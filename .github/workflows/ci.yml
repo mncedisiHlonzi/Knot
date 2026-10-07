@@ -151,7 +151,7 @@ jobs:
       - name: Prove Redis reachability
         run: |
           for attempt in $(seq 1 30); do
-            if redis-cli --host 127.0.0.1 --port 6379 ping | grep -q PONG; then
+            if redis-cli -h 127.0.0.1 -p 6379 ping | grep -q PONG; then
               echo "Redis is reachable."
               exit 0
             fi
