@@ -46,6 +46,32 @@ jobs:
     defaults:
       run:
         working-directory: backend/go
+
+    # PostgreSQL is declared so the identity store's integration tests run instead of
+    # skipping. The image, credentials, and health check mirror the services-smoke job.
+    #
+    # The DSN reaches the service at 127.0.0.1:5432 — the published port — because a
+    # job running directly on the runner is not on the service container's Docker
+    # network, so the label `postgres` does not resolve. This is the same host and port
+    # services-smoke already uses from its psql step.
+    env:
+      KNOT_POSTGRES_DSN: 'postgres://knot:knot_local_only_change_me@127.0.0.1:5432/knot?sslmode=disable'
+
+    services:
+      postgres:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_USER: knot
+          POSTGRES_PASSWORD: knot_local_only_change_me
+          POSTGRES_DB: knot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U knot -d knot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -66,6 +92,13 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+
+      # The store's integration tests need the users table to exist: without it they
+      # skip rather than fail, which would leave the layer uncovered while the job
+      # stayed green. This applies the existing migrations using the same subcommand
+      # developers run locally, and it fails loudly if the database is unreachable.
+      - name: Apply database migrations
+        run: go run ./cmd/knot migrate up
 
       - name: Test
         run: go test ./...
