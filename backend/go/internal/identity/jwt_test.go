@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/knot/backend/internal/testutil"
 )
 
 // newTestIssuer returns an issuer with a fixed, sufficiently long secret.
@@ -168,15 +170,15 @@ func decodeSegment(t *testing.T, segment string) []byte {
 // tamperSignature returns the token with a mutated signature segment.
 //
 // It exists so the three-part token structure stays out of the shared
-// tamperBase64Body helper, which only knows about a single base64 body. The mutation
-// flips a bit in the leading byte of the MAC, which is guaranteed to change the
-// signature. See tamperBase64Body for why the mutation is expressed in decoded bytes
-// rather than as an edit to the encoded text.
+// testutil.TamperBase64Body helper, which only knows about a single base64 body. The
+// mutation flips a bit in the leading byte of the MAC, which is guaranteed to change
+// the signature. See testutil.TamperBase64Body for why the mutation is expressed in
+// decoded bytes rather than as an edit to the encoded text.
 func tamperSignature(t *testing.T, token string) string {
 	t.Helper()
 
 	segments := splitToken(t, token)
-	segments[2], _, _ = tamperBase64Body(t, base64.RawURLEncoding, segments[2], func(signature []byte) {
+	segments[2], _, _ = testutil.TamperBase64Body(t, base64.RawURLEncoding, segments[2], func(signature []byte) {
 		signature[0] ^= 0x01
 	})
 

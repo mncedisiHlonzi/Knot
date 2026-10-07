@@ -1,0 +1,292 @@
+import React, { useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+
+import { describeError } from '../../api/client';
+import { CreateStoryPayload, PILLARS, Pillar, Story, storiesApi } from '../../api/stories';
+
+type CreateStoryScreenProps = {
+  /** The signed-in user's access token. The server derives the author from it. */
+  readonly token: string;
+  /** Called with the published story once it has been stored. */
+  readonly onCreated: (story: Story) => void;
+  /** Called when the person abandons the form. */
+  readonly onCancel: () => void;
+};
+
+/** The language tag the form starts with. */
+const DEFAULT_LANGUAGE = 'en';
+
+/** Field limits, mirroring the server's rules so the user is told early. */
+const MAX_TITLE_LENGTH = 200;
+const MAX_LOCATION_LENGTH = 100;
+const LANGUAGE_PATTERN = /^[A-Za-z]{2,8}$/;
+
+/**
+ * Returns the first client-side validation problem, or undefined when the form is
+ * acceptable. The server validates again and remains the source of truth.
+ */
+function validateForm(
+  title: string,
+  body: string,
+  language: string,
+  location: string,
+): string | undefined {
+  if (title.trim() === '') {
+    return 'A title is required.';
+  }
+  if (title.trim().length > MAX_TITLE_LENGTH) {
+    return `The title must be at most ${MAX_TITLE_LENGTH} characters.`;
+  }
+  if (body.trim() === '') {
+    return 'The story itself is required.';
+  }
+  if (!LANGUAGE_PATTERN.test(language.trim())) {
+    return 'The language must be 2 to 8 letters, such as en or tsonga.';
+  }
+  if (location.trim().length > MAX_LOCATION_LENGTH) {
+    return `The place must be at most ${MAX_LOCATION_LENGTH} characters.`;
+  }
+  return undefined;
+}
+
+/**
+ * The story composer.
+ *
+ * There is no author field: the author is the signed-in account, decided by the
+ * server from the access token. The form therefore cannot publish as someone else.
+ */
+export default function CreateStoryScreen({
+  token,
+  onCreated,
+  onCancel,
+}: CreateStoryScreenProps): React.ReactElement {
+  const [pillar, setPillar] = useState<Pillar>('wonder');
+  const [title, setTitle] = useState('');
+  const [body, setBody] = useState('');
+  const [language, setLanguage] = useState(DEFAULT_LANGUAGE);
+  const [location, setLocation] = useState('');
+  const [mediaUrl, setMediaUrl] = useState('');
+  const [sensitive, setSensitive] = useState(false);
+  const [error, setError] = useState<string | undefined>(undefined);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleSubmit(): Promise<void> {
+    const problem = validateForm(title, body, language, location);
+    if (problem !== undefined) {
+      setError(problem);
+      return;
+    }
+
+    setError(undefined);
+    setSubmitting(true);
+
+    const payload: CreateStoryPayload = {
+      pillar,
+      language: language.trim().toLowerCase(),
+      title: title.trim(),
+      body,
+      ...(location.trim() === '' ? {} : { approximate_location: location.trim() }),
+      ...(mediaUrl.trim() === '' ? {} : { media_urls: [mediaUrl.trim()] }),
+      sensitive,
+    };
+
+    try {
+      const result = await storiesApi.createStory(token, payload);
+      onCreated(result.story);
+    } catch (caught) {
+      setError(describeError(caught));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <Pressable style={styles.link} onPress={onCancel}>
+        <Text style={styles.linkText}>Cancel</Text>
+      </Pressable>
+
+      <Text style={styles.title}>Tell a story</Text>
+
+      <Text style={styles.label}>Pillar</Text>
+      <View style={styles.pillars}>
+        {PILLARS.map((option) => (
+          <Pressable
+            key={option}
+            style={[styles.pillar, pillar === option ? styles.pillarSelected : null]}
+            onPress={() => setPillar(option)}
+          >
+            <Text style={pillar === option ? styles.pillarTextSelected : styles.pillarText}>
+              {option}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <Text style={styles.label}>Title</Text>
+      <TextInput
+        style={styles.input}
+        value={title}
+        onChangeText={setTitle}
+        placeholder="A short headline"
+        placeholderTextColor="#9aa0a6"
+      />
+
+      <Text style={styles.label}>Story</Text>
+      <TextInput
+        style={[styles.input, styles.multiline]}
+        value={body}
+        onChangeText={setBody}
+        placeholder="Tell it the way you would tell it out loud"
+        placeholderTextColor="#9aa0a6"
+        multiline
+        numberOfLines={8}
+        textAlignVertical="top"
+      />
+
+      <Text style={styles.label}>Language</Text>
+      <TextInput
+        style={styles.input}
+        value={language}
+        onChangeText={setLanguage}
+        autoCapitalize="none"
+        autoCorrect={false}
+        placeholder="en"
+        placeholderTextColor="#9aa0a6"
+      />
+
+      <Text style={styles.label}>Approximate place (optional)</Text>
+      <TextInput
+        style={styles.input}
+        value={location}
+        onChangeText={setLocation}
+        placeholder="Cape Town"
+        placeholderTextColor="#9aa0a6"
+      />
+
+      <Text style={styles.label}>One media link (optional)</Text>
+      <TextInput
+        style={styles.input}
+        value={mediaUrl}
+        onChangeText={setMediaUrl}
+        autoCapitalize="none"
+        autoCorrect={false}
+        keyboardType="url"
+        placeholder="https://example.com/photo.jpg"
+        placeholderTextColor="#9aa0a6"
+      />
+
+      <View style={styles.switchRow}>
+        <Text style={styles.label}>Sensitive story</Text>
+        <Switch value={sensitive} onValueChange={setSensitive} />
+      </View>
+      <Text style={styles.hint}>
+        Mark a story sensitive when it should not be surfaced without care.
+      </Text>
+
+      {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
+
+      <Pressable
+        style={[styles.button, submitting ? styles.buttonDisabled : null]}
+        onPress={handleSubmit}
+        disabled={submitting}
+      >
+        <Text style={styles.buttonText}>{submitting ? 'Publishing…' : 'Publish story'}</Text>
+      </Pressable>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  button: {
+    alignItems: 'center',
+    backgroundColor: '#1f6feb',
+    borderRadius: 8,
+    marginTop: 24,
+    paddingVertical: 14,
+  },
+  buttonDisabled: {
+    opacity: 0.5,
+  },
+  buttonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  content: {
+    padding: 24,
+    paddingBottom: 48,
+  },
+  error: {
+    color: '#b3261e',
+    fontSize: 14,
+    marginTop: 16,
+  },
+  hint: {
+    color: '#57606a',
+    fontSize: 13,
+    marginTop: 4,
+  },
+  input: {
+    borderColor: '#d0d7de',
+    borderRadius: 8,
+    borderWidth: 1,
+    color: '#24292f',
+    fontSize: 16,
+    marginTop: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  label: {
+    color: '#24292f',
+    fontSize: 15,
+    fontWeight: '600',
+    marginTop: 20,
+  },
+  link: {
+    marginBottom: 12,
+  },
+  linkText: {
+    color: '#1f6feb',
+    fontSize: 15,
+  },
+  multiline: {
+    minHeight: 160,
+  },
+  pillar: {
+    borderColor: '#d0d7de',
+    borderRadius: 8,
+    borderWidth: 1,
+    marginRight: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  pillarSelected: {
+    backgroundColor: '#1f6feb',
+    borderColor: '#1f6feb',
+  },
+  pillarText: {
+    color: '#24292f',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  pillarTextSelected: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  pillars: {
+    flexDirection: 'row',
+    marginTop: 6,
+  },
+  switchRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 12,
+  },
+  title: {
+    color: '#24292f',
+    fontSize: 24,
+    fontWeight: '700',
+  },
+});

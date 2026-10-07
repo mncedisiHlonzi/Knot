@@ -1,8 +1,9 @@
 // Package httpapi is the HTTP surface of the Knot backend.
 //
-// It translates HTTP requests into calls on the identity service and translates
-// the results back into JSON. It contains no business rules: validation,
-// authentication decisions, and token issuance all live in internal/identity.
+// It translates HTTP requests into calls on the identity and stories services
+// and translates the results back into JSON. It contains no business rules:
+// validation, authentication decisions, and token issuance all live in
+// internal/identity and internal/stories.
 //
 // Routing uses the standard library only. The Go 1.22 ServeMux method patterns
 // ("GET /health") are used deliberately, so no router dependency is needed.

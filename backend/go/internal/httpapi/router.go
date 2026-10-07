@@ -28,21 +28,41 @@ type healthResponse struct {
 //
 // Recover sits inside logging so that a recovered panic is still reported with
 // its status and duration.
+//
+// Authentication is not part of that chain: it is applied per route by
+// AuthMiddleware.Require, because GET /stories and GET /stories/{id} are public
+// while POST /stories is not. The protection therefore travels with the route
+// that needs it, and a public route cannot be exposed by a mistake in the
+// composition order.
 type Router struct {
-	auth    *AuthHandler
-	version string
-	logger  *slog.Logger
+	auth           *AuthHandler
+	stories        *StoriesHandler
+	authMiddleware *AuthMiddleware
+	version        string
+	logger         *slog.Logger
 }
 
 // NewRouter returns the root handler for the API.
-func NewRouter(auth *AuthHandler, version string, logger *slog.Logger) (*Router, error) {
+func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
 	if auth == nil {
 		return nil, errNilHandler("auth")
+	}
+	if storiesHandler == nil {
+		return nil, errNilHandler("stories")
+	}
+	if authMiddleware == nil {
+		return nil, errNilHandler("auth middleware")
 	}
 	if logger == nil {
 		return nil, errNilHandler("logger")
 	}
-	return &Router{auth: auth, version: version, logger: logger}, nil
+	return &Router{
+		auth:           auth,
+		stories:        storiesHandler,
+		authMiddleware: authMiddleware,
+		version:        version,
+		logger:         logger,
+	}, nil
 }
 
 // Handler returns the composed http.Handler, middleware included.
@@ -53,6 +73,11 @@ func (r *Router) Handler() http.Handler {
 	mux.HandleFunc("GET /health", r.handleHealth)
 	mux.HandleFunc("POST /auth/register", r.auth.Register)
 	mux.HandleFunc("POST /auth/login", r.auth.Login)
+
+	// Stories. Publishing requires an access token; reading is open.
+	mux.HandleFunc("POST /stories", r.authMiddleware.Require(r.stories.Create))
+	mux.HandleFunc("GET /stories", r.stories.List)
+	mux.HandleFunc("GET /stories/{id}", r.stories.Get)
 
 	return withRequestID(withRequestLogging(r.logger, withRecover(r.logger, mux)))
 }

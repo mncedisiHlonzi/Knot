@@ -140,6 +140,34 @@ curl -s -X POST http://localhost:8080/auth/register \
   -d '{"email":"you@example.com","password":"at-least-8-chars","display_name":"You"}'
 ```
 
+### Routes
+
+| Route                 | Auth     | Handler file                  |
+| --------------------- | -------- | ----------------------------- |
+| `GET /health`         | public   | `internal/httpapi/router.go`  |
+| `POST /auth/register` | public   | `internal/httpapi/auth_handler.go` |
+| `POST /auth/login`    | public   | `internal/httpapi/auth_handler.go` |
+| `POST /stories`       | `Bearer` | `internal/httpapi/stories_handler.go` |
+| `GET /stories`        | public   | `internal/httpapi/stories_handler.go` |
+| `GET /stories/{id}`   | public   | `internal/httpapi/stories_handler.go` |
+
+Routes are declared in one place, `NewRouter` in `internal/httpapi/router.go`, using
+Go 1.22 method-qualified `ServeMux` patterns. There is no router dependency.
+
+Authentication is **per route**, not global: `POST /stories` is wrapped in
+`AuthMiddleware.Require`, and the public routes are not. A handler that needs the caller
+reads `UserIDFromContext(ctx)`; the second return value is `false` when no authenticated
+user is on the context, which handlers must treat as unauthenticated. Because protection
+travels with the route, adding a protected route means wrapping it explicitly.
+
+`GET /stories/{id}` uses a wildcard segment, so be aware that `/stories/` (with a
+trailing slash) does **not** match it — it is a 404, and the handler is never reached.
+There is a test for exactly that, because the behaviour is easy to assume wrongly.
+
+The composition root is `cmd/knot/main.go`: it builds the pool, the stores, the services,
+the handlers, and the middleware, then hands them to `NewRouter`. That is the only place
+that knows how the layers are wired together.
+
 ### Migrations
 
 - SQL lives in `backend/go/migrations/`, named `<version>_<name>.up.sql` and
@@ -247,8 +275,13 @@ six significant bits, and Go's non-strict decoders ignore those padding bits. An
 changes only them decodes to byte-identical output, so the "tamper" is a no-op.
 
 Instead, **decode the value, mutate the decoded bytes, and re-encode** — use
-`tamperBase64Body` in `backend/go/internal/identity/tamper_test.go`, which does that,
+`testutil.TamperBase64Body` in `backend/go/internal/testutil/tamper.go`, which does that,
 handles both base64 alphabets, and fails the test if the mutation changed nothing.
+
+It lives in its own package rather than in a `_test.go` file because a helper in a
+`_test.go` file is only visible to tests in that same package. `internal/testutil` is
+importable by every test that needs it — the JWT and password tests in
+`internal/identity` and the cursor test in `internal/stories` all use it today.
 
 This is not hypothetical: it has already caused two flaky tests (a JWT signature's final
 character, an argon2id key's final character), each failing about one run in sixteen.

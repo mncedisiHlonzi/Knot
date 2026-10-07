@@ -167,23 +167,10 @@ func (h *AuthHandler) writeServiceError(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
-// writeDecodeError reports a body that could not be read or parsed.
+// writeDecodeError reports a body that could not be read or parsed. The shared
+// helper does the work; the method keeps existing call sites unchanged.
 func (h *AuthHandler) writeDecodeError(w http.ResponseWriter, r *http.Request, err error) {
-	var tooLarge *http.MaxBytesError
-	if errors.As(err, &tooLarge) {
-		writeError(w, http.StatusRequestEntityTooLarge, codeRequestTooLarge,
-			fmt.Sprintf("request body must be at most %d bytes", tooLarge.Limit))
-		return
-	}
-
-	h.logger.WarnContext(
-		r.Context(),
-		"rejected request body",
-		slog.String("request_id", RequestIDFromContext(r.Context())),
-		slog.String("path", r.URL.Path),
-		slog.String("error", err.Error()),
-	)
-	writeError(w, http.StatusBadRequest, codeInvalidRequest, "request body must be a single valid JSON object with no unknown fields")
+	writeDecodeError(w, r, h.logger, err)
 }
 
 // newAuthResponse projects a domain result onto the wire format.

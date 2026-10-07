@@ -31,6 +31,7 @@ import (
 	"github.com/knot/backend/internal/config"
 	"github.com/knot/backend/internal/httpapi"
 	"github.com/knot/backend/internal/identity"
+	"github.com/knot/backend/internal/stories"
 	"github.com/knot/backend/migrations"
 )
 
@@ -134,7 +135,29 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	router, err := httpapi.NewRouter(authHandler, appinfo.Version, logger)
+	storiesStore, err := stories.NewPostgresStore(pool)
+	if err != nil {
+		return err
+	}
+
+	storiesService, err := stories.NewService(storiesStore)
+	if err != nil {
+		return err
+	}
+
+	storiesHandler, err := httpapi.NewStoriesHandler(storiesService, logger)
+	if err != nil {
+		return err
+	}
+
+	// The same issuer that signs access tokens verifies them on protected
+	// routes, so there is one source of truth for the signing key.
+	authMiddleware, err := httpapi.NewAuthMiddleware(tokens, logger)
+	if err != nil {
+		return err
+	}
+
+	router, err := httpapi.NewRouter(authHandler, storiesHandler, authMiddleware, appinfo.Version, logger)
 	if err != nil {
 		return err
 	}

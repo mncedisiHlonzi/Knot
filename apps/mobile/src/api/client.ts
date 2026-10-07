@@ -81,12 +81,21 @@ type ErrorEnvelope = {
 type RequestOptions = {
   readonly method: 'GET' | 'POST';
   readonly body?: unknown;
+  /**
+   * Access token for a protected endpoint, sent as a bearer credential. Public
+   * endpoints omit it so no credential is ever attached to a request that does
+   * not need one.
+   */
+  readonly token?: string;
 };
 
 /**
  * Performs a request and returns the parsed JSON body, or throws an ApiError.
+ *
+ * It is exported so that the other endpoint modules (`stories.ts`) share one
+ * transport, and therefore one error envelope and one network-failure message.
  */
-async function request<T>(path: string, options: RequestOptions): Promise<T> {
+export async function request<T>(path: string, options: RequestOptions): Promise<T> {
   const url = `${API_BASE_URL}${path}`;
 
   let response: Response;
@@ -96,6 +105,7 @@ async function request<T>(path: string, options: RequestOptions): Promise<T> {
       headers: {
         Accept: 'application/json',
         'Content-Type': 'application/json',
+        ...(options.token === undefined ? {} : { Authorization: `Bearer ${options.token}` }),
       },
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/knot/backend/internal/testutil"
 )
 
 func TestHashPasswordProducesParseablePHCString(t *testing.T) {
@@ -125,7 +127,7 @@ func TestVerifyPasswordRejectsTamperedHash(t *testing.T) {
 		t.Fatalf("encoded hash has %d fields, want 6: %q", len(fields), hash)
 	}
 
-	fields[5], _, _ = tamperBase64Body(t, base64.RawStdEncoding, fields[5], func(key []byte) {
+	fields[5], _, _ = testutil.TamperBase64Body(t, base64.RawStdEncoding, fields[5], func(key []byte) {
 		key[0] ^= 0x01
 	})
 	tampered := strings.Join(fields, "$")

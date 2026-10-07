@@ -68,12 +68,35 @@ func newTestHandler(t *testing.T, service AuthService) http.Handler {
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	router, err := NewRouter(authHandler, "0.1.0", logger)
+	testRouter, err := newTestRouter(t, logger, authHandler)
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v, want nil", err)
 	}
 
-	return router.Handler()
+	return testRouter
+}
+
+// newTestRouter assembles the router the way cmd/knot does, so the identity
+// request tests run against the real route table and middleware chain.
+func newTestRouter(t *testing.T, logger *slog.Logger, authHandler *AuthHandler) (http.Handler, error) {
+	t.Helper()
+
+	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, logger)
+	if err != nil {
+		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
+	}
+
+	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID}, logger)
+	if err != nil {
+		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
+	}
+
+	router, err := NewRouter(authHandler, storiesHandler, authMiddleware, "0.1.0", logger)
+	if err != nil {
+		return nil, err
+	}
+
+	return router.Handler(), nil
 }
 
 func doRequest(handler http.Handler, method, path, body string) *httptest.ResponseRecorder {
@@ -457,7 +480,29 @@ func TestNewAuthHandlerRejectsMissingDependencies(t *testing.T) {
 func TestNewRouterRejectsMissingDependencies(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	if _, err := NewRouter(nil, "0.1.0", logger); err == nil {
+	authHandler, err := NewAuthHandler(&fakeAuthService{}, logger)
+	if err != nil {
+		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
+	}
+	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, logger)
+	if err != nil {
+		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
+	}
+	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID}, logger)
+	if err != nil {
+		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
+	}
+
+	if _, err := NewRouter(nil, storiesHandler, authMiddleware, "0.1.0", logger); err == nil {
 		t.Error("NewRouter(nil, ...) error = nil, want an error")
+	}
+	if _, err := NewRouter(authHandler, nil, authMiddleware, "0.1.0", logger); err == nil {
+		t.Error("NewRouter(_, nil, ...) error = nil, want an error")
+	}
+	if _, err := NewRouter(authHandler, storiesHandler, nil, "0.1.0", logger); err == nil {
+		t.Error("NewRouter(_, _, nil, ...) error = nil, want an error")
+	}
+	if _, err := NewRouter(authHandler, storiesHandler, authMiddleware, "0.1.0", nil); err == nil {
+		t.Error("NewRouter(..., nil) error = nil, want an error")
 	}
 }
