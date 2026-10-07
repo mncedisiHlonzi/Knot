@@ -107,18 +107,27 @@ const (
 )
 
 // Story is a published story.
+//
+// A story's written content — its language, title, and body — lives in its root
+// version (see KNOT-ADR-012). The fields below are resolved from that root
+// version, so a Story always carries the content a reader sees, while the
+// version tree holds every adaptation of it.
 type Story struct {
 	// ID is the canonical UUID text assigned by PostgreSQL.
 	ID string
-	// AuthorID is the id of the user who published the story.
+	// AuthorID is the id of the user who published the story: the original
+	// author, who is also the author of the root version.
 	AuthorID string
+	// RootVersionID is the id of the story's root version, the version every
+	// adaptation descends from.
+	RootVersionID string
 	// Pillar is the storytelling lens the story was filed under.
 	Pillar Pillar
-	// Language is the tag of the language the story is written in.
+	// Language is the root version's language tag.
 	Language string
-	// Title is the short headline.
+	// Title is the root version's headline.
 	Title string
-	// Body is the story itself.
+	// Body is the root version's body.
 	Body string
 	// ApproximateLocation is an optional, deliberately coarse place name.
 	ApproximateLocation string
@@ -134,6 +143,9 @@ type Story struct {
 
 // CreateStoryInput is the input to CreateStory. It is a domain type, not an HTTP
 // type, so the handler layer stays free of validation rules.
+//
+// The Language, Title, and Body become the story's root version; the remaining
+// fields stay on the story row itself.
 type CreateStoryInput struct {
 	// AuthorID is required and must be canonical UUID text. In the running
 	// server it comes from the authenticated request, never from the body.
@@ -158,7 +170,10 @@ type CreateStoryInput struct {
 // this interface rather than on pgx, so the business rules can be tested without
 // a database.
 type StoryStore interface {
-	// CreateStory inserts story and returns the stored row.
+	// CreateStory inserts the story together with its root version and returns
+	// the stored story with its root version content resolved. Both rows are
+	// written in one transaction: a failure while writing the root version must
+	// leave no story behind.
 	CreateStory(ctx context.Context, story Story) (Story, error)
 	// GetStory returns the story with the given id, or ErrNotFound.
 	GetStory(ctx context.Context, id string) (Story, error)

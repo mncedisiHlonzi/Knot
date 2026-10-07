@@ -143,6 +143,36 @@ func TestPostgresStoreCreateStoryRoundTrip(t *testing.T) {
 	if created.CreatedAt.IsZero() || created.UpdatedAt.IsZero() {
 		t.Error("timestamps are zero, want database-generated values")
 	}
+	if !isUUID(created.RootVersionID) {
+		t.Errorf("root version id = %q, want a canonical uuid", created.RootVersionID)
+	}
+
+	// The story's root version must really exist, parentless, carrying the
+	// submitted content. Read with an independent query so the assertion does
+	// not lean on the same join the fetch uses.
+	var (
+		versionID string
+		parent    *string
+		language  string
+		title     string
+		body      string
+	)
+	if err := env.pool.QueryRow(
+		ctx,
+		`SELECT id, parent_version_id, language, title, body FROM story_versions WHERE id = $1`,
+		created.RootVersionID,
+	).Scan(&versionID, &parent, &language, &title, &body); err != nil {
+		t.Fatalf("could not read the root version: %v", err)
+	}
+	if versionID != created.RootVersionID {
+		t.Errorf("root version id = %q, want %q", versionID, created.RootVersionID)
+	}
+	if parent != nil {
+		t.Errorf("root version parent = %q, want NULL", *parent)
+	}
+	if language != created.Language || title != created.Title || body != created.Body {
+		t.Errorf("root version content = (%q, %q, %q), want the submitted content", language, title, body)
+	}
 
 	fetched, err := env.store.GetStory(ctx, created.ID)
 	if err != nil {
@@ -376,5 +406,49 @@ func TestPostgresStoreListStoriesCursorIsExclusive(t *testing.T) {
 func TestPostgresStoreRejectsNilPool(t *testing.T) {
 	if _, err := NewPostgresStore(nil); err == nil {
 		t.Error("NewPostgresStore(nil) error = nil, want an error")
+	}
+}
+
+// countAuthorStories counts the stories a single author owns, read with an
+// independent query so the rollback assertion is not circular.
+func countAuthorStories(t *testing.T, env integrationStore) int {
+	t.Helper()
+
+	var total int
+	if err := env.pool.QueryRow(
+		context.Background(),
+		"SELECT count(*) FROM stories WHERE author_id = $1",
+		env.author,
+	).Scan(&total); err != nil {
+		t.Fatalf("could not count stories: %v", err)
+	}
+	return total
+}
+
+func TestPostgresStoreCreateStoryRollsBackWhenVersionInsertFails(t *testing.T) {
+	// A story and its root version are written together, so a failure while
+	// writing the version must leave no story behind. A NUL byte is valid in a Go
+	// string but cannot be stored in a PostgreSQL text column, so putting one in
+	// the body makes only the version insert fail: the body column lives on
+	// story_versions, not on stories.
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	before := countAuthorStories(t, env)
+
+	_, err := env.store.CreateStory(ctx, Story{
+		AuthorID:  env.author,
+		Pillar:    PillarHeritage,
+		Language:  "en",
+		Title:     "Rollback candidate",
+		Body:      "this body contains a NUL byte: \x00",
+		MediaURLs: []string{},
+	})
+	if err == nil {
+		t.Fatal("CreateStory() error = nil, want the root version insert to fail on the NUL byte")
+	}
+
+	if after := countAuthorStories(t, env); after != before {
+		t.Errorf("stories for the author = %d, want %d — the story must roll back when its version fails", after, before)
 	}
 }

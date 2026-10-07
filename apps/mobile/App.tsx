@@ -5,8 +5,10 @@ import type { AuthResponse } from './src/api/client';
 import type { Story } from './src/api/stories';
 import LoginScreen from './src/screens/auth/LoginScreen';
 import RegisterScreen from './src/screens/auth/RegisterScreen';
+import AdaptStoryScreen from './src/screens/stories/AdaptStoryScreen';
 import CreateStoryScreen from './src/screens/stories/CreateStoryScreen';
 import FeedScreen from './src/screens/stories/FeedScreen';
+import LanguageTreeScreen from './src/screens/stories/LanguageTreeScreen';
 import StoryDetailScreen from './src/screens/stories/StoryDetailScreen';
 
 /**
@@ -16,7 +18,7 @@ import StoryDetailScreen from './src/screens/stories/StoryDetailScreen';
  * task. Until then a single screen name in state is enough: the app is shallow
  * and every transition is explicit and typed.
  */
-type ScreenName = 'register' | 'login' | 'feed' | 'detail' | 'create';
+type ScreenName = 'register' | 'login' | 'feed' | 'detail' | 'create' | 'adapt' | 'tree';
 
 /**
  * Root component for the Knot mobile app.
@@ -28,6 +30,7 @@ export default function App(): React.ReactElement {
   const [screen, setScreen] = useState<ScreenName>('register');
   const [session, setSession] = useState<AuthResponse | null>(null);
   const [openStoryId, setOpenStoryId] = useState<string | null>(null);
+  const [adaptParentVersionId, setAdaptParentVersionId] = useState<string | null>(null);
 
   function handleAuthenticated(result: AuthResponse): void {
     setSession(result);
@@ -37,6 +40,7 @@ export default function App(): React.ReactElement {
   function handleSignOut(): void {
     setSession(null);
     setOpenStoryId(null);
+    setAdaptParentVersionId(null);
     setScreen('register');
   }
 
@@ -50,6 +54,11 @@ export default function App(): React.ReactElement {
     // contents are what was persisted.
     setOpenStoryId(story.id);
     setScreen('detail');
+  }
+
+  function handleAdaptStory(rootVersionId: string): void {
+    setAdaptParentVersionId(rootVersionId);
+    setScreen('adapt');
   }
 
   /**
@@ -70,7 +79,33 @@ export default function App(): React.ReactElement {
     }
 
     if (screen === 'detail' && openStoryId !== null) {
-      return <StoryDetailScreen id={openStoryId} onBack={() => setScreen('feed')} />;
+      return (
+        <StoryDetailScreen
+          id={openStoryId}
+          onBack={() => setScreen('feed')}
+          onAdapt={handleAdaptStory}
+          onViewTree={() => setScreen('tree')}
+        />
+      );
+    }
+
+    if (screen === 'adapt' && openStoryId !== null && adaptParentVersionId !== null) {
+      return (
+        <AdaptStoryScreen
+          storyId={openStoryId}
+          parentVersionId={adaptParentVersionId}
+          token={current.access_token}
+          defaultLanguage={
+            current.user.preferred_languages.find((tag) => tag.trim() !== '') ?? 'en'
+          }
+          onAdapted={() => setScreen('tree')}
+          onCancel={() => setScreen('detail')}
+        />
+      );
+    }
+
+    if (screen === 'tree' && openStoryId !== null) {
+      return <LanguageTreeScreen storyId={openStoryId} onBack={() => setScreen('detail')} />;
     }
 
     return (

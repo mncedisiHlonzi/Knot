@@ -17,6 +17,12 @@ export const PILLARS: readonly Pillar[] = ['wonder', 'heritage'];
 export type Story = {
   readonly id: string;
   readonly author_id: string;
+  /**
+   * The id of the story's root version. The content fields below (language,
+   * title, body) are the root version's content; adapting a story starts from
+   * this version.
+   */
+  readonly root_version_id: string;
   readonly pillar: Pillar;
   readonly language: string;
   readonly title: string;

@@ -150,6 +150,9 @@ curl -s -X POST http://localhost:8080/auth/register \
 | `POST /stories`       | `Bearer` | `internal/httpapi/stories_handler.go` |
 | `GET /stories`        | public   | `internal/httpapi/stories_handler.go` |
 | `GET /stories/{id}`   | public   | `internal/httpapi/stories_handler.go` |
+| `POST /stories/{id}/adapt` | `Bearer` | `internal/httpapi/versions_handler.go` |
+| `GET /stories/{id}/tree`   | public   | `internal/httpapi/versions_handler.go` |
+| `GET /versions/{id}`       | public   | `internal/httpapi/versions_handler.go` |
 
 Routes are declared in one place, `NewRouter` in `internal/httpapi/router.go`, using
 Go 1.22 method-qualified `ServeMux` patterns. There is no router dependency.
@@ -167,6 +170,38 @@ There is a test for exactly that, because the behaviour is easy to assume wrongl
 The composition root is `cmd/knot/main.go`: it builds the pool, the stores, the services,
 the handlers, and the middleware, then hands them to `NewRouter`. That is the only place
 that knows how the layers are wired together.
+
+### Tell My People: versions and the Language Tree
+
+`POST /stories/{id}/adapt`, `GET /stories/{id}/tree`, and `GET /versions/{id}` are served
+by `internal/httpapi/versions_handler.go`, backed by the `internal/versions` domain
+package. A story's content is a version, and every story has a root version; an adaptation
+descends from a version through `parent_version_id`.
+
+The tree is an adjacency list, so the tree query is deliberately flat and uses no
+recursion:
+
+```sql
+SELECT id, story_id, parent_version_id, author_id, language, title, body, adaptation_note, created_at, updated_at
+FROM story_versions
+WHERE story_id = $1
+ORDER BY created_at ASC, id ASC
+```
+
+Because a parent is always created before its children, `created_at ASC` returns a version
+before every adaptation of it, which is a valid depth-first presentation. The client
+assembles the nesting from `parent_version_id`; the server neither sorts for a display nor
+returns a nested shape. `ListByStory` returns `ErrNotFound` when the story does not exist,
+which is how `GET /stories/{id}/tree` tells "no such story" from "a story with no
+versions".
+
+A story and its root version are written together in one statement (two data-modifying
+CTEs) because `stories.root_version_id` and `story_versions.story_id` reference each other
+and neither row can be inserted first under an immediate foreign key. That single statement
+is the transaction: a failure while writing the root version leaves no story behind.
+
+Adapting is open to any authenticated user. The adapter comes from the token, and the only
+structural check is that `parent_version_id` belongs to the same story (see KNOT-ADR-013).
 
 ### Migrations
 

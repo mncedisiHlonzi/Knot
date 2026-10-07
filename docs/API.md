@@ -115,8 +115,8 @@ identical message, so the endpoint cannot be used to discover which accounts exi
 
 ## Authentication
 
-`POST /stories` is a protected route. Every other route is public and needs no
-credentials.
+`POST /stories` and `POST /stories/{id}/adapt` are protected routes. Every other
+route is public and needs no credentials.
 
 A protected route requires an access token in the standard header:
 
@@ -147,6 +147,7 @@ and the pillar it belongs to.
 {
   "id": "d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b",
   "author_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
+  "root_version_id": "0f6c2b1a-9e2d-4c7b-8a31-6d5e4f3c2b1a",
   "pillar": "wonder",
   "language": "en",
   "title": "The first rain",
@@ -161,6 +162,11 @@ and the pillar it belongs to.
 
 `media_urls` is always an array, never `null`. `approximate_location` is an empty string
 when it was not given.
+
+`language`, `title`, and `body` are the content of the story's **root version**, and
+`root_version_id` names that version. A story's content is not stored on the story
+itself: every telling of it — the original and every adaptation — is a version. See
+[Versions and the Language Tree](#versions-and-the-language-tree).
 
 ### POST /stories
 
@@ -237,6 +243,105 @@ shift the pages, and no story is skipped or repeated. The cursor is exclusive: i
 
 **Errors:** `400 validation_error` (an unreadable `cursor`, or a `limit` that is not a
 positive integer), `500 internal_error`.
+
+## Versions and the Language Tree
+
+A story's content is a **version**, and a human adaptation is a new version that
+descends from an older one. Every story has exactly one **root version** (the original,
+with no parent), and every adaptation names the version it came from. Together they form
+the story's **Language Tree**.
+
+The tree is an adjacency list: the server returns it as a flat list in which each version
+carries its `parent_version_id`, and the client assembles the nesting. See
+KNOT-ADR-011 in [`docs/DECISIONS.md`](DECISIONS.md).
+
+| Route                      | Auth     | Purpose                                 |
+| -------------------------- | -------- | --------------------------------------- |
+| `POST /stories/{id}/adapt` | `Bearer` | Add a human adaptation of a version      |
+| `GET /stories/{id}/tree`   | public   | Every version of a story, oldest first   |
+| `GET /versions/{id}`       | public   | Read one version                         |
+
+### The version object
+
+```json
+{
+  "id": "0f6c2b1a-9e2d-4c7b-8a31-6d5e4f3c2b1a",
+  "story_id": "d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b",
+  "parent_version_id": null,
+  "author_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
+  "language": "en",
+  "title": "The first rain",
+  "body": "Grandmother said the first rain remembers every name.",
+  "adaptation_note": null,
+  "created_at": "2026-10-07T18:26:37.134182+02:00",
+  "updated_at": "2026-10-07T18:26:37.134182+02:00"
+}
+```
+
+`parent_version_id` is `null` for a story's root version and a version id for an
+adaptation. `adaptation_note` is `null` when the adapter left none.
+
+### POST /stories/{id}/adapt
+
+Adds a version adapted from an existing one and returns **201** with the stored version,
+wrapped as `{ "version": { ... } }`. The response is what the database stored, not an
+echo of the request.
+
+**Request**
+
+```json
+{
+  "parent_version_id": "0f6c2b1a-9e2d-4c7b-8a31-6d5e4f3c2b1a",
+  "language": "fr",
+  "title": "La première pluie",
+  "body": "Grand-mère disait que la première pluie se souvient de chaque nom.",
+  "adaptation_note": "Rendered for French-speaking listeners."
+}
+```
+
+| Field               | Required | Rules                                                    |
+| ------------------- | -------- | -------------------------------------------------------- |
+| `parent_version_id` | yes      | UUID. Must belong to the story named in the path          |
+| `language`          | yes      | 2-8 letters; stored lower-cased                           |
+| `title`             | yes      | 1-200 characters after trimming                           |
+| `body`              | yes      | 1-10000 characters; stored verbatim                        |
+| `adaptation_note`   | no       | At most 1000 characters after trimming                     |
+
+**There is no `author_id` field.** The adapter is taken from the access token. A request
+that includes `author_id` is rejected as an unknown field (400).
+
+**Errors:** `401 unauthorized`, `400 validation_error` (including a `parent_version_id`
+that belongs to a different story, or is not a UUID), `400 invalid_request`,
+`404 not_found` (the story does not exist, or the parent version does not exist),
+`413 request_too_large`, `500 internal_error`.
+
+### GET /stories/{id}/tree
+
+Returns **200** with every version of the story, oldest first:
+
+```json
+{
+  "story_id": "d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b",
+  "versions": [
+    { "id": "0f6c2b1a-...", "parent_version_id": null },
+    { "id": "1a2b3c4d-...", "parent_version_id": "0f6c2b1a-..." }
+  ]
+}
+```
+
+`versions` is always an array, never `null`. The list is flat, not nested: assemble the
+tree from `parent_version_id`. The first version is the root, whose `parent_version_id`
+is `null`.
+
+**Errors:** `404 not_found` (the story does not exist, or its id is not a UUID),
+`500 internal_error`.
+
+### GET /versions/{id}
+
+Returns **200** with `{ "version": { ... } }`.
+
+**Errors:** `404 not_found` (no such version, or the id is not a UUID),
+`500 internal_error`.
 
 ## Tokens
 

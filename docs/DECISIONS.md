@@ -243,3 +243,66 @@ Staying with strings keeps one id convention across the codebase instead of intr
 
 **Consequences:**
 Nothing stops a non-UUID string from being passed as an id at compile time; the guarantee is enforced at runtime by validation and by the `uuid` column itself. The validator is duplicated in two packages rather than shared, which is a deliberate trade for keeping `identity`'s API surface unchanged. If id handling ever needs parsing, formatting, or comparison helpers, that is the moment to reconsider a uuid package — with the same justification a fourth dependency has always required.
+
+---
+
+## KNOT-ADR-011 — The version tree is an adjacency list
+
+**Decision ID:** KNOT-ADR-011
+**Date:** 2026-10-07
+**Status:** Accepted
+
+**Context:** Tell My People records how a story is adapted from one language into another, and those adaptations form a tree: a version descends from the version it was adapted from. The tree had to be stored in a way that fits how it is written and read. Three conventional models were on the table: an adjacency list, a materialized path, and a closure table.
+
+**Decision:** The tree is stored as an **adjacency list**. Each row in `story_versions` carries a `parent_version_id` that references another row in the same table; a story's root version has `parent_version_id IS NULL`. There is no materialized path and no closure table. Only the direct parent is recorded.
+
+**Alternatives Considered:**
+1. Materialized path — rejected. It stores the full ancestry on every row, which makes ancestor lookups cheap but rewrites every descendant row when the tree is re-parented, and it duplicates state that can drift from the parent pointers.
+2. Closure table — rejected. It adds a second table and a row per ancestor-descendant pair, which is the right cost for deep trees and frequent "all descendants" queries, but neither is true here: the floor of the tree is a human who tells a story, so it stays shallow, and a story's whole tree is small enough to read in one query.
+3. Adjacency list — accepted. One nullable column, no second table, and the truth of each edge written in exactly one place.
+
+**Reason:** The workload is "add a leaf" and "read one story's tree". An adjacency list makes the write a single insert with no bookkeeping, and the read a single `WHERE story_id = $1` scan. Both alternatives pay maintenance cost on writes or storage cost on rows for queries the product does not make yet. The simplest model that answers the current queries is the one to start with.
+
+**Consequences:** Reading a whole tree means reading every version of a story and assembling the nesting in application code, which the API does not do at all — it returns a flat list and lets the client assemble it. A query like "every descendant of this version" would need a recursive CTE or a new structure; if deep trees or cross-tree queries become common, that is the moment to introduce a closure table, and it is a change to one table rather than a rewrite. The tree cannot be re-parented cheaply, which is fine: a version's parent is historical fact, not mutable state.
+
+---
+
+## KNOT-ADR-012 — Every story has a root version; content lives in versions
+
+**Decision ID:** KNOT-ADR-012
+**Date:** 2026-10-07
+**Status:** Accepted
+
+**Context:** Before Tell My People, the `stories` table held a single version of content directly: `language`, `title`, and `body`. Tell My People needs a story to have many versions, one per language or retelling, while a story remains one thing that can be found, read, and adapted. The schema had to divide story-level facts from version-level content.
+
+**Decision:** Content moves out of `stories` and into `story_versions`. Every story has exactly **one root version** — a `story_versions` row with `parent_version_id IS NULL` — and `stories.root_version_id` points at it (`NOT NULL`, unique, `REFERENCES story_versions(id) ON DELETE RESTRICT`). Exactly one root per story is enforced by the partial unique index `story_versions_story_id_root_unique ON story_versions (story_id) WHERE parent_version_id IS NULL`. `stories` keeps only story-level metadata: the original `author_id`, `pillar`, `approximate_location`, `media_urls`, `sensitive`, `root_version_id`, and timestamps. The version-level fields are `story_id`, `parent_version_id`, `author_id`, `language`, `title`, `body`, `adaptation_note`, and timestamps. Story creation writes the story row and its root version in one statement; reading a story resolves its content from the root version.
+
+**Alternatives Considered:**
+1. Keep content on `stories` and copy it into the root version — rejected. Two copies of the same text can drift, and there is no single answer to "what does this story say".
+2. Allow a story to exist with no versions — rejected. A story with no content cannot be read or adapted, so making the root version required (via `root_version_id NOT NULL`) means the invalid state cannot be stored.
+3. Make the root directly an editable field on `stories` rather than a version — rejected. The root is the anchor every adaptation descends from, so it has to be a version like any other, or the tree has two kinds of nodes.
+
+**Reason:** One place holds content, so a story's text is stored once and every adaptation is a version of it rather than an edit to it. Anchoring the root in `stories` keeps a story navigable from its id without walking the tree, while the partial unique index and the `NOT NULL` foreign key make "exactly one root per story" a database fact rather than a convention. Because a story row cannot exist without a root, and a version's content lives only on the version, there is no schema state in which a story's content is missing or duplicated.
+
+**Consequences:** Reading a story is a join against its root version, so every story query names `story_versions`; the feed's keyset index is untouched because ordering is still `stories.(created_at, id)`. Story creation writes two rows that reference each other, which the store does in a single statement so the write is atomic. Content is no longer editable in place: editing a title or body becomes a new version once version editing exists, which is a future task. The original author is preserved separately from version authorship, so the story keeps a stable author as adapters add their own versions.
+
+---
+
+## KNOT-ADR-013 — Any authenticated user may adapt any story
+
+**Decision ID:** KNOT-ADR-013
+**Date:** 2026-10-07
+**Status:** Accepted
+
+**Context:** Tell My People is the feature that makes Knot Knot: a person reads a story and retells it in their own language. The task had to decide who is allowed to adapt. Knot has no trust system, no reputation, no roles, and no moderation yet, and the core loop is not yet in use enough to know what a sensible gate would be.
+
+**Decision:** Adaptation authorization is **open to any authenticated user**. Any signed-in account may adapt any version of any story. The adapter is taken from the access token, never from the request body, and the only structural constraint is that `parent_version_id` must belong to the story named in the path — a version cannot be attached to the wrong tree. There are no ownership checks, no allow-lists, and no reputation requirement. This is recorded as an MVP decision, not a permanent one.
+
+**Alternatives Considered:**
+1. Only the original author may adapt — rejected. It defeats the feature: the whole point is that *other* people adapt a story for their own people.
+2. A trust or reputation gate — rejected for now. There is no trust model to gate on, and building one before the loop is used would be guessing at the shape of a problem that has not appeared.
+3. An allow-list of approved adapters — rejected. It re-creates the gate a trust system would own, in a form that cannot grow, and it is a moderation mechanism without a moderation policy.
+
+**Reason:** The feature exists to be used, and gating it before anyone has used it would prevent the behaviour the product is trying to learn about. Every version records its author explicitly, and the tree records every parent edge, so the information a future trust or moderation rule would need is already captured. Leaving the gate open now costs nothing that cannot be added later, because adding a rule later is a change to one authorization check, not to the data.
+
+**Consequences:** Nothing today stops any signed-in user from adapting any story, so abuse is possible and is accepted for the MVP. The same-story parent check and the foreign keys keep the tree internally consistent regardless of who adapts what. Rooted, trust, reputation, reporting, blocking, and moderation are deliberately out of scope and each requires its own task and its own decision before anything is enforced.

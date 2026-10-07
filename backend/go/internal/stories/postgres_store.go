@@ -9,10 +9,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// storyColumns is the canonical SELECT/RETURNING column list. It is a constant so
+// storyColumns is the canonical SELECT column list for a story read together
+// with its root version. The language, title, and body come from the root version
+// (aliased v), which is why every read joins story_versions. It is a constant so
 // every query in this file stays consistent with scanStory, and its order is the
 // order scanStory reads.
-const storyColumns = `id, author_id, pillar, language, title, body, approximate_location, media_urls, sensitive, created_at, updated_at`
+const storyColumns = `s.id, s.author_id, s.root_version_id, s.pillar, v.language, v.title, v.body, s.approximate_location, s.media_urls, s.sensitive, s.created_at, s.updated_at`
+
+// storyFrom resolves each story's root version content. root_version_id is
+// NOT NULL and unique, so the join is always one row and never drops a story.
+const storyFrom = ` FROM stories s JOIN story_versions v ON v.id = s.root_version_id`
 
 // PostgresStore is the pgx-backed implementation of StoryStore.
 //
@@ -33,27 +39,46 @@ func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 	return &PostgresStore{pool: pool}, nil
 }
 
-// CreateStory inserts a story and returns the stored row, including the id and
-// timestamps PostgreSQL generated.
+// CreateStory inserts a story together with its root version and returns the
+// stored row, including the ids and timestamps PostgreSQL generated.
+//
+// The two rows reference each other: stories.root_version_id points at the
+// version and story_versions.story_id points back. With an immediate foreign key
+// neither row can be inserted first, so both are written by a single statement
+// with two data-modifying CTEs. PostgreSQL checks the constraint after the whole
+// statement, by which point both rows exist, so the write is atomic without a
+// deferrable constraint.
 func (s *PostgresStore) CreateStory(ctx context.Context, story Story) (Story, error) {
 	const query = `
-		INSERT INTO stories (
-			author_id, pillar, language, title, body, approximate_location, media_urls, sensitive
+		WITH new_story AS (
+			INSERT INTO stories (
+				author_id, pillar, approximate_location, media_urls, sensitive, root_version_id
+			)
+			VALUES ($1, $2, $3, $4, $5, gen_random_uuid())
+			RETURNING id, author_id, root_version_id, pillar, approximate_location, media_urls, sensitive, created_at, updated_at
+		), new_version AS (
+			INSERT INTO story_versions (
+				id, story_id, parent_version_id, author_id, language, title, body
+			)
+			SELECT root_version_id, id, NULL, author_id, $6, $7, $8 FROM new_story
+			RETURNING language, title, body
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING ` + storyColumns
+		SELECT
+			s.id, s.author_id, s.root_version_id, s.pillar, v.language, v.title, v.body,
+			s.approximate_location, s.media_urls, s.sensitive, s.created_at, s.updated_at
+		FROM new_story s, new_version v`
 
 	row := s.pool.QueryRow(
 		ctx,
 		query,
 		story.AuthorID,
 		string(story.Pillar),
-		story.Language,
-		story.Title,
-		story.Body,
 		nullIfEmpty(story.ApproximateLocation),
 		nonNilURLs(story.MediaURLs),
 		story.Sensitive,
+		story.Language,
+		story.Title,
+		story.Body,
 	)
 
 	created, err := scanStory(row)
@@ -73,7 +98,7 @@ func (s *PostgresStore) GetStory(ctx context.Context, id string) (Story, error) 
 		return Story{}, ErrNotFound
 	}
 
-	const query = `SELECT ` + storyColumns + ` FROM stories WHERE id = $1`
+	const query = `SELECT ` + storyColumns + storyFrom + ` WHERE s.id = $1`
 
 	story, err := scanStory(s.pool.QueryRow(ctx, query, id))
 	if err != nil {
@@ -100,18 +125,18 @@ func (s *PostgresStore) GetStory(ctx context.Context, id string) (Story, error) 
 // One extra row is fetched to decide whether more remain; that row is not
 // returned, and the cursor is derived from the last row that is.
 func (s *PostgresStore) ListStories(ctx context.Context, cursor *Cursor, limit int) ([]Story, *Cursor, error) {
-	query := `SELECT ` + storyColumns + ` FROM stories`
+	query := `SELECT ` + storyColumns + storyFrom
 	args := make([]any, 0, 3)
 
 	if cursor != nil {
 		// The explicit casts are required because a row comparison does not
 		// reliably infer the parameter types, and they are safe because
 		// DecodeCursor has already proven the id is canonical UUID text.
-		query += ` WHERE (created_at, id) < ($1::timestamptz, $2::uuid)`
+		query += ` WHERE (s.created_at, s.id) < ($1::timestamptz, $2::uuid)`
 		args = append(args, cursor.CreatedAt(), cursor.ID())
 	}
 
-	query += fmt.Sprintf(` ORDER BY created_at DESC, id DESC LIMIT $%d`, len(args)+1)
+	query += fmt.Sprintf(` ORDER BY s.created_at DESC, s.id DESC LIMIT $%d`, len(args)+1)
 	args = append(args, limit+1)
 
 	rows, err := s.pool.Query(ctx, query, args...)
@@ -160,6 +185,7 @@ func scanStory(row rowScanner) (Story, error) {
 	err := row.Scan(
 		&story.ID,
 		&story.AuthorID,
+		&story.RootVersionID,
 		&pillar,
 		&story.Language,
 		&story.Title,

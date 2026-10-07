@@ -52,6 +52,7 @@ func (m *memoryStoryStore) CreateStory(_ context.Context, story stories.Story) (
 
 	created := story
 	created.ID = fmt.Sprintf("00000000-0000-4000-8000-%012d", len(m.stories)+1)
+	created.RootVersionID = fmt.Sprintf("00000000-0000-4000-9000-%012d", len(m.stories)+1)
 	created.CreatedAt = testNow.Add(time.Duration(len(m.stories)) * time.Second)
 	created.UpdatedAt = created.CreatedAt
 	m.stories = append(m.stories, created)
@@ -177,12 +178,17 @@ func newRouter(t *testing.T, logger *slog.Logger, service StoriesService) http.H
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
 
+	versionsHandler, err := NewVersionsHandler(&fakeVersionsService{}, logger)
+	if err != nil {
+		t.Fatalf("NewVersionsHandler() error = %v, want nil", err)
+	}
+
 	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID}, logger)
 	if err != nil {
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}
 
-	router, err := NewRouter(authHandler, storiesHandler, authMiddleware, "0.1.0", logger)
+	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, authMiddleware, "0.1.0", logger)
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v, want nil", err)
 	}
@@ -243,6 +249,9 @@ func TestCreateStoryHappyPath(t *testing.T) {
 	}
 	if body.Story.AuthorID != testUserID {
 		t.Errorf("author id = %q, want the authenticated user %q", body.Story.AuthorID, testUserID)
+	}
+	if body.Story.RootVersionID == "" {
+		t.Error("root version id is empty, want the id of the story's root version")
 	}
 	if body.Story.Pillar != stories.PillarWonder {
 		t.Errorf("pillar = %q, want %q", body.Story.Pillar, stories.PillarWonder)

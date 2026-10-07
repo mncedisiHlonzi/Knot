@@ -64,9 +64,14 @@ type createStoryRequest struct {
 // storyResponse is the public projection of a story. It is an explicit type, not
 // the domain Story, so the wire format is a deliberate choice rather than
 // whatever the domain type happens to expose.
+//
+// The content fields (language, title, body) are the story's root version
+// content, resolved from story_versions. root_version_id names that version, so
+// a client can adapt the story from the root without a second lookup.
 type storyResponse struct {
 	ID                  string         `json:"id"`
 	AuthorID            string         `json:"author_id"`
+	RootVersionID       string         `json:"root_version_id"`
 	Pillar              stories.Pillar `json:"pillar"`
 	Language            string         `json:"language"`
 	Title               string         `json:"title"`
@@ -222,6 +227,7 @@ func newStoryResponse(story stories.Story) storyResponse {
 	return storyResponse{
 		ID:                  story.ID,
 		AuthorID:            story.AuthorID,
+		RootVersionID:       story.RootVersionID,
 		Pillar:              story.Pillar,
 		Language:            story.Language,
 		Title:               story.Title,

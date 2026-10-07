@@ -37,18 +37,22 @@ type healthResponse struct {
 type Router struct {
 	auth           *AuthHandler
 	stories        *StoriesHandler
+	versions       *VersionsHandler
 	authMiddleware *AuthMiddleware
 	version        string
 	logger         *slog.Logger
 }
 
 // NewRouter returns the root handler for the API.
-func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
+func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
 	if auth == nil {
 		return nil, errNilHandler("auth")
 	}
 	if storiesHandler == nil {
 		return nil, errNilHandler("stories")
+	}
+	if versionsHandler == nil {
+		return nil, errNilHandler("versions")
 	}
 	if authMiddleware == nil {
 		return nil, errNilHandler("auth middleware")
@@ -59,6 +63,7 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, authMiddleware
 	return &Router{
 		auth:           auth,
 		stories:        storiesHandler,
+		versions:       versionsHandler,
 		authMiddleware: authMiddleware,
 		version:        version,
 		logger:         logger,
@@ -78,6 +83,12 @@ func (r *Router) Handler() http.Handler {
 	mux.HandleFunc("POST /stories", r.authMiddleware.Require(r.stories.Create))
 	mux.HandleFunc("GET /stories", r.stories.List)
 	mux.HandleFunc("GET /stories/{id}", r.stories.Get)
+
+	// Tell My People: story versions and the Language Tree. Adapting requires an
+	// access token; reading a version or a tree is open.
+	mux.HandleFunc("POST /stories/{id}/adapt", r.authMiddleware.Require(r.versions.Adapt))
+	mux.HandleFunc("GET /stories/{id}/tree", r.versions.Tree)
+	mux.HandleFunc("GET /versions/{id}", r.versions.Get)
 
 	return withRequestID(withRequestLogging(r.logger, withRecover(r.logger, mux)))
 }

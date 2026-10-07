@@ -3,12 +3,20 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text } from 'reac
 
 import { describeError } from '../../api/client';
 import { Story, storiesApi } from '../../api/stories';
+import { versionsApi } from '../../api/versions';
 
 type StoryDetailScreenProps = {
   /** The id of the story to read. */
   readonly id: string;
   /** Called when the person returns to the feed. */
   readonly onBack: () => void;
+  /**
+   * Called to adapt this story. The argument is the story's root version id,
+   * which is where an adaptation starts.
+   */
+  readonly onAdapt: (rootVersionId: string) => void;
+  /** Called when the person wants to see every version of the story. */
+  readonly onViewTree: () => void;
 };
 
 /**
@@ -21,8 +29,11 @@ type StoryDetailScreenProps = {
 export default function StoryDetailScreen({
   id,
   onBack,
+  onAdapt,
+  onViewTree,
 }: StoryDetailScreenProps): React.ReactElement {
   const [story, setStory] = useState<Story | undefined>(undefined);
+  const [versionCount, setVersionCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>(undefined);
 
@@ -31,8 +42,14 @@ export default function StoryDetailScreen({
     setError(undefined);
 
     try {
-      const result = await storiesApi.getStory(id);
-      setStory(result.story);
+      // The story carries its root version's content; the tree carries every
+      // version of it, so the count comes from the tree.
+      const [storyResult, treeResult] = await Promise.all([
+        storiesApi.getStory(id),
+        versionsApi.getTree(id),
+      ]);
+      setStory(storyResult.story);
+      setVersionCount(treeResult.versions.length);
     } catch (caught) {
       setError(describeError(caught));
     } finally {
@@ -69,6 +86,15 @@ export default function StoryDetailScreen({
           {story.media_urls.length > 0 ? (
             <Text style={styles.meta}>Attached: {story.media_urls.join(', ')}</Text>
           ) : null}
+
+          <Pressable style={styles.primaryButton} onPress={() => onAdapt(story.root_version_id)}>
+            <Text style={styles.primaryButtonText}>Adapt for my people</Text>
+          </Pressable>
+          <Pressable style={styles.secondaryButton} onPress={onViewTree}>
+            <Text style={styles.secondaryButtonText}>
+              View language tree ({versionCount} {versionCount === 1 ? 'version' : 'versions'})
+            </Text>
+          </Pressable>
         </>
       ) : null}
 
@@ -114,12 +140,24 @@ const styles = StyleSheet.create({
     borderColor: '#d0d7de',
     borderRadius: 8,
     borderWidth: 1,
-    marginTop: 20,
+    marginTop: 12,
     paddingVertical: 12,
   },
   secondaryButtonText: {
     color: '#24292f',
     fontSize: 15,
+    fontWeight: '600',
+  },
+  primaryButton: {
+    alignItems: 'center',
+    backgroundColor: '#1f6feb',
+    borderRadius: 8,
+    marginTop: 24,
+    paddingVertical: 14,
+  },
+  primaryButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
     fontWeight: '600',
   },
   spinner: {
