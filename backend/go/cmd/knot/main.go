@@ -29,6 +29,7 @@ import (
 
 	"github.com/knot/backend/internal/appinfo"
 	"github.com/knot/backend/internal/config"
+	"github.com/knot/backend/internal/conversations"
 	"github.com/knot/backend/internal/httpapi"
 	"github.com/knot/backend/internal/identity"
 	"github.com/knot/backend/internal/stories"
@@ -166,6 +167,23 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
+	// One store implements both conversation contracts: comments and bridges live
+	// in the same database and the same bounded context.
+	conversationsStore, err := conversations.NewPostgresStore(pool)
+	if err != nil {
+		return err
+	}
+
+	conversationsService, err := conversations.NewService(conversationsStore, conversationsStore)
+	if err != nil {
+		return err
+	}
+
+	conversationsHandler, err := httpapi.NewConversationsHandler(conversationsService, logger)
+	if err != nil {
+		return err
+	}
+
 	// The same issuer that signs access tokens verifies them on protected
 	// routes, so there is one source of truth for the signing key.
 	authMiddleware, err := httpapi.NewAuthMiddleware(tokens, logger)
@@ -173,7 +191,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, authMiddleware, appinfo.Version, logger)
+	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, authMiddleware, appinfo.Version, logger)
 	if err != nil {
 		return err
 	}

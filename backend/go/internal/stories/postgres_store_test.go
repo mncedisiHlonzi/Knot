@@ -228,19 +228,6 @@ func TestPostgresStoreGetStoryMalformedId(t *testing.T) {
 	}
 }
 
-// feedSize counts every story visible to the feed. The list tests need it
-// because ListStories deliberately has no author filter, so the exact
-// end-of-feed boundary can only be asserted against the real row count.
-func feedSize(t *testing.T, env integrationStore) int {
-	t.Helper()
-
-	var total int
-	if err := env.pool.QueryRow(context.Background(), "SELECT count(*) FROM stories").Scan(&total); err != nil {
-		t.Fatalf("could not count stories: %v", err)
-	}
-	return total
-}
-
 // authoredIDs returns this test's story ids in feed order, read with an
 // independent query so the pagination assertions are not circular.
 func authoredIDs(t *testing.T, env integrationStore) []string {
@@ -331,36 +318,43 @@ func TestPostgresStoreListStoriesStopsWithoutACursor(t *testing.T) {
 	env := integrationSetup(t)
 	ctx := context.Background()
 
-	for i := 0; i < 3; i++ {
+	const created = 3
+	for i := 0; i < created; i++ {
 		if _, err := env.store.CreateStory(ctx, newIntegrationStory(env.author, fmt.Sprintf("last-%d", i))); err != nil {
 			t.Fatalf("CreateStory(%d) error = %v, want nil", i, err)
 		}
 	}
 
-	total := feedSize(t, env)
-
-	for _, limit := range []int{3, 10} {
+	// The feed is global, and other packages' integration tests run against the
+	// same database at the same time, so a row count read here could change
+	// before the next read. The assertions therefore use the contract rather
+	// than a count: a page never exceeds the limit, and a cursor is returned
+	// exactly when the page is full.
+	for _, limit := range []int{created, 10} {
 		page, next, err := env.store.ListStories(ctx, nil, limit)
 		if err != nil {
 			t.Fatalf("ListStories(limit=%d) error = %v, want nil", limit, err)
 		}
 
-		wantLen := limit
-		if total < limit {
-			wantLen = total
+		if len(page) > limit {
+			t.Errorf("ListStories(limit=%d) returned %d rows, want at most %d", limit, len(page), limit)
 		}
-		if len(page) != wantLen {
-			t.Errorf("ListStories(limit=%d) returned %d rows, want %d", limit, len(page), wantLen)
+		if next != nil && len(page) != limit {
+			t.Errorf("ListStories(limit=%d) returned a cursor with %d rows, want a cursor only when the page is full", limit, len(page))
 		}
+	}
 
-		// The end of the feed must be reported explicitly. The limit == total case
-		// is the one a naive "len(page) == limit" check gets wrong.
-		if total > limit && next == nil {
-			t.Errorf("ListStories(limit=%d) returned no cursor, want one because %d rows remain", limit, total)
-		}
-		if total <= limit && next != nil {
-			t.Errorf("ListStories(limit=%d) returned a cursor %+v, want nil at the end of the feed", limit, next)
-		}
+	// The end of the feed must be reported explicitly rather than by an empty
+	// page: a limit larger than the feed returns every row and no cursor.
+	page, next, err := env.store.ListStories(ctx, nil, 1000)
+	if err != nil {
+		t.Fatalf("ListStories(limit=1000) error = %v, want nil", err)
+	}
+	if next != nil {
+		t.Errorf("ListStories(limit=1000) returned a cursor %+v, want nil at the end of the feed", next)
+	}
+	if len(page) < created {
+		t.Errorf("ListStories(limit=1000) returned %d rows, want at least the %d this test created", len(page), created)
 	}
 }
 

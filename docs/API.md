@@ -115,8 +115,9 @@ identical message, so the endpoint cannot be used to discover which accounts exi
 
 ## Authentication
 
-`POST /stories` and `POST /stories/{id}/adapt` are protected routes. Every other
-route is public and needs no credentials.
+`POST /stories`, `POST /stories/{id}/adapt`, `POST /versions/{id}/comments`, and
+`POST /comments/{id}/bridges` are protected routes. Every other route is public and needs
+no credentials.
 
 A protected route requires an access token in the standard header:
 
@@ -341,6 +342,155 @@ is `null`.
 Returns **200** with `{ "version": { ... } }`.
 
 **Errors:** `404 not_found` (no such version, or the id is not a UUID),
+`500 internal_error`.
+
+## Conversations and Bridges
+
+A conversation is the flat list of comments on one story **version**, newest first.
+Comments are how people talk about a telling; a **bridge** is how that talk crosses a
+language boundary.
+
+A bridge does not translate in place. It creates a **new comment** in the target
+language, on the **story's version written in that language**, and records a bridge that
+references both. The source comment is left untouched, so both conversations stay intact,
+and the bridge is a first-class object with its own id. A bridge therefore connects two
+conversations rather than adding to one. See KNOT-ADR-014 in
+[`docs/DECISIONS.md`](DECISIONS.md).
+
+| Route                          | Auth     | Purpose                                  |
+| ------------------------------ | -------- | ---------------------------------------- |
+| `POST /versions/{id}/comments` | `Bearer` | Comment on a version                      |
+| `GET /versions/{id}/comments`  | public   | Read a version's comments, newest first    |
+| `POST /comments/{id}/bridges`  | `Bearer` | Bridge a comment into another language     |
+| `GET /comments/{id}/bridges`   | public   | Bridges touching a comment                 |
+| `GET /bridges/{id}`            | public   | Read one bridge                            |
+
+### The comment object
+
+```json
+{
+  "id": "66666666-6666-4666-8666-666666666666",
+  "version_id": "44444444-4444-4444-8444-444444444444",
+  "author_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
+  "language": "en",
+  "body": "The first rain remembers every name.",
+  "created_at": "2026-10-08T18:26:37.134182+02:00",
+  "updated_at": "2026-10-08T18:26:37.134182+02:00"
+}
+```
+
+### The bridge object
+
+```json
+{
+  "id": "77777777-7777-4777-8777-777777777777",
+  "source_comment_id": "66666666-6666-4666-8666-666666666666",
+  "target_comment_id": "88888888-8888-4888-8888-888888888888",
+  "author_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
+  "target_language": "fr",
+  "adaptation_note": "Rendered for French-speaking listeners.",
+  "created_at": "2026-10-08T18:30:00.000000+02:00"
+}
+```
+
+`adaptation_note` is `null` when the bridger left none.
+
+### POST /versions/{id}/comments
+
+Comments on a version as the authenticated user and returns **201** with the stored
+comment, wrapped as `{ "comment": { ... } }`.
+
+**Request**
+
+```json
+{ "body": "The first rain remembers every name.", "language": "en" }
+```
+
+| Field      | Required | Rules                            |
+| ---------- | -------- | -------------------------------- |
+| `body`     | yes      | 1-5000 characters; stored verbatim |
+| `language` | yes      | 2-8 letters; stored lower-cased   |
+
+**There is no `author_id` field.** The commenter is taken from the access token.
+
+**Errors:** `401 unauthorized`, `400 validation_error`, `400 invalid_request`,
+`404 not_found` (the version does not exist), `413 request_too_large`,
+`500 internal_error`.
+
+### GET /versions/{id}/comments
+
+Returns **200** with one page of the version's comments, newest first:
+
+```json
+{ "comments": [ { "id": "...", "body": "..." } ], "next_cursor": "MjAyNi0xMC0wOFQxODo..." }
+```
+
+| Query    | Required | Rules                                                        |
+| -------- | -------- | ------------------------------------------------------------ |
+| `cursor` | no       | A `next_cursor` from a previous page. Omit for the first page  |
+| `limit`  | no       | 1-50. Defaults to 20; a larger value is clamped to 50          |
+
+`comments` is always an array, never `null`, and `next_cursor` is always present. Paging
+is keyset, exactly as for the feed: a page is a range of the sort order, so a comment
+posted between two requests neither shifts nor repeats a page.
+
+**Errors:** `400 validation_error` (an unreadable `cursor`, or a `limit` that is not a
+positive integer), `404 not_found` (the version does not exist, or its id is not a UUID),
+`500 internal_error`.
+
+### POST /comments/{id}/bridges
+
+Bridges the comment into another language and returns **201** with the bridge plus both
+comments, so a client does not have to fetch them:
+
+```json
+{
+  "bridge": { "id": "...", "source_comment_id": "...", "target_comment_id": "...", "target_language": "fr" },
+  "source_comment": { "id": "...", "language": "en" },
+  "target_comment": { "id": "...", "language": "fr" }
+}
+```
+
+**Request**
+
+```json
+{
+  "target_language": "fr",
+  "body": "La première pluie se souvient de chaque nom.",
+  "adaptation_note": "Rendered for French-speaking listeners."
+}
+```
+
+| Field             | Required | Rules                                                                         |
+| ----------------- | -------- | ----------------------------------------------------------------------------- |
+| `target_language` | yes      | 2-8 letters; stored lower-cased; must differ from the source comment's language |
+| `body`            | yes      | The target comment's body, 1-5000 characters                                   |
+| `adaptation_note` | no       | At most 1000 characters after trimming                                          |
+
+**There is no `author_id` field.** The bridger is taken from the access token. The server
+resolves the target comment's version from the source comment's story and `target_language`;
+when the story has several versions in that language the oldest is used. A source comment
+may be bridged into any one given language once; a second attempt returns
+`400 validation_error`.
+
+**Errors:** `401 unauthorized`, `400 validation_error` (including a target language equal
+to the source's, a story with no version in that language, or a language the comment has
+already been bridged into), `400 invalid_request`, `404 not_found` (the source comment
+does not exist), `413 request_too_large`, `500 internal_error`.
+
+### GET /comments/{id}/bridges
+
+Returns **200** with `{ "bridges": [ ... ] }`: every bridge in which the comment is the
+source or the target, newest first. `bridges` is always an array, never `null`.
+
+**Errors:** `404 not_found` (the comment does not exist, or its id is not a UUID),
+`500 internal_error`.
+
+### GET /bridges/{id}
+
+Returns **200** with `{ "bridge": { ... } }`.
+
+**Errors:** `404 not_found` (no such bridge, or the id is not a UUID),
 `500 internal_error`.
 
 ## Tokens

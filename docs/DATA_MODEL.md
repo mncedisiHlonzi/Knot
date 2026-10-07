@@ -1,7 +1,7 @@
 # Knot — Data Model
 
-**Status: MVP, subject to change.** Three tables exist today: `users`, `stories`, and
-`story_versions`.
+**Status: MVP, subject to change.** Five tables exist today: `users`, `stories`,
+`story_versions`, `comments`, and `bridges`.
 
 Migrations live in `backend/go/migrations/` and are applied with
 `go run ./cmd/knot migrate up`. See the "Migrations" section of
@@ -14,6 +14,7 @@ Migrations live in `backend/go/migrations/` and are applied with
 | `0001`  | `users`   | The `users` table and its email index        |
 | `0002`  | `stories` | The `stories` table, its indexes, and its pillar constraint |
 | `0003`  | `story_versions` | The `story_versions` table, its indexes and constraints, and the `stories` refactor that moves content into a root version |
+| `0004`  | `conversations` | The `comments` and `bridges` tables, their indexes and constraints |
 
 Applied versions are recorded in the `schema_migrations` table, which the runner creates
 on first use.
@@ -97,8 +98,8 @@ than a feed page does.
   editing task does not need a migration for it.
 - **No feed filtering by author, language, or pillar.** The indexes exist so those
   filters can be added without a schema change, but no endpoint offers them yet.
-- **No tags, reactions, or comments.** Each is a separate feature with its own migration
-  and its own review.
+- **No tags or reactions.** Each is a separate feature with its own migration and its own
+  review.
 - **No full-text search.** Search is a later problem, and the right index for it depends
   on how it is used.
 
@@ -169,3 +170,88 @@ parent is always created before its children, that order is also a valid depth-f
 presentation, and the client indents each version by walking its `parent_version_id` chain.
 No recursive query is used: the flat list is the wire format, and `parent_version_id` is
 the whole of the structure.
+
+## `comments`
+
+A comment is one thing a person said about a story version. Comments are flat: there is no
+`parent_comment_id`, and a reply in another language is a **bridge**, not a child comment.
+See KNOT-ADR-014.
+
+| Column       | Type          | Nullable | Default             | Notes                                              |
+| ------------ | ------------- | -------- | ------------------- | -------------------------------------------------- |
+| `id`         | `uuid`        | no       | `gen_random_uuid()` | Primary key                                        |
+| `version_id` | `uuid`        | no       | —                   | References `story_versions(id)`; the version commented on |
+| `author_id`  | `uuid`        | no       | —                   | References `users(id)`; the commenter               |
+| `language`   | `text`        | no       | —                   | 2-8 letters, stored lower-cased                     |
+| `body`       | `text`        | no       | —                   | 1-5000 characters, stored verbatim                  |
+| `created_at` | `timestamptz` | no       | `now()`             | The thread's primary sort key                       |
+| `updated_at` | `timestamptz` | no       | `now()`             | Set on insert. No trigger yet: editing a comment is a later task |
+
+### Indexes and constraints
+
+| Name                                 | Kind                     | Columns                                  | Purpose                                                     |
+| ------------------------------------ | ------------------------ | ---------------------------------------- | ----------------------------------------------------------- |
+| `comments_pkey`                      | Primary key              | `id`                                     | Row identity                                                 |
+| `comments_version_id_created_at_idx` | Btree index (descending) | `(version_id, created_at DESC, id DESC)` | Serves the thread's `ORDER BY` and its keyset seek together  |
+| `comments_author_id_idx`             | Btree index              | `author_id`                              | "Comments by this person", and the cascade on user deletion  |
+| `comments_language_idx`              | Btree index              | `language`                               | Filtering by language                                        |
+| `comments_version_id_fkey`           | Foreign key              | `version_id` → `story_versions(id)`      | `ON DELETE CASCADE`: deleting a version removes its comments  |
+| `comments_author_id_fkey`            | Foreign key              | `author_id` → `users(id)`                | `ON DELETE CASCADE`: deleting an account removes its comments |
+
+The composite index mirrors `stories_created_at_id_idx`: it is descending on both columns
+and in the same order as the thread's `WHERE (created_at, id) < ($2, $3) ORDER BY
+created_at DESC, id DESC` seek, so PostgreSQL seeks to the resume point instead of sorting
+the table.
+
+## `bridges`
+
+A bridge connects a comment in one language to a comment in another. It is a first-class
+object: it names a source comment and a target comment, and it is the record that one is
+an adaptation of the other. Creating a bridge writes a new comment (the target) and the
+bridge row in **one transaction**. The target comment belongs to the story's version
+written in `target_language`, so a bridge joins two conversations rather than adding to
+one; both comments remain ordinary members of their own conversation. See KNOT-ADR-014
+and KNOT-ADR-015.
+
+| Column              | Type          | Nullable | Default             | Notes                                                               |
+| ------------------- | ------------- | -------- | ------------------- | ------------------------------------------------------------------- |
+| `id`                | `uuid`        | no       | `gen_random_uuid()` | Primary key                                                          |
+| `source_comment_id` | `uuid`        | no       | —                   | References `comments(id)`; the comment bridged from                  |
+| `target_comment_id` | `uuid`        | no       | —                   | References `comments(id)`; the new comment in the target language     |
+| `author_id`         | `uuid`        | no       | —                   | References `users(id)`; the bridger, and the target comment's author  |
+| `target_language`   | `text`        | no       | —                   | 2-8 letters, stored lower-cased                                      |
+| `adaptation_note`   | `text`        | yes      | `NULL`              | The bridger's optional note, up to 1000 characters                    |
+| `created_at`        | `timestamptz` | no       | `now()`             |                                                                      |
+
+### Indexes and constraints
+
+| Name                              | Kind             | Columns                                  | Purpose                                                              |
+| --------------------------------- | ---------------- | ---------------------------------------- | -------------------------------------------------------------------- |
+| `bridges_pkey`                    | Primary key      | `id`                                     | Row identity                                                         |
+| `bridges_source_comment_id_idx`   | Btree index      | `source_comment_id`                      | Bridges out of a comment, and the cascade on comment deletion         |
+| `bridges_target_comment_id_idx`   | Btree index      | `target_comment_id`                      | Bridges into a comment, and the cascade on comment deletion           |
+| `bridges_author_id_idx`           | Btree index      | `author_id`                              | "Bridges by this person", and the cascade on user deletion            |
+| `bridges_unique_pair`             | Unique index     | `(source_comment_id, target_comment_id)` | A source-target pair is bridged at most once                          |
+| `bridges_one_per_target_language` | Unique index     | `(source_comment_id, target_language)`   | A comment is bridged into any one language at most once               |
+| `bridges_source_comment_id_fkey`  | Foreign key      | `source_comment_id` → `comments(id)`     | `ON DELETE CASCADE`: deleting a comment removes bridges out of it     |
+| `bridges_target_comment_id_fkey`  | Foreign key      | `target_comment_id` → `comments(id)`     | `ON DELETE CASCADE`: deleting a comment removes bridges into it       |
+| `bridges_author_id_fkey`          | Foreign key      | `author_id` → `users(id)`                | `ON DELETE CASCADE`: deleting an account removes its bridges          |
+| `bridges_check`                   | Check constraint | `source_comment_id`, `target_comment_id` | A comment cannot be bridged to itself                                 |
+
+### Creating a bridge is one transaction
+
+A bridge first resolves its target version: the source comment gives the story, and
+`target_language` gives the version of that story written in the language (the oldest,
+when several share it). The story must have such a version, or the request is rejected.
+The target version's conversation is the one the target comment joins.
+
+Unlike the story-plus-root-version write in migration `0003`, a bridge has no circular
+foreign key: the target comment is inserted first, then the bridge that references it and
+the source comment. Both rows are written in a single transaction, so a failure while
+inserting the bridge rolls back the target comment it had already created. There is no
+window in which a comment exists with no bridge to say where it came from.
+
+`bridges_one_per_target_language` is a product policy rather than a structural necessity:
+without it, the same comment could be bridged into French repeatedly, producing many
+near-duplicate targets claiming to be the same adaptation. It is the default this task
+chose (see KNOT-ADR-014) and can be relaxed later by dropping the one index.

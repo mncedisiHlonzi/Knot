@@ -306,3 +306,46 @@ Nothing stops a non-UUID string from being passed as an id at compile time; the 
 **Reason:** The feature exists to be used, and gating it before anyone has used it would prevent the behaviour the product is trying to learn about. Every version records its author explicitly, and the tree records every parent edge, so the information a future trust or moderation rule would need is already captured. Leaving the gate open now costs nothing that cannot be added later, because adding a rule later is a change to one authorization check, not to the data.
 
 **Consequences:** Nothing today stops any signed-in user from adapting any story, so abuse is possible and is accepted for the MVP. The same-story parent check and the foreign keys keep the tree internally consistent regardless of who adapts what. Rooted, trust, reputation, reporting, blocking, and moderation are deliberately out of scope and each requires its own task and its own decision before anything is enforced.
+
+---
+
+## KNOT-ADR-014 — A bridge creates a new target-language comment; both conversations stay intact
+
+**Decision ID:** KNOT-ADR-014
+**Date:** 2026-10-08
+**Status:** Accepted
+
+**Context:** Conversations are per version and per language: a comment is written in one language and belongs to one story version. The core Knot loop needs a person reading a comment in one language to answer in another, so the product needed a way to connect a comment in language A to the same thought expressed in language B. The choice was between mutating the comment, holding translations inside it, or creating a second comment and a link.
+
+**Decision:** A bridge creates a **new comment** in the target language, on the story's version written in that language, and a `bridges` row that references both the source and the target comment. The source comment is never modified, and each comment remains an ordinary member of its own conversation — so a bridge **joins two conversations** rather than adding to one. The bridge is a **first-class object** with its own id, author, target language, optional adaptation note, and timestamp. **Comment threading (a `parent_comment_id`) is deliberately not part of the model**; replies happen only by bridging, and threading is deferred to a future task. Two constraints keep the graph well formed: `bridges_unique_pair` (a given source-target pair is bridged once) and `bridges_one_per_target_language` (a source can be bridged into any one language once). Creating the target comment and the bridge is one transaction.
+
+**Alternatives Considered:**
+1. One comment carrying many translations — rejected. It makes a comment a container of languages rather than a thing written in one language, and it gives the same comment two authors, which the model cannot express cleanly.
+2. A comment that is edited in place to the new language — rejected outright. It destroys the original, which defeats the point: both conversations must survive so each language's readers keep their own thread.
+3. An automatic machine translation stored on the comment — rejected. Knot adapts by human hands (Knot Brain is deliberately last), and a machine translation is not an adaptation.
+4. A `parent_comment_id` for replies — rejected for now. Replies-by-bridging is the loop this task completes; a general reply tree is a larger design that should be decided on its own evidence.
+
+**Reason:** Making the bridge a first-class object keeps each comment a simple, single-language, single-author row, and puts the relationship between two comments in one place where it can be queried, counted, and later given a workflow of its own (confirmation, removal). Writing the target comment on the story's target-language version means a bridge connects the English conversation to the French conversation that already exists because someone adapted the story into French — the two threads stay separate and readable in their own languages, joined by the bridge rather than merged. The two unique indexes make "one adaptation per language per source" and "no duplicate pairs" database facts, so a race cannot create two competing translations of the same comment into the same language.
+
+**Consequences:** Bridging writes two rows, and they are written in one transaction so a failure inserts neither. The story must already have a version in the target language — a comment cannot be bridged into a language the story is not told in, and such a request is rejected as a validation error — and when the story has several versions in that language the oldest is chosen, so the choice is deterministic rather than dependent on row order. A comment can appear in several bridges (as a source once per language, and as a target once), so code that walks bridges must handle both directions. Because threading is deferred, a conversation is a flat list and a reply is a bridge rather than a child; if general threading is later wanted it is an additive migration, not a rewrite. `bridges_one_per_target_language` is a product policy enforced by the schema — the same comment cannot be bridged into the same language twice — which is the default this task chose and can be relaxed later by dropping one index.
+
+---
+
+## KNOT-ADR-015 — Any authenticated user may bridge any comment
+
+**Decision ID:** KNOT-ADR-015
+**Date:** 2026-10-08
+**Status:** Accepted
+
+**Context:** Bridging is the second half of the core loop: after a person adapts a story, others discuss it, and bridging lets a discussion cross a language boundary. The task had to decide who may bridge. Knot still has no trust system, so this decision had to be consistent with how adaptation was already opened up.
+
+**Decision:** Bridge authorization is **open to any authenticated user**. Any signed-in account may bridge any comment into any language other than the source comment's own, and the bridger is taken from the access token, never from the request body. The only structural constraint is that the target language must differ from the source comment's language, and the schema's uniqueness indexes prevent duplicate pairs and duplicate target languages for one source. There are no ownership checks, no allow-lists, and no reputation gate. This is recorded as an MVP decision, not a permanent one.
+
+**Alternatives Considered:**
+1. Only the comment's author may bridge it — rejected. It defeats the feature: the reason to bridge is that someone *else* can carry the thought into their language.
+2. A trust or Rooted-based gate — rejected for now, and explicitly a non-goal of this task. There is no trust model to gate on yet; building one before the loop is used would be guessing at the problem.
+3. A bridge confirmation workflow (source author approves) — rejected for now. It is a moderation mechanism without a moderation policy, and it would block the loop this task exists to complete.
+
+**Reason:** This mirrors KNOT-ADR-013 for adaptation, so the two halves of the core loop apply the same rule rather than an inconsistent pair. Every bridge records its author, and the source and target comments record theirs, so the attribution a future trust or moderation rule would need is already captured. Opening the gate now costs nothing that cannot be added later, because a future rule is a change to one authorization check, not to the data.
+
+**Consequences:** Nothing today stops any signed-in user from bridging any comment, so abuse is possible and accepted for the MVP. The same-language check and the foreign keys keep the bridge graph internally consistent regardless of who bridges what. Rooted-gated bridging, bridge confirmation, and moderation remain out of scope and each requires its own task and its own decision before anything is enforced.

@@ -38,13 +38,14 @@ type Router struct {
 	auth           *AuthHandler
 	stories        *StoriesHandler
 	versions       *VersionsHandler
+	conversations  *ConversationsHandler
 	authMiddleware *AuthMiddleware
 	version        string
 	logger         *slog.Logger
 }
 
 // NewRouter returns the root handler for the API.
-func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
+func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
 	if auth == nil {
 		return nil, errNilHandler("auth")
 	}
@@ -53,6 +54,9 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 	}
 	if versionsHandler == nil {
 		return nil, errNilHandler("versions")
+	}
+	if conversationsHandler == nil {
+		return nil, errNilHandler("conversations")
 	}
 	if authMiddleware == nil {
 		return nil, errNilHandler("auth middleware")
@@ -64,6 +68,7 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 		auth:           auth,
 		stories:        storiesHandler,
 		versions:       versionsHandler,
+		conversations:  conversationsHandler,
 		authMiddleware: authMiddleware,
 		version:        version,
 		logger:         logger,
@@ -89,6 +94,14 @@ func (r *Router) Handler() http.Handler {
 	mux.HandleFunc("POST /stories/{id}/adapt", r.authMiddleware.Require(r.versions.Adapt))
 	mux.HandleFunc("GET /stories/{id}/tree", r.versions.Tree)
 	mux.HandleFunc("GET /versions/{id}", r.versions.Get)
+
+	// Conversations: comments on a version, and the bridges between comments.
+	// Commenting and bridging require an access token; reading is open.
+	mux.HandleFunc("POST /versions/{id}/comments", r.authMiddleware.Require(r.conversations.CreateComment))
+	mux.HandleFunc("GET /versions/{id}/comments", r.conversations.ListComments)
+	mux.HandleFunc("POST /comments/{id}/bridges", r.authMiddleware.Require(r.conversations.CreateBridge))
+	mux.HandleFunc("GET /comments/{id}/bridges", r.conversations.ListBridges)
+	mux.HandleFunc("GET /bridges/{id}", r.conversations.GetBridge)
 
 	return withRequestID(withRequestLogging(r.logger, withRecover(r.logger, mux)))
 }

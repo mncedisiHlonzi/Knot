@@ -17,6 +17,11 @@ type StoryDetailScreenProps = {
   readonly onAdapt: (rootVersionId: string) => void;
   /** Called when the person wants to see every version of the story. */
   readonly onViewTree: () => void;
+  /**
+   * Called to open the conversation on a version. The argument is the version
+   * id, which is the story's root version from this screen.
+   */
+  readonly onConversation: (versionId: string) => void;
 };
 
 /**
@@ -31,6 +36,7 @@ export default function StoryDetailScreen({
   onBack,
   onAdapt,
   onViewTree,
+  onConversation,
 }: StoryDetailScreenProps): React.ReactElement {
   const [story, setStory] = useState<Story | undefined>(undefined);
   const [versionCount, setVersionCount] = useState(0);
@@ -94,6 +100,12 @@ export default function StoryDetailScreen({
             <Text style={styles.secondaryButtonText}>
               View language tree ({versionCount} {versionCount === 1 ? 'version' : 'versions'})
             </Text>
+          </Pressable>
+          <Pressable
+            style={styles.secondaryButton}
+            onPress={() => onConversation(story.root_version_id)}
+          >
+            <Text style={styles.secondaryButtonText}>See conversation</Text>
           </Pressable>
         </>
       ) : null}

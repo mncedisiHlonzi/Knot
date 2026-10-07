@@ -153,6 +153,11 @@ curl -s -X POST http://localhost:8080/auth/register \
 | `POST /stories/{id}/adapt` | `Bearer` | `internal/httpapi/versions_handler.go` |
 | `GET /stories/{id}/tree`   | public   | `internal/httpapi/versions_handler.go` |
 | `GET /versions/{id}`       | public   | `internal/httpapi/versions_handler.go` |
+| `POST /versions/{id}/comments` | `Bearer` | `internal/httpapi/conversations_handler.go` |
+| `GET /versions/{id}/comments`  | public   | `internal/httpapi/conversations_handler.go` |
+| `POST /comments/{id}/bridges`  | `Bearer` | `internal/httpapi/conversations_handler.go` |
+| `GET /comments/{id}/bridges`   | public   | `internal/httpapi/conversations_handler.go` |
+| `GET /bridges/{id}`            | public   | `internal/httpapi/conversations_handler.go` |
 
 Routes are declared in one place, `NewRouter` in `internal/httpapi/router.go`, using
 Go 1.22 method-qualified `ServeMux` patterns. There is no router dependency.
@@ -202,6 +207,38 @@ is the transaction: a failure while writing the root version leaves no story beh
 
 Adapting is open to any authenticated user. The adapter comes from the token, and the only
 structural check is that `parent_version_id` belongs to the same story (see KNOT-ADR-013).
+
+### Conversations and bridges
+
+`POST /versions/{id}/comments`, `GET /versions/{id}/comments`,
+`POST /comments/{id}/bridges`, `GET /comments/{id}/bridges`, and `GET /bridges/{id}` are
+served by `internal/httpapi/conversations_handler.go`, backed by the
+`internal/conversations` domain package. A comment belongs to one story version; a bridge
+records that a comment is an adaptation of another comment.
+
+Comment pagination reuses the feed's keyset pattern. The cursor is duplicated in
+`internal/conversations/cursor.go` rather than shared, following KNOT-ADR-010, and the
+query matches `comments_version_id_created_at_idx`:
+
+```sql
+SELECT id, version_id, author_id, language, body, created_at, updated_at
+FROM comments
+WHERE version_id = $1 AND (created_at, id) < ($2::timestamptz, $3::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT $4
+```
+
+Creating a bridge resolves the target version first — the source comment's story, plus the
+version of that story written in `target_language` (the oldest, when several share it) —
+then writes a target comment and a bridge in one transaction: the target comment is
+inserted first, the bridge second, and a failure on either rolls both back. There is no
+circular foreign key here, so a plain `Begin`/`Commit` is enough — contrast the
+single-statement CTE the story plus its root version needs, above.
+
+Bridging is open to any authenticated user. The bridger comes from the token, and the only
+structural checks are that the target language differs from the source comment's language
+and that the comment has not already been bridged into that language (see
+KNOT-ADR-014/015).
 
 ### Migrations
 

@@ -2,9 +2,12 @@ import React, { useState } from 'react';
 import { SafeAreaView, StyleSheet } from 'react-native';
 
 import type { AuthResponse } from './src/api/client';
+import type { Comment } from './src/api/conversations';
 import type { Story } from './src/api/stories';
 import LoginScreen from './src/screens/auth/LoginScreen';
 import RegisterScreen from './src/screens/auth/RegisterScreen';
+import BridgeScreen from './src/screens/conversations/BridgeScreen';
+import CommentThreadScreen from './src/screens/conversations/CommentThreadScreen';
 import AdaptStoryScreen from './src/screens/stories/AdaptStoryScreen';
 import CreateStoryScreen from './src/screens/stories/CreateStoryScreen';
 import FeedScreen from './src/screens/stories/FeedScreen';
@@ -18,7 +21,8 @@ import StoryDetailScreen from './src/screens/stories/StoryDetailScreen';
  * task. Until then a single screen name in state is enough: the app is shallow
  * and every transition is explicit and typed.
  */
-type ScreenName = 'register' | 'login' | 'feed' | 'detail' | 'create' | 'adapt' | 'tree';
+type ScreenName =
+  'register' | 'login' | 'feed' | 'detail' | 'create' | 'adapt' | 'tree' | 'comments' | 'bridge';
 
 /**
  * Root component for the Knot mobile app.
@@ -31,6 +35,8 @@ export default function App(): React.ReactElement {
   const [session, setSession] = useState<AuthResponse | null>(null);
   const [openStoryId, setOpenStoryId] = useState<string | null>(null);
   const [adaptParentVersionId, setAdaptParentVersionId] = useState<string | null>(null);
+  const [openVersionId, setOpenVersionId] = useState<string | null>(null);
+  const [bridgeSourceComment, setBridgeSourceComment] = useState<Comment | null>(null);
 
   function handleAuthenticated(result: AuthResponse): void {
     setSession(result);
@@ -41,6 +47,8 @@ export default function App(): React.ReactElement {
     setSession(null);
     setOpenStoryId(null);
     setAdaptParentVersionId(null);
+    setOpenVersionId(null);
+    setBridgeSourceComment(null);
     setScreen('register');
   }
 
@@ -59,6 +67,16 @@ export default function App(): React.ReactElement {
   function handleAdaptStory(rootVersionId: string): void {
     setAdaptParentVersionId(rootVersionId);
     setScreen('adapt');
+  }
+
+  function handleConversation(versionId: string): void {
+    setOpenVersionId(versionId);
+    setScreen('comments');
+  }
+
+  function handleBridge(comment: Comment): void {
+    setBridgeSourceComment(comment);
+    setScreen('bridge');
   }
 
   /**
@@ -85,6 +103,7 @@ export default function App(): React.ReactElement {
           onBack={() => setScreen('feed')}
           onAdapt={handleAdaptStory}
           onViewTree={() => setScreen('tree')}
+          onConversation={handleConversation}
         />
       );
     }
@@ -106,6 +125,30 @@ export default function App(): React.ReactElement {
 
     if (screen === 'tree' && openStoryId !== null) {
       return <LanguageTreeScreen storyId={openStoryId} onBack={() => setScreen('detail')} />;
+    }
+
+    if (screen === 'comments' && openVersionId !== null) {
+      return (
+        <CommentThreadScreen
+          versionId={openVersionId}
+          token={current.access_token}
+          language={current.user.preferred_languages.find((tag) => tag.trim() !== '')}
+          onBridge={handleBridge}
+          onBack={() => setScreen('detail')}
+        />
+      );
+    }
+
+    if (screen === 'bridge' && bridgeSourceComment !== null) {
+      return (
+        <BridgeScreen
+          sourceComment={bridgeSourceComment}
+          token={current.access_token}
+          preferredLanguages={current.user.preferred_languages}
+          onBridged={() => setScreen('comments')}
+          onCancel={() => setScreen('comments')}
+        />
+      );
     }
 
     return (

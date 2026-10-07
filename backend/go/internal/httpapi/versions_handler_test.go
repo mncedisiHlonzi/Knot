@@ -171,12 +171,17 @@ func newVersionsRouter(t *testing.T, logger *slog.Logger, service VersionsServic
 		t.Fatalf("NewVersionsHandler() error = %v, want nil", err)
 	}
 
+	conversationsHandler, err := NewConversationsHandler(&fakeConversationsService{}, logger)
+	if err != nil {
+		t.Fatalf("NewConversationsHandler() error = %v, want nil", err)
+	}
+
 	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID}, logger)
 	if err != nil {
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}
 
-	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, authMiddleware, "0.1.0", logger)
+	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, authMiddleware, "0.1.0", logger)
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v, want nil", err)
 	}
