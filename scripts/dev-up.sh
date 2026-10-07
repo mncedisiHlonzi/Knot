@@ -53,5 +53,5 @@ log "Current status:"
 compose ps
 
 log "Local infrastructure is up. Connection details come from .env"
-log "(defaults: postgres on localhost:5432, redis on localhost:6379)."
+log "(defaults: postgres on localhost:5433, redis on localhost:6379)."
 log "Stop it with:  scripts/dev-down.sh"

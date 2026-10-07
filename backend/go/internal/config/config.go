@@ -34,7 +34,7 @@ const (
 // local docker-compose services; they are never used for ci or test.
 const (
 	defaultEnv         = EnvLocal
-	defaultPostgresDSN = "postgres://knot:knot_local_only_change_me@localhost:5432/knot?sslmode=disable"
+	defaultPostgresDSN = "postgres://knot:knot_local_only_change_me@localhost:5433/knot?sslmode=disable"
 	defaultRedisAddr   = "localhost:6379"
 )
 

@@ -50,6 +50,25 @@ func TestLoadLocalFallsBackToDefaults(t *testing.T) {
 	}
 }
 
+// TestLoadLocalDefaultDSNUsesHostPort5433 pins the local default DSN to the host
+// port that infrastructure/docker/docker-compose.yml publishes. Knot's Postgres
+// is deliberately not on the conventional port, so this must not silently drift.
+func TestLoadLocalDefaultDSNUsesHostPort5433(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error %v, want nil", err)
+	}
+
+	if !strings.Contains(cfg.PostgresDSN, ":5433/") {
+		t.Errorf("default PostgresDSN = %q, want it to contain host port 5433", cfg.PostgresDSN)
+	}
+	if strings.Contains(cfg.PostgresDSN, ":5432/") {
+		t.Errorf("default PostgresDSN = %q, want it NOT to use host port 5432", cfg.PostgresDSN)
+	}
+}
+
 func TestLoadLocalHonoursEnvOverrides(t *testing.T) {
 	clearEnv(t)
 	const (

@@ -8,6 +8,7 @@ the time it is) implemented. Statuses: **Proposed**, **Accepted**, **Superseded*
 ## KNOT-ADR-001 — Clean-room start; `as-told-by` is out of scope
 
 **Decision ID:** KNOT-ADR-001
+**Date:** 2026-10-07
 **Status:** Accepted
 
 **Context:** An earlier prototype at `~/Projects/as-told-by` existed before the current
