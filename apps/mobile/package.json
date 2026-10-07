@@ -1,0 +1,36 @@
+{
+  "name": "knot-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Knot mobile application (React Native + TypeScript).",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "react-native start",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc --noEmit",
+    "test": "jest",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-native": "^0.76.0"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.0",
+    "@babel/preset-env": "^7.25.0",
+    "@babel/preset-typescript": "^7.24.0",
+    "@eslint/js": "^9.0.0",
+    "@types/jest": "^30.0.0",
+    "@types/react": "^18.3.0",
+    "babel-jest": "^30.0.0",
+    "eslint": "^9.0.0",
+    "jest": "^30.0.0",
+    "prettier": "^3.0.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.0.0"
+  }
+}
