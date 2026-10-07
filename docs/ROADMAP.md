@@ -4,6 +4,14 @@ The build order is fixed: **Human Network First → Data Foundation Second → I
 Third.** Phases below are directional; each phase is delivered through individually
 approved tasks.
 
+## Task queue
+
+Approved or anticipated work, in the order it is expected to be dispatched.
+
+| Task | Title | Follows | Purpose |
+| --- | --- | --- | --- |
+| `KNOT-001b` | Design System Implementation (mobile) | `KNOT-001a` | Implement the design tokens in [`docs/BRAND.md`](BRAND.md) as React Native style primitives — colours, typography, spacing, corner radius, and elevation — so screens stop re-deciding them individually. Dispatch once the design language is stable. |
+
 ## Phase 0 — Foundation (current)
 
 **Goal:** a clean, reproducible repository that can accept real work.
@@ -41,6 +49,11 @@ language and receive responses from both.
 
 **Discovery Map — confirmed in Phase 2.** It is a discovery feature and needs stories and
 language versions to exist before it can be useful, so it does not move earlier.
+
+**Ordering.** Phase 2 follows Phase 1 and does not begin until Phase 1's loop is in use. Its
+product work — **Rooted**, the **Discovery Map**, **Curious Inquiries**, and
+**notifications** — depends on Phase 1's identity, stories, adaptations, and conversations,
+and is queued here rather than pulled earlier.
 
 **Exit criteria:** the product runs on a real, versioned database with reproducible
 migrations.
