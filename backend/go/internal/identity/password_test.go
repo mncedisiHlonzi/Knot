@@ -1,6 +1,8 @@
 package identity
 
 import (
+	"bytes"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -102,28 +104,55 @@ func TestVerifyPasswordRejectsWrongPassword(t *testing.T) {
 	}
 }
 
+// TestVerifyPasswordRejectsTamperedHash flips a bit in the decoded derived key and
+// checks that verification rejects it.
+//
+// The tamper is applied to DECODED bytes rather than to the final character of the
+// encoded key, and that distinction is the whole point. The key is 32 bytes, which
+// base64-encodes to 43 characters; the 43rd carries only four significant bits and
+// its low two bits are padding that Go's non-strict base64 decoder ignores.
+// Replacing the final character can therefore decode to byte-identical key material,
+// making the "tamper" a no-op — an earlier version of this test failed roughly one
+// run in sixteen for exactly that reason. Mutating a decoded byte cannot be undone
+// by padding bits.
 func TestVerifyPasswordRejectsTamperedHash(t *testing.T) {
-	hash, err := HashPassword("correct horse battery staple")
+	const password = "correct horse battery staple"
+
+	hash, err := HashPassword(password)
 	if err != nil {
 		t.Fatalf("HashPassword() error = %v, want nil", err)
 	}
 
-	// Replace the final base64 character with a different valid one. The derived
-	// key no longer matches the password.
-	last := hash[len(hash)-1]
-	replacement := byte('A')
-	if last == 'A' {
-		replacement = 'B'
+	// A PHC string is $argon2id$v=...$m=...$<salt>$<key>.
+	fields := strings.Split(hash, "$")
+	if len(fields) != 6 {
+		t.Fatalf("encoded hash has %d fields, want 6: %q", len(fields), hash)
 	}
-	tampered := hash[:len(hash)-1] + string(replacement)
 
-	ok, err := VerifyPassword(tampered, "correct horse battery staple")
+	key, err := base64.RawStdEncoding.DecodeString(fields[5])
 	if err != nil {
-		// A tampered tail may no longer decode; that is a rejection too.
-		return
+		t.Fatalf("decoding the derived key: %v", err)
+	}
+
+	tamperedKey := make([]byte, len(key))
+	copy(tamperedKey, key)
+	tamperedKey[0] ^= 0x01
+
+	if bytes.Equal(tamperedKey, key) {
+		t.Fatal("the tampered key is identical to the original; this test would pass vacuously")
+	}
+
+	fields[5] = base64.RawStdEncoding.EncodeToString(tamperedKey)
+	tampered := strings.Join(fields, "$")
+
+	// The tampered hash is still well-formed, so verification has to fail on the
+	// constant-time comparison rather than on parsing.
+	ok, err := VerifyPassword(tampered, password)
+	if err != nil {
+		t.Fatalf("VerifyPassword() error = %v, want nil for a well-formed hash with the wrong key", err)
 	}
 	if ok {
-		t.Error("VerifyPassword() = true, want false for a tampered hash")
+		t.Error("VerifyPassword() = true, want false for a tampered key")
 	}
 }
 
