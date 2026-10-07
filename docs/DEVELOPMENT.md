@@ -108,40 +108,78 @@ cd backend/go
 gofmt -l .          # should print nothing
 go vet ./...
 go test ./...
-go run ./cmd/knot   # prints a single startup line
+go test ./... -race
 ```
 
-The binary loads configuration and prints a single startup line. It opens **no**
-connection to PostgreSQL or Redis, has no HTTP server, and has no database or cache
-driver.
+### Running the backend locally
+
+The backend needs a reachable PostgreSQL. Start the local infrastructure first:
+
+```bash
+scripts/dev-up.sh                # Postgres on host port 5433, Redis on 6379
+cd backend/go
+go run ./cmd/knot migrate up     # apply pending migrations
+go run ./cmd/knot                # serve the API on :8080
+```
+
+`knot` with no arguments starts the HTTP API. `knot migrate up` applies pending
+migrations and exits. Migrations are **never** applied automatically when the server
+starts, because schema changes should stay an explicit action.
+
+The server logs its startup line, then one line per request containing `request_id`,
+`method`, `path`, `status`, and `duration_ms`. Tokens, passwords, and DSNs are never
+logged. It shuts down gracefully on SIGINT or SIGTERM, draining in-flight requests for
+up to 10 seconds.
+
+To try it by hand:
+
+```bash
+curl -s http://localhost:8080/health
+curl -s -X POST http://localhost:8080/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"you@example.com","password":"at-least-8-chars","display_name":"You"}'
+```
+
+### Migrations
+
+- SQL lives in `backend/go/migrations/`, named `<version>_<name>.up.sql` and
+  `<version>_<name>.down.sql`, and is embedded into the binary with `go:embed`.
+- Applied versions are recorded in the `schema_migrations` table, so re-running
+  `migrate up` is safe and reports that the schema is already up to date.
+- The runner only goes **up**. The `.down.sql` files exist so that a rollback is
+  explicit and reviewable; there is no `migrate down` command.
+- There is deliberately no third-party migration library.
 
 ## Backend configuration
 
 `backend/go/internal/config` reads configuration from the environment. It uses the Go
-standard library only and it stores the Postgres DSN and Redis address **without
-connecting to either**.
+standard library only, and it stores values without connecting to anything.
 
-| Variable            | Required                 | Notes                                  |
-| ------------------- | ------------------------ | -------------------------------------- |
-| `KNOT_ENV`          | No — defaults to `local` | `local`, `ci`, or `test`               |
-| `KNOT_POSTGRES_DSN` | Only when `ci` / `test`  | Has a safe local default               |
-| `KNOT_REDIS_ADDR`   | Only when `ci` / `test`  | Has a safe local default               |
+| Variable            | Required                        | Notes                                          |
+| ------------------- | ------------------------------- | ---------------------------------------------- |
+| `KNOT_ENV`          | No — defaults to `local`        | `local`, `ci`, or `test`                       |
+| `KNOT_POSTGRES_DSN` | Only when `ci` / `test`         | Has a safe local default                       |
+| `KNOT_REDIS_ADDR`   | Only when `ci` / `test`         | Has a safe local default                       |
+| `KNOT_HTTP_PORT`    | No — defaults to `8080`         | Must be 1-65535 when set                       |
+| `KNOT_LOG_LEVEL`    | No — defaults to `info`         | `debug`, `info`, `warn`, or `error`            |
+| `KNOT_JWT_SECRET`   | Only when `ci` / `test`         | Must be at least 32 bytes outside `local`      |
 
 - `local` (or unset): missing values fall back to the safe local defaults listed in
-  `.env.example`.
-- `ci` / `test`: both variables are **required**; the backend fails fast and names every
-  missing one.
-- Any other value: treated as required as well, so an unrecognised environment never
+  `.env.example`. A missing JWT secret becomes the documented placeholder and the server
+  logs a prominent warning.
+- `ci` / `test`: the Postgres DSN, Redis address, and JWT secret are all **required**,
+  the secret must be at least 32 bytes, and the backend fails fast naming every problem.
+- Any other value: treated as required too, so an unrecognised environment never
   silently receives local defaults.
 
 ```bash
 cd backend/go
-KNOT_ENV=local go run ./cmd/knot   # knot-backend 0.1.0 starting (env=local)
-KNOT_ENV=ci go run ./cmd/knot      # fails fast: KNOT_POSTGRES_DSN, KNOT_REDIS_ADDR
+KNOT_ENV=local go run ./cmd/knot                 # warns about the placeholder secret
+KNOT_ENV=ci go run ./cmd/knot                    # fails fast naming the missing variables
 ```
 
-Only the environment name is ever printed. The DSN and Redis address may carry
-credentials and are never logged.
+Only the environment name and the port are ever logged. The DSN and the JWT secret may
+carry credentials and are never logged.
 
 ## Environment configuration
 
@@ -157,12 +195,16 @@ git ls-files --error-unmatch .env.example   # should succeed (file is tracked)
 ```
 
 - The active variables are the `KNOT_*` ones:
-  - `KNOT_ENV`, `KNOT_POSTGRES_DSN`, `KNOT_REDIS_ADDR` — read by the Go backend.
+  - `KNOT_ENV`, `KNOT_POSTGRES_DSN`, `KNOT_REDIS_ADDR`, `KNOT_HTTP_PORT`,
+    `KNOT_LOG_LEVEL`, `KNOT_JWT_SECRET` — read by the Go backend.
   - `KNOT_POSTGRES_USER`, `KNOT_POSTGRES_PASSWORD`, `KNOT_POSTGRES_DB`,
     `KNOT_POSTGRES_PORT`, `KNOT_REDIS_PORT` — consumed by
     `infrastructure/docker/docker-compose.yml`.
-- The "reserved for later phases" block (`DATABASE_URL`, `REDIS_URL`, `JWT_SECRET`) is
-  placeholder-only and **not used yet**.
+  - `KNOT_API_URL` — the API base URL for the mobile app, read by
+    `apps/mobile/src/config/api.ts` when the bundler inlines `process.env`.
+- The "reserved for later phases" block (`REDIS_URL`) is placeholder-only and **not used
+  yet**. `DATABASE_URL` was removed in KNOT-002b and `JWT_SECRET` in KNOT-003, in favour
+  of `KNOT_POSTGRES_DSN` and `KNOT_JWT_SECRET`.
 
 ```bash
 cp .env.example .env

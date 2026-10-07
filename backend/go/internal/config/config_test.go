@@ -9,7 +9,14 @@ import (
 // state, regardless of the machine running the tests.
 func clearEnv(t *testing.T) {
 	t.Helper()
-	for _, key := range []string{envKeyEnv, envKeyPostgresDSN, envKeyRedisAddr} {
+	for _, key := range []string{
+		envKeyEnv,
+		envKeyPostgresDSN,
+		envKeyRedisAddr,
+		envKeyHTTPPort,
+		envKeyJWTSecret,
+		envKeyLogLevel,
+	} {
 		t.Setenv(key, "")
 	}
 }
@@ -165,10 +172,12 @@ func TestLoadCIDoesNotApplyLocalDefaults(t *testing.T) {
 	const (
 		wantDSN   = "postgres://ci:ci@127.0.0.1:5432/knot_test"
 		wantRedis = "127.0.0.1:6379"
+		wantJWT   = "ci-secret-that-is-at-least-32-bytes-long"
 	)
 	t.Setenv(envKeyEnv, EnvCI)
 	t.Setenv(envKeyPostgresDSN, wantDSN)
 	t.Setenv(envKeyRedisAddr, wantRedis)
+	t.Setenv(envKeyJWTSecret, wantJWT)
 
 	cfg, err := Load()
 	if err != nil {
@@ -214,6 +223,149 @@ func TestResolveEnv(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := resolveEnv(tt.raw); got != tt.want {
 				t.Errorf("resolveEnv(%q) = %q, want %q", tt.raw, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadLocalAppliesInsecureJWTSecretPlaceholder(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error %v, want nil", err)
+	}
+
+	if cfg.JWTSecret != LocalJWTSecretPlaceholder {
+		t.Errorf("JWTSecret = %q, want the local placeholder", cfg.JWTSecret)
+	}
+	if !cfg.UsingInsecureJWTSecret() {
+		t.Error("UsingInsecureJWTSecret() = false, want true for the local placeholder")
+	}
+}
+
+func TestLoadDefaultsHTTPPortAndLogLevel(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error %v, want nil", err)
+	}
+
+	if cfg.HTTPPort != defaultHTTPPort {
+		t.Errorf("HTTPPort = %d, want %d", cfg.HTTPPort, defaultHTTPPort)
+	}
+	if cfg.LogLevel != LogLevelInfo {
+		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, LogLevelInfo)
+	}
+}
+
+func TestLoadHonoursHTTPPortAndLogLevel(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envKeyHTTPPort, "9090")
+	t.Setenv(envKeyLogLevel, "DEBUG")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error %v, want nil", err)
+	}
+
+	if cfg.HTTPPort != 9090 {
+		t.Errorf("HTTPPort = %d, want 9090", cfg.HTTPPort)
+	}
+	if cfg.LogLevel != LogLevelDebug {
+		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, LogLevelDebug)
+	}
+}
+
+func TestLoadRejectsInvalidHTTPPort(t *testing.T) {
+	for _, raw := range []string{"abc", "0", "70000", "-1"} {
+		t.Run(raw, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv(envKeyHTTPPort, raw)
+
+			if _, err := Load(); err == nil {
+				t.Errorf("Load() error = nil, want an error for KNOT_HTTP_PORT=%q", raw)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsInvalidLogLevel(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envKeyLogLevel, "verbose")
+
+	if _, err := Load(); err == nil {
+		t.Error("Load() error = nil, want an error for KNOT_LOG_LEVEL=verbose")
+	}
+}
+
+func TestLoadNonLocalRequiresJWTSecret(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envKeyEnv, EnvCI)
+	t.Setenv(envKeyPostgresDSN, "postgres://ci@127.0.0.1:5432/knot_test")
+	t.Setenv(envKeyRedisAddr, "127.0.0.1:6379")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want an error when KNOT_JWT_SECRET is unset in ci")
+	}
+	if !strings.Contains(err.Error(), envKeyJWTSecret) {
+		t.Errorf("error %q does not name %q", err.Error(), envKeyJWTSecret)
+	}
+}
+
+func TestLoadNonLocalRejectsShortJWTSecret(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envKeyEnv, EnvCI)
+	t.Setenv(envKeyPostgresDSN, "postgres://ci@127.0.0.1:5432/knot_test")
+	t.Setenv(envKeyRedisAddr, "127.0.0.1:6379")
+	t.Setenv(envKeyJWTSecret, "too-short")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() error = nil, want an error for a short JWT secret in ci")
+	}
+	if !strings.Contains(err.Error(), envKeyJWTSecret) {
+		t.Errorf("error %q does not name %q", err.Error(), envKeyJWTSecret)
+	}
+}
+
+func TestLoadLocalAcceptsShortJWTSecretButFlagsIt(t *testing.T) {
+	clearEnv(t)
+	const short = "short"
+	t.Setenv(envKeyEnv, EnvLocal)
+	t.Setenv(envKeyJWTSecret, short)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil in local", err)
+	}
+	if cfg.JWTSecret != short {
+		t.Errorf("JWTSecret = %q, want %q", cfg.JWTSecret, short)
+	}
+	if !cfg.UsingInsecureJWTSecret() {
+		t.Error("UsingInsecureJWTSecret() = false, want true for a short local secret")
+	}
+}
+
+func TestUsingInsecureJWTSecret(t *testing.T) {
+	tests := []struct {
+		name   string
+		secret string
+		want   bool
+	}{
+		{name: "placeholder", secret: LocalJWTSecretPlaceholder, want: true},
+		{name: "too short", secret: strings.Repeat("a", MinJWTSecretBytes-1), want: true},
+		{name: "exactly the minimum", secret: strings.Repeat("a", MinJWTSecretBytes), want: false},
+		{name: "long", secret: strings.Repeat("a", MinJWTSecretBytes*2), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{JWTSecret: tt.secret}
+			if got := cfg.UsingInsecureJWTSecret(); got != tt.want {
+				t.Errorf("UsingInsecureJWTSecret() = %v, want %v", got, tt.want)
 			}
 		})
 	}
