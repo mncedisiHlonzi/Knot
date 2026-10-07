@@ -165,36 +165,22 @@ func decodeSegment(t *testing.T, segment string) []byte {
 	return decoded
 }
 
-// mutateSignatureCharacter replaces one character of the signature and returns the
-// mutated signature together with the signature bytes before and after.
+// tamperSignature returns the token with a mutated signature segment.
 //
-// The position matters, and this is the trap that made an earlier version of
-// TestTamperedTokenIsRejected fail roughly one run in sixteen. An HMAC-SHA256
-// signature is 32 bytes, which base64url-encodes to 43 characters. The 43rd
-// character carries only four significant bits; its low two bits are padding, and
-// Go's non-strict base64 decoder ignores them. Four different characters therefore
-// decode to the same 32 bytes, so mutating the final character can leave the
-// signature byte-identical and the token legitimately valid. Every earlier
-// character contributes six significant bits, so mutating one always changes the
-// decoded signature.
-func mutateSignatureCharacter(t *testing.T, signature string, position int) (mutated string, before, after []byte) {
+// It exists so the three-part token structure stays out of the shared
+// tamperBase64Body helper, which only knows about a single base64 body. The mutation
+// flips a bit in the leading byte of the MAC, which is guaranteed to change the
+// signature. See tamperBase64Body for why the mutation is expressed in decoded bytes
+// rather than as an edit to the encoded text.
+func tamperSignature(t *testing.T, token string) string {
 	t.Helper()
 
-	if position < 0 || position >= len(signature) {
-		t.Fatalf("position %d is outside the signature (length %d)", position, len(signature))
-	}
+	segments := splitToken(t, token)
+	segments[2], _, _ = tamperBase64Body(t, base64.RawURLEncoding, segments[2], func(signature []byte) {
+		signature[0] ^= 0x01
+	})
 
-	before = decodeSegment(t, signature)
-
-	replacement := byte('A')
-	if signature[position] == 'A' {
-		replacement = 'B'
-	}
-
-	mutated = signature[:position] + string(replacement) + signature[position+1:]
-	after = decodeSegment(t, mutated)
-
-	return mutated, before, after
+	return strings.Join(segments, ".")
 }
 
 func TestTamperedTokenIsRejected(t *testing.T) {
@@ -205,17 +191,7 @@ func TestTamperedTokenIsRejected(t *testing.T) {
 		t.Fatalf("IssueAccessToken() error = %v, want nil", err)
 	}
 
-	segments := splitToken(t, token)
-
-	// Mutate the FIRST character of the signature: unlike the final character it
-	// carries only significant bits, so the MAC is guaranteed to change.
-	tamperedSignature, before, after := mutateSignatureCharacter(t, segments[2], 0)
-	if bytes.Equal(before, after) {
-		t.Fatal("mutating the signature did not change its bytes; this test would pass vacuously")
-	}
-
-	segments[2] = tamperedSignature
-	tampered := strings.Join(segments, ".")
+	tampered := tamperSignature(t, token)
 
 	if _, err := issuer.ParseAccessToken(tampered); !errors.Is(err, ErrInvalidToken) {
 		t.Errorf("ParseAccessToken() error = %v, want ErrInvalidToken for a tampered signature", err)

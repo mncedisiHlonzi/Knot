@@ -239,6 +239,20 @@ Practical guidance:
 - **gofmt** is the single source of truth for Go formatting.
 - `.editorconfig` defines shared whitespace rules (2 spaces; tabs for Go files).
 
+## Testing — tampering with encoded values
+
+**Never tamper with the final character of a base64-encoded value in a test.** The last
+character of an encoding whose raw bytes are not a multiple of three carries fewer than
+six significant bits, and Go's non-strict decoders ignore those padding bits. An edit that
+changes only them decodes to byte-identical output, so the "tamper" is a no-op.
+
+Instead, **decode the value, mutate the decoded bytes, and re-encode** — use
+`tamperBase64Body` in `backend/go/internal/identity/tamper_test.go`, which does that,
+handles both base64 alphabets, and fails the test if the mutation changed nothing.
+
+This is not hypothetical: it has already caused two flaky tests (a JWT signature's final
+character, an argon2id key's final character), each failing about one run in sixteen.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request. It has four jobs:
