@@ -1,6 +1,8 @@
 package identity
 
 import (
+	"bytes"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -137,6 +139,64 @@ func TestExpiredTokenIsRejected(t *testing.T) {
 	}
 }
 
+// splitToken splits a compact JWS into its header, payload, and signature segments.
+func splitToken(t *testing.T, token string) []string {
+	t.Helper()
+
+	segments := strings.Split(token, ".")
+	if len(segments) != 3 {
+		t.Fatalf("token has %d segments, want 3", len(segments))
+	}
+
+	return segments
+}
+
+// decodeSegment base64url-decodes one JWT segment. It fails the test rather than
+// returning an error, because a segment that does not decode makes the assertion
+// that follows meaningless.
+func decodeSegment(t *testing.T, segment string) []byte {
+	t.Helper()
+
+	decoded, err := base64.RawURLEncoding.DecodeString(segment)
+	if err != nil {
+		t.Fatalf("decoding JWT segment %q: %v", segment, err)
+	}
+
+	return decoded
+}
+
+// mutateSignatureCharacter replaces one character of the signature and returns the
+// mutated signature together with the signature bytes before and after.
+//
+// The position matters, and this is the trap that made an earlier version of
+// TestTamperedTokenIsRejected fail roughly one run in sixteen. An HMAC-SHA256
+// signature is 32 bytes, which base64url-encodes to 43 characters. The 43rd
+// character carries only four significant bits; its low two bits are padding, and
+// Go's non-strict base64 decoder ignores them. Four different characters therefore
+// decode to the same 32 bytes, so mutating the final character can leave the
+// signature byte-identical and the token legitimately valid. Every earlier
+// character contributes six significant bits, so mutating one always changes the
+// decoded signature.
+func mutateSignatureCharacter(t *testing.T, signature string, position int) (mutated string, before, after []byte) {
+	t.Helper()
+
+	if position < 0 || position >= len(signature) {
+		t.Fatalf("position %d is outside the signature (length %d)", position, len(signature))
+	}
+
+	before = decodeSegment(t, signature)
+
+	replacement := byte('A')
+	if signature[position] == 'A' {
+		replacement = 'B'
+	}
+
+	mutated = signature[:position] + string(replacement) + signature[position+1:]
+	after = decodeSegment(t, mutated)
+
+	return mutated, before, after
+}
+
 func TestTamperedTokenIsRejected(t *testing.T) {
 	issuer := newTestIssuer(t)
 
@@ -145,16 +205,47 @@ func TestTamperedTokenIsRejected(t *testing.T) {
 		t.Fatalf("IssueAccessToken() error = %v, want nil", err)
 	}
 
-	// Flip the final character of the signature.
-	last := token[len(token)-1]
-	replacement := byte('A')
-	if last == 'A' {
-		replacement = 'B'
+	segments := splitToken(t, token)
+
+	// Mutate the FIRST character of the signature: unlike the final character it
+	// carries only significant bits, so the MAC is guaranteed to change.
+	tamperedSignature, before, after := mutateSignatureCharacter(t, segments[2], 0)
+	if bytes.Equal(before, after) {
+		t.Fatal("mutating the signature did not change its bytes; this test would pass vacuously")
 	}
-	tampered := token[:len(token)-1] + string(replacement)
+
+	segments[2] = tamperedSignature
+	tampered := strings.Join(segments, ".")
 
 	if _, err := issuer.ParseAccessToken(tampered); !errors.Is(err, ErrInvalidToken) {
-		t.Errorf("ParseAccessToken() error = %v, want ErrInvalidToken for a tampered token", err)
+		t.Errorf("ParseAccessToken() error = %v, want ErrInvalidToken for a tampered signature", err)
+	}
+}
+
+// TestForgedPayloadIsRejected tampers at a different point from
+// TestTamperedTokenIsRejected: it rewrites the payload segment without re-signing.
+// This is the forged-claim attack the signature exists to prevent.
+func TestForgedPayloadIsRejected(t *testing.T) {
+	issuer := newTestIssuer(t)
+
+	token, err := issuer.IssueAccessToken("user-123")
+	if err != nil {
+		t.Fatalf("IssueAccessToken() error = %v, want nil", err)
+	}
+
+	segments := splitToken(t, token)
+
+	claims := decodeSegment(t, segments[1])
+	forged := bytes.Replace(claims, []byte("user-123"), []byte("user-999"), 1)
+	if bytes.Equal(forged, claims) {
+		t.Fatal("forged payload is identical to the original; nothing was tampered with")
+	}
+
+	segments[1] = base64.RawURLEncoding.EncodeToString(forged)
+	tampered := strings.Join(segments, ".")
+
+	if _, err := issuer.ParseAccessToken(tampered); !errors.Is(err, ErrInvalidToken) {
+		t.Errorf("ParseAccessToken() error = %v, want ErrInvalidToken for a re-encoded payload", err)
 	}
 }
 
