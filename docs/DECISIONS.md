@@ -7,8 +7,8 @@ the time it is) implemented. Statuses: **Proposed**, **Accepted**, **Superseded*
 
 ## KNOT-ADR-001 — Clean-room start; `as-told-by` is out of scope
 
-- **Decision ID:** KNOT-ADR-001
-- **Status:** Accepted
+**Decision ID:** KNOT-ADR-001
+**Status:** Accepted
 
 **Context:** An earlier prototype at `~/Projects/as-told-by` existed before the current
 Knot architecture and product direction were established.

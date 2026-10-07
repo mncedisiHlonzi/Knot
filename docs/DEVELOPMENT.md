@@ -52,6 +52,10 @@ over `localhost`.
 - Images are pinned to specific minor versions (`postgres:16.4-alpine`,
   `redis:7.4.0-alpine`). `latest` is never used.
 - Ports bind to `127.0.0.1` only, so nothing is exposed to your network.
+- **PostgreSQL is published on host port `5433`, not the default `5432`.** This avoids a
+  clash with any Postgres already installed on the developer's machine. Only the *host*
+  mapping changed — the container's internal port is still `5432`. Redis stays on `6379`.
+  Override the host port with `KNOT_POSTGRES_PORT` if `5433` is also taken.
 - Data lives in the named volumes `knot_postgres_data` and `knot_redis_data`.
 - The CI "Services smoke" job uses the **same pinned versions**, so local and CI do not
   drift apart.
