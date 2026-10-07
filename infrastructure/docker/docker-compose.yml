@@ -1,0 +1,78 @@
+# ---------------------------------------------------------------------------
+# Knot — local development infrastructure.
+#
+# Scope: PostgreSQL + Redis for LOCAL DEVELOPMENT ONLY.
+#
+#   * There is deliberately NO application service in this file. During local
+#     development the mobile app and the Go backend run on the host, and they
+#     reach these containers over localhost.
+#   * Images are pinned to specific minor versions. `latest` is never used.
+#   * Ports are bound to 127.0.0.1 so nothing is exposed on the LAN.
+#   * Data lives in named volumes so it survives container recreation.
+#
+# Usage (prefer the scripts in scripts/):
+#   docker compose -f infrastructure/docker/docker-compose.yml --env-file .env up -d
+#   docker compose -f infrastructure/docker/docker-compose.yml down
+#
+# These are local-only credentials from .env.example. They are placeholders,
+# not secrets, and must never be reused outside a developer machine.
+# ---------------------------------------------------------------------------
+
+name: knot-local
+
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    container_name: knot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${KNOT_POSTGRES_USER:-knot}
+      POSTGRES_PASSWORD: ${KNOT_POSTGRES_PASSWORD:-knot_local_only_change_me}
+      POSTGRES_DB: ${KNOT_POSTGRES_DB:-knot}
+    ports:
+      # Local-only binding: host 127.0.0.1 -> container 5432.
+      - "127.0.0.1:${KNOT_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - knot_postgres_data:/var/lib/postgresql/data
+    networks:
+      - knot
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${KNOT_POSTGRES_USER:-knot} -d ${KNOT_POSTGRES_DB:-knot}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  redis:
+    image: redis:7.4.0-alpine
+    container_name: knot-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      # Local-only binding: host 127.0.0.1 -> container 6379.
+      - "127.0.0.1:${KNOT_REDIS_PORT:-6379}:6379"
+    volumes:
+      - knot_redis_data:/data
+    networks:
+      - knot
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  knot_postgres_data:
+    name: knot_postgres_data
+  knot_redis_data:
+    name: knot_redis_data
+
+networks:
+  knot:
+    name: knot-local
+    driver: bridge

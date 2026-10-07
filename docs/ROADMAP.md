@@ -39,6 +39,9 @@ language and receive responses from both.
 - Search and discovery over places, languages, and stories.
 - Operational basics: configuration, observability, backups.
 
+**Discovery Map — confirmed in Phase 2.** It is a discovery feature and needs stories and
+language versions to exist before it can be useful, so it does not move earlier.
+
 **Exit criteria:** the product runs on a real, versioned database with reproducible
 migrations.
 

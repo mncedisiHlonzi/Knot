@@ -24,6 +24,23 @@ language, adapted by a human in another language, and responded to by people in 
 
 ## Core loop
 
+Knot has one core loop, described at two levels: a **public** four-verb description that
+anyone can repeat, and the **internal** step-by-step view that product and engineering
+work against. Both describe the same loop.
+
+### Public loop — four verbs
+
+> **Share → Adapt → Connect → Build Understanding**
+
+1. **Share** — someone contributes a story, micro-fact, or piece of heritage in their own
+   language.
+2. **Adapt** — someone fluent in both languages retells it for their own community.
+3. **Connect** — people in both languages respond to and talk with each other.
+4. **Build Understanding** — the conversation crosses the language boundary and comes
+   back, leaving both sides knowing more than they did.
+
+### Internal loop — the same loop, step by step
+
 1. **Create** — a person shares a story, fact, or piece of heritage in their language.
 2. **Adapt** — another person, fluent in both languages, adapts it for their community.
 3. **Respond** — readers react, comment, and continue the conversation.

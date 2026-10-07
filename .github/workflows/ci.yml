@@ -4,7 +4,9 @@ on:
   push:
   pull_request:
 
-# No deployment steps exist in this workflow. It only verifies the foundation.
+# No deployment steps exist in this workflow. It only verifies the foundation:
+# application checks, workflow-file linting, and local-infrastructure
+# reachability.
 permissions:
   contents: read
 
@@ -67,3 +69,94 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+  workflows:
+    name: Workflows (actionlint)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      # actionlint is pinned to an exact version so workflow linting cannot
+      # drift on its own. Bump deliberately in its own change.
+      - name: Install actionlint
+        run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+
+      - name: Add Go bin to PATH
+        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Lint workflows
+        run: actionlint -color
+
+  services-smoke:
+    name: Services smoke (Postgres + Redis)
+    runs-on: ubuntu-latest
+
+    # Image versions are pinned to match infrastructure/docker/docker-compose.yml
+    # exactly. This job proves REACHABILITY ONLY: no schema, no migrations, and
+    # no product tables are created.
+    services:
+      postgres:
+        image: postgres:16.4-alpine
+        env:
+          POSTGRES_USER: knot
+          POSTGRES_PASSWORD: knot_local_only_change_me
+          POSTGRES_DB: knot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U knot -d knot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7.4.0-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install psql and redis-cli
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends postgresql-client redis-tools
+
+      - name: Prove PostgreSQL reachability
+        env:
+          PGPASSWORD: knot_local_only_change_me
+        run: |
+          for attempt in $(seq 1 30); do
+            if psql --host=127.0.0.1 --port=5432 --username=knot --dbname=knot --command='SELECT 1;'; then
+              echo "PostgreSQL is reachable."
+              exit 0
+            fi
+            echo "Attempt ${attempt}/30: PostgreSQL not ready yet."
+            sleep 2
+          done
+          echo "PostgreSQL did not become reachable." >&2
+          exit 1
+
+      - name: Prove Redis reachability
+        run: |
+          for attempt in $(seq 1 30); do
+            if redis-cli --host 127.0.0.1 --port 6379 ping | grep -q PONG; then
+              echo "Redis is reachable."
+              exit 0
+            fi
+            echo "Attempt ${attempt}/30: Redis not ready yet."
+            sleep 2
+          done
+          echo "Redis did not become reachable." >&2
+          exit 1

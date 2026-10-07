@@ -14,8 +14,8 @@ people closest to a place are heard first.
 | `apps/mobile/`    | React Native + TypeScript mobile application               |
 | `backend/go/`     | Go modular-monolith backend                                |
 | `docs/`           | Product, architecture, roadmap, and workflow documentation |
-| `infrastructure/` | Deployment and infrastructure definitions (placeholder)   |
-| `scripts/`        | Development and automation scripts (placeholder)           |
+| `infrastructure/` | Local infrastructure definitions (Docker Compose: Postgres + Redis) |
+| `scripts/`        | Developer scripts (`dev-up` / `dev-down` / `dev-reset`)            |
 | `tools/`          | Internal engineering tools (placeholder)                   |
 | `experiments/`    | Spikes that are explicitly not part of the product         |
 | `assets/`         | Shared brand and media assets (placeholder)                |
