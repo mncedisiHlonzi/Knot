@@ -104,19 +104,31 @@ export default function DiscoveryMapScreen({
         </View>
       </View>
 
-      <MapView style={styles.map} initialRegion={INITIAL_REGION}>
-        {/*
-         * Use OpenStreetMap raster tiles instead of the platform's default
-         * basemap. The default on Android is the Google Maps SDK, which needs a
-         * Google Cloud project with a billing method and an API key; OSM needs
-         * neither, which is what makes the map renderable for free at MVP scale.
-         *
-         * Migration path: when Knot outgrows OSM's usage policy, swap this one
-         * component for the chosen provider's tile layer (Google Maps with a key,
-         * or Mapbox). MapView and Marker are unchanged, so the rest of this
-         * screen does not move. See KNOT-ADR-023.
-         */}
-        <UrlTile urlTemplate="https://tile.openstreetmap.org/{z}/{x}/{y}.png" maximumZ={19} />
+      {/*
+       * The map draws OpenStreetMap raster tiles rather than the platform's own
+       * basemap. On Android that basemap is the Google Maps SDK, which needs a
+       * billing-enabled Cloud project and an API key; OSM needs neither, which is
+       * what makes the map renderable for free at MVP scale (KNOT-ADR-023).
+       *
+       * Why this is configured the way it is (KNOT-011):
+       *   - mapType="none" turns OFF the platform base layer. Without it, Android
+       *     drew the Google layer (the "Google" watermark, no real tiles) over the
+       *     top of the UrlTile overlay, so the screen showed an empty container.
+       *     With no base layer, the UrlTile is the only thing drawn.
+       *   - <UrlTile> is the LAST child and carries zIndex={-1}, so it sits beneath
+       *     the markers; some react-native-maps versions only paint a UrlTile that
+       *     is the final child of <MapView>.
+       *
+       * If tiles still do not render, diagnose in this order:
+       *   1. Watch Metro logs for network/fetch errors while this screen opens.
+       *   2. On a temporary debug screen, point a <UrlTile> at one hard-coded tile
+       *      URL to rule out the {z}/{x}/{y} template.
+       *   3. Confirm the tile server is reachable from this network:
+       *      curl -I https://tile.openstreetmap.org/0/0/0.png   (expect 200, image/png)
+       *   4. If a native raster overlay cannot be made to work, the fallback is a
+       *      WebView + Leaflet map — a separate future task, not this one.
+       */}
+      <MapView style={styles.map} initialRegion={INITIAL_REGION} mapType="none">
         {plotted.map((cluster) => {
           const coordinate = coordinatesForPlace(cluster.place);
           if (coordinate === undefined) {
@@ -132,6 +144,12 @@ export default function DiscoveryMapScreen({
             />
           );
         })}
+        <UrlTile
+          urlTemplate="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+          maximumZ={19}
+          tileSize={256}
+          zIndex={-1}
+        />
       </MapView>
 
       {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
