@@ -31,18 +31,23 @@ type StoriesService interface {
 // StoriesHandler serves the story endpoints.
 type StoriesHandler struct {
 	service StoriesService
+	rooted  RootedLookup
 	logger  *slog.Logger
 }
 
-// NewStoriesHandler returns a handler backed by service.
-func NewStoriesHandler(service StoriesService, logger *slog.Logger) (*StoriesHandler, error) {
+// NewStoriesHandler returns a handler backed by service. The rooted lookup is used
+// to attach each author's inline Rooted summary to a story response.
+func NewStoriesHandler(service StoriesService, rooted RootedLookup, logger *slog.Logger) (*StoriesHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a service")
+	}
+	if rooted == nil {
+		return nil, fmt.Errorf("httpapi: stories handler requires a rooted lookup")
 	}
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a logger")
 	}
-	return &StoriesHandler{service: service, logger: logger}, nil
+	return &StoriesHandler{service: service, rooted: rooted, logger: logger}, nil
 }
 
 // createStoryRequest is the POST /stories body.
@@ -81,6 +86,10 @@ type storyResponse struct {
 	Sensitive           bool           `json:"sensitive"`
 	CreatedAt           time.Time      `json:"created_at"`
 	UpdatedAt           time.Time      `json:"updated_at"`
+	// AuthorRooted is the author's primary public Rooted signal, or null when they
+	// have none. It is a summary (place and duration only), attached at the HTTP
+	// layer; see KNOT-ADR-017.
+	AuthorRooted *rootedSummary `json:"author_rooted"`
 }
 
 // storyEnvelope wraps a single story, so the response shape can gain sibling
@@ -141,7 +150,10 @@ func (h *StoriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, storyEnvelope{Story: newStoryResponse(story)})
+	response := newStoryResponse(story)
+	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{story.AuthorID})[story.AuthorID]
+
+	writeJSON(w, http.StatusOK, storyEnvelope{Story: response})
 }
 
 // List handles GET /stories. The route is public.

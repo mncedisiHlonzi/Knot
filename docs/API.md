@@ -26,7 +26,7 @@ Every error uses the same envelope:
 | 400    | `invalid_request`   | Body is not a single valid JSON object, or has unknown fields |
 | 401    | `invalid_credentials` | Login failed. Deliberately identical for a wrong password and an unknown email |
 | 401    | `unauthorized`      | A protected route was called without a valid access token. Identical for a missing, malformed, expired, or wrong-type token |
-| 404    | `not_found`         | The requested story does not exist, or its id is not a UUID |
+| 404    | `not_found`         | The requested resource (story, version, comment, bridge, or user) does not exist, or its id is not a UUID |
 | 405    | *(empty body)*      | Method not allowed for that path                     |
 | 409    | `email_taken`       | That email is already registered                     |
 | 413    | `request_too_large` | Body exceeded 1 MiB                                  |
@@ -115,9 +115,9 @@ identical message, so the endpoint cannot be used to discover which accounts exi
 
 ## Authentication
 
-`POST /stories`, `POST /stories/{id}/adapt`, `POST /versions/{id}/comments`, and
-`POST /comments/{id}/bridges` are protected routes. Every other route is public and needs
-no credentials.
+`POST /stories`, `POST /stories/{id}/adapt`, `POST /versions/{id}/comments`,
+`POST /comments/{id}/bridges`, `POST /users/me/rooted`, and `GET /users/me/rooted` are
+protected routes. Every other route is public and needs no credentials.
 
 A protected route requires an access token in the standard header:
 
@@ -163,6 +163,9 @@ and the pillar it belongs to.
 
 `media_urls` is always an array, never `null`. `approximate_location` is an empty string
 when it was not given.
+
+`GET /stories/{id}` also carries `author_rooted`, the author's inline Rooted summary, or
+`null`. See [`author_rooted` on content responses](#author_rooted-on-content-responses).
 
 `language`, `title`, and `body` are the content of the story's **root version**, and
 `root_version_id` names that version. A story's content is not stored on the story
@@ -280,7 +283,9 @@ KNOT-ADR-011 in [`docs/DECISIONS.md`](DECISIONS.md).
 ```
 
 `parent_version_id` is `null` for a story's root version and a version id for an
-adaptation. `adaptation_note` is `null` when the adapter left none.
+adaptation. `adaptation_note` is `null` when the adapter left none. Version responses also
+carry `author_rooted`, the author's inline Rooted summary, or `null`. See
+[`author_rooted` on content responses](#author_rooted-on-content-responses).
 
 ### POST /stories/{id}/adapt
 
@@ -393,7 +398,9 @@ conversations rather than adding to one. See KNOT-ADR-014 in
 }
 ```
 
-`adaptation_note` is `null` when the bridger left none.
+`adaptation_note` is `null` when the bridger left none. Comment and bridge responses also
+carry `author_rooted`, the author's inline Rooted summary, or `null`. See
+[`author_rooted` on content responses](#author_rooted-on-content-responses).
 
 ### POST /versions/{id}/comments
 
@@ -492,6 +499,106 @@ Returns **200** with `{ "bridge": { ... } }`.
 
 **Errors:** `404 not_found` (no such bridge, or the id is not a UUID),
 `500 internal_error`.
+
+## Rooted
+
+Rooted is a person's self-declared connection to a place: a place name at **city or region
+precision only**, and a duration bucket. It is self-declared and never verified — there is
+no vouching, no score, and no gating. See KNOT-ADR-016 in
+[`docs/DECISIONS.md`](DECISIONS.md).
+
+| Route                    | Auth     | Purpose                                       |
+| ------------------------ | -------- | --------------------------------------------- |
+| `POST /users/me/rooted`  | `Bearer` | Set (or replace) your own Rooted signal        |
+| `GET /users/me/rooted`   | `Bearer` | Read your own signals, private ones included   |
+| `GET /users/{id}/rooted` | public   | Read a user's public signals                   |
+
+### The signal object
+
+```json
+{
+  "id": "99999999-9999-4999-8999-999999999999",
+  "user_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
+  "place": "Cape Town",
+  "duration_bucket": "lifelong",
+  "is_public": true,
+  "is_primary": true,
+  "created_at": "2026-10-08T12:00:00Z",
+  "updated_at": "2026-10-08T12:00:00Z"
+}
+```
+
+`duration_bucket` is one of `lifelong`, `many_years`, `several_years`, `a_few_years`, or
+`recently`. A person has exactly one **primary** signal, so `is_primary` is always `true`
+for a stored signal in this MVP: setting a signal replaces the previous one rather than
+adding another.
+
+### POST /users/me/rooted
+
+Sets the authenticated user's primary Rooted signal and returns **200** with
+`{ "signal": { ... } }`. A second call **replaces** the first.
+
+**Request**
+
+```json
+{ "place": "Cape Town", "duration_bucket": "lifelong", "is_public": true }
+```
+
+| Field             | Required | Rules                                                                    |
+| ----------------- | -------- | ------------------------------------------------------------------------ |
+| `place`           | yes      | 1-80 characters after trimming; a single line (no line breaks or tabs)    |
+| `duration_bucket` | yes      | Exactly one of the five values above                                      |
+| `is_public`       | no       | Defaults to `true`; `false` hides the signal from public read             |
+
+**There is no `user_id` field.** The owner is taken from the access token. A request that
+includes `user_id` is rejected as an unknown field (400). A signal is public unless
+`is_public` is explicitly `false`, and that default is applied by the server rather than
+assumed from the client.
+
+**Errors:** `401 unauthorized`, `400 validation_error` (including a `place` that is empty,
+too long, or contains a line break or a tab, and a `duration_bucket` outside the five
+values), `400 invalid_request`, `413 request_too_large`, `500 internal_error`.
+
+### GET /users/me/rooted
+
+Returns **200** with `{ "signals": [ ... ] }`: the authenticated user's own signals,
+**including** any hidden from public read. `signals` is always an array, never `null`.
+
+**Errors:** `401 unauthorized`, `500 internal_error`.
+
+### GET /users/{id}/rooted
+
+Returns **200** with `{ "signals": [ ... ] }`: the user's **public** signals only.
+
+An unknown user returns **404** `not_found`, so an empty array means "this user has
+declared nothing public" rather than "no such user". An id that is not a UUID also returns
+404.
+
+**Errors:** `404 not_found`, `500 internal_error`.
+
+### `author_rooted` on content responses
+
+The story detail, version, comment, and bridge responses carry an `author_rooted` field:
+
+```json
+{ "author_rooted": { "place": "Cape Town", "duration_bucket": "lifelong" } }
+```
+
+It is the author's primary **public** Rooted signal, or `null` when they have none (or have
+hidden it). It carries only `place` and `duration_bucket` — no `id`, no `user_id`, and no
+timestamps — because it is an inline display summary, not a lookup of the full signal
+(KNOT-ADR-017). The server attaches it with a single batched read of every distinct author
+in a response, never one query per row.
+
+| Response                                                                             | `author_rooted` describes            |
+| ------------------------------------------------------------------------------------ | ------------------------------------- |
+| `GET /stories/{id}`                                                                    | the story's author                     |
+| `POST /stories/{id}/adapt`, `GET /stories/{id}/tree`, `GET /versions/{id}`             | each version's author                  |
+| `POST /versions/{id}/comments`, `GET /versions/{id}/comments`                           | each comment's author                  |
+| `POST /comments/{id}/bridges`, `GET /comments/{id}/bridges`, `GET /bridges/{id}`       | each bridge's author (and, on create, both comments' authors) |
+
+`GET /stories` (the feed) and `POST /stories` do not populate the field: it is present
+there but always `null`.
 
 ## Tokens
 

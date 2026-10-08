@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { describeError } from '../../api/client';
 import { Story, storiesApi } from '../../api/stories';
 import { versionsApi } from '../../api/versions';
+import RootedBadge from '../../components/RootedBadge';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
 
 type StoryDetailScreenProps = {
@@ -88,6 +89,15 @@ export default function StoryDetailScreen({
             <Text style={styles.meta}>{story.approximate_location}</Text>
           ) : null}
 
+          {story.author_rooted ? (
+            <View style={styles.rootedRow}>
+              <RootedBadge
+                place={story.author_rooted.place}
+                durationBucket={story.author_rooted.duration_bucket}
+              />
+            </View>
+          ) : null}
+
           <Text style={styles.body}>{story.body}</Text>
 
           {story.media_urls.length > 0 ? (
@@ -147,6 +157,9 @@ const styles = StyleSheet.create({
     color: colors.text.secondary,
     fontSize: fontSizes.sm,
     marginTop: 6,
+  },
+  rootedRow: {
+    marginTop: spacing.sm,
   },
   secondaryButton: {
     alignItems: 'center',

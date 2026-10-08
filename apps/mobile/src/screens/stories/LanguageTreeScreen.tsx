@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 
 import { describeError } from '../../api/client';
 import { StoryVersion, versionDepths, versionsApi } from '../../api/versions';
+import RootedBadge from '../../components/RootedBadge';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type LanguageTreeScreenProps = {
@@ -83,6 +84,15 @@ export default function LanguageTreeScreen({
           <View style={styles.rowMeta}>
             <Text style={styles.badge}>{version.language}</Text>
             <Text style={styles.author}>{authorPrefix(version.author_id)}</Text>
+            {version.author_rooted ? (
+              <View style={styles.rootedBadge}>
+                <RootedBadge
+                  place={version.author_rooted.place}
+                  durationBucket={version.author_rooted.duration_bucket}
+                  compact
+                />
+              </View>
+            ) : null}
             {version.parent_version_id === null ? <Text style={styles.rootTag}>root</Text> : null}
           </View>
           {version.adaptation_note !== null && version.adaptation_note !== '' ? (
@@ -145,6 +155,9 @@ const styles = StyleSheet.create({
   rootTag: {
     color: colors.text.brand,
     fontSize: fontSizes.sm,
+    marginLeft: spacing.sm,
+  },
+  rootedBadge: {
     marginLeft: spacing.sm,
   },
   row: {

@@ -349,3 +349,49 @@ Nothing stops a non-UUID string from being passed as an id at compile time; the 
 **Reason:** This mirrors KNOT-ADR-013 for adaptation, so the two halves of the core loop apply the same rule rather than an inconsistent pair. Every bridge records its author, and the source and target comments record theirs, so the attribution a future trust or moderation rule would need is already captured. Opening the gate now costs nothing that cannot be added later, because a future rule is a change to one authorization check, not to the data.
 
 **Consequences:** Nothing today stops any signed-in user from bridging any comment, so abuse is possible and accepted for the MVP. The same-language check and the foreign keys keep the bridge graph internally consistent regardless of who bridges what. Rooted-gated bridging, bridge confirmation, and moderation remain out of scope and each requires its own task and its own decision before anything is enforced.
+
+---
+
+## KNOT-ADR-016 — Rooted signal model: place plus duration bucket, self-declared
+
+**Decision ID:** KNOT-ADR-016
+**Date:** 2026-10-08
+**Status:** Accepted
+
+**Context:** Knot needs a trust and community layer before it can honour its core loop across languages. The first primitive had to answer "who is this person, and where are they from" without inventing a reputation system, without collecting anything precise enough to endanger anyone, and without a verification mechanism that does not exist yet. The options ranged from a full vouch graph or a Rooted Score to nothing at all, and the task had to pick the smallest honest thing.
+
+**Decision:** A Rooted signal is a **place** plus a **duration bucket**, and it is **self-declared**. The place is free text at **city or region precision only**: 1-80 characters after trimming, no coordinates, no address, and a line break or a tab is rejected. The duration bucket is one of a **closed set of five** — `lifelong`, `many_years`, `several_years`, `a_few_years`, `recently` — enforced by both a domain check and a `CHECK` constraint. A user has **exactly one primary signal**: setting a second replaces the first, enforced by a partial unique index on `(user_id)` where `is_primary`. The `is_primary` column exists so a later multi-signal feature can add non-primary rows without a migration. In this task there is **no verification, no vouching, no score, and no gating** of any action.
+
+**Alternatives Considered:**
+1. A vouch graph (people confirm each other's place) — rejected for now. It is a second, larger model that needs its own trust rules, its own abuse story, and its own UI; building it before the simple signal has been used would be guessing at the shape of a problem that has not appeared.
+2. A Rooted Score or any derived number — rejected outright. A score invites optimising the number rather than declaring the truth, and it would make an honest self-declaration into a competition.
+3. Precise location or geocoding — rejected. It is a safety and privacy hazard with no product benefit here: a city or region is enough for a reader to understand where a telling comes from, and precision cannot be un-collected once leaked.
+4. Gating an action (adapting, bridging, commenting) on having a signal — rejected for now. It would make the trust layer a toll gate before anyone has used the feature, and it is explicitly a non-goal of this task.
+5. Free-text duration ("about ten years") — rejected. It does not sort, filter, or render consistently, and it invites precision the model cannot verify.
+
+**Reason:** Place plus a duration bucket is the smallest model that answers the question Rooted exists to answer, and every part of it is something the person can state about themselves without anyone else's involvement. Keeping the set of buckets closed and the place bounded to a single short line makes the honesty of the signal structural rather than aspirational: there is nothing to score, nothing to verify, and nowhere to put an address. One primary signal keeps the MVP honest about its own limits while the partial index and `is_primary` flag leave the door open for the multi-place case later.
+
+**Consequences:** Every signal is unverified by construction, so a signal is a self-description and must never be presented as a fact or used as an authorisation input. The public-read path exposes a place name, which is a real, if coarse, piece of personal information: a person who hides their signal is the only one who can see it. Because `is_primary` exists and the unique index is partial, adding multi-signal support is additive — a schema-supported change rather than a rewrite — but the MVP UI deliberately handles one signal. Vouching, scores, community aggregation, and gating each remain out of scope and require their own ADR before anything is enforced.
+
+---
+
+## KNOT-ADR-017 — Rooted visibility: public by default, with a per-signal private flag, and a minimal inline enrichment
+
+**Decision ID:** KNOT-ADR-017
+**Date:** 2026-10-08
+**Status:** Accepted
+
+**Context:** A Rooted signal is a person's declared connection to a place, so it is simultaneously the thing that makes a stranger legible and the thing that could expose them. The task had to decide (a) whether a signal is visible by default, (b) how a person hides one, and (c) how much of a signal leaves the Rooted endpoints when it is attached to a story, a version, a comment, or a bridge for inline display.
+
+**Decision:** A Rooted signal is **public by default**, and a per-signal boolean `is_public` lets its owner hide it. The server applies the default: an omitted `is_public` on `POST /users/me/rooted` means public, so a client cannot accidentally publish or accidentally hide by omission. Two read rules follow: `GET /users/me/rooted` (protected) returns the owner's own signals **including** hidden ones, and `GET /users/{id}/rooted` (public) returns **only** public signals, answering `404` for a user that does not exist so an empty array means "declared nothing public" rather than "no such user". Inline enrichment on the story detail, version, comment, and bridge responses attaches an `author_rooted` summary that carries **only `place` and `duration_bucket`** — no `id`, no `user_id`, and no timestamps — or `null` when the author has no public signal. Enrichment is a single batched read of the distinct authors in a response, performed at the HTTP layer, and a failure to read Rooted is logged and swallowed rather than failing the content response.
+
+**Alternatives Considered:**
+1. Private by default, with an opt-in to publish — rejected. It would make the trust layer invisible until people actively opted in, which is the opposite of what a legibility primitive is for, and it makes the common case the one that requires an extra step.
+2. A global "Rooted visibility" setting rather than a per-signal flag — rejected. The flag belongs on the signal that is being hidden, and a per-signal flag is what the multi-signal future needs anyway; the column is per-signal precisely so the rule never has to be reinterpreted later.
+3. Enriching with the whole signal (id, owner, timestamps) so the client can be lazily rich — rejected. The inline field is a display hint, not a lookup: shipping the owner and the timestamps would spread personal data across every content response for no display benefit and would couple every content endpoint to the Rooted schema.
+4. Enriching by having the stories, versions, and conversations stores join `rooted_signals` — rejected. It would change three store interfaces and push an unrelated domain's table into each of their queries; the batch happens once, at the HTTP layer, where the response shape is already being assembled.
+5. Failing the content response when the Rooted read fails — rejected. Enrichment is supplementary decoration; a Rooted outage must not make stories, versions, comments, or bridges unreadable.
+
+**Reason:** Public-by-default makes legibility the ordinary case, and the server applying the default means the client's omission is never mistaken for a decision to hide. Keeping hidden signals visible to their owner, and only to their owner, gives a person a real way to withdraw without losing their own view of what they declared. Trimming the inline summary to two fields keeps the enrichment honest about what it is — a place and a duration for a badge — and keeps the owner's identity out of responses that already name the author only by id. Doing the enrichment once per response at the HTTP layer keeps it off the store interfaces and makes the "one batch, not N+1" property testable with a lookup that counts its calls.
+
+**Consequences:** A hidden signal is still a row and still counts toward the one-primary invariant; hiding is a read-time decision, not a delete, so a person can unhide without re-declaring. Every content response that carries `author_rooted` may show `null`, which a client must treat as "no public signal" rather than an error. Because the enrichment is best-effort, a Rooted outage degrades the badge to `null` while the content still loads — an availability choice, not a correctness one, and one that is visible in the logs. The summary deliberately cannot be used to look up the full signal, so a client that wants more must call the Rooted endpoints, where the visibility rules apply. `GET /stories` (the feed) and `POST /stories` do not populate the field; extending the enrichment to the feed is a small, additive change for whichever task first renders a badge there.

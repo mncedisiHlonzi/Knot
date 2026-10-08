@@ -39,13 +39,14 @@ type Router struct {
 	stories        *StoriesHandler
 	versions       *VersionsHandler
 	conversations  *ConversationsHandler
+	rooted         *RootedHandler
 	authMiddleware *AuthMiddleware
 	version        string
 	logger         *slog.Logger
 }
 
 // NewRouter returns the root handler for the API.
-func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
+func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
 	if auth == nil {
 		return nil, errNilHandler("auth")
 	}
@@ -58,6 +59,9 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 	if conversationsHandler == nil {
 		return nil, errNilHandler("conversations")
 	}
+	if rootedHandler == nil {
+		return nil, errNilHandler("rooted")
+	}
 	if authMiddleware == nil {
 		return nil, errNilHandler("auth middleware")
 	}
@@ -69,6 +73,7 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 		stories:        storiesHandler,
 		versions:       versionsHandler,
 		conversations:  conversationsHandler,
+		rooted:         rootedHandler,
 		authMiddleware: authMiddleware,
 		version:        version,
 		logger:         logger,
@@ -102,6 +107,14 @@ func (r *Router) Handler() http.Handler {
 	mux.HandleFunc("POST /comments/{id}/bridges", r.authMiddleware.Require(r.conversations.CreateBridge))
 	mux.HandleFunc("GET /comments/{id}/bridges", r.conversations.ListBridges)
 	mux.HandleFunc("GET /bridges/{id}", r.conversations.GetBridge)
+
+	// Rooted: a user's self-declared connection to a place. Writing a signal and
+	// reading your own signals require an access token; reading another user's
+	// public signals is open. The literal "me" pattern is more specific than the
+	// "{id}" wildcard, so the two routes do not collide.
+	mux.HandleFunc("POST /users/me/rooted", r.authMiddleware.Require(r.rooted.SetSignal))
+	mux.HandleFunc("GET /users/me/rooted", r.authMiddleware.Require(r.rooted.GetMySignals))
+	mux.HandleFunc("GET /users/{id}/rooted", r.rooted.GetUserSignals)
 
 	return withRequestID(withRequestLogging(r.logger, withRecover(r.logger, mux)))
 }

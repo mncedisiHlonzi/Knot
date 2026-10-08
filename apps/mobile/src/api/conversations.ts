@@ -8,6 +8,7 @@
  * always an `ApiError` carrying the server's machine-readable code.
  */
 import { request } from './client';
+import type { AuthorRooted } from './rooted';
 
 /** One comment on a story version. */
 export type Comment = {
@@ -18,6 +19,11 @@ export type Comment = {
   readonly body: string;
   readonly created_at: string;
   readonly updated_at: string;
+  /**
+   * The author's primary public Rooted signal, or null when they have none. The
+   * server attaches it to the comment list and create responses.
+   */
+  readonly author_rooted?: AuthorRooted | null;
 };
 
 /** The request body for POST /versions/{id}/comments. */
@@ -47,6 +53,11 @@ export type Bridge = {
   readonly target_language: string;
   readonly adaptation_note: string | null;
   readonly created_at: string;
+  /**
+   * The bridger's primary public Rooted signal, or null when they have none. The
+   * server attaches it to the bridge list, get, and create responses.
+   */
+  readonly author_rooted?: AuthorRooted | null;
 };
 
 /** The request body for POST /comments/{id}/bridges. */

@@ -161,19 +161,24 @@ func newVersionsRouter(t *testing.T, logger *slog.Logger, service VersionsServic
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, logger)
+	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, &fakeRootedService{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
 
-	versionsHandler, err := NewVersionsHandler(service, logger)
+	versionsHandler, err := NewVersionsHandler(service, &fakeRootedService{}, logger)
 	if err != nil {
 		t.Fatalf("NewVersionsHandler() error = %v, want nil", err)
 	}
 
-	conversationsHandler, err := NewConversationsHandler(&fakeConversationsService{}, logger)
+	conversationsHandler, err := NewConversationsHandler(&fakeConversationsService{}, &fakeRootedService{}, logger)
 	if err != nil {
 		t.Fatalf("NewConversationsHandler() error = %v, want nil", err)
+	}
+
+	rootedHandler, err := NewRootedHandler(&fakeRootedService{}, logger)
+	if err != nil {
+		t.Fatalf("NewRootedHandler() error = %v, want nil", err)
 	}
 
 	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID}, logger)
@@ -181,7 +186,7 @@ func newVersionsRouter(t *testing.T, logger *slog.Logger, service VersionsServic
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}
 
-	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, authMiddleware, "0.1.0", logger)
+	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, authMiddleware, "0.1.0", logger)
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v, want nil", err)
 	}
@@ -534,11 +539,14 @@ func TestGetVersionUnexpectedFailureIsInternalError(t *testing.T) {
 func TestNewVersionsHandlerRejectsMissingDependencies(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	if _, err := NewVersionsHandler(nil, logger); err == nil {
-		t.Error("NewVersionsHandler(nil, logger) error = nil, want an error")
+	if _, err := NewVersionsHandler(nil, &fakeRootedService{}, logger); err == nil {
+		t.Error("NewVersionsHandler(nil, rooted, logger) error = nil, want an error")
 	}
-	if _, err := NewVersionsHandler(&fakeVersionsService{}, nil); err == nil {
-		t.Error("NewVersionsHandler(service, nil) error = nil, want an error")
+	if _, err := NewVersionsHandler(&fakeVersionsService{}, &fakeRootedService{}, nil); err == nil {
+		t.Error("NewVersionsHandler(service, rooted, nil) error = nil, want an error")
+	}
+	if _, err := NewVersionsHandler(&fakeVersionsService{}, nil, logger); err == nil {
+		t.Error("NewVersionsHandler(service, nil, logger) error = nil, want an error")
 	}
 }
 

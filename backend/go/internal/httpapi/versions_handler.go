@@ -23,18 +23,23 @@ type VersionsService interface {
 // VersionsHandler serves the Tell My People endpoints.
 type VersionsHandler struct {
 	service VersionsService
+	rooted  RootedLookup
 	logger  *slog.Logger
 }
 
-// NewVersionsHandler returns a handler backed by service.
-func NewVersionsHandler(service VersionsService, logger *slog.Logger) (*VersionsHandler, error) {
+// NewVersionsHandler returns a handler backed by service. The rooted lookup is
+// used to attach each author's inline Rooted summary to a version response.
+func NewVersionsHandler(service VersionsService, rooted RootedLookup, logger *slog.Logger) (*VersionsHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: versions handler requires a service")
+	}
+	if rooted == nil {
+		return nil, fmt.Errorf("httpapi: versions handler requires a rooted lookup")
 	}
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: versions handler requires a logger")
 	}
-	return &VersionsHandler{service: service, logger: logger}, nil
+	return &VersionsHandler{service: service, rooted: rooted, logger: logger}, nil
 }
 
 // createAdaptationRequest is the POST /stories/{id}/adapt body.
@@ -67,6 +72,10 @@ type versionResponse struct {
 	AdaptationNote  *string   `json:"adaptation_note"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+	// AuthorRooted is the version author's primary public Rooted signal, or null
+	// when they have none. It is a summary (place and duration only), attached at
+	// the HTTP layer; see KNOT-ADR-017.
+	AuthorRooted *rootedSummary `json:"author_rooted"`
 }
 
 // versionEnvelope wraps a single version, so the response shape can gain sibling
@@ -115,7 +124,10 @@ func (h *VersionsHandler) Adapt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, versionEnvelope{Version: newVersionResponse(created)})
+	response := newVersionResponse(created)
+	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{created.AuthorID})[created.AuthorID]
+
+	writeJSON(w, http.StatusCreated, versionEnvelope{Version: response})
 }
 
 // Tree handles GET /stories/{id}/tree. The route is public.
@@ -128,9 +140,17 @@ func (h *VersionsHandler) Tree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	authorIDs := make([]string, 0, len(list))
+	for _, version := range list {
+		authorIDs = append(authorIDs, version.AuthorID)
+	}
+	summaries := authorRootedSummaries(r.Context(), h.rooted, h.logger, authorIDs)
+
 	items := make([]versionResponse, 0, len(list))
 	for _, version := range list {
-		items = append(items, newVersionResponse(version))
+		item := newVersionResponse(version)
+		item.AuthorRooted = summaries[version.AuthorID]
+		items = append(items, item)
 	}
 
 	writeJSON(w, http.StatusOK, treeResponse{StoryID: storyID, Versions: items})
@@ -144,7 +164,10 @@ func (h *VersionsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, versionEnvelope{Version: newVersionResponse(version)})
+	response := newVersionResponse(version)
+	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{version.AuthorID})[version.AuthorID]
+
+	writeJSON(w, http.StatusOK, versionEnvelope{Version: response})
 }
 
 // writeServiceError maps domain errors onto HTTP status codes. Only errors we

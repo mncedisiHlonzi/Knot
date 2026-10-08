@@ -184,6 +184,9 @@ curl -s -X POST http://localhost:8080/auth/register \
 | `POST /comments/{id}/bridges`  | `Bearer` | `internal/httpapi/conversations_handler.go` |
 | `GET /comments/{id}/bridges`   | public   | `internal/httpapi/conversations_handler.go` |
 | `GET /bridges/{id}`            | public   | `internal/httpapi/conversations_handler.go` |
+| `POST /users/me/rooted`        | `Bearer` | `internal/httpapi/rooted_handler.go` |
+| `GET /users/me/rooted`         | `Bearer` | `internal/httpapi/rooted_handler.go` |
+| `GET /users/{id}/rooted`       | public   | `internal/httpapi/rooted_handler.go` |
 
 Routes are declared in one place, `NewRouter` in `internal/httpapi/router.go`, using
 Go 1.22 method-qualified `ServeMux` patterns. There is no router dependency.
@@ -265,6 +268,34 @@ Bridging is open to any authenticated user. The bridger comes from the token, an
 structural checks are that the target language differs from the source comment's language
 and that the comment has not already been bridged into that language (see
 KNOT-ADR-014/015).
+
+### Rooted, and the enrichment pattern
+
+`POST /users/me/rooted`, `GET /users/me/rooted`, and `GET /users/{id}/rooted` are served by
+`internal/httpapi/rooted_handler.go`, backed by the `internal/rooted` domain package.
+Rooted is a self-declared connection to a place (city or region precision only) plus a
+duration bucket; a user has exactly one primary signal, so setting one replaces the last.
+Writing a signal and reading your own require an access token; reading another user's
+public signals is open. See KNOT-ADR-016/017.
+
+The content handlers share one enrichment step: the stories, versions, and conversations
+handlers each gather the **distinct author ids** in a response, call
+`BatchGetPrimaryPublicSignals` **once**, and attach the resulting inline summary. The helper
+is `authorRootedSummaries` in `internal/httpapi/enrich.go`, and the dependency is the narrow
+`RootedLookup` interface (one method) rather than the whole Rooted service, so a handler
+test can substitute a lookup that counts its calls. A failure to read Rooted is logged and
+swallowed — enrichment is supplementary, so a Rooted problem must not make stories
+unreadable — and a user with no public signal simply carries `null`.
+
+```sql
+SELECT id, user_id, place, duration_bucket, is_public, is_primary, created_at, updated_at
+FROM rooted_signals
+WHERE is_primary = true AND is_public = true AND user_id = ANY($1)
+```
+
+That is the single batch query behind the enrichment; `$1` is a `uuid[]`, so `user_id`'s
+index stays usable. The `author_rooted` projection carries only `place` and
+`duration_bucket`.
 
 ### Migrations
 

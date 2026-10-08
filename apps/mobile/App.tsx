@@ -9,6 +9,8 @@ import LoginScreen from './src/screens/auth/LoginScreen';
 import RegisterScreen from './src/screens/auth/RegisterScreen';
 import BridgeScreen from './src/screens/conversations/BridgeScreen';
 import CommentThreadScreen from './src/screens/conversations/CommentThreadScreen';
+import ProfileScreen from './src/screens/profile/ProfileScreen';
+import RootedSetupScreen from './src/screens/profile/RootedSetupScreen';
 import AdaptStoryScreen from './src/screens/stories/AdaptStoryScreen';
 import CreateStoryScreen from './src/screens/stories/CreateStoryScreen';
 import FeedScreen from './src/screens/stories/FeedScreen';
@@ -23,7 +25,17 @@ import StoryDetailScreen from './src/screens/stories/StoryDetailScreen';
  * and every transition is explicit and typed.
  */
 type ScreenName =
-  'register' | 'login' | 'feed' | 'detail' | 'create' | 'adapt' | 'tree' | 'comments' | 'bridge';
+  | 'register'
+  | 'login'
+  | 'feed'
+  | 'detail'
+  | 'create'
+  | 'adapt'
+  | 'tree'
+  | 'comments'
+  | 'bridge'
+  | 'profile'
+  | 'rootedSetup';
 
 /**
  * Root component for the Knot mobile app.
@@ -38,6 +50,7 @@ export default function App(): React.ReactElement {
   const [adaptParentVersionId, setAdaptParentVersionId] = useState<string | null>(null);
   const [openVersionId, setOpenVersionId] = useState<string | null>(null);
   const [bridgeSourceComment, setBridgeSourceComment] = useState<Comment | null>(null);
+  const [profileUserId, setProfileUserId] = useState<string | null>(null);
 
   function handleAuthenticated(result: AuthResponse): void {
     setSession(result);
@@ -50,6 +63,7 @@ export default function App(): React.ReactElement {
     setAdaptParentVersionId(null);
     setOpenVersionId(null);
     setBridgeSourceComment(null);
+    setProfileUserId(null);
     setScreen('register');
   }
 
@@ -148,6 +162,28 @@ export default function App(): React.ReactElement {
           preferredLanguages={current.user.preferred_languages}
           onBridged={() => setScreen('comments')}
           onCancel={() => setScreen('comments')}
+        />
+      );
+    }
+
+    if (screen === 'profile' && profileUserId !== null) {
+      return (
+        <ProfileScreen
+          userId={profileUserId}
+          token={current.access_token}
+          currentUser={current.user}
+          onSetRooted={() => setScreen('rootedSetup')}
+          onBack={() => setScreen('feed')}
+        />
+      );
+    }
+
+    if (screen === 'rootedSetup') {
+      return (
+        <RootedSetupScreen
+          token={current.access_token}
+          onSaved={() => setScreen('profile')}
+          onCancel={() => setScreen('profile')}
         />
       );
     }

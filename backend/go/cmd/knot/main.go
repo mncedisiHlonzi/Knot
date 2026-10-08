@@ -32,6 +32,7 @@ import (
 	"github.com/knot/backend/internal/conversations"
 	"github.com/knot/backend/internal/httpapi"
 	"github.com/knot/backend/internal/identity"
+	"github.com/knot/backend/internal/rooted"
 	"github.com/knot/backend/internal/stories"
 	"github.com/knot/backend/internal/versions"
 	"github.com/knot/backend/migrations"
@@ -137,6 +138,24 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
+	// Rooted is Knot's trust and community layer. Its service doubles as the
+	// enrichment lookup the content handlers use to attach an author's inline
+	// Rooted summary to a response.
+	rootedStore, err := rooted.NewPostgresStore(pool)
+	if err != nil {
+		return err
+	}
+
+	rootedService, err := rooted.NewService(rootedStore)
+	if err != nil {
+		return err
+	}
+
+	rootedHandler, err := httpapi.NewRootedHandler(rootedService, logger)
+	if err != nil {
+		return err
+	}
+
 	storiesStore, err := stories.NewPostgresStore(pool)
 	if err != nil {
 		return err
@@ -147,7 +166,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	storiesHandler, err := httpapi.NewStoriesHandler(storiesService, logger)
+	storiesHandler, err := httpapi.NewStoriesHandler(storiesService, rootedService, logger)
 	if err != nil {
 		return err
 	}
@@ -162,7 +181,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	versionsHandler, err := httpapi.NewVersionsHandler(versionsService, logger)
+	versionsHandler, err := httpapi.NewVersionsHandler(versionsService, rootedService, logger)
 	if err != nil {
 		return err
 	}
@@ -179,7 +198,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	conversationsHandler, err := httpapi.NewConversationsHandler(conversationsService, logger)
+	conversationsHandler, err := httpapi.NewConversationsHandler(conversationsService, rootedService, logger)
 	if err != nil {
 		return err
 	}
@@ -191,7 +210,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, authMiddleware, appinfo.Version, logger)
+	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, authMiddleware, appinfo.Version, logger)
 	if err != nil {
 		return err
 	}

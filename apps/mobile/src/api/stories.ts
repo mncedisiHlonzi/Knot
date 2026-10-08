@@ -6,6 +6,7 @@
  * carrying the server's machine-readable code.
  */
 import { request } from './client';
+import type { AuthorRooted } from './rooted';
 
 /** The two storytelling lenses a story can be filed under. */
 export type Pillar = 'wonder' | 'heritage';
@@ -32,6 +33,11 @@ export type Story = {
   readonly sensitive: boolean;
   readonly created_at: string;
   readonly updated_at: string;
+  /**
+   * The author's primary public Rooted signal, or null when they have none. The
+   * server attaches it to the story detail response.
+   */
+  readonly author_rooted?: AuthorRooted | null;
 };
 
 /** The request body for POST /stories. */

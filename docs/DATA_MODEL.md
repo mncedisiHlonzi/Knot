@@ -1,7 +1,7 @@
 # Knot — Data Model
 
-**Status: MVP, subject to change.** Five tables exist today: `users`, `stories`,
-`story_versions`, `comments`, and `bridges`.
+**Status: MVP, subject to change.** Six tables exist today: `users`, `stories`,
+`story_versions`, `comments`, `bridges`, and `rooted_signals`.
 
 Migrations live in `backend/go/migrations/` and are applied with
 `go run ./cmd/knot migrate up`. See the "Migrations" section of
@@ -15,6 +15,7 @@ Migrations live in `backend/go/migrations/` and are applied with
 | `0002`  | `stories` | The `stories` table, its indexes, and its pillar constraint |
 | `0003`  | `story_versions` | The `story_versions` table, its indexes and constraints, and the `stories` refactor that moves content into a root version |
 | `0004`  | `conversations` | The `comments` and `bridges` tables, their indexes and constraints |
+| `0005`  | `rooted`  | The `rooted_signals` table, its indexes, and its duration-bucket constraint |
 
 Applied versions are recorded in the `schema_migrations` table, which the runner creates
 on first use.
@@ -255,3 +256,61 @@ window in which a comment exists with no bridge to say where it came from.
 without it, the same comment could be bridged into French repeatedly, producing many
 near-duplicate targets claiming to be the same adaptation. It is the default this task
 chose (see KNOT-ADR-014) and can be relaxed later by dropping the one index.
+
+## `rooted_signals`
+
+A signal is a person's declared connection to a place: a place name at city or region
+precision, and a duration bucket. It is Knot's trust primitive, and it is deliberately
+honest (self-declared, never verified), privacy-conscious (place only — no coordinates,
+no address), and simple (no vouching, no score, no gating). See KNOT-ADR-016.
+
+| Column            | Type          | Nullable | Default             | Notes                                                               |
+| ----------------- | ------------- | -------- | ------------------- | ------------------------------------------------------------------- |
+| `id`              | `uuid`        | no       | `gen_random_uuid()` | Primary key                                                         |
+| `user_id`         | `uuid`        | no       | —                   | References `users(id)`. The person the signal belongs to             |
+| `place`           | `text`        | no       | —                   | A city or region name, 1-80 characters; never a precise location      |
+| `duration_bucket` | `text`        | no       | —                   | How long the connection has been held; see the closed set below      |
+| `is_public`       | `boolean`     | no       | `true`              | `false` hides the signal from public read; the owner still sees it    |
+| `is_primary`      | `boolean`     | no       | `true`              | Marks the one active signal; exists for later multi-signal support    |
+| `created_at`      | `timestamptz` | no       | `now()`             |                                                                     |
+| `updated_at`      | `timestamptz` | no       | `now()`             | Set on insert and on replacement. No trigger yet                      |
+
+### Indexes and constraints
+
+| Name                                   | Kind                         | Columns                               | Purpose                                                        |
+| -------------------------------------- | ---------------------------- | ------------------------------------- | -------------------------------------------------------------- |
+| `rooted_signals_pkey`                  | Primary key                  | `id`                                  | Row identity                                                    |
+| `rooted_signals_user_id_idx`           | Btree index                  | `user_id`                             | Reads a user's signals, and the cascade on user deletion        |
+| `rooted_signals_one_primary_per_user`  | Partial unique index (btree) | `(user_id)` where `is_primary = true` | At most one primary signal per user — the MVP invariant          |
+| `rooted_signals_user_id_fkey`          | Foreign key                  | `user_id` → `users(id)`               | `ON DELETE CASCADE`: deleting an account removes its signals     |
+| `rooted_signals_duration_bucket_check` | Check constraint             | `duration_bucket`                     | The bucket set is closed in the database, not only in Go         |
+
+### The duration buckets
+
+`duration_bucket` is one of `lifelong`, `many_years`, `several_years`, `a_few_years`, or
+`recently`. The set is closed by both the CHECK constraint and the domain's
+`DurationBucket.Valid`, so a value outside it is rejected before it reaches the database.
+
+### One primary signal per user
+
+`rooted_signals_one_primary_per_user` is a **partial** unique index on `(user_id)` where
+`is_primary = true`. It enforces the MVP invariant that a person has exactly one active
+signal: setting a second signal *replaces* the first rather than adding another. The store
+does this in one statement — `INSERT ... ON CONFLICT (user_id) WHERE is_primary = true DO
+UPDATE` — so a replacement cannot race itself into two primaries.
+
+The index is partial, and `is_primary` exists at all, so a future multi-signal feature (a
+person rooted in more than one place) can add non-primary rows without a schema change.
+The MVP UI handles one signal.
+
+### The visibility model
+
+A signal is **public by default** (`is_public` defaults to `true`). Its owner hides it by
+setting `is_public` to `false`. Two read rules follow from that:
+
+- `GET /users/me/rooted` returns the owner's signals **including** hidden ones.
+- `GET /users/{id}/rooted` returns **only** public signals.
+
+The inline `author_rooted` enrichment on content responses is a summary, not a lookup: it
+carries only `place` and `duration_bucket`, never the signal's id, its owner, or its
+timestamps. See KNOT-ADR-017.

@@ -81,19 +81,24 @@ func newTestHandler(t *testing.T, service AuthService) http.Handler {
 func newTestRouter(t *testing.T, logger *slog.Logger, authHandler *AuthHandler) (http.Handler, error) {
 	t.Helper()
 
-	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, logger)
+	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, &fakeRootedService{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
 
-	versionsHandler, err := NewVersionsHandler(&fakeVersionsService{}, logger)
+	versionsHandler, err := NewVersionsHandler(&fakeVersionsService{}, &fakeRootedService{}, logger)
 	if err != nil {
 		t.Fatalf("NewVersionsHandler() error = %v, want nil", err)
 	}
 
-	conversationsHandler, err := NewConversationsHandler(&fakeConversationsService{}, logger)
+	conversationsHandler, err := NewConversationsHandler(&fakeConversationsService{}, &fakeRootedService{}, logger)
 	if err != nil {
 		t.Fatalf("NewConversationsHandler() error = %v, want nil", err)
+	}
+
+	rootedHandler, err := NewRootedHandler(&fakeRootedService{}, logger)
+	if err != nil {
+		t.Fatalf("NewRootedHandler() error = %v, want nil", err)
 	}
 
 	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID}, logger)
@@ -101,7 +106,7 @@ func newTestRouter(t *testing.T, logger *slog.Logger, authHandler *AuthHandler) 
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}
 
-	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, authMiddleware, "0.1.0", logger)
+	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, authMiddleware, "0.1.0", logger)
 	if err != nil {
 		return nil, err
 	}
@@ -494,39 +499,46 @@ func TestNewRouterRejectsMissingDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
-	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, logger)
+	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, &fakeRootedService{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
-	versionsHandler, err := NewVersionsHandler(&fakeVersionsService{}, logger)
+	versionsHandler, err := NewVersionsHandler(&fakeVersionsService{}, &fakeRootedService{}, logger)
 	if err != nil {
 		t.Fatalf("NewVersionsHandler() error = %v, want nil", err)
 	}
-	conversationsHandler, err := NewConversationsHandler(&fakeConversationsService{}, logger)
+	conversationsHandler, err := NewConversationsHandler(&fakeConversationsService{}, &fakeRootedService{}, logger)
 	if err != nil {
 		t.Fatalf("NewConversationsHandler() error = %v, want nil", err)
+	}
+	rootedHandler, err := NewRootedHandler(&fakeRootedService{}, logger)
+	if err != nil {
+		t.Fatalf("NewRootedHandler() error = %v, want nil", err)
 	}
 	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID}, logger)
 	if err != nil {
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}
 
-	if _, err := NewRouter(nil, storiesHandler, versionsHandler, conversationsHandler, authMiddleware, "0.1.0", logger); err == nil {
+	if _, err := NewRouter(nil, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, authMiddleware, "0.1.0", logger); err == nil {
 		t.Error("NewRouter(nil, ...) error = nil, want an error")
 	}
-	if _, err := NewRouter(authHandler, nil, versionsHandler, conversationsHandler, authMiddleware, "0.1.0", logger); err == nil {
+	if _, err := NewRouter(authHandler, nil, versionsHandler, conversationsHandler, rootedHandler, authMiddleware, "0.1.0", logger); err == nil {
 		t.Error("NewRouter(_, nil, ...) error = nil, want an error")
 	}
-	if _, err := NewRouter(authHandler, storiesHandler, nil, conversationsHandler, authMiddleware, "0.1.0", logger); err == nil {
+	if _, err := NewRouter(authHandler, storiesHandler, nil, conversationsHandler, rootedHandler, authMiddleware, "0.1.0", logger); err == nil {
 		t.Error("NewRouter(_, _, nil, ...) error = nil, want an error")
 	}
-	if _, err := NewRouter(authHandler, storiesHandler, versionsHandler, nil, authMiddleware, "0.1.0", logger); err == nil {
+	if _, err := NewRouter(authHandler, storiesHandler, versionsHandler, nil, rootedHandler, authMiddleware, "0.1.0", logger); err == nil {
 		t.Error("NewRouter(_, _, _, nil, ...) error = nil, want an error")
 	}
-	if _, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, nil, "0.1.0", logger); err == nil {
+	if _, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, nil, authMiddleware, "0.1.0", logger); err == nil {
 		t.Error("NewRouter(_, _, _, _, nil, ...) error = nil, want an error")
 	}
-	if _, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, authMiddleware, "0.1.0", nil); err == nil {
+	if _, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, nil, "0.1.0", logger); err == nil {
+		t.Error("NewRouter(_, _, _, _, _, nil, ...) error = nil, want an error")
+	}
+	if _, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, authMiddleware, "0.1.0", nil); err == nil {
 		t.Error("NewRouter(..., nil) error = nil, want an error")
 	}
 }

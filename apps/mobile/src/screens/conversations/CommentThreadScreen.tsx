@@ -12,6 +12,7 @@ import {
 
 import { describeError } from '../../api/client';
 import { Comment, THREAD_PAGE_SIZE, conversationsApi } from '../../api/conversations';
+import RootedBadge from '../../components/RootedBadge';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
 
 type CommentThreadScreenProps = {
@@ -202,6 +203,15 @@ export default function CommentThreadScreen({
             <View style={styles.cardMeta}>
               <Text style={styles.badge}>{item.language}</Text>
               <Text style={styles.author}>{authorPrefix(item.author_id)}</Text>
+              {item.author_rooted ? (
+                <View style={styles.rootedBadge}>
+                  <RootedBadge
+                    place={item.author_rooted.place}
+                    durationBucket={item.author_rooted.duration_bucket}
+                    compact
+                  />
+                </View>
+              ) : null}
               <Text style={styles.date}>{formatDate(item.created_at)}</Text>
             </View>
             <Text style={styles.body}>{item.body}</Text>
@@ -383,6 +393,9 @@ const styles = StyleSheet.create({
     color: colors.text.inverse,
     fontSize: fontSizes.base,
     fontWeight: fontWeights.semiBold,
+  },
+  rootedBadge: {
+    marginLeft: spacing.sm,
   },
   secondaryButton: {
     alignItems: 'center',

@@ -10,6 +10,7 @@
  * the tree as a flat list; assembling it into a nesting is the client's job.
  */
 import { request } from './client';
+import type { AuthorRooted } from './rooted';
 
 /** One written version of a story. */
 export type StoryVersion = {
@@ -25,6 +26,11 @@ export type StoryVersion = {
   readonly adaptation_note: string | null;
   readonly created_at: string;
   readonly updated_at: string;
+  /**
+   * The author's primary public Rooted signal, or null when they have none. The
+   * server attaches it to the version, tree, and adapt responses.
+   */
+  readonly author_rooted?: AuthorRooted | null;
 };
 
 /** The request body for POST /stories/{id}/adapt. */
