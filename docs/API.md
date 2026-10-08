@@ -600,6 +600,82 @@ in a response, never one query per row.
 `GET /stories` (the feed) and `POST /stories` do not populate the field: it is present
 there but always `null`.
 
+## Discovery
+
+Discovery answers "where are stories told?" It groups stories into **place clusters** — one
+entry per place, with how many stories are there, which pillars they belong to, which
+languages they are told in, and when the newest one was published — and lists the stories at a
+single place, with the same keyset pagination the feed uses.
+
+Places are **free text**. The server stores no coordinates and never geocodes (KNOT-ADR-020): a
+place is normalised to `lower(trim(...))` for grouping, and the map client resolves a place
+name to a point on the device.
+
+| Route                           | Auth   | Purpose                                    |
+| ------------------------------- | ------ | ------------------------------------------ |
+| `GET /discovery/clusters`       | public | Places with stories, most stories first     |
+| `GET /discovery/places/{place}` | public | One page of the stories at a place, newest first |
+
+### The cluster object
+
+```json
+{
+  "place": "Cape Town",
+  "story_count": 42,
+  "pillar_counts": { "wonder": 30, "heritage": 12 },
+  "languages": ["af", "en", "xh"],
+  "latest_story_at": "2026-10-08T12:00:00Z"
+}
+```
+
+`pillar_counts` always carries **both** supported pillars, so a place with only wonder stories
+still has `"heritage": 0`. `languages` is the distinct, sorted set of the stories' **root
+version** languages — always an array, never `null`. `place` is an author's original spelling;
+grouping is on the normalised lower case form, so "Cape Town" and "cape town" are one cluster.
+The cluster query groups by place and orders by `story_count` descending; a language *filter*
+matches any version of a story, while the aggregated `languages` list comes from root versions
+only (KNOT-ADR-020).
+
+### GET /discovery/clusters
+
+Returns **200** with `{ "clusters": [ ... ] }`, ordered by `story_count` descending.
+
+| Query      | Required | Rules                                                           |
+| ---------- | -------- | --------------------------------------------------------------- |
+| `pillar`   | no       | `wonder` or `heritage`; keeps only places with a story under it  |
+| `language` | no       | 2-8 letters; keeps only places with a version in that language   |
+| `limit`    | no       | 1-500. Defaults to 100; a larger value is clamped to 500         |
+
+`clusters` is always an array, never `null`.
+
+**Errors:** `400 validation_error` (an unknown `pillar`, a malformed `language`, or a `limit`
+that is not a positive integer), `500 internal_error`.
+
+### GET /discovery/places/{place}
+
+Returns **200** with one page of the stories at a place, newest first:
+
+```json
+{ "stories": [ { "id": "...", "title": "..." } ], "next_cursor": "MjAyNi0xMC0wOFQxMjowMDowMFo..." }
+```
+
+The `{place}` path segment is URL-encoded by the client and decoded by the server, and the
+match is case-insensitive: `GET /discovery/places/Cape%20Town` and
+`/discovery/places/cape%20town` are the same place. Each story is the
+[story object](#the-story-object), including `author_rooted` enrichment.
+
+| Query    | Required | Rules                                                        |
+| -------- | -------- | ------------------------------------------------------------ |
+| `cursor` | no       | A `next_cursor` from a previous page. Omit for the first page  |
+| `limit`  | no       | 1-50. Defaults to 20; a larger value is clamped to 50          |
+
+`stories` is always an array, never `null`, and `next_cursor` is always present. Paging is
+keyset, exactly as for the feed. A place with no stories is **200** with `"stories": []`, not
+a 404: it is a valid place with an empty result, not a missing resource.
+
+**Errors:** `400 validation_error` (an unreadable `cursor`, or a `limit` that is not a
+positive integer), `500 internal_error`.
+
 ## Tokens
 
 Two HS256 JWTs are issued. Both are signed with `KNOT_JWT_SECRET`.

@@ -395,3 +395,69 @@ Nothing stops a non-UUID string from being passed as an id at compile time; the 
 **Reason:** Public-by-default makes legibility the ordinary case, and the server applying the default means the client's omission is never mistaken for a decision to hide. Keeping hidden signals visible to their owner, and only to their owner, gives a person a real way to withdraw without losing their own view of what they declared. Trimming the inline summary to two fields keeps the enrichment honest about what it is — a place and a duration for a badge — and keeps the owner's identity out of responses that already name the author only by id. Doing the enrichment once per response at the HTTP layer keeps it off the store interfaces and makes the "one batch, not N+1" property testable with a lookup that counts its calls.
 
 **Consequences:** A hidden signal is still a row and still counts toward the one-primary invariant; hiding is a read-time decision, not a delete, so a person can unhide without re-declaring. Every content response that carries `author_rooted` may show `null`, which a client must treat as "no public signal" rather than an error. Because the enrichment is best-effort, a Rooted outage degrades the badge to `null` while the content still loads — an availability choice, not a correctness one, and one that is visible in the logs. The summary deliberately cannot be used to look up the full signal, so a client that wants more must call the Rooted endpoints, where the visibility rules apply. `GET /stories` (the feed) and `POST /stories` do not populate the field; extending the enrichment to the feed is a small, additive change for whichever task first renders a badge there.
+
+---
+
+## KNOT-ADR-018 — Map library: react-native-maps
+
+**Decision ID:** KNOT-ADR-018
+**Date:** 2026-10-08
+**Status:** Accepted
+
+**Context:** The Discovery Map (KNOT-008) is the first Knot screen that draws a map, and it is the first feature to need a native module. The task had to choose how the map is rendered, knowing that the mobile app is a hand-authored minimal scaffold with no `ios/` or Android project and a deliberately tiny dependency set (KNOT-ADR-002, KNOT-ADR-007), and that adding a native dependency changes the build story even though no native build runs yet.
+
+**Decision:** Use **`react-native-maps`**, pinned to `^1.29.11` — the first new mobile dependency since KNOT-001. It is used for `MapView` and `Marker` only. Because there is no native project to build, the **native setup is deferred to a future task** and documented in [`docs/DEVELOPMENT.md`](DEVELOPMENT.md): iOS needs `pod install` once an `ios/` project exists, and Android needs a Google Maps API key in the manifest. The **JavaScript layer** (lint, typecheck, Jest) is verified now and does not touch native code. Knot stores no coordinates, so the map is populated from a client-side place-name lookup, not from the API.
+
+**Alternatives Considered:**
+1. A web map in a `WebView` — rejected. It would still be a native dependency (`react-native-webview`), add a bridge and a second runtime, and give a worse gesture story than a native map.
+2. A hand-drawn or SVG map — rejected. There is no offline vector basemap to hand-draw at world scale, and building one is a product-size undertaking unrelated to discovery.
+3. A map provider SDK (Google Maps SDK directly) — rejected. It is lower-level than Knot needs and would tie the client to one provider with no web fallback, whereas `react-native-maps` already wraps the platform maps.
+4. No map at all: a plain list of places — rejected for this task. The whole point of KNOT-008 is geographic discovery; a list is a fine fallback inside the screen but not the feature.
+
+**Reason:** `react-native-maps` is the de-facto React Native map binding, it is one dependency, and its peer requirements (`react-native >= 0.76`) match the app's React Native version. Keeping the feature to `MapView` and `Marker` keeps the surface small enough that the deferred native setup is a build concern rather than a design one: nothing in the JS depends on a Google-specific API. Documenting the native steps now, without running a native build, keeps the dependency honest about what it will cost later while unblocking the feature.
+
+**Consequences:** The mobile app now has a dependency that cannot be exercised in CI or in a Jest test — the JS layer is verified, the native rendering is not. A future task must generate the native scaffold, run `pod install`, supply an Android API key, and verify the map on a device; until then the map screen type-checks and lints but is not run. Because Knot stores no coordinates, the map's usefulness depends on the client lookup table (`apps/mobile/src/data/placeCoordinates.ts`), which is a curated list that will need extending as places are used; a place it does not know is shown in a list rather than silently dropped.
+
+---
+
+## KNOT-ADR-019 — Navigation: a hand-rolled bottom tab bar
+
+**Decision ID:** KNOT-ADR-019
+**Date:** 2026-10-08
+**Status:** Accepted
+
+**Context:** KNOT-008 introduces four primary destinations (Home, Map, Create, Profile) and, for the first time, a reason to keep a persistent chrome element on screen. The app has never used a navigation library: `App.tsx` held a single `ScreenName` in state and rendered one screen for it (KNOT-ADR-002). The task had to decide whether to finally adopt a router, or to model tabs by hand.
+
+**Decision:** Model navigation **by hand**, in `App.tsx`, as two levels: an **active tab** (`feed`, `discoveryMap`, `createStory`, `profile`) and an optional **overlay** — a discriminated union of the non-tab screens, each carrying the ids it needs to render and to return. A new `TabBar` component renders four buttons and highlights the active one; it is rendered **only when there is no overlay**, so a secondary screen replaces the whole surface rather than sitting inside the bar. **No navigation library is added** — not `react-navigation`, not `react-native-screens`, not `react-native-safe-area-context`.
+
+**Alternatives Considered:**
+1. `react-navigation` (bottom tabs + a native stack) — rejected for now. It is a large dependency with its own native peers, adopted to serve four tabs and one overlay slot where every transition is already explicit and type-checked; the behaviour it would add (back gestures, deep links, per-tab state) is not asked for yet.
+2. A single flat `ScreenName` including the four tabs — rejected. It cannot express "a screen over a tab", so it would either lose the bar on every secondary screen or duplicate each tab's screen at each entry point.
+3. A tab bar with per-tab navigation state (retained scroll/stack per tab) — rejected. Retaining per-tab state is what a router is for; hand-rolling it now would be building the thing that was just declined.
+
+**Reason:** Four tabs plus one overlay is small enough that a plain discriminated union is the cheapest correct model: the type checker proves every transition, each overlay carries its own back target, and the whole thing is one file with no dependency. It also keeps the tab bar's relationship to overlays explicit — the bar is a sibling of the active tab, shown only for a primary destination — which is exactly the behaviour wanted and is easy to get wrong behind a library's abstractions.
+
+**Consequences:** Back behaviour is hard-coded per overlay rather than derived from a stack, so a new screen must state where its back button goes; that is a small, local cost and is visible at the call site. There are still no deep links and no hardware/gesture back handling. The decision is deliberately revisitable: when a concrete flow needs what this cannot express (a deep link into a nested screen, a real per-tab stack, a modal that survives a tab switch), a router is the right answer, and this ADR should be superseded rather than worked around. Until then, `docs/NAVIGATION.md` records the remaining proposals.
+
+---
+
+## KNOT-ADR-020 — Place representation: free text with a lowercased indexed copy
+
+**Decision ID:** KNOT-ADR-020
+**Date:** 2026-10-08
+**Status:** Accepted
+
+**Context:** Discovery groups stories by place, but a place in Knot is a free-text field an author types (KNOT-ADR-016 for Rooted, and the story's `approximate_location`). The same place arrives spelled differently — "Cape Town", "cape town", "Cape Town " — and grouping on the raw column would treat each as a distinct place. The task had to decide how places are represented and compared, without introducing coordinates.
+
+**Decision:** A place stays **free text**, and discovery groups on a **normalised copy**, `stories.approximate_location_lower`, added in migration `0006` as `lower(trim(approximate_location))` with an index. The application maintains the column on story create (the `INSERT` computes `lower(trim($3))`), and the migration backfilled existing rows. The read side matches a place by normalising the input the same way, so comparison is case- and surrounding-whitespace-insensitive. There are **no coordinates, no spatial index, and no geocoding server-side**; the mobile client resolves a place name to a point with a **local lookup table** (`apps/mobile/src/data/placeCoordinates.ts`), and a place it does not know is listed rather than plotted.
+
+**Alternatives Considered:**
+1. Store coordinates (lat/lng) on the story — rejected. It asks authors for precision Knot deliberately avoids collecting, and it is a privacy hazard with no display benefit a city name does not already give.
+2. PostGIS and a geometry column — rejected. It is a large extension and a spatial model bought for a grouping problem that a text column solves; it also makes "the same place" a fuzzy geometric question rather than an exact string one.
+3. Geocode place names on write — rejected. It needs a third-party service, a network dependency on the write path, and a cache; it would also resolve the same text differently over time.
+4. Group on the raw `approximate_location` — rejected. It would fragment one place into many clusters on casing and stray whitespace, which is the exact problem this task exists to solve.
+5. A canonical place table with ids — rejected for now. It is the right shape once places need to be curated, but it is a second model (and an editing surface) that this task does not need; the normalised column is the smallest thing that makes grouping correct.
+
+**Reason:** Normalising a text field is the least invasive way to make "the same place" mean the same thing in a query. Keeping the author's original spelling in `approximate_location` preserves what they typed, while the lowercased copy is a pure derivation the application can maintain in the same statement that writes the row — so the two cannot drift. Pushing coordinates to the client keeps the server free of precise location data and keeps the map a presentation concern, which is where an exact-match lookup table is adequate for an MVP.
+
+**Consequences:** Place matching is **exact after normalisation**: "Cape Town" and "cape town" are one place, but "Cape Town, South Africa" is a different one, and the map will list rather than plot it — a known MVP limit, not a silent failure. The client lookup table is curated and must be extended as places are used; it is not a geocoder and does not guess. If places later need to be curated or merged, a canonical place table is the natural next step, and the normalised column is the bridge to it. The `languages` figure in a cluster is aggregated from **root versions only**, while the language *filter* matches any version; both are deliberate and recorded here so the asymmetry is a choice rather than an accident.

@@ -30,6 +30,7 @@ import (
 	"github.com/knot/backend/internal/appinfo"
 	"github.com/knot/backend/internal/config"
 	"github.com/knot/backend/internal/conversations"
+	"github.com/knot/backend/internal/discovery"
 	"github.com/knot/backend/internal/httpapi"
 	"github.com/knot/backend/internal/identity"
 	"github.com/knot/backend/internal/rooted"
@@ -203,6 +204,26 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
+	// Discovery reads the stories and story_versions tables directly: finding
+	// stories by place is a different read shape over the same data, so it owns
+	// its own store rather than widening the stories interface. Its handler reuses
+	// the rooted service as the enrichment lookup, exactly as the stories handler
+	// does.
+	discoveryStore, err := discovery.NewPostgresStore(pool)
+	if err != nil {
+		return err
+	}
+
+	discoveryService, err := discovery.NewService(discoveryStore)
+	if err != nil {
+		return err
+	}
+
+	discoveryHandler, err := httpapi.NewDiscoveryHandler(discoveryService, rootedService, logger)
+	if err != nil {
+		return err
+	}
+
 	// The same issuer that signs access tokens verifies them on protected
 	// routes, so there is one source of truth for the signing key.
 	authMiddleware, err := httpapi.NewAuthMiddleware(tokens, logger)
@@ -210,7 +231,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, authMiddleware, appinfo.Version, logger)
+	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, authMiddleware, appinfo.Version, logger)
 	if err != nil {
 		return err
 	}

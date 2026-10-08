@@ -148,6 +148,28 @@ imported directly. Values that fall between the documented scale steps stay nume
 example a `paddingVertical: 10`), and `BRAND.md` remains the source of truth for every
 token value.
 
+### Native dependencies (react-native-maps)
+
+The Discovery Map uses **`react-native-maps`** (KNOT-008) — the first mobile dependency with a
+**native** component. The JavaScript layer (lint, typecheck, and Jest) runs with no native
+build, so day-to-day work and CI are unaffected. A *native* build (a real iOS or Android app)
+is a **future task**; these steps are recorded now so the dependency is not a surprise later:
+
+- **iOS:** after `npm install`, run `cd apps/mobile/ios && pod install` before opening the
+  project in Xcode. Pods must be reinstalled whenever `react-native-maps` or React Native
+  itself changes.
+- **Android:** a Google Maps API key is required. Add it to the app manifest
+  (`android/app/src/main/AndroidManifest.xml`) as
+  `<meta-data android:name="com.google.android.geo.API_KEY" android:value="…" />`. The key is
+  a secret and is never committed; inject it per environment.
+- There is currently **no `ios/` directory and no Android project** in the repository: the
+  native scaffold is hand-authored with the rest of the mobile app, and generating it is a
+  future task. Until then the map screen type-checks and lints but has no native host to run
+  in.
+- The map resolves place names with a **local lookup table**
+  (`apps/mobile/src/data/placeCoordinates.ts`), not a geocoding service, so no API key is
+  needed to *use* the feature — only to render the Google basemap on Android.
+
 ## Backend (`backend/go/`)
 
 ```bash
@@ -208,6 +230,8 @@ curl -s -X POST http://localhost:8080/auth/register \
 | `POST /users/me/rooted`        | `Bearer` | `internal/httpapi/rooted_handler.go` |
 | `GET /users/me/rooted`         | `Bearer` | `internal/httpapi/rooted_handler.go` |
 | `GET /users/{id}/rooted`       | public   | `internal/httpapi/rooted_handler.go` |
+| `GET /discovery/clusters`      | public   | `internal/httpapi/discovery_handler.go` |
+| `GET /discovery/places/{place}` | public  | `internal/httpapi/discovery_handler.go` |
 
 Routes are declared in one place, `NewRouter` in `internal/httpapi/router.go`, using
 Go 1.22 method-qualified `ServeMux` patterns. There is no router dependency.

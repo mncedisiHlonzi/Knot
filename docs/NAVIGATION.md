@@ -1,46 +1,58 @@
 # Knot — Navigation
 
-> **Status: proposed, not yet approved.** This document describes the navigation model Knot
-> intends to adopt. It is not a specification of what the app does today, and it is not
-> approved scope. The final design will be confirmed in a future task; until then, treat
-> everything below the "Current state" section as a proposal.
+> **Status: partly implemented (KNOT-008).** The bottom tab bar described here now exists, with
+> **four** destinations — Home, Map, Create, and Profile — implemented as a hand-rolled tab bar
+> plus a single overlay slot, not a navigation library (KNOT-ADR-019). The **Messages**
+> destination, per-tab stacks, deep links, and back gestures remain **proposals**; treat those
+> parts of this document as not yet built.
 
 ## Primary navigation
 
-The concept's mobile navigation is a **bottom tab bar with five destinations**, with **Create**
-raised in the centre:
+The app's primary navigation is a **bottom tab bar**, implemented in KNOT-008:
 
 ```
-   Home        Map       ( + )      Messages      Profile
+   Home          Map          Create          Profile
 ```
 
 - **Home** — the story feed.
-- **Map** — explore stories and languages by place (Discovery Map).
-- **Create** (centre, raised) — publish a story; the primary action, reachable from anywhere.
-- **Messages** — conversations.
+- **Map** — explore stories by place (the Discovery Map).
+- **Create** — publish a story.
 - **Profile** — the signed-in person's own cultural profile.
 
-Two of the five destinations have no screen behind them yet (Map and Profile), which is the
-main reason the tab bar is not built: a tab that leads nowhere is worse than no tab.
+The original concept proposed **five** destinations, with **Create** raised in the centre and a
+**Messages** tab. The implementation ships **four**: Create is an ordinary tab rather than a
+raised centre action, and Messages is not built — conversations are still reached from a story's
+detail screen. A tab that leads nowhere is worse than no tab, so Messages waits until there is a
+conversation inbox to put behind it.
 
 ## Current state
 
-The app **has no navigation library**. `apps/mobile/App.tsx` holds a single `ScreenName` string
-in component state —
+The app **has no navigation library**. `apps/mobile/App.tsx` models the app in two levels:
 
 ```ts
-type ScreenName =
-  | 'register' | 'login' | 'feed' | 'detail' | 'create' | 'adapt' | 'tree' | 'comments' | 'bridge';
+type TabName = 'feed' | 'discoveryMap' | 'createStory' | 'profile';
+
+type Overlay =
+  | { name: 'detail'; storyId: string }
+  | { name: 'adapt'; storyId: string; parentVersionId: string }
+  | { name: 'tree'; storyId: string }
+  | { name: 'comments'; storyId: string; versionId: string }
+  | { name: 'bridge'; storyId: string; versionId: string; comment: Comment }
+  | { name: 'rootedSetup' }
+  | { name: 'placeStories'; place: string };
 ```
 
-— and renders exactly one screen for the current value. Transitions are explicit, typed
-callbacks (`onBack`, `onOpenStory`, `onAdapt`, …) passed down to each screen. There are **no
-routes, no deep links, and no back gestures**; the hardware/gesture back button is not wired to
-anything. The session and the access token live in component state only and are lost when the
-app restarts.
+An **active tab** is one of the four primary destinations, and an optional **overlay** is a
+secondary screen pushed over it. `TabBar` — a plain row of four buttons — is rendered **only
+when there is no overlay**, so a secondary screen replaces the whole surface rather than sitting
+inside the bar. Transitions are explicit, typed callbacks (`onBack`, `onOpenStory`,
+`onOpenPlace`, …), and each overlay carries the ids it needs to return to where it came from.
+There are still **no routes, no deep links, and no back gestures**; the hardware/gesture back
+button is not wired to anything. The session and the access token live in component state only
+and are lost when the app restarts.
 
-That is deliberate for a shallow app. Every transition is one `setScreen(...)` call, the type
-checker proves the destinations, and there is no router dependency to justify.
+That remains deliberate. Every transition is one `setState` call, the type checker proves the
+destinations, and there is no router dependency to justify; see KNOT-ADR-019.
 
 ## Auth flow
 
@@ -59,19 +71,23 @@ approved task.
 
 ## Stack flows
 
-The flows below are the proposal. Today each hop is a `setScreen` call rather than a pushed
-route, and the "back" targets are hard-coded rather than derived from a stack:
+The flows below are implemented, as `setOverlay(...)` calls with hard-coded back targets (there
+is still no stack to derive them from):
 
 ```
-Feed
- └── StoryDetail
-      ├── AdaptStory ──▶ (on success) LanguageTree
-      ├── LanguageTree
-      └── CommentThread
-           └── Bridge ──▶ (on success / back) CommentThread
+Home (feed) ──────────▶ StoryDetail
+Map (discoveryMap) ───▶ PlaceStories ───▶ StoryDetail
+
+StoryDetail
+ ├── AdaptStory ──▶ (on success) LanguageTree
+ ├── LanguageTree
+ └── CommentThread
+      └── Bridge ──▶ (on success / back) CommentThread
 ```
 
 - **Feed → StoryDetail** — tapping a story opens it.
+- **Map → PlaceStories** — tapping a place marker or a list row opens that place's stories.
+- **PlaceStories → StoryDetail** — tapping a story opens it.
 - **StoryDetail → AdaptStory** — "Adapt for my people", starting from the story's **root
   version**.
 - **StoryDetail → LanguageTree** — "View language tree".
@@ -84,28 +100,27 @@ Feed
 
 ## Modals and temporary screens
 
-**Create Story** is a **modal-style flow**: it is entered from the feed, it is about one task,
-and it should slide up over the feed and dismiss back to it, rather than being a stack
-destination. Today it is a plain screen; today's behaviour after publishing is to open the new
-story's detail, which the modal model would revisit.
+**Create Story** is now a **tab**, not a modal: KNOT-008 made Create one of the four primary
+destinations, so it is entered from the bar and returns to Home when cancelled. After
+publishing, the app still opens the new story's detail as an overlay. If Create later needs to
+feel like a modal — slide up, dismiss back to where you were — that is a change to revisit; it is
+not the implemented model today.
 
 ## Migration plan
 
-**When to introduce a navigation library.** When the bottom tab bar actually exists — that is,
-**after the Discovery Map lands (post-KNOT-008)**, when there are genuinely several top-level
-destinations and back behaviour, tab state, and deep links all start to matter. That is the
-point at which a router stops being overhead and starts being the cheapest way to express the
-app's structure.
+**When to introduce a navigation library.** When the app's navigation genuinely outgrows a tab
+bar plus one overlay — when deep links, back gestures, or a per-tab stack start to matter.
+KNOT-008 landed the tab bar **without** a router (see KNOT-ADR-019), so the trigger has not been
+reached.
 
-**Why not yet.** A router (for example `react-navigation`) would add a dependency and a
-navigation model to serve **one** shallow stack where every transition is already explicit and
-type-checked. It would buy back-gesture and deep-link behaviour the product does not ask for
-yet, at the cost of the simplicity the current state machine has; see **KNOT-ADR-002** (mobile
-scaffold hand-authored) and **KNOT-ADR-007** (minimal dependency set) for the same discipline
-applied elsewhere. Adding it before the destinations exist would mean designing navigation for
-screens that have not been built.
+**Why still not.** A router (for example `react-navigation`) would add a dependency and a
+navigation model to serve four tabs and a single overlay slot, where every transition is already
+explicit and type-checked. It would buy back-gesture and deep-link behaviour the product does not
+ask for yet, at the cost of the simplicity the current state machine has; see **KNOT-ADR-002**
+(mobile scaffold hand-authored) and **KNOT-ADR-007** (minimal dependency set) for the same
+discipline applied elsewhere.
 
-**Recommendation.** Dispatch a task to introduce navigation (a tab navigator plus a stack per
-tab, most likely `react-navigation`) at the moment the tab bar is built — post-KNOT-008, once
-Discovery Map has landed — and confirm this document's proposal at that point rather than
-treating it as settled now.
+**Recommendation.** Keep the hand-rolled tab bar until a concrete flow needs what it cannot
+express — a deep link into a nested screen, a real back stack within a tab, or a modal that must
+survive a tab switch. At that point, adopt a router and convert this document's remaining
+proposals into that decision.

@@ -16,6 +16,7 @@ Migrations live in `backend/go/migrations/` and are applied with
 | `0003`  | `story_versions` | The `story_versions` table, its indexes and constraints, and the `stories` refactor that moves content into a root version |
 | `0004`  | `conversations` | The `comments` and `bridges` tables, their indexes and constraints |
 | `0005`  | `rooted`  | The `rooted_signals` table, its indexes, and its duration-bucket constraint |
+| `0006`  | `discovery` | The `stories.approximate_location_lower` column, its backfill, and its index |
 
 Applied versions are recorded in the `schema_migrations` table, which the runner creates
 on first use.
@@ -64,6 +65,7 @@ Language Tree, Conversations, Bridges) references `stories.id`.
 | `pillar`               | `text`         | no       | —                   | `CHECK (pillar IN ('wonder', 'heritage'))`                   |
 | `root_version_id`      | `uuid`         | no       | —                   | References `story_versions(id)`. The story's root version; see [the root version invariant](#the-root-version-invariant) |
 | `approximate_location` | `text`         | yes      | `NULL`              | Coarse location only; precise location is out of scope        |
+| `approximate_location_lower` | `text`   | yes      | `NULL`              | Normalised `lower(trim(approximate_location))`, maintained on write and backfilled by `0006`; groups stories by place. No coordinates, no geocoding |
 | `media_urls`           | `text[]`       | no       | `'{}'`              | The application always writes an array, never `NULL`          |
 | `sensitive`            | `boolean`      | no       | `false`             | Marks a story that should not be surfaced without care        |
 | `created_at`           | `timestamptz`  | no       | `now()`             | The feed's primary sort key                                  |
@@ -81,6 +83,7 @@ live on `story_versions`, where the story's content belongs. See
 | `stories_created_at_id_idx` | Btree index (descending)   | `(created_at DESC, id DESC)`   | Serves the feed's `ORDER BY` and its keyset seek together        |
 | `stories_author_id_idx`   | Btree index                  | `author_id`                    | "Stories by this person", and the cascade on user deletion       |
 | `stories_pillar_idx`      | Btree index                  | `pillar`                       | Filtering the feed by pillar                                     |
+| `stories_approximate_location_lower_idx` | Btree index | `approximate_location_lower` | Groups stories into place clusters for discovery                 |
 | `stories_root_version_id_unique` | Unique index (btree)  | `root_version_id`              | A root version anchors at most one story, and a story's root is looked up by it |
 | `stories_author_id_fkey`  | Foreign key                  | `author_id` → `users(id)`      | `ON DELETE CASCADE`: deleting an account removes its stories     |
 | `stories_root_version_id_fkey` | Foreign key             | `root_version_id` → `story_versions(id)` | `ON DELETE RESTRICT`: a story always has a root, so its root version cannot be deleted while the story exists |
@@ -92,6 +95,20 @@ index is **descending on both columns and in the same order**, so PostgreSQL see
 directly to the resume point instead of sorting the table. It is deliberately separate
 from `stories_author_id_idx`: a filter on `author_id` needs a different column order
 than a feed page does.
+
+### Place normalisation for discovery
+
+`approximate_location_lower` is a normalised copy of `approximate_location`, added in migration
+`0006`. Grouping stories by place has to fold "Cape Town" and "cape town" into one place, so
+discovery groups on `lower(trim(approximate_location))` rather than on the raw column. The
+application writes the column on story create — the `INSERT` computes `lower(trim($3))`, so it
+cannot drift from the raw value — and migration `0006` backfilled the rows that already
+existed.
+
+This is normalisation-for-grouping only: there are no coordinates, no spatial index, and no
+geocoding. The mobile client resolves a place name to a point with a local lookup table, and a
+place it does not know is listed rather than plotted. See KNOT-ADR-020, and
+[`Discovery`](API.md#discovery) for the read endpoints.
 
 ### Deliberate omissions
 

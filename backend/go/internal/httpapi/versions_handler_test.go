@@ -181,12 +181,17 @@ func newVersionsRouter(t *testing.T, logger *slog.Logger, service VersionsServic
 		t.Fatalf("NewRootedHandler() error = %v, want nil", err)
 	}
 
+	discoveryHandler, err := NewDiscoveryHandler(fakeDiscoveryService{}, &fakeRootedService{}, logger)
+	if err != nil {
+		t.Fatalf("NewDiscoveryHandler() error = %v, want nil", err)
+	}
+
 	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID}, logger)
 	if err != nil {
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}
 
-	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, authMiddleware, "0.1.0", logger)
+	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, authMiddleware, "0.1.0", logger)
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v, want nil", err)
 	}

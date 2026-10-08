@@ -40,13 +40,14 @@ type Router struct {
 	versions       *VersionsHandler
 	conversations  *ConversationsHandler
 	rooted         *RootedHandler
+	discovery      *DiscoveryHandler
 	authMiddleware *AuthMiddleware
 	version        string
 	logger         *slog.Logger
 }
 
 // NewRouter returns the root handler for the API.
-func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
+func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
 	if auth == nil {
 		return nil, errNilHandler("auth")
 	}
@@ -62,6 +63,9 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 	if rootedHandler == nil {
 		return nil, errNilHandler("rooted")
 	}
+	if discoveryHandler == nil {
+		return nil, errNilHandler("discovery")
+	}
 	if authMiddleware == nil {
 		return nil, errNilHandler("auth middleware")
 	}
@@ -74,6 +78,7 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 		versions:       versionsHandler,
 		conversations:  conversationsHandler,
 		rooted:         rootedHandler,
+		discovery:      discoveryHandler,
 		authMiddleware: authMiddleware,
 		version:        version,
 		logger:         logger,
@@ -115,6 +120,12 @@ func (r *Router) Handler() http.Handler {
 	mux.HandleFunc("POST /users/me/rooted", r.authMiddleware.Require(r.rooted.SetSignal))
 	mux.HandleFunc("GET /users/me/rooted", r.authMiddleware.Require(r.rooted.GetMySignals))
 	mux.HandleFunc("GET /users/{id}/rooted", r.rooted.GetUserSignals)
+
+	// Discovery: finding stories by place. Both routes are public. The place is a
+	// path segment and is URL-decoded by the router, so a client may send
+	// "Cape%20Town" and reach the handler with "Cape Town".
+	mux.HandleFunc("GET /discovery/clusters", r.discovery.Clusters)
+	mux.HandleFunc("GET /discovery/places/{place}", r.discovery.PlaceStories)
 
 	return withRequestID(withRequestLogging(r.logger, withRecover(r.logger, mux)))
 }

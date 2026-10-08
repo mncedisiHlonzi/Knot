@@ -49,12 +49,16 @@ func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 // statement, by which point both rows exist, so the write is atomic without a
 // deferrable constraint.
 func (s *PostgresStore) CreateStory(ctx context.Context, story Story) (Story, error) {
+	// approximate_location_lower is a normalised copy of approximate_location,
+	// maintained here so discovery can group by place without treating casing or
+	// surrounding space as a different place. The expression matches the one in
+	// migration 0006, so an existing row and a newly written row normalise alike.
 	const query = `
 		WITH new_story AS (
 			INSERT INTO stories (
-				author_id, pillar, approximate_location, media_urls, sensitive, root_version_id
+				author_id, pillar, approximate_location, approximate_location_lower, media_urls, sensitive, root_version_id
 			)
-			VALUES ($1, $2, $3, $4, $5, gen_random_uuid())
+			VALUES ($1, $2, $3, lower(trim($3)), $4, $5, gen_random_uuid())
 			RETURNING id, author_id, root_version_id, pillar, approximate_location, media_urls, sensitive, created_at, updated_at
 		), new_version AS (
 			INSERT INTO story_versions (
