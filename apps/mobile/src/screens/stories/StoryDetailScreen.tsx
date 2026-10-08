@@ -72,7 +72,7 @@ export default function StoryDetailScreen({
   return (
     <ScrollView contentContainerStyle={styles.content}>
       <Pressable style={styles.link} onPress={onBack}>
-        <Text style={styles.linkText}>Back to stories</Text>
+        <Text style={styles.linkText}>← Back</Text>
       </Pressable>
 
       {loading ? <ActivityIndicator style={styles.spinner} /> : null}

@@ -99,7 +99,7 @@ export default function LoginScreen({
       </Pressable>
 
       <Pressable style={styles.link} onPress={onSwitchToRegister}>
-        <Text style={styles.linkText}>Need an account? Register</Text>
+        <Text style={styles.linkText}>Don't have an account? Create one</Text>
       </Pressable>
     </ScrollView>
   );

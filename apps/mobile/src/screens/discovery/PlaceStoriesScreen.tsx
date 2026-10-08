@@ -121,7 +121,7 @@ export default function PlaceStoriesScreen({
       ListHeaderComponent={
         <View>
           <Pressable style={styles.link} onPress={onBack}>
-            <Text style={styles.linkText}>Back to map</Text>
+            <Text style={styles.linkText}>← Back</Text>
           </Pressable>
           <Text style={styles.title}>{place}</Text>
 

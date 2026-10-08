@@ -182,7 +182,7 @@ export default function CommentThreadScreen({
     <View style={styles.container}>
       <View style={styles.header}>
         <Pressable style={styles.link} onPress={onBack}>
-          <Text style={styles.linkText}>Back to story</Text>
+          <Text style={styles.linkText}>← Back</Text>
         </Pressable>
         <Text style={styles.title}>Conversation</Text>
         <Text style={styles.hint}>

@@ -522,3 +522,44 @@ Nothing stops a non-UUID string from being passed as an id at compile time; the 
 **Reason:** OSM is the cheapest viable option at MVP scale: zero setup cost, no key, no account, no billing. It is a raster tile layer over the map component the app already has, so the change is one component and no dependency.
 
 **Consequences:** OSM's tile usage policy discourages bulk or high-volume use and asks that clients identify themselves and keep traffic modest — fine for on-device development and a small user base, not for production scale. When Knot's user base grows, migrate the basemap to Google Maps (with a key) or Mapbox; because only the `<UrlTile>` block changes, this is a contained change to `DiscoveryMapScreen`. Tracking that migration as a Phase 2+ task is the exit from this decision. The Google Maps API key placeholder in `android/app/src/main/res/values/strings.xml` is left in place (unused, harmless) so the Google path needs no re-plumbing if it is chosen.
+
+---
+
+## KNOT-ADR-024 — Session persistence via AsyncStorage
+
+**Decision ID:** KNOT-ADR-024
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** The mobile session — the access token, the refresh token, and the user profile — lived only in React component state, so closing the app lost it and every restart meant registering again. On-device verification flagged this as the most blocking UX problem. The task had to decide where the session is persisted, and whether to protect it.
+
+**Decision:** Persist the session in **`@react-native-async-storage/async-storage`** under a single, versioned key, `knot.session.v1`, as JSON holding `{ accessToken, refreshToken, user }`. `App.tsx` loads it on launch and restores it before rendering; login and register save it; sign-out clears it. AsyncStorage is the **only** new dependency. The storage layer is **total**: every failure is logged and swallowed, a missing or corrupted value resolving to `null` ("not signed in") rather than throwing.
+
+**Alternatives Considered:**
+1. Secure/encrypted storage (Keychain/Keystore via `react-native-keychain`, or `expo-secure-store`) — deferred, not rejected on merit. It is the correct home for credentials, but it is a heavier native dependency with per-platform APIs, and the app today stores nothing sensitive: the tokens are short-lived MVP credentials and the profile is a name and an email. Deferring keeps this change small and the new-dependency count at one.
+2. No persistence (in-memory only) — rejected. That is the bug being fixed.
+3. Persisting only the tokens and re-fetching the user on launch — rejected for now. There is no "GET /users/me" endpoint, and adding one is a non-goal; the register/login response already carries the profile, so storing it avoids a new endpoint and an extra round-trip.
+
+**Reason:** AsyncStorage is the standard, smallest, zero-configuration key-value store for React Native, and the session is a single small JSON blob. A versioned key means a future change to the stored shape can migrate or discard an old value instead of crashing on it. Making the storage layer total — never throwing — means an unavailable or corrupt store degrades to "logged out", which is the safe state.
+
+**Consequences:** The tokens are stored **unencrypted**, readable by anything that can read the app's sandbox. That is accepted only because there is no sensitive data yet; the trigger to migrate to encrypted storage is the moment Knot stores anything sensitive or ships to real users, and the versioned key exists so that migration can be additive. There is **no refresh-token rotation or auto-refresh**: an expired access token means a signed-out user until a later task adds refresh (a non-goal here). Sign-out clears the stored key, so signing out survives a restart.
+
+---
+
+## KNOT-ADR-025 — Navigation via header back buttons and an overlay stack, no navigation library yet
+
+**Decision ID:** KNOT-ADR-025
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** KNOT-008 modelled navigation (KNOT-ADR-019) as a single optional overlay over one of four tabs, with each overlay hard-coding where its "back" went. Two problems surfaced on device: the way back was unclear on some screens, and the **Android hardware back button was not handled** at all, so pressing it exited the app rather than returning to the previous screen. The task had to decide whether to adopt a navigation library now or extend the hand-rolled model.
+
+**Decision:** Keep the hand-rolled model and extend it in two ways. First, the overlay becomes a **stack**: `apps/mobile/src/navigation/overlayStack.ts` provides pure `push`/`pop`/`replace`/`popAll` helpers over an array, and `App.tsx` holds the stack in state, so back is always "pop". Second, **every overlay screen renders a "← Back" affordance** at the top-left and `App.tsx` wires the **Android hardware back button** (`BackHandler`) to pop one overlay, falling through to the OS only when the stack is empty. **No navigation library is added.**
+
+**Alternatives Considered:**
+1. Adopt `@react-navigation` (native stack) — rejected for now. It is the right answer for deep stacks, deep linking, per-tab stacks, and gesture transitions, but none of those are needed yet, and it is a large dependency with its own native peers (`react-native-screens`, `react-native-safe-area-context`) that would have to be built and verified on the device.
+2. Keep the single overlay and only fix each back target — rejected. It cannot express "return to where I came from" when one screen is reachable from two places (a story opened from the feed versus from a place's stories), which is a case that was losing its parent.
+
+**Reason:** A stack is the smallest model that makes back correct and uniform — pop always reveals the previous screen, whether that is a tab or another overlay, so every screen's back action is the same function. It is pure array arithmetic, trivially testable, and adds no navigation dependency. Handling the Android hardware back button is part of the platform contract and was the concrete "stuck" bug.
+
+**Consequences:** Back targets are now derived from the stack rather than written per screen, so adding a screen means pushing it, not wiring a return path. There is still **no deep linking**, no per-tab navigation state, and no gesture or transition animation — the device back button and the on-screen "← Back" are the whole of back handling. The trigger to revisit is a flow the stack cannot express: a deep link into a nested screen, a real per-tab stack, or a modal that must survive a tab switch; at that point a router should supersede this ADR rather than be worked around. The four tab screens stay top-level. `CreateStoryScreen` and `ProfileScreen` also keep their pre-existing "Cancel"/"Back" affordances — those are tab-level actions, not overlay back navigation — and were left unchanged.

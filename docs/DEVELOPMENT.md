@@ -148,7 +148,7 @@ imported directly. Values that fall between the documented scale steps stay nume
 example a `paddingVertical: 10`), and `BRAND.md` remains the source of truth for every
 token value.
 
-### Native dependencies (react-native-maps)
+### Native dependencies (react-native-maps, AsyncStorage)
 
 The Discovery Map uses **`react-native-maps`** (KNOT-008) — the first mobile dependency with a
 **native** component. The JavaScript layer (lint, typecheck, and Jest) runs with no native
@@ -169,6 +169,30 @@ these are the setup steps a native build needs:
 - The map resolves place names with a **local lookup table**
   (`apps/mobile/src/data/placeCoordinates.ts`), not a geocoding service, so no key is needed at
   all: neither to *use* the feature nor to render the basemap (OSM tiles need no key).
+
+**`@react-native-async-storage/async-storage`** (KNOT-009) is the second native module. It is
+installed by `npm install` and needs no key or configuration, but because it is native it
+changed the native app: after pulling this change, run `npm install` and then **rebuild** —
+`npx react-native run-android` on Android (run `pod install` in `ios/` first on iOS). A Metro
+reload alone is not enough.
+
+### Session persistence
+
+The signed-in session is **persisted across restarts** (KNOT-009, KNOT-ADR-024). `App.tsx`
+loads it from AsyncStorage under the key `knot.session.v1` on launch and restores it before
+rendering, so a returning user goes straight to the feed instead of the login screen. A
+successful login or register saves the session; signing out clears it.
+
+- The stored value is `{ accessToken, refreshToken, user }` as JSON, written and read by
+  `apps/mobile/src/session/session.ts`. Storage is best-effort: a missing or corrupted value is
+  logged and treated as "not signed in" rather than crashing the app.
+- The session lives in **AsyncStorage, which is unencrypted**. This is acceptable only because
+  there is no sensitive data yet; moving to encrypted storage before there is any is tracked in
+  KNOT-ADR-024.
+- **Login is the default auth screen**; a "Don't have an account? Create one" link switches to
+  Register, which links back to Login.
+- There is **no token refresh** yet: when the access token expires the user must sign in again.
+  Auto-refresh is a future task.
 
 ### Running the mobile app
 

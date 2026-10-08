@@ -60,7 +60,7 @@ export default function LanguageTreeScreen({
   return (
     <ScrollView contentContainerStyle={styles.content}>
       <Pressable style={styles.link} onPress={onBack}>
-        <Text style={styles.linkText}>Back to story</Text>
+        <Text style={styles.linkText}>← Back</Text>
       </Pressable>
 
       <Text style={styles.title}>Language tree</Text>

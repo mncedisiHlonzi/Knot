@@ -141,7 +141,7 @@ export default function AdaptStoryScreen({
   return (
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       <Pressable style={styles.link} onPress={onCancel}>
-        <Text style={styles.linkText}>Cancel</Text>
+        <Text style={styles.linkText}>← Back</Text>
       </Pressable>
 
       <Text style={styles.title}>Adapt for my people</Text>

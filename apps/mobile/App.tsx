@@ -1,12 +1,20 @@
-import React, { useState } from 'react';
-import { SafeAreaView, StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, BackHandler, SafeAreaView, StyleSheet, View } from 'react-native';
 
-import type { AuthResponse } from './src/api/client';
+import type { AuthResponse, User } from './src/api/client';
 import type { Comment } from './src/api/conversations';
 import type { Story } from './src/api/stories';
-import { spacing } from './src/theme';
+import { colors, spacing } from './src/theme';
 import TabBar from './src/components/TabBar';
 import type { TabName } from './src/components/TabBar';
+import {
+  popAllOverlays,
+  popOverlay,
+  pushOverlay,
+  replaceOverlay,
+  topOverlay,
+} from './src/navigation/overlayStack';
+import { clearSession, loadSession, saveSession, Session } from './src/session/session';
 import LoginScreen from './src/screens/auth/LoginScreen';
 import RegisterScreen from './src/screens/auth/RegisterScreen';
 import BridgeScreen from './src/screens/conversations/BridgeScreen';
@@ -25,9 +33,11 @@ import StoryDetailScreen from './src/screens/stories/StoryDetailScreen';
  * A non-tab screen, pushed over the tab bar.
  *
  * The four primary destinations are tabs (see `TabName`); every other screen is
- * an overlay on top of whichever tab is active. Each overlay carries the ids it
- * needs both to render and to navigate back, so returning from one is a matter of
- * setting the overlay to the previous one, or to null for the tab beneath.
+ * an overlay on top of whichever tab is active. Overlays form a stack (see
+ * `overlayStack.ts`): each carries the ids it needs both to render and to open
+ * the next screen, so back is always "pop the stack" rather than a hard-coded
+ * target. Each variant's payload is compile-time checked, which a loose
+ * `{ name, props }` shape would not give.
  */
 type Overlay =
   | { readonly name: 'detail'; readonly storyId: string }
@@ -43,44 +53,104 @@ type Overlay =
   | { readonly name: 'rootedSetup' }
   | { readonly name: 'placeStories'; readonly place: string };
 
-/** The two auth screens, shown before there is a session. */
-type AuthScreen = 'register' | 'login';
+/** The two auth screens, shown before there is a session. Login is the default. */
+type AuthMode = 'login' | 'register';
+
+/**
+ * The first preferred language tag that is not blank, or "en" when the profile
+ * names none. Used to seed the language field when adapting and commenting.
+ */
+function preferredLanguage(user: User): string {
+  return user.preferred_languages.find((tag) => tag.trim() !== '') ?? 'en';
+}
 
 /**
  * Root component for the Knot mobile app.
  *
- * The app has two levels: an active tab (Home, Map, Create, Profile), and an
- * optional overlay screen pushed over it. Splitting the two means the tab bar is
- * only ever shown for a primary destination, and a secondary screen (a story, a
- * place, the composer's follow-ups) replaces the whole surface until dismissed.
- * This is a hand-rolled state machine, not a navigation library; see KNOT-ADR-019.
+ * The app has three pieces of navigation state: an active tab (Home, Map,
+ * Create, Profile), a stack of overlay screens pushed over it, and — before there
+ * is a session — which auth screen is showing. The tab bar is rendered only when
+ * the overlay stack is empty, so a secondary screen covers the whole surface
+ * until it is popped. This is a hand-rolled state machine, not a navigation
+ * library; see KNOT-ADR-019 and KNOT-ADR-025.
  *
- * Auth tokens live in component state only: they are lost when the app restarts.
- * Persistent storage is a later task, so this is deliberately in-memory for now.
+ * The session is restored from AsyncStorage on launch and written back on login
+ * or register, so it survives a restart; signing out clears it (KNOT-ADR-024).
  */
 export default function App(): React.ReactElement {
+  const [session, setSession] = useState<Session | null>(null);
+  // True until the stored session has been read once, so a returning user does
+  // not see the login screen flash before their session is restored.
+  const [restoring, setRestoring] = useState(true);
+  const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [tab, setTab] = useState<TabName>('feed');
-  const [overlay, setOverlay] = useState<Overlay | null>(null);
-  const [authScreen, setAuthScreen] = useState<AuthScreen>('register');
-  const [session, setSession] = useState<AuthResponse | null>(null);
+  const [overlays, setOverlays] = useState<readonly Overlay[]>([]);
+
+  // Restore a stored session on first mount. loadSession never throws: a missing
+  // or corrupted value resolves to null, which just means "show the login".
+  useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      const stored = await loadSession();
+      if (!active) {
+        return;
+      }
+      if (stored !== null) {
+        setSession(stored);
+      }
+      setRestoring(false);
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  // Android hardware back pops the overlay stack and falls through to the OS
+  // (background the app) only when there is nothing to pop. BackHandler exists on
+  // every platform but only fires on Android, so this is inert on iOS.
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (overlays.length === 0) {
+        return false;
+      }
+      setOverlays((current) => popOverlay(current));
+      return true;
+    });
+
+    return () => subscription.remove();
+  }, [overlays]);
+
+  /** Pops the top overlay — the back action every overlay screen calls. */
+  const handleBack = useCallback((): void => {
+    setOverlays((current) => popOverlay(current));
+  }, []);
 
   function handleAuthenticated(result: AuthResponse): void {
-    setSession(result);
+    const next: Session = {
+      accessToken: result.access_token,
+      refreshToken: result.refresh_token,
+      user: result.user,
+    };
+    void saveSession(next);
+    setSession(next);
     setTab('feed');
-    setOverlay(null);
+    setOverlays((current) => popAllOverlays(current));
   }
 
   function handleSignOut(): void {
+    void clearSession();
     setSession(null);
-    setOverlay(null);
+    setOverlays((current) => popAllOverlays(current));
     setTab('feed');
-    setAuthScreen('register');
+    setAuthMode('login');
   }
 
   function handleStoryCreated(story: Story): void {
     // Show the story the server actually stored, rather than assuming the form's
     // contents are what was persisted.
-    setOverlay({ name: 'detail', storyId: story.id });
+    setOverlays((current) => pushOverlay(current, { name: 'detail', storyId: story.id }));
   }
 
   /**
@@ -89,18 +159,20 @@ export default function App(): React.ReactElement {
    * The session is passed in rather than read from state so the type checker can
    * see that it is non-null here.
    */
-  function renderTab(current: AuthResponse): React.ReactElement {
+  function renderTab(current: Session): React.ReactElement {
     switch (tab) {
       case 'discoveryMap':
         return (
           <DiscoveryMapScreen
-            onOpenPlace={(place) => setOverlay({ name: 'placeStories', place })}
+            onOpenPlace={(place) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'placeStories', place }))
+            }
           />
         );
       case 'createStory':
         return (
           <CreateStoryScreen
-            token={current.access_token}
+            token={current.accessToken}
             onCreated={handleStoryCreated}
             onCancel={() => setTab('feed')}
           />
@@ -109,9 +181,9 @@ export default function App(): React.ReactElement {
         return (
           <ProfileScreen
             userId={current.user.id}
-            token={current.access_token}
+            token={current.accessToken}
             currentUser={current.user}
-            onSetRooted={() => setOverlay({ name: 'rootedSetup' })}
+            onSetRooted={() => setOverlays((stack) => pushOverlay(stack, { name: 'rootedSetup' }))}
             onBack={() => setTab('feed')}
           />
         );
@@ -120,7 +192,9 @@ export default function App(): React.ReactElement {
         return (
           <FeedScreen
             email={current.user.email}
-            onOpenStory={(id) => setOverlay({ name: 'detail', storyId: id })}
+            onOpenStory={(id) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId: id }))
+            }
             onCreateStory={() => setTab('createStory')}
             onSignOut={handleSignOut}
           />
@@ -129,11 +203,18 @@ export default function App(): React.ReactElement {
   }
 
   /**
-   * Renders the overlay screen over the active tab, or the tab itself when there
-   * is no overlay.
+   * Renders the top overlay over the active tab, or the tab itself when the stack
+   * is empty.
+   *
+   * Every overlay's back action is the same: pop the stack, revealing whatever was
+   * underneath — the tab, or the screen that pushed it. Advancing pushes a new
+   * overlay; a screen that hands off in place (adapting a story, then its tree)
+   * replaces its own entry via `replaceOverlay`.
    */
-  function renderOverlay(current: AuthResponse): React.ReactElement {
-    if (overlay === null) {
+  function renderOverlay(current: Session): React.ReactElement {
+    const overlay = topOverlay(overlays);
+
+    if (overlay === undefined) {
       return renderTab(current);
     }
 
@@ -142,13 +223,19 @@ export default function App(): React.ReactElement {
         return (
           <StoryDetailScreen
             id={overlay.storyId}
-            onBack={() => setOverlay(null)}
+            onBack={handleBack}
             onAdapt={(parentVersionId) =>
-              setOverlay({ name: 'adapt', storyId: overlay.storyId, parentVersionId })
+              setOverlays((stack) =>
+                pushOverlay(stack, { name: 'adapt', storyId: overlay.storyId, parentVersionId }),
+              )
             }
-            onViewTree={() => setOverlay({ name: 'tree', storyId: overlay.storyId })}
+            onViewTree={() =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'tree', storyId: overlay.storyId }))
+            }
             onConversation={(versionId) =>
-              setOverlay({ name: 'comments', storyId: overlay.storyId, versionId })
+              setOverlays((stack) =>
+                pushOverlay(stack, { name: 'comments', storyId: overlay.storyId, versionId }),
+              )
             }
           />
         );
@@ -157,74 +244,63 @@ export default function App(): React.ReactElement {
           <AdaptStoryScreen
             storyId={overlay.storyId}
             parentVersionId={overlay.parentVersionId}
-            token={current.access_token}
-            defaultLanguage={
-              current.user.preferred_languages.find((tag) => tag.trim() !== '') ?? 'en'
+            token={current.accessToken}
+            defaultLanguage={preferredLanguage(current.user)}
+            onAdapted={() =>
+              setOverlays((stack) =>
+                replaceOverlay(stack, { name: 'tree', storyId: overlay.storyId }),
+              )
             }
-            onAdapted={() => setOverlay({ name: 'tree', storyId: overlay.storyId })}
-            onCancel={() => setOverlay({ name: 'detail', storyId: overlay.storyId })}
+            onCancel={handleBack}
           />
         );
       case 'tree':
-        return (
-          <LanguageTreeScreen
-            storyId={overlay.storyId}
-            onBack={() => setOverlay({ name: 'detail', storyId: overlay.storyId })}
-          />
-        );
+        return <LanguageTreeScreen storyId={overlay.storyId} onBack={handleBack} />;
       case 'comments':
         return (
           <CommentThreadScreen
             versionId={overlay.versionId}
-            token={current.access_token}
+            token={current.accessToken}
             language={current.user.preferred_languages.find((tag) => tag.trim() !== '')}
             onBridge={(comment) =>
-              setOverlay({
-                name: 'bridge',
-                storyId: overlay.storyId,
-                versionId: overlay.versionId,
-                comment,
-              })
+              setOverlays((stack) =>
+                pushOverlay(stack, {
+                  name: 'bridge',
+                  storyId: overlay.storyId,
+                  versionId: overlay.versionId,
+                  comment,
+                }),
+              )
             }
-            onBack={() => setOverlay({ name: 'detail', storyId: overlay.storyId })}
+            onBack={handleBack}
           />
         );
       case 'bridge':
         return (
           <BridgeScreen
             sourceComment={overlay.comment}
-            token={current.access_token}
+            token={current.accessToken}
             preferredLanguages={current.user.preferred_languages}
-            onBridged={() =>
-              setOverlay({
-                name: 'comments',
-                storyId: overlay.storyId,
-                versionId: overlay.versionId,
-              })
-            }
-            onCancel={() =>
-              setOverlay({
-                name: 'comments',
-                storyId: overlay.storyId,
-                versionId: overlay.versionId,
-              })
-            }
+            onBridged={handleBack}
+            onCancel={handleBack}
           />
         );
       case 'rootedSetup':
         return (
           <RootedSetupScreen
-            token={current.access_token}
-            onSaved={() => setOverlay(null)}
-            onCancel={() => setOverlay(null)}
+            token={current.accessToken}
+            onSaved={handleBack}
+            onCancel={handleBack}
           />
         );
       case 'placeStories':
         return (
           <PlaceStoriesScreen
             place={overlay.place}
-            onOpenStory={(id) => setOverlay({ name: 'detail', storyId: id })}
-            onBack={() => setOverlay(null)}
+            onOpenStory={(id) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId: id }))
+            }
+            onBack={handleBack}
           />
         );
       default:
@@ -232,18 +308,26 @@ export default function App(): React.ReactElement {
     }
   }
 
+  if (restoring) {
+    return (
+      <SafeAreaView style={styles.loadingContainer}>
+        <ActivityIndicator color={colors.brand.purple} size="large" />
+      </SafeAreaView>
+    );
+  }
+
   if (session === null) {
     return (
       <SafeAreaView style={styles.authContainer}>
-        {authScreen === 'login' ? (
+        {authMode === 'login' ? (
           <LoginScreen
             onAuthenticated={handleAuthenticated}
-            onSwitchToRegister={() => setAuthScreen('register')}
+            onSwitchToRegister={() => setAuthMode('register')}
           />
         ) : (
           <RegisterScreen
             onAuthenticated={handleAuthenticated}
-            onSwitchToLogin={() => setAuthScreen('login')}
+            onSwitchToLogin={() => setAuthMode('login')}
           />
         )}
       </SafeAreaView>
@@ -253,7 +337,7 @@ export default function App(): React.ReactElement {
   return (
     <SafeAreaView style={styles.storyContainer}>
       <View style={styles.body}>{renderOverlay(session)}</View>
-      {overlay === null ? <TabBar activeTab={tab} onSelect={setTab} /> : null}
+      {overlays.length === 0 ? <TabBar activeTab={tab} onSelect={setTab} /> : null}
     </SafeAreaView>
   );
 }
@@ -266,6 +350,11 @@ const styles = StyleSheet.create({
   },
   body: {
     flex: 1,
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'center',
   },
   storyContainer: {
     flex: 1,
