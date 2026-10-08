@@ -461,3 +461,64 @@ Nothing stops a non-UUID string from being passed as an id at compile time; the 
 **Reason:** Normalising a text field is the least invasive way to make "the same place" mean the same thing in a query. Keeping the author's original spelling in `approximate_location` preserves what they typed, while the lowercased copy is a pure derivation the application can maintain in the same statement that writes the row — so the two cannot drift. Pushing coordinates to the client keeps the server free of precise location data and keeps the map a presentation concern, which is where an exact-match lookup table is adequate for an MVP.
 
 **Consequences:** Place matching is **exact after normalisation**: "Cape Town" and "cape town" are one place, but "Cape Town, South Africa" is a different one, and the map will list rather than plot it — a known MVP limit, not a silent failure. The client lookup table is curated and must be extended as places are used; it is not a geocoder and does not guess. If places later need to be curated or merged, a canonical place table is the natural next step, and the normalised column is the bridge to it. The `languages` figure in a cluster is aggregated from **root versions only**, while the language *filter* matches any version; both are deliberate and recorded here so the asymmetry is a choice rather than an accident.
+
+---
+
+## KNOT-ADR-021 — New Architecture disabled for MVP
+
+**Decision ID:** KNOT-ADR-021
+**Date:** 2026-10-08
+**Status:** Accepted
+
+**Context:** React Native 0.76 enables the New Architecture (Fabric renderer + TurboModules) by default, and the KNOT-008a native Android scaffold inherited `newArchEnabled=true`. Building with the New Architecture on Android compiles the React Native C++ core, which requires the Android NDK — a roughly 1.5 GB download that repeatedly timed out and hung on the founder's network, blocking the first physical-device build entirely.
+
+**Decision:** Set `newArchEnabled=false` in `apps/mobile/android/gradle.properties`, opting the Android build into the legacy architecture for the MVP. The `ndkVersion` pins in `android/build.gradle` and `android/app/build.gradle` are commented out to match, since the NDK is only pulled in for New Architecture C++ compilation.
+
+**Alternatives Considered:**
+1. Install the NDK manually and keep the New Architecture on — rejected for now. It is a ~1.5 GB download that already failed on the founder's network, and it buys a performance feature the app cannot yet use.
+2. Leave `newArchEnabled=true` and accept a build that does not complete — rejected outright. The app must build and run on a device before any further product work is verifiable.
+
+**Reason:** Knot has **no custom native C++ code**. The New Architecture is a performance and interop story for large component trees and for libraries that adopt its APIs; at MVP scale, with a handful of screens and one native module, it provides no benefit that justifies a 1.5 GB toolchain download. Disabling it is the smallest change that makes the native build reproducible on an ordinary connection.
+
+**Consequences:** The app runs on the legacy architecture until this ADR is revisited. Revisit when (a) a required native library only ships New Architecture support and cannot be worked around, or (b) Knot's component tree grows large enough that the Fabric renderer's performance is needed. Re-enabling requires the NDK to be installed, so it is a deliberate toolchain change, not a one-line toggle.
+
+---
+
+## KNOT-ADR-022 — react-native-maps pinned to 1.14.0
+
+**Decision ID:** KNOT-ADR-022
+**Date:** 2026-10-08
+**Status:** Accepted
+
+**Context:** KNOT-008 (KNOT-ADR-018) added `react-native-maps` at `^1.29.11`. With the New Architecture disabled (KNOT-ADR-021), the Android build of `1.29.11` fails to compile: it uses `ViewManagerWithGeneratedInterface`, an API that only exists under the New Architecture, so its generated interfaces are not produced on the legacy architecture.
+
+**Decision:** Pin `react-native-maps` to `^1.14.0` — the version that supports the legacy architecture — in `apps/mobile/package.json` (and the lockfile). The API surface used by the app (`MapView`, `Marker`, `UrlTile`) is identical across the two versions, so no screen code changes.
+
+**Alternatives Considered:**
+1. Re-enable the New Architecture to keep `1.29.11` — rejected: that is KNOT-ADR-021, which exists precisely to avoid the NDK download this would require.
+2. Switch the map to Mapbox (`@rnmapbox/maps`) — rejected for now. It is a different native dependency with its own account, token, and setup, replacing a working module to solve a version conflict that a pin already solves.
+3. Remove maps entirely — rejected. The Discovery Map is a Phase 1 feature (KNOT-008); dropping it is a product decision, not a build workaround.
+
+**Reason:** `1.14.0` provides everything the current screen needs — `MapView`, `Marker`, and `UrlTile` — with the same component API, so the downgrade is invisible in application code. It is the version that matches the architecture the app is actually building, which is the correct thing to pin against.
+
+**Consequences:** The map library trails the newest release until the New Architecture is enabled. The caret range is kept as `^1.14.0` in `package.json`; if patch or minor releases under `1.x` ever diverge from the legacy architecture again, the version should be pinned exactly (no `^`) to prevent a surprise upgrade in a lockfile refresh. Upgrading back to a New-Architecture release is a follow-up to KNOT-ADR-021, not a separate decision.
+
+---
+
+## KNOT-ADR-023 — OpenStreetMap tile provider for MVP
+
+**Decision ID:** KNOT-ADR-023
+**Date:** 2026-10-08
+**Status:** Accepted
+
+**Context:** `react-native-maps` on Android draws its basemap with the Google Maps SDK by default. Rendering it requires a Google Cloud project with a valid billing method and an API key, even for usage that stays inside the free tier. The founder has no billing-enabled Cloud account available, so the default basemap cannot render and the map shows no tiles.
+
+**Decision:** Draw the map with **OpenStreetMap raster tiles** via the `UrlTile` component inside `MapView`, pointing at `https://tile.openstreetmap.org/{z}/{x}/{y}.png` with `maximumZ={19}`. No Google Maps API key is required, and no signup or billing account is needed. `UrlTile` ships inside `react-native-maps@1.14.0`, so no new dependency is added.
+
+**Alternatives Considered:**
+1. Google Maps SDK — rejected for now. It requires a billing-enabled Google Cloud project and an API key before a single tile renders; that is setup cost and a card on file for an MVP that has no revenue yet.
+2. Mapbox — rejected. Its free tier is usable, but it is a native module change (a different package, token, and build configuration) to solve what a single `UrlTile` component already solves.
+
+**Reason:** OSM is the cheapest viable option at MVP scale: zero setup cost, no key, no account, no billing. It is a raster tile layer over the map component the app already has, so the change is one component and no dependency.
+
+**Consequences:** OSM's tile usage policy discourages bulk or high-volume use and asks that clients identify themselves and keep traffic modest — fine for on-device development and a small user base, not for production scale. When Knot's user base grows, migrate the basemap to Google Maps (with a key) or Mapbox; because only the `<UrlTile>` block changes, this is a contained change to `DiscoveryMapScreen`. Tracking that migration as a Phase 2+ task is the exit from this decision. The Google Maps API key placeholder in `android/app/src/main/res/values/strings.xml` is left in place (unused, harmless) so the Google path needs no re-plumbing if it is chosen.

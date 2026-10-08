@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import MapView, { Marker, UrlTile } from 'react-native-maps';
 
 import { describeError } from '../../api/client';
 import { PlaceCluster, discoveryApi } from '../../api/discovery';
@@ -105,6 +105,18 @@ export default function DiscoveryMapScreen({
       </View>
 
       <MapView style={styles.map} initialRegion={INITIAL_REGION}>
+        {/*
+         * Use OpenStreetMap raster tiles instead of the platform's default
+         * basemap. The default on Android is the Google Maps SDK, which needs a
+         * Google Cloud project with a billing method and an API key; OSM needs
+         * neither, which is what makes the map renderable for free at MVP scale.
+         *
+         * Migration path: when Knot outgrows OSM's usage policy, swap this one
+         * component for the chosen provider's tile layer (Google Maps with a key,
+         * or Mapbox). MapView and Marker are unchanged, so the rest of this
+         * screen does not move. See KNOT-ADR-023.
+         */}
+        <UrlTile urlTemplate="https://tile.openstreetmap.org/{z}/{x}/{y}.png" maximumZ={19} />
         {plotted.map((cluster) => {
           const coordinate = coordinatesForPlace(cluster.place);
           if (coordinate === undefined) {

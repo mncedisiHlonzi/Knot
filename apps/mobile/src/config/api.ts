@@ -3,13 +3,15 @@
  *
  * React Native has no populated `process.env` at runtime, and this scaffold
  * deliberately adds no build-time env-inlining plugin (KNOT-003 adds no npm
- * dependencies). The base URL therefore comes from a constant, with a defensive
- * read of `process.env.KNOT_API_URL` so that a future build which does inline it
- * takes precedence without changing this module.
+ * dependencies). The base URL therefore comes from a constant — `DEV_API_URL`
+ * in `./dev.ts`, the one place to point the app at a different backend — with a
+ * defensive read of `process.env.KNOT_API_URL` so that a future build which does
+ * inline it takes precedence without changing this module.
  */
+import { DEV_API_URL } from './dev';
 
 /** Used when no build-time override is present. */
-const DEFAULT_API_BASE_URL = 'http://localhost:8080';
+const DEFAULT_API_BASE_URL = DEV_API_URL;
 
 /**
  * Matches `scheme://host[:port][/path]` with no whitespace. A hand-rolled check is

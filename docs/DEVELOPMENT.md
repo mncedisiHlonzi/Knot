@@ -158,16 +158,17 @@ these are the setup steps a native build needs:
 - **iOS:** after `npm install`, run `cd apps/mobile/ios && pod install` before opening the
   project in Xcode. Pods must be reinstalled whenever `react-native-maps` or React Native
   itself changes.
-- **Android:** a Google Maps API key is required. Add it to the app manifest
-  (`android/app/src/main/AndroidManifest.xml`) as
-  `<meta-data android:name="com.google.android.geo.API_KEY" android:value="…" />`. The key is
-  a secret and is never committed; inject it per environment.
+- **Android:** no API key is required. The map draws **OpenStreetMap** tiles through a `UrlTile`
+  component (KNOT-ADR-023), so the Google Maps SDK — and the billing-enabled Google Cloud
+  project and API key it would need — is not used. The `google_maps_api_key` placeholder in
+  `android/app/src/main/res/values/strings.xml` is left in place; it is unused by this path and
+  harmless.
 - The **native projects exist** (`apps/mobile/ios/` and `apps/mobile/android/`, added in
   KNOT-008a), so the map screen has a native host; see [Running the mobile app](#running-the-mobile-app)
   below.
 - The map resolves place names with a **local lookup table**
-  (`apps/mobile/src/data/placeCoordinates.ts`), not a geocoding service, so no API key is
-  needed to *use* the feature — only to render the Google basemap on Android.
+  (`apps/mobile/src/data/placeCoordinates.ts`), not a geocoding service, so no key is needed at
+  all: neither to *use* the feature nor to render the basemap (OSM tiles need no key).
 
 ### Running the mobile app
 
@@ -221,29 +222,128 @@ cd apps/mobile
 npx react-native run-android    # or: npm run android
 ```
 
-Android needs a **Google Maps API key** for `react-native-maps`. Put it in
-`android/app/src/main/res/values/strings.xml`:
+No **Google Maps API key** is needed: the map renders **OpenStreetMap** tiles (KNOT-ADR-023), so
+`react-native-maps` does not use the Google Maps SDK. The committed `google_maps_api_key`
+placeholder in `android/app/src/main/res/values/strings.xml` (referenced from `AndroidManifest.xml`
+as `com.google.android.geo.API_KEY`) is left in place and unused. `android/local.properties`
+(which holds the SDK path) is git-ignored.
 
-```xml
-<string name="google_maps_api_key">YOUR_REAL_KEY</string>
-```
-
-The committed value is the placeholder `YOUR_GOOGLE_MAPS_API_KEY_HERE`, referenced from
-`AndroidManifest.xml` as `com.google.android.geo.API_KEY`. Replace it locally and **never commit
-a real key**. `android/local.properties` (which holds the SDK path) is git-ignored.
+For a **physical device**, see
+[Running the mobile app on Android (physical device)](#running-the-mobile-app-on-android-physical-device)
+below.
 
 On both platforms the app is named **Knot** and the bundle identifier / application id is
 **`com.knot.app`**.
 
 Finally, point the app at the backend. The API base URL comes from
-`apps/mobile/src/config/api.ts`, which reads `KNOT_API_URL` when the bundler inlines it and
-otherwise uses `http://localhost:8080`. On a physical device `localhost` is the device, not your
-machine, so set `KNOT_API_URL` to your machine's LAN address (or use `adb reverse tcp:8080
-tcp:8080`) for the app to reach the API.
+`apps/mobile/src/config/dev.ts` (read by `apps/mobile/src/config/api.ts`), a single constant
+`DEV_API_URL` that is the one place to change. The correct value depends on where the app runs:
+
+| Where the app runs | Set `DEV_API_URL` to        | Why                                         |
+| ------------------ | --------------------------- | ------------------------------------------- |
+| iOS Simulator      | `http://localhost:8080`     | The simulator shares the Mac's loopback     |
+| Android emulator   | `http://10.0.2.2:8080`      | The emulator's alias for the Mac's loopback |
+| Physical device    | `http://<Mac Wi-Fi IP>:8080` | The phone reaches the Mac over the LAN     |
+
+The address is **not a secret and not production configuration** — it is a per-developer,
+per-network value that changes with the Wi-Fi network, which is why it lives in one small file and
+is committed as a convenience default. `apps/mobile/src/config/api.ts` still lets a build-time
+`KNOT_API_URL` (if a future build inlines one) take precedence without editing source.
 
 > **On-device verification of the map is expected after this task.** The map is a native module,
 > so it can only be confirmed by a real build; lint, typecheck, and Jest exercise the JS layer
 > only.
+
+### Running the mobile app on Android (physical device)
+
+This is the full, verified procedure for running the app on a physical Android phone (it was
+confirmed on a Samsung Galaxy A13, Android 14). The emulator path is identical except for the
+backend URL.
+
+**Prerequisites**
+
+- **JDK 17** (Temurin or equivalent). Confirm the JVM Gradle will use:
+
+  ```bash
+  /usr/libexec/java_home -v 17
+  ```
+
+- **Android SDK** with **API 35** (`compileSdk 35`), **build-tools 34/35**, `platform-tools`,
+  `emulator`, and `cmdline-tools`. Install via Android Studio, or with `sdkmanager`, e.g.
+  `sdkmanager "platforms;android-35" "build-tools;35.0.0"`.
+- **Environment variables** so the CLI and Gradle can find the toolchains:
+
+  ```bash
+  export ANDROID_HOME="$HOME/Library/Android/sdk"
+  export JAVA_HOME="$(/usr/libexec/java_home -v 17)"
+  export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/emulator:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+  ```
+
+  Add these to your shell profile to make them persistent. `apps/mobile/android/local.properties`
+  (if present) records `sdk.dir` and is git-ignored.
+
+**Steps**
+
+1. **Enable USB debugging** on the phone: Settings → About phone → tap *Build number* seven times,
+   then Settings → Developer options → turn **USB debugging** on.
+2. **Connect the phone by USB** and accept the *Allow USB debugging?* prompt on the device.
+3. **Confirm the device is visible:**
+
+   ```bash
+   adb devices
+   ```
+
+   The phone should be listed with state `device` (not `unauthorized` or `offline`). If it shows
+   `unauthorized`, re-accept the prompt on the phone.
+
+4. **Start Metro** in its own terminal (both platforms need it running):
+
+   ```bash
+   cd apps/mobile
+   npm start
+   ```
+
+5. **Build and install onto the device:**
+
+   ```bash
+   cd apps/mobile
+   npx react-native run-android    # or: npm run android
+   ```
+
+   The first build downloads Gradle and the Android dependencies and is slow; later builds are
+   fast. If the Gradle wrapper download times out,
+   `android/gradle/wrapper/gradle-wrapper.properties` sets `networkTimeout=120000` for exactly
+   this reason.
+
+**Point the app at the backend**
+
+The app reads its base URL from the single constant `DEV_API_URL` in
+`apps/mobile/src/config/dev.ts`:
+
+- **iOS Simulator:** `http://localhost:8080`
+- **Android emulator:** `http://10.0.2.2:8080`
+- **Physical Android device:** your Mac's Wi-Fi address, e.g. `http://10.27.80.173:8080`
+
+Find the Mac's current Wi-Fi address with:
+
+```bash
+ipconfig getifaddr en0
+```
+
+The phone and the Mac **must be on the same Wi-Fi network** — the phone reaches the Mac over the
+LAN, and `localhost` on the phone means the phone itself. The address **changes whenever the Mac
+joins a different network**, so update `DEV_API_URL` in `apps/mobile/src/config/dev.ts` and reload
+the app when it does; it is the only place to change.
+
+**Notes**
+
+- **No Google Maps API key is needed.** The map renders OpenStreetMap tiles through `UrlTile`
+  (KNOT-ADR-023); the Google Maps SDK and its billing requirement are not used.
+- **The New Architecture is disabled** (`newArchEnabled=false` in `android/gradle.properties`,
+  KNOT-ADR-021). This is deliberate: it avoids the ~1.5 GB NDK download the New Architecture
+  requires on Android. See ADR-021 for when to revisit it.
+- Confirming the map renders is an **on-device** step — it is a native module and cannot be
+  verified by lint, typecheck, or Jest.
 
 ## Backend (`backend/go/`)
 
