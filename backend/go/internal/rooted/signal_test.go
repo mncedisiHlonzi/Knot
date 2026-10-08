@@ -1,5 +1,4 @@
 package rooted
-package rooted
 
 import (
 	"errors"

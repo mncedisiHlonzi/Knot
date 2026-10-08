@@ -86,7 +86,28 @@ docker compose -f infrastructure/docker/docker-compose.yml --env-file .env up -d
 docker compose -f infrastructure/docker/docker-compose.yml --env-file .env down
 docker compose -f infrastructure/docker/docker-compose.yml config   # syntax check only
 ```
+## Git hooks
 
+The repository tracks its git hooks in `.githooks/`, activated with `core.hooksPath`.
+The local `.git/hooks/` directory is untracked and cannot be shared, so it is not used.
+
+- **`pre-commit`** scans every Go file under `backend/` and **blocks the commit** if any
+  file declares two or more `package` clauses. This catches the recurring corruption where
+  a tool prepends a stray `package` line — which breaks `gofmt` and `go vet`, and has
+  reached CI before.
+
+Install the hooks once after cloning:
+
+```bash
+scripts/install-hooks.sh
+```
+
+`install-hooks.sh` sets `git config core.hooksPath .githooks` and marks the hook
+executable. If a commit is blocked, remove the stray line and retry — do not work around it.
+
+Bypass the hook only in a genuine emergency with `git commit --no-verify`. This is
+**discouraged**: it defeats the guard whose whole purpose is to keep the corruption out of
+CI.
 ## Mobile (`apps/mobile/`)
 
 ```bash

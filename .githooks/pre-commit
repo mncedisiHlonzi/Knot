@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+#
+# Knot — pre-commit hook.
+#
+# Guards against the recurring corruption where a file-writing tool prepends a
+# second `package` clause to a Go file. A file with two or more package
+# declarations does not compile, and gofmt / go vet reject it — it has broken CI
+# four times (KNOT-005, KNOT-006, KNOT-001a, KNOT-007).
+#
+# The hook scans every Go file under backend/ and blocks the commit if any file
+# declares two or more `package` clauses.
+#
+# Install once after cloning:  scripts/install-hooks.sh
+# Bypass in a genuine emergency: git commit --no-verify   (discouraged)
+
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "${repo_root}"
+
+offenders=()
+while IFS= read -r file; do
+  count="$(grep -c '^package ' "${file}" || true)"
+  if [ "${count}" -gt 1 ]; then
+    offenders+=("${file}")
+  fi
+done < <(find backend -name '*.go' -type f)
+
+if [ "${#offenders[@]}" -gt 0 ]; then
+  printf 'pre-commit: duplicate `package` clause detected in:\n' >&2
+  for file in "${offenders[@]}"; do
+    printf '  %s\n' "${file}" >&2
+  done
+  printf '\nEach Go file must declare exactly one package.\n' >&2
+  printf 'Remove the stray line, then retry the commit.\n' >&2
+  exit 1
+fi
+
+exit 0

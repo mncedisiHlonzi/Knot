@@ -1,4 +1,3 @@
-package rooted
 // Package rooted implements the Knot Rooted domain: a user's self-declared
 // connection to a place, expressed as a place name and a duration bucket.
 //
