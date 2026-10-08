@@ -117,11 +117,12 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   buttonText: {
-    color: colors.text.inverse,
+    color: colors.text.primary,
     fontSize: fontSizes.md,
     fontWeight: fontWeights.semiBold,
   },
   content: {
+    backgroundColor: colors.bg.primary,
     padding: spacing.xl,
   },
   error: {
@@ -130,10 +131,11 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
   },
   input: {
-    backgroundColor: colors.bg.inverse,
+    backgroundColor: colors.bg.surface,
     borderColor: colors.border.default,
     borderRadius: radius.md,
     borderWidth: 1,
+    color: colors.text.primary,
     fontSize: fontSizes.md,
     paddingHorizontal: spacing.md,
     paddingVertical: 10,

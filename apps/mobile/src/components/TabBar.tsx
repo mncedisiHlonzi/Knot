@@ -53,8 +53,8 @@ export default function TabBar({ activeTab, onSelect }: TabBarProps): React.Reac
 
 const styles = StyleSheet.create({
   bar: {
-    backgroundColor: colors.bg.inverse,
-    borderTopColor: colors.border.default,
+    backgroundColor: colors.bg.secondary,
+    borderTopColor: colors.border.subtle,
     borderTopWidth: 1,
     flexDirection: 'row',
     paddingVertical: spacing.sm,

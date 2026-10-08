@@ -9,7 +9,9 @@ function isStrictlyIncreasing(values: readonly number[]): boolean {
 describe('design tokens', () => {
   it('exposes the canonical brand anchors', () => {
     expect(colors.brand.purple).toBe('#7B3FE4');
-    expect(colors.text.primary).toBe('#0F172A');
+    expect(colors.text.primary).toBe('#FFFFFF');
+    expect(colors.text.inverse).toBe('#0F172A');
+    expect(colors.bg.primary).toBe('#0F172A');
     expect(colors.gradient.primaryStart).toBe('#6B46FF');
     expect(fonts.primary).toBe('Inter');
   });

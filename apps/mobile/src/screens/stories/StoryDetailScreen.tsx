@@ -138,6 +138,7 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   content: {
+    backgroundColor: colors.bg.primary,
     padding: spacing.xl,
     paddingBottom: spacing['3xl'],
   },
@@ -182,7 +183,7 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
   },
   primaryButtonText: {
-    color: colors.text.inverse,
+    color: colors.text.primary,
     fontSize: fontSizes.md,
     fontWeight: fontWeights.semiBold,
   },

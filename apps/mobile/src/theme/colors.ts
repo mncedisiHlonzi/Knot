@@ -11,9 +11,9 @@ export const colors = {
     blue: '#3B82F6',
   },
   text: {
-    primary: '#0F172A',
+    primary: '#FFFFFF',
     secondary: '#94A3B8',
-    inverse: '#FFFFFF',
+    inverse: '#0F172A',
     brand: '#7B3FE4',
   },
   bg: {
@@ -23,8 +23,8 @@ export const colors = {
     inverse: '#FFFFFF',
   },
   border: {
-    subtle: '#E2E8F0',
-    default: '#CBD5E1',
+    subtle: '#1E293B',
+    default: '#334155',
   },
   gradient: {
     primaryStart: '#6B46FF',

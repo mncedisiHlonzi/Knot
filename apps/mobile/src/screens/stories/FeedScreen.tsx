@@ -154,7 +154,8 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   card: {
-    borderColor: colors.border.default,
+    backgroundColor: colors.bg.surface,
+    borderColor: colors.border.subtle,
     borderRadius: radius.md,
     borderWidth: 1,
     marginTop: spacing.md,
@@ -171,6 +172,7 @@ const styles = StyleSheet.create({
     fontWeight: fontWeights.semiBold,
   },
   content: {
+    backgroundColor: colors.bg.primary,
     padding: spacing.xl,
     paddingBottom: spacing['3xl'],
   },
@@ -192,7 +194,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   primaryButtonText: {
-    color: colors.text.inverse,
+    color: colors.text.primary,
     fontSize: fontSizes.base,
     fontWeight: fontWeights.semiBold,
   },

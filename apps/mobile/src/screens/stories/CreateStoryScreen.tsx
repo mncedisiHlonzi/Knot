@@ -210,11 +210,12 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   buttonText: {
-    color: colors.text.inverse,
+    color: colors.text.primary,
     fontSize: fontSizes.md,
     fontWeight: fontWeights.semiBold,
   },
   content: {
+    backgroundColor: colors.bg.primary,
     padding: spacing.xl,
     paddingBottom: spacing['3xl'],
   },
@@ -229,6 +230,7 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
   input: {
+    backgroundColor: colors.bg.surface,
     borderColor: colors.border.default,
     borderRadius: radius.md,
     borderWidth: 1,
@@ -272,7 +274,7 @@ const styles = StyleSheet.create({
     fontWeight: fontWeights.semiBold,
   },
   pillarTextSelected: {
-    color: colors.text.inverse,
+    color: colors.text.primary,
     fontSize: fontSizes.base,
     fontWeight: fontWeights.semiBold,
   },

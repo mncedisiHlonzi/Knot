@@ -344,6 +344,7 @@ export default function App(): React.ReactElement {
 
 const styles = StyleSheet.create({
   authContainer: {
+    backgroundColor: colors.bg.primary,
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: spacing.xl,
@@ -353,10 +354,12 @@ const styles = StyleSheet.create({
   },
   loadingContainer: {
     alignItems: 'center',
+    backgroundColor: colors.bg.primary,
     flex: 1,
     justifyContent: 'center',
   },
   storyContainer: {
+    backgroundColor: colors.bg.primary,
     flex: 1,
   },
 });

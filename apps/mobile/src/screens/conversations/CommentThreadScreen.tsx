@@ -305,11 +305,12 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.base,
   },
   card: {
-    borderColor: colors.border.default,
+    backgroundColor: colors.bg.surface,
+    borderColor: colors.border.subtle,
     borderRadius: radius.md,
     borderWidth: 1,
     marginTop: spacing.md,
-    padding: 14,
+    padding: spacing.lg,
   },
   cardMeta: {
     alignItems: 'center',
@@ -321,6 +322,7 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
   },
   composerInput: {
+    backgroundColor: colors.bg.surface,
     borderColor: colors.border.default,
     borderRadius: radius.md,
     borderWidth: 1,
@@ -335,6 +337,7 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   container: {
+    backgroundColor: colors.bg.primary,
     flex: 1,
   },
   date: {
@@ -360,6 +363,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   languageInput: {
+    backgroundColor: colors.bg.surface,
     borderColor: colors.border.default,
     borderRadius: radius.md,
     borderWidth: 1,
@@ -390,7 +394,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   postButtonText: {
-    color: colors.text.inverse,
+    color: colors.text.primary,
     fontSize: fontSizes.base,
     fontWeight: fontWeights.semiBold,
   },

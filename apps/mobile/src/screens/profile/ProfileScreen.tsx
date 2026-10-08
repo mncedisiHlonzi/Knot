@@ -106,6 +106,7 @@ export default function ProfileScreen({
 
 const styles = StyleSheet.create({
   content: {
+    backgroundColor: colors.bg.primary,
     padding: spacing.xl,
     paddingBottom: spacing['3xl'],
   },
@@ -139,7 +140,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   primaryButtonText: {
-    color: colors.text.inverse,
+    color: colors.text.primary,
     fontSize: fontSizes.base,
     fontWeight: fontWeights.semiBold,
   },

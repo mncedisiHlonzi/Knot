@@ -126,6 +126,7 @@ const styles = StyleSheet.create({
     paddingVertical: 2,
   },
   content: {
+    backgroundColor: colors.bg.primary,
     padding: spacing.xl,
     paddingBottom: spacing['3xl'],
   },
@@ -161,12 +162,13 @@ const styles = StyleSheet.create({
     marginLeft: spacing.sm,
   },
   row: {
-    borderColor: colors.border.default,
+    backgroundColor: colors.bg.surface,
+    borderColor: colors.border.subtle,
     borderLeftWidth: 3,
     borderRadius: radius.md,
     borderWidth: 1,
     marginTop: spacing.md,
-    padding: spacing.md,
+    padding: spacing.lg,
   },
   rowMeta: {
     alignItems: 'center',

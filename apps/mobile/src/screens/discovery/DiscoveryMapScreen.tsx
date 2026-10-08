@@ -167,6 +167,7 @@ export default function DiscoveryMapScreen({
 
 const styles = StyleSheet.create({
   container: {
+    backgroundColor: colors.bg.primary,
     flex: 1,
   },
   empty: {
@@ -197,7 +198,7 @@ const styles = StyleSheet.create({
     fontWeight: fontWeights.medium,
   },
   filterTextActive: {
-    color: colors.text.inverse,
+    color: colors.text.primary,
   },
   filters: {
     flexDirection: 'row',
@@ -228,7 +229,8 @@ const styles = StyleSheet.create({
     fontWeight: fontWeights.semiBold,
   },
   placeRow: {
-    borderColor: colors.border.default,
+    backgroundColor: colors.bg.surface,
+    borderColor: colors.border.subtle,
     borderRadius: radius.md,
     borderWidth: 1,
     marginTop: spacing.md,
