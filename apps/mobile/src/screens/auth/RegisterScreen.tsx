@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { api, AuthResponse, describeError } from '../../api/client';
+import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type RegisterScreenProps = {
   /** Called with the issued tokens and user once registration succeeds. */
@@ -109,7 +110,7 @@ export default function RegisterScreen({
         autoCorrect={false}
         keyboardType="email-address"
         placeholder="you@example.com"
-        placeholderTextColor="#9aa0a6"
+        placeholderTextColor={colors.text.secondary}
       />
 
       <Text style={styles.label}>Password</Text>
@@ -119,7 +120,7 @@ export default function RegisterScreen({
         onChangeText={setPassword}
         secureTextEntry
         placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
-        placeholderTextColor="#9aa0a6"
+        placeholderTextColor={colors.text.secondary}
       />
 
       <Text style={styles.label}>Display name</Text>
@@ -128,7 +129,7 @@ export default function RegisterScreen({
         value={displayName}
         onChangeText={setDisplayName}
         placeholder="How you want to be known"
-        placeholderTextColor="#9aa0a6"
+        placeholderTextColor={colors.text.secondary}
       />
 
       <Text style={styles.label}>Languages you speak (comma separated)</Text>
@@ -138,7 +139,7 @@ export default function RegisterScreen({
         onChangeText={setLanguages}
         autoCapitalize="none"
         placeholder="en, zu, fr"
-        placeholderTextColor="#9aa0a6"
+        placeholderTextColor={colors.text.secondary}
       />
 
       <Text style={styles.label}>Approximate location (optional)</Text>
@@ -148,7 +149,7 @@ export default function RegisterScreen({
         onChangeText={setLocation}
         maxLength={MAX_LOCATION_LENGTH}
         placeholder="Cape Town"
-        placeholderTextColor="#9aa0a6"
+        placeholderTextColor={colors.text.secondary}
       />
 
       <Text style={styles.label}>Phone (optional)</Text>
@@ -159,7 +160,7 @@ export default function RegisterScreen({
         maxLength={MAX_PHONE_LENGTH}
         keyboardType="phone-pad"
         placeholder="+27 00 000 0000"
-        placeholderTextColor="#9aa0a6"
+        placeholderTextColor={colors.text.secondary}
       />
 
       {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
@@ -184,8 +185,8 @@ export default function RegisterScreen({
 const styles = StyleSheet.create({
   button: {
     alignItems: 'center',
-    backgroundColor: '#1f6feb',
-    borderRadius: 8,
+    backgroundColor: colors.brand.purple,
+    borderRadius: radius.md,
     marginTop: 20,
     paddingVertical: 14,
   },
@@ -193,49 +194,49 @@ const styles = StyleSheet.create({
     opacity: 0.5,
   },
   buttonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
+    color: colors.text.inverse,
+    fontSize: fontSizes.md,
+    fontWeight: fontWeights.semiBold,
   },
   content: {
-    padding: 24,
+    padding: spacing.xl,
   },
   error: {
-    color: '#b3261e',
-    fontSize: 14,
-    marginTop: 16,
+    color: colors.state.error,
+    fontSize: fontSizes.base,
+    marginTop: spacing.lg,
   },
   input: {
-    backgroundColor: '#ffffff',
-    borderColor: '#d0d7de',
-    borderRadius: 8,
+    backgroundColor: colors.bg.inverse,
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
     borderWidth: 1,
-    fontSize: 16,
-    paddingHorizontal: 12,
+    fontSize: fontSizes.md,
+    paddingHorizontal: spacing.md,
     paddingVertical: 10,
   },
   label: {
-    color: '#24292f',
-    fontSize: 14,
-    fontWeight: '600',
+    color: colors.text.primary,
+    fontSize: fontSizes.base,
+    fontWeight: fontWeights.semiBold,
     marginBottom: 6,
-    marginTop: 16,
+    marginTop: spacing.lg,
   },
   link: {
     alignItems: 'center',
     marginTop: 18,
   },
   linkText: {
-    color: '#1f6feb',
-    fontSize: 14,
+    color: colors.text.brand,
+    fontSize: fontSizes.base,
   },
   spacer: {
-    height: 32,
+    height: spacing['2xl'],
   },
   title: {
-    color: '#24292f',
-    fontSize: 22,
-    fontWeight: '700',
-    marginBottom: 8,
+    color: colors.text.primary,
+    fontSize: fontSizes.xl,
+    fontWeight: fontWeights.bold,
+    marginBottom: spacing.sm,
   },
 });

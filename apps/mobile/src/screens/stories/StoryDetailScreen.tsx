@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text } from 'reac
 import { describeError } from '../../api/client';
 import { Story, storiesApi } from '../../api/stories';
 import { versionsApi } from '../../api/versions';
+import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
 
 type StoryDetailScreenProps = {
   /** The id of the story to read. */
@@ -121,64 +122,64 @@ export default function StoryDetailScreen({
 
 const styles = StyleSheet.create({
   body: {
-    color: '#24292f',
-    fontSize: 16,
-    lineHeight: 24,
+    color: colors.text.primary,
+    fontSize: fontSizes.md,
+    lineHeight: lineHeights.md,
     marginTop: 20,
   },
   content: {
-    padding: 24,
-    paddingBottom: 48,
+    padding: spacing.xl,
+    paddingBottom: spacing['3xl'],
   },
   error: {
-    color: '#b3261e',
-    fontSize: 14,
-    marginTop: 16,
+    color: colors.state.error,
+    fontSize: fontSizes.base,
+    marginTop: spacing.lg,
   },
   link: {
-    marginBottom: 12,
+    marginBottom: spacing.md,
   },
   linkText: {
-    color: '#1f6feb',
-    fontSize: 15,
+    color: colors.text.brand,
+    fontSize: fontSizes.base,
   },
   meta: {
-    color: '#57606a',
-    fontSize: 13,
+    color: colors.text.secondary,
+    fontSize: fontSizes.sm,
     marginTop: 6,
   },
   secondaryButton: {
     alignItems: 'center',
-    borderColor: '#d0d7de',
-    borderRadius: 8,
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
     borderWidth: 1,
-    marginTop: 12,
-    paddingVertical: 12,
+    marginTop: spacing.md,
+    paddingVertical: spacing.md,
   },
   secondaryButtonText: {
-    color: '#24292f',
-    fontSize: 15,
-    fontWeight: '600',
+    color: colors.text.primary,
+    fontSize: fontSizes.base,
+    fontWeight: fontWeights.semiBold,
   },
   primaryButton: {
     alignItems: 'center',
-    backgroundColor: '#1f6feb',
-    borderRadius: 8,
-    marginTop: 24,
+    backgroundColor: colors.brand.purple,
+    borderRadius: radius.md,
+    marginTop: spacing.xl,
     paddingVertical: 14,
   },
   primaryButtonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
+    color: colors.text.inverse,
+    fontSize: fontSizes.md,
+    fontWeight: fontWeights.semiBold,
   },
   spinner: {
-    marginTop: 24,
+    marginTop: spacing.xl,
   },
   title: {
-    color: '#24292f',
-    fontSize: 24,
-    fontWeight: '700',
-    marginTop: 8,
+    color: colors.text.primary,
+    fontSize: fontSizes.xl,
+    fontWeight: fontWeights.bold,
+    marginTop: spacing.sm,
   },
 });

@@ -10,6 +10,7 @@ import {
 
 import { describeError } from '../../api/client';
 import { CreateAdaptationPayload, StoryVersion, versionsApi } from '../../api/versions';
+import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type AdaptStoryScreenProps = {
   /** The story the new version belongs to. */
@@ -166,7 +167,7 @@ export default function AdaptStoryScreen({
             autoCapitalize="none"
             autoCorrect={false}
             placeholder="fr"
-            placeholderTextColor="#9aa0a6"
+            placeholderTextColor={colors.text.secondary}
           />
 
           <Text style={styles.label}>Title</Text>
@@ -175,7 +176,7 @@ export default function AdaptStoryScreen({
             value={title}
             onChangeText={setTitle}
             placeholder="A short headline"
-            placeholderTextColor="#9aa0a6"
+            placeholderTextColor={colors.text.secondary}
           />
 
           <Text style={styles.label}>Story</Text>
@@ -184,7 +185,7 @@ export default function AdaptStoryScreen({
             value={body}
             onChangeText={setBody}
             placeholder="Tell it the way you would tell it out loud"
-            placeholderTextColor="#9aa0a6"
+            placeholderTextColor={colors.text.secondary}
             multiline
             numberOfLines={8}
             textAlignVertical="top"
@@ -196,7 +197,7 @@ export default function AdaptStoryScreen({
             value={note}
             onChangeText={setNote}
             placeholder="What changed, and why?"
-            placeholderTextColor="#9aa0a6"
+            placeholderTextColor={colors.text.secondary}
             multiline
             numberOfLines={3}
             textAlignVertical="top"
@@ -226,83 +227,83 @@ export default function AdaptStoryScreen({
 const styles = StyleSheet.create({
   button: {
     alignItems: 'center',
-    backgroundColor: '#1f6feb',
-    borderRadius: 8,
-    marginTop: 24,
+    backgroundColor: colors.brand.purple,
+    borderRadius: radius.md,
+    marginTop: spacing.xl,
     paddingVertical: 14,
   },
   buttonDisabled: {
     opacity: 0.5,
   },
   buttonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
+    color: colors.text.inverse,
+    fontSize: fontSizes.md,
+    fontWeight: fontWeights.semiBold,
   },
   content: {
-    padding: 24,
-    paddingBottom: 48,
+    padding: spacing.xl,
+    paddingBottom: spacing['3xl'],
   },
   error: {
-    color: '#b3261e',
-    fontSize: 14,
-    marginTop: 16,
+    color: colors.state.error,
+    fontSize: fontSizes.base,
+    marginTop: spacing.lg,
   },
   hint: {
-    color: '#57606a',
-    fontSize: 13,
-    marginTop: 8,
+    color: colors.text.secondary,
+    fontSize: fontSizes.sm,
+    marginTop: spacing.sm,
   },
   input: {
-    borderColor: '#d0d7de',
-    borderRadius: 8,
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
     borderWidth: 1,
-    color: '#24292f',
-    fontSize: 16,
+    color: colors.text.primary,
+    fontSize: fontSizes.md,
     marginTop: 6,
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.md,
     paddingVertical: 10,
   },
   label: {
-    color: '#24292f',
-    fontSize: 15,
-    fontWeight: '600',
+    color: colors.text.primary,
+    fontSize: fontSizes.base,
+    fontWeight: fontWeights.semiBold,
     marginTop: 20,
   },
   link: {
-    marginBottom: 12,
+    marginBottom: spacing.md,
   },
   linkText: {
-    color: '#1f6feb',
-    fontSize: 15,
+    color: colors.text.brand,
+    fontSize: fontSizes.base,
   },
   multiline: {
     minHeight: 120,
   },
   parentSummary: {
-    color: '#57606a',
-    fontSize: 14,
-    marginTop: 16,
+    color: colors.text.secondary,
+    fontSize: fontSizes.base,
+    marginTop: spacing.lg,
   },
   secondaryButton: {
     alignItems: 'center',
-    borderColor: '#d0d7de',
-    borderRadius: 8,
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
     borderWidth: 1,
     marginTop: 20,
-    paddingVertical: 12,
+    paddingVertical: spacing.md,
   },
   secondaryButtonText: {
-    color: '#24292f',
-    fontSize: 15,
-    fontWeight: '600',
+    color: colors.text.primary,
+    fontSize: fontSizes.base,
+    fontWeight: fontWeights.semiBold,
   },
   spinner: {
-    marginTop: 24,
+    marginTop: spacing.xl,
   },
   title: {
-    color: '#24292f',
-    fontSize: 24,
-    fontWeight: '700',
+    color: colors.text.primary,
+    fontSize: fontSizes.xl,
+    fontWeight: fontWeights.bold,
   },
 });

@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 
 import { describeError } from '../../api/client';
 import { StoryVersion, versionDepths, versionsApi } from '../../api/versions';
+import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type LanguageTreeScreenProps = {
   /** The story whose language tree to show. */
@@ -12,7 +13,7 @@ type LanguageTreeScreenProps = {
 };
 
 /** How far each level of the tree is indented, in points. */
-const INDENT_PER_LEVEL = 16;
+const INDENT_PER_LEVEL = spacing.lg;
 
 /** The first eight characters of an author id, so contributors are distinguishable. */
 function authorPrefix(authorId: string): string {
@@ -101,58 +102,58 @@ export default function LanguageTreeScreen({
 
 const styles = StyleSheet.create({
   author: {
-    color: '#57606a',
-    fontSize: 12,
-    marginLeft: 8,
+    color: colors.text.secondary,
+    fontSize: fontSizes.sm,
+    marginLeft: spacing.sm,
   },
   badge: {
-    backgroundColor: '#eaeef2',
-    borderRadius: 4,
-    color: '#24292f',
-    fontSize: 12,
-    fontWeight: '600',
+    backgroundColor: colors.border.subtle,
+    borderRadius: radius.sm,
+    color: colors.text.primary,
+    fontSize: fontSizes.sm,
+    fontWeight: fontWeights.semiBold,
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
   content: {
-    padding: 24,
-    paddingBottom: 48,
+    padding: spacing.xl,
+    paddingBottom: spacing['3xl'],
   },
   error: {
-    color: '#b3261e',
-    fontSize: 14,
-    marginTop: 16,
+    color: colors.state.error,
+    fontSize: fontSizes.base,
+    marginTop: spacing.lg,
   },
   hint: {
-    color: '#57606a',
-    fontSize: 13,
+    color: colors.text.secondary,
+    fontSize: fontSizes.sm,
     marginTop: 6,
   },
   link: {
-    marginBottom: 12,
+    marginBottom: spacing.md,
   },
   linkText: {
-    color: '#1f6feb',
-    fontSize: 15,
+    color: colors.text.brand,
+    fontSize: fontSizes.base,
   },
   note: {
-    color: '#57606a',
-    fontSize: 13,
+    color: colors.text.secondary,
+    fontSize: fontSizes.sm,
     fontStyle: 'italic',
     marginTop: 6,
   },
   rootTag: {
-    color: '#1f6feb',
-    fontSize: 12,
-    marginLeft: 8,
+    color: colors.text.brand,
+    fontSize: fontSizes.sm,
+    marginLeft: spacing.sm,
   },
   row: {
-    borderColor: '#d0d7de',
+    borderColor: colors.border.default,
     borderLeftWidth: 3,
-    borderRadius: 6,
+    borderRadius: radius.md,
     borderWidth: 1,
-    marginTop: 12,
-    padding: 12,
+    marginTop: spacing.md,
+    padding: spacing.md,
   },
   rowMeta: {
     alignItems: 'center',
@@ -160,29 +161,29 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   rowTitle: {
-    color: '#24292f',
-    fontSize: 16,
-    fontWeight: '600',
+    color: colors.text.primary,
+    fontSize: fontSizes.md,
+    fontWeight: fontWeights.semiBold,
   },
   secondaryButton: {
     alignItems: 'center',
-    borderColor: '#d0d7de',
-    borderRadius: 8,
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
     borderWidth: 1,
     marginTop: 20,
-    paddingVertical: 12,
+    paddingVertical: spacing.md,
   },
   secondaryButtonText: {
-    color: '#24292f',
-    fontSize: 15,
-    fontWeight: '600',
+    color: colors.text.primary,
+    fontSize: fontSizes.base,
+    fontWeight: fontWeights.semiBold,
   },
   spinner: {
-    marginTop: 24,
+    marginTop: spacing.xl,
   },
   title: {
-    color: '#24292f',
-    fontSize: 24,
-    fontWeight: '700',
+    color: colors.text.primary,
+    fontSize: fontSizes.xl,
+    fontWeight: fontWeights.bold,
   },
 });

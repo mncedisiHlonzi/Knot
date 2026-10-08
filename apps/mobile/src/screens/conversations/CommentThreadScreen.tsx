@@ -12,6 +12,7 @@ import {
 
 import { describeError } from '../../api/client';
 import { Comment, THREAD_PAGE_SIZE, conversationsApi } from '../../api/conversations';
+import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
 
 type CommentThreadScreenProps = {
   /** The version whose conversation to show. */
@@ -235,7 +236,7 @@ export default function CommentThreadScreen({
           value={body}
           onChangeText={setBody}
           placeholder="Add a comment"
-          placeholderTextColor="#9aa0a6"
+          placeholderTextColor={colors.text.secondary}
           multiline
           numberOfLines={3}
           textAlignVertical="top"
@@ -248,7 +249,7 @@ export default function CommentThreadScreen({
             autoCapitalize="none"
             autoCorrect={false}
             placeholder="en"
-            placeholderTextColor="#9aa0a6"
+            placeholderTextColor={colors.text.secondary}
           />
           <Pressable
             style={[styles.postButton, posting ? styles.disabled : null]}
@@ -266,38 +267,38 @@ export default function CommentThreadScreen({
 
 const styles = StyleSheet.create({
   author: {
-    color: '#57606a',
-    fontSize: 12,
-    marginLeft: 8,
+    color: colors.text.secondary,
+    fontSize: fontSizes.sm,
+    marginLeft: spacing.sm,
   },
   badge: {
-    backgroundColor: '#eaeef2',
-    borderRadius: 4,
-    color: '#24292f',
-    fontSize: 12,
-    fontWeight: '600',
+    backgroundColor: colors.border.subtle,
+    borderRadius: radius.sm,
+    color: colors.text.primary,
+    fontSize: fontSizes.sm,
+    fontWeight: fontWeights.semiBold,
     paddingHorizontal: 6,
     paddingVertical: 2,
   },
   body: {
-    color: '#24292f',
-    fontSize: 15,
-    lineHeight: 22,
-    marginTop: 8,
+    color: colors.text.primary,
+    fontSize: fontSizes.base,
+    lineHeight: lineHeights.base,
+    marginTop: spacing.sm,
   },
   bridgeButton: {
     alignSelf: 'flex-start',
     marginTop: 10,
   },
   bridgeButtonText: {
-    color: '#1f6feb',
-    fontSize: 14,
+    color: colors.text.brand,
+    fontSize: fontSizes.base,
   },
   card: {
-    borderColor: '#d0d7de',
-    borderRadius: 8,
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
     borderWidth: 1,
-    marginTop: 12,
+    marginTop: spacing.md,
     padding: 14,
   },
   cardMeta: {
@@ -305,18 +306,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   composer: {
-    borderTopColor: '#d0d7de',
+    borderTopColor: colors.border.default,
     borderTopWidth: 1,
-    padding: 16,
+    padding: spacing.lg,
   },
   composerInput: {
-    borderColor: '#d0d7de',
-    borderRadius: 8,
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
     borderWidth: 1,
-    color: '#24292f',
-    fontSize: 15,
+    color: colors.text.primary,
+    fontSize: fontSizes.base,
     minHeight: 64,
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.md,
     paddingVertical: 10,
   },
   composerRow: {
@@ -327,81 +328,81 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   date: {
-    color: '#57606a',
-    fontSize: 12,
-    marginLeft: 8,
+    color: colors.text.secondary,
+    fontSize: fontSizes.sm,
+    marginLeft: spacing.sm,
   },
   disabled: {
     opacity: 0.5,
   },
   error: {
-    color: '#b3261e',
-    fontSize: 14,
+    color: colors.state.error,
+    fontSize: fontSizes.base,
     marginTop: 10,
   },
   header: {
-    padding: 24,
+    padding: spacing.xl,
     paddingBottom: 0,
   },
   hint: {
-    color: '#57606a',
-    fontSize: 13,
+    color: colors.text.secondary,
+    fontSize: fontSizes.sm,
     marginTop: 6,
   },
   languageInput: {
-    borderColor: '#d0d7de',
-    borderRadius: 8,
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
     borderWidth: 1,
-    color: '#24292f',
-    fontSize: 15,
-    paddingHorizontal: 12,
+    color: colors.text.primary,
+    fontSize: fontSizes.base,
+    paddingHorizontal: spacing.md,
     paddingVertical: 10,
     width: 80,
   },
   link: {
-    marginBottom: 12,
+    marginBottom: spacing.md,
   },
   linkText: {
-    color: '#1f6feb',
-    fontSize: 15,
+    color: colors.text.brand,
+    fontSize: fontSizes.base,
   },
   list: {
-    paddingHorizontal: 24,
-    paddingBottom: 24,
+    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing.xl,
   },
   postButton: {
     alignItems: 'center',
-    backgroundColor: '#1f6feb',
-    borderRadius: 8,
+    backgroundColor: colors.brand.purple,
+    borderRadius: radius.md,
     flexGrow: 1,
     justifyContent: 'center',
     marginLeft: 10,
-    paddingVertical: 12,
+    paddingVertical: spacing.md,
   },
   postButtonText: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '600',
+    color: colors.text.inverse,
+    fontSize: fontSizes.base,
+    fontWeight: fontWeights.semiBold,
   },
   secondaryButton: {
     alignItems: 'center',
-    borderColor: '#d0d7de',
-    borderRadius: 8,
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
     borderWidth: 1,
-    marginTop: 12,
-    paddingVertical: 12,
+    marginTop: spacing.md,
+    paddingVertical: spacing.md,
   },
   secondaryButtonText: {
-    color: '#24292f',
-    fontSize: 15,
-    fontWeight: '600',
+    color: colors.text.primary,
+    fontSize: fontSizes.base,
+    fontWeight: fontWeights.semiBold,
   },
   spinner: {
-    marginTop: 24,
+    marginTop: spacing.xl,
   },
   title: {
-    color: '#24292f',
-    fontSize: 24,
-    fontWeight: '700',
+    color: colors.text.primary,
+    fontSize: fontSizes.xl,
+    fontWeight: fontWeights.bold,
   },
 });

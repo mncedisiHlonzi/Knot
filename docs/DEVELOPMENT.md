@@ -101,6 +101,32 @@ npm run format:check # Prettier
 There is intentionally no runnable product app yet — the scaffold has no navigation and
 no product screens.
 
+### Design tokens
+
+The mobile theme lives in `apps/mobile/src/theme/` and encodes every token from
+[`BRAND.md`](BRAND.md) as plain TypeScript objects: `colors`, `fonts`, `fontWeights`,
+`fontSizes`, `lineHeights`, `typography`, `spacing`, `radius`, and `elevation`.
+
+Import the tokens from the theme barrel and use them in place of literal values:
+
+```ts
+import { colors, radius, spacing } from '../../theme';
+
+const styles = StyleSheet.create({
+  card: {
+    backgroundColor: colors.bg.inverse,
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
+    padding: spacing.lg,
+  },
+});
+```
+
+There is no theme provider, context, or styling library — the tokens are plain objects
+imported directly. Values that fall between the documented scale steps stay numeric (for
+example a `paddingVertical: 10`), and `BRAND.md` remains the source of truth for every
+token value.
+
 ## Backend (`backend/go/`)
 
 ```bash

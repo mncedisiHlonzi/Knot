@@ -4,6 +4,7 @@ import { SafeAreaView, StyleSheet } from 'react-native';
 import type { AuthResponse } from './src/api/client';
 import type { Comment } from './src/api/conversations';
 import type { Story } from './src/api/stories';
+import { spacing } from './src/theme';
 import LoginScreen from './src/screens/auth/LoginScreen';
 import RegisterScreen from './src/screens/auth/RegisterScreen';
 import BridgeScreen from './src/screens/conversations/BridgeScreen';
@@ -186,7 +187,7 @@ const styles = StyleSheet.create({
   authContainer: {
     flex: 1,
     justifyContent: 'center',
-    paddingHorizontal: 24,
+    paddingHorizontal: spacing.xl,
   },
   storyContainer: {
     flex: 1,

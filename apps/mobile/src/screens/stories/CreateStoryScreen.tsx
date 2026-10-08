@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from
 
 import { describeError } from '../../api/client';
 import { CreateStoryPayload, PILLARS, Pillar, Story, storiesApi } from '../../api/stories';
+import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type CreateStoryScreenProps = {
   /** The signed-in user's access token. The server derives the author from it. */
@@ -129,7 +130,7 @@ export default function CreateStoryScreen({
         value={title}
         onChangeText={setTitle}
         placeholder="A short headline"
-        placeholderTextColor="#9aa0a6"
+        placeholderTextColor={colors.text.secondary}
       />
 
       <Text style={styles.label}>Story</Text>
@@ -138,7 +139,7 @@ export default function CreateStoryScreen({
         value={body}
         onChangeText={setBody}
         placeholder="Tell it the way you would tell it out loud"
-        placeholderTextColor="#9aa0a6"
+        placeholderTextColor={colors.text.secondary}
         multiline
         numberOfLines={8}
         textAlignVertical="top"
@@ -152,7 +153,7 @@ export default function CreateStoryScreen({
         autoCapitalize="none"
         autoCorrect={false}
         placeholder="en"
-        placeholderTextColor="#9aa0a6"
+        placeholderTextColor={colors.text.secondary}
       />
 
       <Text style={styles.label}>Approximate place (optional)</Text>
@@ -161,7 +162,7 @@ export default function CreateStoryScreen({
         value={location}
         onChangeText={setLocation}
         placeholder="Cape Town"
-        placeholderTextColor="#9aa0a6"
+        placeholderTextColor={colors.text.secondary}
       />
 
       <Text style={styles.label}>One media link (optional)</Text>
@@ -173,7 +174,7 @@ export default function CreateStoryScreen({
         autoCorrect={false}
         keyboardType="url"
         placeholder="https://example.com/photo.jpg"
-        placeholderTextColor="#9aa0a6"
+        placeholderTextColor={colors.text.secondary}
       />
 
       <View style={styles.switchRow}>
@@ -200,80 +201,80 @@ export default function CreateStoryScreen({
 const styles = StyleSheet.create({
   button: {
     alignItems: 'center',
-    backgroundColor: '#1f6feb',
-    borderRadius: 8,
-    marginTop: 24,
+    backgroundColor: colors.brand.purple,
+    borderRadius: radius.md,
+    marginTop: spacing.xl,
     paddingVertical: 14,
   },
   buttonDisabled: {
     opacity: 0.5,
   },
   buttonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
+    color: colors.text.inverse,
+    fontSize: fontSizes.md,
+    fontWeight: fontWeights.semiBold,
   },
   content: {
-    padding: 24,
-    paddingBottom: 48,
+    padding: spacing.xl,
+    paddingBottom: spacing['3xl'],
   },
   error: {
-    color: '#b3261e',
-    fontSize: 14,
-    marginTop: 16,
+    color: colors.state.error,
+    fontSize: fontSizes.base,
+    marginTop: spacing.lg,
   },
   hint: {
-    color: '#57606a',
-    fontSize: 13,
-    marginTop: 4,
+    color: colors.text.secondary,
+    fontSize: fontSizes.sm,
+    marginTop: spacing.xs,
   },
   input: {
-    borderColor: '#d0d7de',
-    borderRadius: 8,
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
     borderWidth: 1,
-    color: '#24292f',
-    fontSize: 16,
+    color: colors.text.primary,
+    fontSize: fontSizes.md,
     marginTop: 6,
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.md,
     paddingVertical: 10,
   },
   label: {
-    color: '#24292f',
-    fontSize: 15,
-    fontWeight: '600',
+    color: colors.text.primary,
+    fontSize: fontSizes.base,
+    fontWeight: fontWeights.semiBold,
     marginTop: 20,
   },
   link: {
-    marginBottom: 12,
+    marginBottom: spacing.md,
   },
   linkText: {
-    color: '#1f6feb',
-    fontSize: 15,
+    color: colors.text.brand,
+    fontSize: fontSizes.base,
   },
   multiline: {
     minHeight: 160,
   },
   pillar: {
-    borderColor: '#d0d7de',
-    borderRadius: 8,
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
     borderWidth: 1,
-    marginRight: 12,
-    paddingHorizontal: 16,
+    marginRight: spacing.md,
+    paddingHorizontal: spacing.lg,
     paddingVertical: 10,
   },
   pillarSelected: {
-    backgroundColor: '#1f6feb',
-    borderColor: '#1f6feb',
+    backgroundColor: colors.brand.purple,
+    borderColor: colors.brand.purple,
   },
   pillarText: {
-    color: '#24292f',
-    fontSize: 15,
-    fontWeight: '600',
+    color: colors.text.primary,
+    fontSize: fontSizes.base,
+    fontWeight: fontWeights.semiBold,
   },
   pillarTextSelected: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '600',
+    color: colors.text.inverse,
+    fontSize: fontSizes.base,
+    fontWeight: fontWeights.semiBold,
   },
   pillars: {
     flexDirection: 'row',
@@ -282,11 +283,11 @@ const styles = StyleSheet.create({
   switchRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: 12,
+    gap: spacing.md,
   },
   title: {
-    color: '#24292f',
-    fontSize: 24,
-    fontWeight: '700',
+    color: colors.text.primary,
+    fontSize: fontSizes.xl,
+    fontWeight: fontWeights.bold,
   },
 });

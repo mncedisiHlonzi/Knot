@@ -3,6 +3,7 @@ import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from '
 
 import { describeError } from '../../api/client';
 import { FEED_PAGE_SIZE, Story, storiesApi } from '../../api/stories';
+import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type FeedScreenProps = {
   /** The signed-in account's email, shown so the session is obvious. */
@@ -146,86 +147,86 @@ export default function FeedScreen({
 const styles = StyleSheet.create({
   actions: {
     flexDirection: 'row',
-    gap: 12,
-    marginTop: 16,
+    gap: spacing.md,
+    marginTop: spacing.lg,
   },
   buttonDisabled: {
     opacity: 0.5,
   },
   card: {
-    borderColor: '#d0d7de',
-    borderRadius: 8,
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
     borderWidth: 1,
-    marginTop: 12,
-    padding: 16,
+    marginTop: spacing.md,
+    padding: spacing.lg,
   },
   cardMeta: {
-    color: '#57606a',
-    fontSize: 13,
-    marginTop: 4,
+    color: colors.text.secondary,
+    fontSize: fontSizes.sm,
+    marginTop: spacing.xs,
   },
   cardTitle: {
-    color: '#24292f',
-    fontSize: 17,
-    fontWeight: '600',
+    color: colors.text.primary,
+    fontSize: fontSizes.md,
+    fontWeight: fontWeights.semiBold,
   },
   content: {
-    padding: 24,
-    paddingBottom: 48,
+    padding: spacing.xl,
+    paddingBottom: spacing['3xl'],
   },
   empty: {
-    color: '#57606a',
-    fontSize: 15,
-    marginTop: 16,
+    color: colors.text.secondary,
+    fontSize: fontSizes.base,
+    marginTop: spacing.lg,
   },
   error: {
-    color: '#b3261e',
-    fontSize: 14,
-    marginTop: 16,
+    color: colors.state.error,
+    fontSize: fontSizes.base,
+    marginTop: spacing.lg,
   },
   primaryButton: {
     alignItems: 'center',
-    backgroundColor: '#1f6feb',
-    borderRadius: 8,
+    backgroundColor: colors.brand.purple,
+    borderRadius: radius.md,
     flexGrow: 1,
-    paddingVertical: 12,
+    paddingVertical: spacing.md,
   },
   primaryButtonText: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '600',
+    color: colors.text.inverse,
+    fontSize: fontSizes.base,
+    fontWeight: fontWeights.semiBold,
   },
   secondaryButton: {
     alignItems: 'center',
-    borderColor: '#d0d7de',
-    borderRadius: 8,
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
     borderWidth: 1,
-    marginTop: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
   },
   secondaryButtonText: {
-    color: '#24292f',
-    fontSize: 15,
-    fontWeight: '600',
+    color: colors.text.primary,
+    fontSize: fontSizes.base,
+    fontWeight: fontWeights.semiBold,
   },
   sectionTitle: {
-    color: '#24292f',
-    fontSize: 20,
-    fontWeight: '700',
+    color: colors.text.primary,
+    fontSize: fontSizes.lg,
+    fontWeight: fontWeights.bold,
     marginTop: 28,
   },
   session: {
-    color: '#57606a',
-    fontSize: 14,
-    marginTop: 4,
+    color: colors.text.secondary,
+    fontSize: fontSizes.base,
+    marginTop: spacing.xs,
   },
   spinner: {
-    marginTop: 24,
+    marginTop: spacing.xl,
   },
   title: {
-    color: '#24292f',
-    fontSize: 26,
-    fontWeight: '700',
+    color: colors.text.primary,
+    fontSize: fontSizes.xl,
+    fontWeight: fontWeights.bold,
   },
 });

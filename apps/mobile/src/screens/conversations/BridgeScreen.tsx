@@ -3,6 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native
 
 import { describeError } from '../../api/client';
 import { Comment, CreateBridgePayload, conversationsApi } from '../../api/conversations';
+import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
 
 type BridgeScreenProps = {
   /**
@@ -148,7 +149,7 @@ export default function BridgeScreen({
         autoCapitalize="none"
         autoCorrect={false}
         placeholder="fr"
-        placeholderTextColor="#9aa0a6"
+        placeholderTextColor={colors.text.secondary}
       />
 
       <Text style={styles.label}>Your comment</Text>
@@ -157,7 +158,7 @@ export default function BridgeScreen({
         value={body}
         onChangeText={setBody}
         placeholder="Say it in the other language"
-        placeholderTextColor="#9aa0a6"
+        placeholderTextColor={colors.text.secondary}
         multiline
         numberOfLines={6}
         textAlignVertical="top"
@@ -169,7 +170,7 @@ export default function BridgeScreen({
         value={note}
         onChangeText={setNote}
         placeholder="What changed, and why?"
-        placeholderTextColor="#9aa0a6"
+        placeholderTextColor={colors.text.secondary}
         multiline
         numberOfLines={3}
         textAlignVertical="top"
@@ -191,73 +192,73 @@ export default function BridgeScreen({
 const styles = StyleSheet.create({
   button: {
     alignItems: 'center',
-    backgroundColor: '#1f6feb',
-    borderRadius: 8,
-    marginTop: 24,
+    backgroundColor: colors.brand.purple,
+    borderRadius: radius.md,
+    marginTop: spacing.xl,
     paddingVertical: 14,
   },
   buttonText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
+    color: colors.text.inverse,
+    fontSize: fontSizes.md,
+    fontWeight: fontWeights.semiBold,
   },
   content: {
-    padding: 24,
-    paddingBottom: 48,
+    padding: spacing.xl,
+    paddingBottom: spacing['3xl'],
   },
   disabled: {
     opacity: 0.5,
   },
   error: {
-    color: '#b3261e',
-    fontSize: 14,
-    marginTop: 16,
+    color: colors.state.error,
+    fontSize: fontSizes.base,
+    marginTop: spacing.lg,
   },
   hint: {
-    color: '#57606a',
-    fontSize: 13,
-    marginTop: 8,
+    color: colors.text.secondary,
+    fontSize: fontSizes.sm,
+    marginTop: spacing.sm,
   },
   input: {
-    borderColor: '#d0d7de',
-    borderRadius: 8,
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
     borderWidth: 1,
-    color: '#24292f',
-    fontSize: 16,
+    color: colors.text.primary,
+    fontSize: fontSizes.md,
     marginTop: 6,
-    paddingHorizontal: 12,
+    paddingHorizontal: spacing.md,
     paddingVertical: 10,
   },
   label: {
-    color: '#24292f',
-    fontSize: 15,
-    fontWeight: '600',
+    color: colors.text.primary,
+    fontSize: fontSizes.base,
+    fontWeight: fontWeights.semiBold,
     marginTop: 20,
   },
   link: {
-    marginBottom: 12,
+    marginBottom: spacing.md,
   },
   linkText: {
-    color: '#1f6feb',
-    fontSize: 15,
+    color: colors.text.brand,
+    fontSize: fontSizes.base,
   },
   multiline: {
     minHeight: 100,
   },
   sourceBody: {
-    color: '#24292f',
-    fontSize: 15,
-    lineHeight: 22,
+    color: colors.text.primary,
+    fontSize: fontSizes.base,
+    lineHeight: lineHeights.base,
     marginTop: 6,
   },
   sourceMeta: {
-    color: '#57606a',
-    fontSize: 13,
+    color: colors.text.secondary,
+    fontSize: fontSizes.sm,
     marginTop: 6,
   },
   title: {
-    color: '#24292f',
-    fontSize: 24,
-    fontWeight: '700',
+    color: colors.text.primary,
+    fontSize: fontSizes.xl,
+    fontWeight: fontWeights.bold,
   },
 });
