@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Knot</string>
+    <!-- react-native-maps requires a Google Maps Android API key. This is a
+         deliberate placeholder so that no real key is committed: replace it
+         locally (or inject it per environment) before building for Android. -->
+    <string name="google_maps_api_key">YOUR_GOOGLE_MAPS_API_KEY_HERE</string>
+</resources>

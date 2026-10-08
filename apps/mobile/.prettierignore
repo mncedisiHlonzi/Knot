@@ -2,3 +2,7 @@ node_modules/
 coverage/
 dist/
 *.log
+
+# Generated native projects are not formatted by Prettier.
+ios/
+android/

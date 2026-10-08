@@ -56,3 +56,26 @@ Thumbs.db
 # Logs / misc
 # ---------------------------------------------------------------------------
 *.log
+
+# ---------------------------------------------------------------------------
+# Native mobile (apps/mobile/ios, apps/mobile/android)
+# ---------------------------------------------------------------------------
+# iOS
+apps/mobile/ios/Pods/
+apps/mobile/ios/build/
+apps/mobile/ios/DerivedData/
+**/.xcode.env.local
+apps/mobile/ios/*.xcworkspace
+!apps/mobile/ios/Knot.xcworkspace
+# Podfile.lock is generated on the first successful pod install; the founder
+# commits it deliberately after that build (KNOT-008a).
+apps/mobile/ios/Podfile.lock
+
+# Android
+apps/mobile/android/.gradle/
+apps/mobile/android/build/
+apps/mobile/android/app/build/
+apps/mobile/android/local.properties
+apps/mobile/android/.cxx/
+# The debug keystore is a shared, non-secret development artefact.
+!apps/mobile/android/app/debug.keystore

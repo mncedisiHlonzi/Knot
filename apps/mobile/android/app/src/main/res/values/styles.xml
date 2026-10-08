@@ -1,0 +1,12 @@
+<resources>
+
+    <!-- Base application theme. -->
+    <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <!-- Customize your theme here. -->
+        <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
+        <!-- Solid brand background shown before React Native mounts (splash).
+             The colour is defined in res/values/colors.xml (BRAND.md Purple). -->
+        <item name="android:windowBackground">@color/knot_splash_background</item>
+    </style>
+
+</resources>

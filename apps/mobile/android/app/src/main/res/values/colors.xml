@@ -1,0 +1,6 @@
+<resources>
+    <!-- Knot splash background — BRAND.md Purple (#7B3FE4). A solid brand
+         colour shown before React Native mounts; a proper splash is a future
+         task. -->
+    <color name="knot_splash_background">#7B3FE4</color>
+</resources>
