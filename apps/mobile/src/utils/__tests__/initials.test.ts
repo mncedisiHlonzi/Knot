@@ -26,4 +26,17 @@ describe('getInitials', () => {
     expect(getInitials('')).toBe('?');
     expect(getInitials('   ')).toBe('?');
   });
+
+  it('never throws and falls back to "?" for a missing name', () => {
+    expect(getInitials(null)).toBe('?');
+    expect(getInitials(undefined)).toBe('?');
+  });
+
+  it('never throws for a non-string name', () => {
+    // The API types describe the wire format optimistically; a malformed response
+    // can deliver anything, so the guard must be a typeof check.
+    expect(getInitials(42 as unknown as string)).toBe('?');
+    expect(getInitials({} as unknown as string)).toBe('?');
+    expect(getInitials(['Ada'] as unknown as string)).toBe('?');
+  });
 });

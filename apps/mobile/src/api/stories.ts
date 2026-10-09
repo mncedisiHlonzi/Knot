@@ -49,9 +49,13 @@ export type Story = {
    * can attribute the story without a second request. `author_avatar_url` is a
    * relative path on the API, or null when the author has no avatar (the client
    * then renders initials).
+   *
+   * Both are optional because the API types describe the wire format
+   * optimistically: a response from an older server omits them, and a client must
+   * treat a missing field as absent rather than assume a string (KNOT-015b-fix).
    */
-  readonly author_display_name: string;
-  readonly author_avatar_url: string | null;
+  readonly author_display_name?: string;
+  readonly author_avatar_url?: string | null;
   /**
    * The id of the story's root version. The content fields below (language,
    * title, body) are the root version's content; adapting a story starts from

@@ -166,27 +166,36 @@ export default function FeedScreen({
           ) : null}
         </View>
       }
-      renderItem={({ item }) => (
-        <Pressable style={styles.card} onPress={() => onOpenStory(item.id)}>
-          <Text style={styles.cardTitle}>{item.title}</Text>
-          <View style={styles.cardAuthor}>
-            <AuthorLine
-              displayName={item.author_display_name}
-              avatarUrl={item.author_avatar_url}
-              createdAt={item.created_at}
-              rooted={item.author_rooted}
-              size="small"
-            />
-          </View>
-          <Text style={styles.cardMeta}>
-            {item.pillar} · {item.language}
-            {item.sensitive ? ' · sensitive' : ''}
-          </Text>
-          {item.approximate_location !== '' ? (
-            <Text style={styles.cardMeta}>{item.approximate_location}</Text>
-          ) : null}
-        </Pressable>
-      )}
+      renderItem={({ item }) => {
+        // A story whose author fields are both absent falls back to the card's
+        // previous look: no AuthorLine, rather than a line with nothing in it.
+        const hasAuthor =
+          item.author_display_name !== undefined || item.author_avatar_url !== undefined;
+
+        return (
+          <Pressable style={styles.card} onPress={() => onOpenStory(item.id)}>
+            <Text style={styles.cardTitle}>{item.title}</Text>
+            {hasAuthor ? (
+              <View style={styles.cardAuthor}>
+                <AuthorLine
+                  displayName={item.author_display_name}
+                  avatarUrl={item.author_avatar_url}
+                  createdAt={item.created_at}
+                  rooted={item.author_rooted}
+                  size="small"
+                />
+              </View>
+            ) : null}
+            <Text style={styles.cardMeta}>
+              {item.pillar} · {item.language}
+              {item.sensitive ? ' · sensitive' : ''}
+            </Text>
+            {item.approximate_location !== '' ? (
+              <Text style={styles.cardMeta}>{item.approximate_location}</Text>
+            ) : null}
+          </Pressable>
+        );
+      }}
       ListFooterComponent={
         nextCursor !== '' ? (
           <Pressable

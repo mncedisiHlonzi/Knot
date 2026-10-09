@@ -12,8 +12,12 @@ import RootedBadge from './RootedBadge';
 export type AuthorLineSize = 'small' | 'medium' | 'large';
 
 type AuthorLineProps = {
-  /** The author's display name. A blank name omits the name segment. */
-  readonly displayName: string;
+  /**
+   * The author's display name. Optional and nullable: the API types describe the
+   * wire format optimistically, and a response from an older server can omit it.
+   * A missing or blank name omits the name segment.
+   */
+  readonly displayName?: string | null;
   /** The backend avatar path (`/users/{id}/avatar`), or null/empty for none. */
   readonly avatarUrl?: string | null;
   /** The content's ISO-8601 timestamp, rendered relative to now. */
@@ -60,6 +64,11 @@ const TIME_SIZE: Readonly<Record<AuthorLineSize, number>> = {
  * and a bridge all read the same way. Every segment is optional: a missing name or
  * timestamp is omitted rather than shown empty, and an author with no avatar gets
  * their initials in a coloured circle instead.
+ *
+ * Every field is validated as a string before it is used. The API response types
+ * describe an optimistic wire format, so a response that omits an author field
+ * delivers `undefined` at runtime; reading it must not crash the screen
+ * (KNOT-015b-fix).
  */
 export default function AuthorLine({
   displayName,
@@ -67,19 +76,28 @@ export default function AuthorLine({
   createdAt,
   rooted,
   size = 'small',
-}: AuthorLineProps): React.ReactElement {
-  const name = displayName.trim();
+}: AuthorLineProps): React.ReactElement | null {
+  const name = typeof displayName === 'string' ? displayName.trim() : '';
   const diameter = AVATAR_DIAMETER[size];
 
-  const path = avatarUrl === null || avatarUrl === undefined ? '' : avatarUrl.trim();
+  const path = typeof avatarUrl === 'string' ? avatarUrl.trim() : '';
   const avatarUri = path === '' ? undefined : `${API_BASE_URL}${path}`;
 
   const relative =
-    createdAt === null || createdAt === undefined || createdAt === ''
-      ? ''
-      : formatRelativeTime(createdAt);
+    typeof createdAt === 'string' && createdAt !== '' ? formatRelativeTime(createdAt) : '';
 
-  const hasRooted = rooted !== null && rooted !== undefined && rooted.place.trim() !== '';
+  const hasRooted =
+    rooted !== null &&
+    rooted !== undefined &&
+    typeof rooted.place === 'string' &&
+    rooted.place.trim() !== '';
+
+  // Nothing to show: render no row at all rather than an empty one. A row that
+  // carries only a Rooted badge is still something, so it renders.
+  if (avatarUri === undefined && name === '' && relative === '' && !hasRooted) {
+    return null;
+  }
+
   const hasLeadingSegment = name !== '' || hasRooted;
 
   return (
