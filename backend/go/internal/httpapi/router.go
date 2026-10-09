@@ -44,13 +44,14 @@ type Router struct {
 	avatar         *AvatarHandler
 	storyMedia     *StoryMediaHandler
 	notifications  *NotificationsHandler
+	profile        *ProfileHandler
 	authMiddleware *AuthMiddleware
 	version        string
 	logger         *slog.Logger
 }
 
 // NewRouter returns the root handler for the API.
-func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, avatarHandler *AvatarHandler, storyMediaHandler *StoryMediaHandler, notificationsHandler *NotificationsHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
+func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, avatarHandler *AvatarHandler, storyMediaHandler *StoryMediaHandler, notificationsHandler *NotificationsHandler, profileHandler *ProfileHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
 	if auth == nil {
 		return nil, errNilHandler("auth")
 	}
@@ -78,6 +79,9 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 	if notificationsHandler == nil {
 		return nil, errNilHandler("notifications")
 	}
+	if profileHandler == nil {
+		return nil, errNilHandler("profile")
+	}
 	if authMiddleware == nil {
 		return nil, errNilHandler("auth middleware")
 	}
@@ -94,6 +98,7 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 		avatar:         avatarHandler,
 		storyMedia:     storyMediaHandler,
 		notifications:  notificationsHandler,
+		profile:        profileHandler,
 		authMiddleware: authMiddleware,
 		version:        version,
 		logger:         logger,
@@ -136,6 +141,11 @@ func (r *Router) Handler() http.Handler {
 	mux.HandleFunc("POST /users/me/rooted", r.authMiddleware.Require(r.rooted.SetSignal))
 	mux.HandleFunc("GET /users/me/rooted", r.authMiddleware.Require(r.rooted.GetMySignals))
 	mux.HandleFunc("GET /users/{id}/rooted", r.rooted.GetUserSignals)
+
+	// Profiles: a user's public wall of everything they have authored. The route is
+	// public, and the literal "/profile" segment does not collide with "/rooted" or
+	// "/avatar" (KNOT-ADR-042).
+	mux.HandleFunc("GET /users/{id}/profile", r.profile.Get)
 
 	// Discovery: finding stories by place. Both routes are public. The place is a
 	// path segment and is URL-decoded by the router, so a client may send

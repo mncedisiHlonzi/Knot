@@ -14,6 +14,8 @@ type FeedScreenProps = {
   readonly token: string;
   /** Called when a story is tapped. */
   readonly onOpenStory: (id: string) => void;
+  /** Called when a story's author is tapped, to open their profile. */
+  readonly onOpenUserProfile: (userId: string) => void;
   /** Called when the person wants to publish a story. */
   readonly onCreateStory: () => void;
   /** Called when the person opens their notifications. */
@@ -33,6 +35,7 @@ export default function FeedScreen({
   email,
   token,
   onOpenStory,
+  onOpenUserProfile,
   onCreateStory,
   onOpenNotifications,
   onSignOut,
@@ -183,6 +186,7 @@ export default function FeedScreen({
                   createdAt={item.created_at}
                   rooted={item.author_rooted}
                   size="small"
+                  onPress={() => onOpenUserProfile(item.author_id)}
                 />
               </View>
             ) : null}

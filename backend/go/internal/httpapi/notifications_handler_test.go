@@ -255,7 +255,7 @@ func newNotificationsRouter(t *testing.T, logger *slog.Logger, notificationsHand
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}
 
-	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, newTestAvatarHandler(t, logger), newTestStoryMediaHandler(t, logger), notificationsHandler, authMiddleware, "0.1.0", logger)
+	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, newTestAvatarHandler(t, logger), newTestStoryMediaHandler(t, logger), notificationsHandler, newTestProfileHandler(t, logger), authMiddleware, "0.1.0", logger)
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v, want nil", err)
 	}

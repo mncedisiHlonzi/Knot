@@ -34,6 +34,7 @@ import (
 	"github.com/knot/backend/internal/httpapi"
 	"github.com/knot/backend/internal/identity"
 	"github.com/knot/backend/internal/notifications"
+	"github.com/knot/backend/internal/profile"
 	"github.com/knot/backend/internal/rooted"
 	"github.com/knot/backend/internal/storage"
 	"github.com/knot/backend/internal/stories"
@@ -288,6 +289,24 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
+	// The profile wall reads across the four content tables in one UNION ALL, so it
+	// owns its own store. It reuses the identity service to resolve the wall's owner
+	// and the rooted service to decorate the header (KNOT-ADR-042).
+	profileStore, err := profile.NewPostgresStore(pool)
+	if err != nil {
+		return err
+	}
+
+	profileService, err := profile.NewService(service, profileStore)
+	if err != nil {
+		return err
+	}
+
+	profileHandler, err := httpapi.NewProfileHandler(profileService, rootedService, logger)
+	if err != nil {
+		return err
+	}
+
 	// The same issuer that signs access tokens verifies them on protected
 	// routes, so there is one source of truth for the signing key.
 	authMiddleware, err := httpapi.NewAuthMiddleware(tokens, logger)
@@ -295,7 +314,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, avatarHandler, storyMediaHandler, notificationsHandler, authMiddleware, appinfo.Version, logger)
+	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, avatarHandler, storyMediaHandler, notificationsHandler, profileHandler, authMiddleware, appinfo.Version, logger)
 	if err != nil {
 		return err
 	}

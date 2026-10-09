@@ -21,6 +21,8 @@ type BridgeScreenProps = {
   readonly preferredLanguages: readonly string[];
   /** Called once the bridge has been created. */
   readonly onBridged: () => void;
+  /** Called when the source comment's author is tapped, to open their profile. */
+  readonly onOpenUserProfile: (userId: string) => void;
   /** Called when the person abandons the form. */
   readonly onCancel: () => void;
 };
@@ -82,6 +84,7 @@ export default function BridgeScreen({
   token,
   preferredLanguages,
   onBridged,
+  onOpenUserProfile,
   onCancel,
 }: BridgeScreenProps): React.ReactElement {
   const [targetLanguage, setTargetLanguage] = useState(() =>
@@ -140,6 +143,7 @@ export default function BridgeScreen({
           createdAt={sourceComment.created_at}
           rooted={sourceComment.author_rooted}
           size="small"
+          onPress={() => onOpenUserProfile(sourceComment.author_id)}
         />
       </View>
       <Text style={styles.sourceBody}>{sourceComment.body}</Text>

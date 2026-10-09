@@ -6,6 +6,7 @@ import AuthorLine from '../AuthorLine';
 // `secrets.local` module that `src/config/api` pulls in (KNOT-ADR-027).
 jest.mock('react-native', () => ({
   Image: 'Image',
+  Pressable: 'Pressable',
   StyleSheet: { create: (styles: unknown) => styles },
   Text: 'Text',
   View: 'View',
@@ -56,5 +57,30 @@ describe('AuthorLine', () => {
         createdAt: '2026-10-09T12:00:00.000Z',
       }),
     ).not.toBeNull();
+  });
+
+  it('renders without onPress and never throws', () => {
+    const props = {
+      displayName: 'Ada Lovelace',
+      avatarUrl: null,
+      createdAt: '2026-10-09T12:00:00.000Z',
+    };
+
+    expect(() => AuthorLine(props)).not.toThrow();
+    expect(AuthorLine(props)).not.toBeNull();
+  });
+
+  it('accepts an onPress without invoking it during render', () => {
+    const onPress = jest.fn();
+
+    const element = AuthorLine({
+      displayName: 'Ada Lovelace',
+      avatarUrl: null,
+      createdAt: '2026-10-09T12:00:00.000Z',
+      onPress,
+    });
+
+    expect(element).not.toBeNull();
+    expect(onPress).not.toHaveBeenCalled();
   });
 });

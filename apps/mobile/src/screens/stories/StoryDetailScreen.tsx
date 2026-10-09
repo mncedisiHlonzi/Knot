@@ -96,6 +96,8 @@ type StoryDetailScreenProps = {
    * id, which is the story's root version from this screen.
    */
   readonly onConversation: (versionId: string) => void;
+  /** Called when the story's author is tapped, to open their profile. */
+  readonly onOpenUserProfile: (userId: string) => void;
 };
 
 /**
@@ -111,6 +113,7 @@ export default function StoryDetailScreen({
   onAdapt,
   onViewTree,
   onConversation,
+  onOpenUserProfile,
 }: StoryDetailScreenProps): React.ReactElement {
   const [story, setStory] = useState<Story | undefined>(undefined);
   const [versionCount, setVersionCount] = useState(0);
@@ -165,6 +168,7 @@ export default function StoryDetailScreen({
               createdAt={story.created_at}
               rooted={story.author_rooted}
               size="medium"
+              onPress={() => onOpenUserProfile(story.author_id)}
             />
           </View>
           <Text style={styles.meta}>

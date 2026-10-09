@@ -24,6 +24,8 @@ type CommentThreadScreenProps = {
   readonly language?: string;
   /** Called when the person wants to bridge a comment into another language. */
   readonly onBridge: (comment: Comment) => void;
+  /** Called when a commenter is tapped, to open their profile. */
+  readonly onOpenUserProfile: (userId: string) => void;
   /** Called when the person returns to the story. */
   readonly onBack: () => void;
 };
@@ -63,6 +65,7 @@ export default function CommentThreadScreen({
   token,
   language,
   onBridge,
+  onOpenUserProfile,
   onBack,
 }: CommentThreadScreenProps): React.ReactElement {
   const [comments, setComments] = useState<readonly Comment[]>([]);
@@ -191,6 +194,7 @@ export default function CommentThreadScreen({
                 createdAt={item.created_at}
                 rooted={item.author_rooted}
                 size="small"
+                onPress={() => onOpenUserProfile(item.author_id)}
               />
             </View>
             <Text style={styles.body}>{item.body}</Text>

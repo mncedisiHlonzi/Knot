@@ -1,5 +1,5 @@
 import React from 'react';
-import { Image, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { AuthorRooted } from '../api/rooted';
 import { API_BASE_URL } from '../config/api';
@@ -26,6 +26,14 @@ type AuthorLineProps = {
   readonly rooted?: AuthorRooted | null;
   /** Controls the avatar diameter and text weight. Defaults to "small". */
   readonly size?: AuthorLineSize;
+  /**
+   * Called when the author's avatar or name is tapped, to open their profile.
+   *
+   * When omitted, the identity is plain (not a tap target). The Rooted badge and
+   * the timestamp are never part of the tap target, so a caller can wrap the whole
+   * line in a card that opens something else.
+   */
+  readonly onPress?: () => void;
 };
 
 /** Avatar diameter per size, in points. */
@@ -69,6 +77,10 @@ const TIME_SIZE: Readonly<Record<AuthorLineSize, number>> = {
  * describe an optimistic wire format, so a response that omits an author field
  * delivers `undefined` at runtime; reading it must not crash the screen
  * (KNOT-015b-fix).
+ *
+ * When `onPress` is given, the avatar and name become a tap target for the
+ * author's profile: a nested `Pressable` takes the touch itself, so the parent
+ * card's own onPress does not fire for it (KNOT-ADR-043).
  */
 export default function AuthorLine({
   displayName,
@@ -76,6 +88,7 @@ export default function AuthorLine({
   createdAt,
   rooted,
   size = 'small',
+  onPress,
 }: AuthorLineProps): React.ReactElement | null {
   const name = typeof displayName === 'string' ? displayName.trim() : '';
   const diameter = AVATAR_DIAMETER[size];
@@ -100,36 +113,55 @@ export default function AuthorLine({
 
   const hasLeadingSegment = name !== '' || hasRooted;
 
+  const avatar =
+    avatarUri === undefined ? (
+      <View style={[styles.avatarFallback, { height: diameter, width: diameter }]}>
+        <Text style={[styles.initials, { fontSize: INITIALS_SIZE[size] }]}>
+          {getInitials(displayName)}
+        </Text>
+      </View>
+    ) : (
+      <Image
+        style={[styles.avatar, { height: diameter, width: diameter }]}
+        source={{ uri: avatarUri }}
+        accessibilityLabel={name === '' ? 'profile picture' : `${name}'s profile picture`}
+      />
+    );
+
+  const nameText =
+    name !== '' ? (
+      <Text
+        style={[
+          styles.name,
+          {
+            fontSize: NAME_SIZE[size],
+            fontWeight: size === 'small' ? fontWeights.medium : fontWeights.semiBold,
+          },
+        ]}
+        numberOfLines={1}
+      >
+        {name}
+      </Text>
+    ) : null;
+
   return (
     <View style={styles.row}>
-      {avatarUri === undefined ? (
-        <View style={[styles.avatarFallback, { height: diameter, width: diameter }]}>
-          <Text style={[styles.initials, { fontSize: INITIALS_SIZE[size] }]}>
-            {getInitials(displayName)}
-          </Text>
-        </View>
-      ) : (
-        <Image
-          style={[styles.avatar, { height: diameter, width: diameter }]}
-          source={{ uri: avatarUri }}
-          accessibilityLabel={name === '' ? 'profile picture' : `${name}'s profile picture`}
-        />
-      )}
-
-      {name !== '' ? (
-        <Text
-          style={[
-            styles.name,
-            {
-              fontSize: NAME_SIZE[size],
-              fontWeight: size === 'small' ? fontWeights.medium : fontWeights.semiBold,
-            },
-          ]}
-          numberOfLines={1}
+      {onPress !== undefined ? (
+        <Pressable
+          style={styles.identity}
+          onPress={onPress}
+          accessibilityRole="button"
+          accessibilityLabel={name === '' ? 'Open profile' : `Open ${name}'s profile`}
         >
-          {name}
-        </Text>
-      ) : null}
+          {avatar}
+          {nameText}
+        </Pressable>
+      ) : (
+        <>
+          {avatar}
+          {nameText}
+        </>
+      )}
 
       {hasRooted ? (
         <RootedBadge
@@ -158,6 +190,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brand.purple,
     borderRadius: radius.pill,
     justifyContent: 'center',
+  },
+  identity: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
   },
   initials: {
     color: colors.text.primary,

@@ -515,3 +515,76 @@ the row is the whole feature, and the client polls its own inbox (KNOT-ADR-039).
 - **No `updated_at`.** A notification is a record of a past event; only `read_at` changes.
 - **No grouping or de-duplication.** Ten adaptations are ten rows, because each points at a
 different thing to open.
+
+## The profile wall (a read model, no new table)
+
+The profile wall (`GET /users/{id}/profile`) is **not backed by a table**. It is a read
+model over the four entity tables that already exist — `stories`, `story_versions`,
+`comments`, and `bridges` — unioned in one query, filtered by the author, and ordered
+chronologically:
+
+```sql
+SELECT kind, id, created_at, payload
+FROM (
+    SELECT 'story'   AS kind, s.id, s.created_at,
+           jsonb_build_object('title',        rv.title,
+                              'pillar',       s.pillar,
+                              'language',     rv.language)          AS payload
+    FROM stories s
+    JOIN story_versions rv ON rv.id = s.root_version_id
+    WHERE s.author_id = $1
+
+    UNION ALL
+    SELECT 'version' AS kind, v.id, v.created_at,
+           jsonb_build_object('story_id',     v.story_id,
+                              'story_title',  rv.title,
+                              'language',     v.language)
+    FROM story_versions v
+    JOIN stories s         ON s.id = v.story_id
+    JOIN story_versions rv ON rv.id = s.root_version_id
+    WHERE v.author_id = $1 AND v.parent_version_id IS NOT NULL
+
+    UNION ALL
+    SELECT 'comment' AS kind, c.id, c.created_at,
+           jsonb_build_object('version_id',   c.version_id,
+                              'story_id',     v.story_id,
+                              'body_preview', left(c.body, 200))
+    FROM comments c
+    JOIN story_versions v ON v.id = c.version_id
+    WHERE c.author_id = $1
+      AND NOT EXISTS (SELECT 1 FROM bridges b WHERE b.target_comment_id = c.id)
+
+    UNION ALL
+    SELECT 'bridge'  AS kind, b.id, b.created_at,
+           jsonb_build_object('source_comment_id', b.source_comment_id,
+                              'version_id',        sc.version_id,
+                              'target_language',   b.target_language)
+    FROM bridges b
+    JOIN comments sc ON sc.id = b.source_comment_id
+    WHERE b.author_id = $1
+) AS activities
+WHERE (created_at, id) < ($2::timestamptz, $3::uuid)   -- when a cursor is sent
+ORDER BY created_at DESC, id DESC
+LIMIT $4
+```
+
+**Why a union and not a materialised `activities` table.** The four entities are already
+the source of truth; a fifth table would have to be written on every create in four
+domains, kept in sync on every delete, and backfilled. A read model with one query costs
+one scan of each author-indexed table and stays correct by construction (KNOT-ADR-042).
+
+**Why the payload is built in SQL.** `jsonb_build_object` attaches the context a card needs
+— a story's title, an adaptation's story title, a comment's preview, a bridge's source —
+to the row, so a whole page is one query rather than one per activity. The comment preview
+is `left(body, 200)`, so a full body never travels to a client through the wall.
+
+**Two acts are deliberately not double-counted.** A story's root version is excluded from
+the `version` branch (the root *is* the story), and a bridge's target comment is excluded
+from the `comment` branch (the target is the bridge's artifact). Both are single acts that
+write two rows each, so listing both rows would list one action twice.
+
+**Indexes it relies on.** `stories_author_id_idx`, `story_versions_author_id_idx`,
+`comments_author_id_idx`, and `bridges_author_id_idx` narrow each branch to the author;
+the `ORDER BY (created_at DESC, id DESC)` is a sort over the merged rows, which is bounded
+by the four per-author filters. Each branch's primary-key lookup for the join is an index
+scan.

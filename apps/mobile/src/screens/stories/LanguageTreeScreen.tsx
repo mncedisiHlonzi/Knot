@@ -9,6 +9,8 @@ import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 type LanguageTreeScreenProps = {
   /** The story whose language tree to show. */
   readonly storyId: string;
+  /** Called when a version's author is tapped, to open their profile. */
+  readonly onOpenUserProfile: (userId: string) => void;
   /** Called when the person returns to the story. */
   readonly onBack: () => void;
 };
@@ -26,6 +28,7 @@ const INDENT_PER_LEVEL = spacing.lg;
  */
 export default function LanguageTreeScreen({
   storyId,
+  onOpenUserProfile,
   onBack,
 }: LanguageTreeScreenProps): React.ReactElement {
   const [versions, setVersions] = useState<readonly StoryVersion[]>([]);
@@ -87,6 +90,7 @@ export default function LanguageTreeScreen({
               createdAt={version.created_at}
               rooted={version.author_rooted}
               size="small"
+              onPress={() => onOpenUserProfile(version.author_id)}
             />
           </View>
           {version.adaptation_note !== null && version.adaptation_note !== '' ? (

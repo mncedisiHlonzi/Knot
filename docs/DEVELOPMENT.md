@@ -253,6 +253,22 @@ versions, comments, and bridges (KNOT-ADR-041) — so a screen never has to call
 service for a name. Render attribution by passing an entity's fields to `AuthorLine`; do not
 hand-roll the markup on a new screen.
 
+### The profile wall (`UserProfileScreen`)
+
+`apps/mobile/src/screens/profile/UserProfileScreen.tsx` shows a user's public wall from
+`GET /users/{id}/profile` (`src/api/profile.ts`): a header (avatar, name, Rooted badge,
+"Joined …") and a `FlatList` of activity cards with pull-to-refresh and cursor paging. Each
+card is labelled by kind (Story / Adaptation / Comment / Bridge) and opens the entity it
+names — a story activity opens the story, a comment opens its thread, and a bridge resolves
+its source comment through `GET /comments/{id}` first.
+
+The same screen serves the owner: `isOwnProfile` adds the avatar upload and sign-out
+controls, so tapping your own author line opens your wall. `AuthorLine`'s `onPress` is how
+the app reaches it — a nested `Pressable` handles the author tap without firing the parent
+card's (KNOT-ADR-043). The tab-bar `ProfileScreen` stays the owner's dedicated screen (it
+also exposes the Rooted shortcut); `App.tsx` pushes a `userProfile` overlay for every author
+tap.
+
 ### Native dependencies (Mapbox, AsyncStorage)
 
 The Discovery Map uses **`@rnmapbox/maps`** (KNOT-011a, KNOT-ADR-026) — the app's first native
@@ -802,6 +818,24 @@ the avatar handler already had.
 Delivery is **in-app only** (KNOT-ADR-039): there is no device-token table, no push
 provider, and no delivery state. The mobile app reads its own inbox and the unread count,
 and shows a bell with a badge on the feed.
+
+### Profiles (a read model)
+
+`GET /users/{id}/profile` is served by `internal/httpapi/profile_handler.go`, backed by
+`internal/profile`. The wall is a **read model**, not a table:
+`internal/profile/postgres_store.go` runs one `UNION ALL` over `stories`, `story_versions`,
+`comments`, and `bridges`, filtered by `author_id` and ordered by
+`(created_at DESC, id DESC)`. Each branch builds its payload with `jsonb_build_object`, so a
+page is one query, never N+1, and a comment preview is `left(body, 200)` so a full body
+never leaves through the wall. Two acts are not double-counted: a story's root version is
+excluded from the version branch, and a bridge's target comment is excluded from the comment
+branch (KNOT-ADR-042).
+
+The service resolves the owner through `identity.UserByID` — so an unknown id is a 404 even
+with no activity — and decodes the same opaque `(created_at, id)` cursor the feed uses. The
+handler attaches the owner's Rooted summary with the shared `authorRootedSummaries` helper
+and projects the avatar with `avatarPathFor`, exactly as the content handlers do. The route
+is public and does not collide with `GET /users/{id}/rooted` or `GET /users/{id}/avatar`.
 
 ### Migrations
 

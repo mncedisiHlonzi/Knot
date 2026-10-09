@@ -925,6 +925,80 @@ call — never one query per row, and never by widening an entity's stored colum
 Attribution is supplementary: if the lookup fails, the response still returns, with
 `author_display_name` empty and `author_avatar_url` `null`.
 
+## Profiles
+
+Every user has a public **wall**: one chronological stream of everything they have
+authored — stories, adaptations, comments, and bridges. It is how the app answers
+"who is this person, and what have they made?" from any author mention.
+
+| Route                     | Auth   | Purpose                                    |
+| ------------------------- | ------ | ------------------------------------------ |
+| `GET /users/{id}/profile` | public | One page of a user's public activity wall  |
+
+### The profile object
+
+```json
+{
+  "user": {
+    "id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
+    "display_name": "Ada Lovelace",
+    "avatar_url": "/users/7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8/avatar?v=ada.png",
+    "rooted": { "place": "Cape Town", "duration_bucket": "lifelong" },
+    "joined_at": "2026-10-07T18:26:37.134182+02:00"
+  },
+  "activities": [
+    {
+      "kind": "story",
+      "id": "d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b",
+      "created_at": "2026-10-09T18:26:37.134182+02:00",
+      "payload": { "title": "The first rain", "pillar": "wonder", "language": "en" }
+    }
+  ],
+  "next_cursor": ""
+}
+```
+
+`avatar_url` is a path on this API (`/users/{id}/avatar`), or `null` when the user
+has no avatar. `rooted` is the same inline summary content responses carry (see
+[`author_rooted` on content responses](#author_rooted-on-content-responses)), or
+`null`.
+
+### GET /users/{id}/profile
+
+Returns **200** with the user's public identity header and one page of their
+activity, newest first.
+
+| Query    | Required | Rules                                                    |
+| -------- | -------- | -------------------------------------------------------- |
+| `cursor` | no       | A `next_cursor` from a previous page. Omit for the first  |
+| `limit`  | no       | 1-50. Defaults to 20; a larger value is clamped to 50      |
+
+`activities` is always an array, never `null`. `next_cursor` is the empty string on
+the last page. Paging is keyset over `(created_at, id)`, exactly as the feed and a
+thread are.
+
+Each activity is discriminated by `kind`; `payload` carries the context for that
+kind:
+
+| `kind`    | `id` names     | `payload`                                              |
+| --------- | -------------- | ------------------------------------------------------ |
+| `story`   | the story      | `{ title, pillar, language }`                           |
+| `version` | the adaptation | `{ story_id, story_title, language }`                   |
+| `comment` | the comment    | `{ version_id, story_id, body_preview }`                |
+| `bridge`  | the bridge     | `{ source_comment_id, version_id, target_language }`    |
+
+Every activity is authored by the wall's owner, so there is **no per-activity
+author**: the name and avatar are on the `user` header. `body_preview` is the first
+200 characters of a comment.
+
+One act is one activity: a story's **root version** is not listed again as a
+`version`, and a bridge's **target comment** is not listed again as a `comment`.
+See KNOT-ADR-042.
+
+**Errors:** `400 validation_error` (an unreadable `cursor`, or a `limit` that is not
+a positive integer), `404 not_found` (no such user, or the id is not a UUID),
+`500 internal_error`.
+
 ## Discovery
 
 Discovery answers "where are stories told?" It groups stories into **place clusters** — one

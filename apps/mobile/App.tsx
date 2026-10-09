@@ -26,6 +26,7 @@ import PlaceStoriesScreen from './src/screens/discovery/PlaceStoriesScreen';
 import NotificationsScreen from './src/screens/notifications/NotificationsScreen';
 import ProfileScreen from './src/screens/profile/ProfileScreen';
 import RootedSetupScreen from './src/screens/profile/RootedSetupScreen';
+import UserProfileScreen from './src/screens/profile/UserProfileScreen';
 import AdaptStoryScreen from './src/screens/stories/AdaptStoryScreen';
 import CreateStoryScreen from './src/screens/stories/CreateStoryScreen';
 import FeedScreen from './src/screens/stories/FeedScreen';
@@ -55,7 +56,8 @@ type Overlay =
     }
   | { readonly name: 'rootedSetup' }
   | { readonly name: 'notifications' }
-  | { readonly name: 'placeStories'; readonly place: string };
+  | { readonly name: 'placeStories'; readonly place: string }
+  | { readonly name: 'userProfile'; readonly userId: string };
 
 /** The two auth screens, shown before there is a session. Login is the default. */
 type AuthMode = 'login' | 'register';
@@ -220,6 +222,7 @@ export default function App(): React.ReactElement {
             onOpenNotifications={() =>
               setOverlays((stack) => pushOverlay(stack, { name: 'notifications' }))
             }
+            onOpenUserProfile={openUserProfile}
             onSignOut={handleSignOut}
           />
         );
@@ -280,6 +283,17 @@ export default function App(): React.ReactElement {
   }
 
   /**
+   * Pushes a user's profile wall over whatever is showing.
+   *
+   * The same overlay serves the owner and everyone else: the screen shows the
+   * owner controls only when the id is the signed-in user's, so tapping your own
+   * author line opens your wall with the avatar and sign-out controls.
+   */
+  function openUserProfile(userId: string): void {
+    setOverlays((stack) => pushOverlay(stack, { name: 'userProfile', userId }));
+  }
+
+  /**
    * Renders the top overlay over the active tab, or the tab itself when the stack
    * is empty.
    *
@@ -314,6 +328,7 @@ export default function App(): React.ReactElement {
                 pushOverlay(stack, { name: 'comments', storyId: overlay.storyId, versionId }),
               )
             }
+            onOpenUserProfile={openUserProfile}
           />
         );
       case 'adapt':
@@ -332,7 +347,13 @@ export default function App(): React.ReactElement {
           />
         );
       case 'tree':
-        return <LanguageTreeScreen storyId={overlay.storyId} onBack={handleBack} />;
+        return (
+          <LanguageTreeScreen
+            storyId={overlay.storyId}
+            onOpenUserProfile={openUserProfile}
+            onBack={handleBack}
+          />
+        );
       case 'comments':
         return (
           <CommentThreadScreen
@@ -349,6 +370,7 @@ export default function App(): React.ReactElement {
                 }),
               )
             }
+            onOpenUserProfile={openUserProfile}
             onBack={handleBack}
           />
         );
@@ -359,6 +381,7 @@ export default function App(): React.ReactElement {
             token={current.accessToken}
             preferredLanguages={current.user.preferred_languages}
             onBridged={handleBack}
+            onOpenUserProfile={openUserProfile}
             onCancel={handleBack}
           />
         );
@@ -385,6 +408,23 @@ export default function App(): React.ReactElement {
           <NotificationsScreen
             token={current.accessToken}
             onOpenEntity={handleOpenNotification}
+            onBack={handleBack}
+          />
+        );
+      case 'userProfile':
+        return (
+          <UserProfileScreen
+            userId={overlay.userId}
+            token={current.accessToken}
+            isOwnProfile={overlay.userId === current.user.id}
+            onOpenStory={(storyId) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId }))
+            }
+            onOpenComment={(storyId, versionId) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'comments', storyId, versionId }))
+            }
+            onUserUpdated={handleUserUpdated}
+            onSignOut={handleSignOut}
             onBack={handleBack}
           />
         );

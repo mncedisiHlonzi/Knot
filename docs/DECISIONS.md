@@ -937,3 +937,52 @@ The S3 implementation sets the SDK's `GetObjectInput.Range` field, so the object
 **Reason:** Attribution is a presentation concern over an id the entity already stores, and it has the same shape in every domain. Doing it once, in one batched read at the edge, keeps it consistent, keeps the storage model normalized, and keeps the cost independent of page size.
 
 **Consequences:** Every authored response gains two fields and every content handler gains one dependency (`AuthorLookup`), plus one batched read per response. The wire format grows additively, so a client that ignores the fields is unaffected. The notifications inbox already resolved actors this way; its `NotificationActors` is now an alias of the same `AuthorLookup` contract, so there is one enrichment interface rather than two.
+
+## KNOT-ADR-042 — The profile wall unions the four content tables; chronological, cursor-paginated, public
+
+**Decision ID:** KNOT-ADR-042
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** A profile page must answer "who is this person, and what have they made?" from any author mention. Everything a user authors lives in four tables owned by four domains: `stories`, `story_versions`, `comments`, and `bridges`. The obvious shapes were a new `activities` table written by every create, or four separate paginated lists merged on the client.
+
+**Decision:**
+- The wall is a **read model**, not a table. `internal/profile` holds an `ActivityStore` whose one method runs a single `UNION ALL` over the four tables, filtered by `author_id = $1`, ordered by `(created_at DESC, id DESC)`, and cursor-paginated with the same opaque `(created_at, id)` cursor the feed and a thread use.
+- Each branch builds its **payload** in SQL with `jsonb_build_object`, so the context a card needs travels with the row. A page is one query, never N+1. A comment preview is `left(body, 200)`, so a full body never leaves through the wall.
+- The kinds are `story`, `version`, `comment`, and `bridge`. **One act is one activity:** a story's root version is excluded from the `version` branch (the root *is* the story), and a bridge's target comment is excluded from the `comment` branch (the target is the bridge's artifact).
+- The wall is **public**. There is no private activity and no per-viewer filtering. It exposes only what the content endpoints already expose publicly, plus the owner's display name and avatar.
+- `GET /users/{id}/profile` returns the owner header (`id`, `display_name`, `avatar_url`, `rooted`, `joined_at`) and one page of activities. The owner is resolved through `identity.UserByID`, so an unknown id is a 404 even for an empty wall; the Rooted summary is attached with the existing batched helper.
+
+**Alternatives Considered:**
+1. **A materialised `activities` table** — rejected. It denormalizes the four domains, must be written on every create in each of them, kept correct on delete (comments and bridges cascade), and backfilled; the read model is correct by construction.
+2. **Four paginated lists merged on the client** — rejected. Correct interleaving and a single cursor are exactly what a union gives for free; the client would need to hold four cursors and merge-sort pages.
+3. **Listing root versions and bridge target comments as separate activities** — rejected. Both are second rows written by one act; listing them makes one action read as two.
+4. **A per-activity author object** — rejected. Every activity is by the wall's owner, so the author is the header; repeating it per row is payload bloat.
+
+**Reason:** The four tables are already the source of truth and each has an author-id index. A single indexed union with a JSON payload is one query, stays correct when content changes, and adds no write path to four domains.
+
+**Consequences:** The wall is eventually consistent only with the tables themselves (there is nothing else to keep in sync), and a new authored entity type means one more `UNION ALL` branch. Ordering across kinds relies on `gen_random_uuid` ids being distinct enough for the `id` tiebreaker, which holds in practice. The endpoint is public and unauthenticated, matching the content endpoints it summarizes.
+
+## KNOT-ADR-043 — AuthorLine is a tap target for the author's profile; a nested Pressable isolates the tap
+
+**Decision ID:** KNOT-ADR-043
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** Attribution is rendered in one component, `AuthorLine`, on the feed, story detail, language tree, comment thread, and bridge screen. The product wants tapping an author to open their profile everywhere — but on the feed, an `AuthorLine` sits inside a card whose own tap opens the story, so a tap must open exactly one thing.
+
+**Decision:**
+- `AuthorLine` takes an optional `onPress`. When it is given, the **avatar and name** are wrapped in a `Pressable`; when it is omitted, they are plain and are not a tap target.
+- The **Rooted badge and the relative timestamp are never part of the tap target** — they are informational, and keeping them out means the tap area is exactly "the author".
+- Every screen that renders attribution passes `onPress={() => onOpenUserProfile(authorId)}`, and `App.tsx` pushes a single `userProfile` overlay. The overlay serves both the owner and everyone else: it shows the owner controls (Edit avatar, Sign out) only when the id is the signed-in user's.
+- The nested `Pressable` is what avoids conflict with the parent card: React Native's responder system grants the touch to the deepest view that wants it, so the child's `onPress` fires and the parent card's does not.
+
+**Alternatives Considered:**
+1. **Make the whole `AuthorLine` pressable** — rejected. It would swallow the timestamp and badge into a link and enlarge the tap area beyond "the author".
+2. **A separate "view profile" button per card** — rejected. It adds chrome to every card and to the design surface, and the author's name is the natural affordance.
+3. **Stop propagation manually from the parent card** — rejected. It puts the child's knowledge in the parent and is the wrong direction; the child owning its tap is the correct model.
+4. **Only make the name tappable, not the avatar** — rejected. The avatar is the more common tap target on a phone, and the two read as one identity.
+
+**Reason:** Attribution already flows through one component; adding one optional callback keeps the tap behavior in one place, and the responder system already resolves the nested-tap case without global state or event plumbing.
+
+**Consequences:** The nested-tap behavior must be verified on a device (Android especially), because the responder system's behavior in a `FlatList` cell is not exercised by the unit tests. Screens that show an `AuthorLine` but cannot navigate to a profile simply omit `onPress`, and the line renders unchanged.
