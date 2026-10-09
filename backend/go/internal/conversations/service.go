@@ -380,18 +380,18 @@ func validateBody(raw string) (string, error) {
 	return raw, nil
 }
 
-// validateLanguage requires a canonical ISO 639-1 code, reporting a failure
+// validateLanguage requires a canonical ISO 639-3 code, reporting a failure
 // against the given field name.
 //
-// The code must match exactly: "en" is accepted, while "EN", "eng", and
-// "English" are rejected, so a comment's language and a bridge's target language
-// are always known codes (KNOT-ADR-045).
+// The code must match exactly: "eng" is accepted, while "ENG" and "en" are
+// rejected, so a comment's language and a bridge's target language are always
+// known codes (KNOT-ADR-046).
 func validateLanguage(raw, field string) (string, error) {
 	code := strings.TrimSpace(raw)
 	if !language.IsValid(code) {
 		return "", &ValidationError{
 			Field:   field,
-			Message: "must be a valid ISO 639-1 language code, such as en or zu",
+			Message: "must be a valid ISO 639-3 language code, such as eng or zul",
 		}
 	}
 	return code, nil

@@ -125,7 +125,7 @@ export default function RegisterScreen({
         mode="multiple"
         selected={languages}
         onChange={setLanguages}
-        placeholder="Search, e.g. Zulu or zu"
+        placeholder="Search, e.g. Zulu or zul"
       />
 
       <Text style={styles.label}>Approximate location (optional)</Text>

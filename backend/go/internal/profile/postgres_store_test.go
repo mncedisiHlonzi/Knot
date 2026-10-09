@@ -136,7 +136,7 @@ func createUser(t *testing.T, pool *pgxpool.Pool, email, displayName string) str
 		email,
 		"$argon2id$v=19$m=65536,t=1,p=4$c2FsdA$a2V5",
 		displayName,
-		[]string{"en"},
+		[]string{"eng"},
 	).Scan(&id)
 	if err != nil {
 		t.Fatalf("could not create user %q: %v", email, err)
@@ -152,7 +152,7 @@ func createStory(t *testing.T, env integrationEnv, author, name string) (storyID
 	story, err := env.storyStore.CreateStory(context.Background(), stories.Story{
 		AuthorID:  author,
 		Pillar:    stories.PillarHeritage,
-		Language:  "en",
+		Language:  "eng",
 		Title:     "Story " + name,
 		Body:      "Body for " + name,
 		MediaURLs: []string{},
@@ -190,7 +190,7 @@ func createComment(t *testing.T, env integrationEnv, author, versionID, body str
 	created, err := env.convStore.CreateComment(context.Background(), conversations.Comment{
 		VersionID: versionID,
 		AuthorID:  author,
-		Language:  "en",
+		Language:  "eng",
 		Body:      body,
 	})
 	if err != nil {
@@ -223,9 +223,9 @@ func TestPostgresStoreListForUserMergesEveryKind(t *testing.T) {
 	ctx := context.Background()
 
 	storyID, rootVersionID := createStory(t, env, env.userA, "merged")
-	frVersionID := createVersion(t, env, env.userA, storyID, rootVersionID, "fr")
+	frVersionID := createVersion(t, env, env.userA, storyID, rootVersionID, "fra")
 	commentID := createComment(t, env, env.userA, rootVersionID, "Ada's comment.")
-	bridgeID := createBridge(t, env, env.userA, commentID, frVersionID, "fr")
+	bridgeID := createBridge(t, env, env.userA, commentID, frVersionID, "fra")
 
 	page, next, err := env.store.ListForUser(ctx, env.userA, nil, 50)
 	if err != nil {
@@ -249,14 +249,14 @@ func TestPostgresStoreListForUserMergesEveryKind(t *testing.T) {
 	if got := byKind[KindStory]; got.ID != storyID {
 		t.Errorf("story id = %q, want the story %q", got.ID, storyID)
 	}
-	if got := byKind[KindStory].Payload; got.Title != "Story merged" || got.Pillar != "heritage" || got.Language != "en" {
+	if got := byKind[KindStory].Payload; got.Title != "Story merged" || got.Pillar != "heritage" || got.Language != "eng" {
 		t.Errorf("story payload = %+v, want title/pillar/language of the story", got)
 	}
 
 	if got := byKind[KindVersion]; got.ID != frVersionID {
 		t.Errorf("version id = %q, want the adaptation %q (the root version must be excluded)", got.ID, frVersionID)
 	}
-	if got := byKind[KindVersion].Payload; got.StoryID != storyID || got.StoryTitle != "Story merged" || got.Language != "fr" {
+	if got := byKind[KindVersion].Payload; got.StoryID != storyID || got.StoryTitle != "Story merged" || got.Language != "fra" {
 		t.Errorf("version payload = %+v, want the story id, story title and language", got)
 	}
 
@@ -270,7 +270,7 @@ func TestPostgresStoreListForUserMergesEveryKind(t *testing.T) {
 	if got := byKind[KindBridge]; got.ID != bridgeID {
 		t.Errorf("bridge id = %q, want %q", got.ID, bridgeID)
 	}
-	if got := byKind[KindBridge].Payload; got.SourceCommentID != commentID || got.VersionID != rootVersionID || got.TargetLanguage != "fr" {
+	if got := byKind[KindBridge].Payload; got.SourceCommentID != commentID || got.VersionID != rootVersionID || got.TargetLanguage != "fra" {
 		t.Errorf("bridge payload = %+v, want the source comment, version and target language", got)
 	}
 

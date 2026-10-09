@@ -116,7 +116,7 @@ func validAdaptationInput() CreateAdaptationInput {
 		StoryID:         serviceStoryID,
 		ParentVersionID: serviceParentID,
 		AuthorID:        serviceAuthorID,
-		Language:        "fr",
+		Language:        "fra",
 		Title:           "La première pluie",
 		Body:            "Grand-mère disait que la première pluie se souvient de chaque nom.",
 		AdaptationNote:  "Rendered for French-speaking listeners.",
@@ -130,7 +130,7 @@ func rootParent() StoryVersion {
 		ID:       serviceParentID,
 		StoryID:  serviceStoryID,
 		AuthorID: serviceAuthorID,
-		Language: "en",
+		Language: "eng",
 		Title:    "The first rain",
 		Body:     "Grandmother said the first rain remembers every name.",
 	}
@@ -176,7 +176,7 @@ func TestCreateAdaptationNormalisesFields(t *testing.T) {
 	store.getResult = rootParent()
 
 	input := validAdaptationInput()
-	input.Language = " fr "
+	input.Language = " fra "
 	input.Title = "  La première pluie  "
 	input.Body = "  indented body  "
 	input.AdaptationNote = "  a note  "
@@ -185,8 +185,8 @@ func TestCreateAdaptationNormalisesFields(t *testing.T) {
 		t.Fatalf("CreateAdaptation() error = %v, want nil", err)
 	}
 
-	if store.gotCreate.Language != "fr" {
-		t.Errorf("language = %q, want %q", store.gotCreate.Language, "fr")
+	if store.gotCreate.Language != "fra" {
+		t.Errorf("language = %q, want %q", store.gotCreate.Language, "fra")
 	}
 	if store.gotCreate.Title != "La première pluie" {
 		t.Errorf("title = %q, want the trimmed value", store.gotCreate.Title)
@@ -218,8 +218,9 @@ func TestCreateAdaptationValidation(t *testing.T) {
 		{"empty body", func(in *CreateAdaptationInput) { in.Body = "\n\t " }, "body"},
 		{"body too long", func(in *CreateAdaptationInput) { in.Body = longBody }, "body"},
 		{"unknown language code", func(in *CreateAdaptationInput) { in.Language = "f" }, "language"},
+		{"two letter code", func(in *CreateAdaptationInput) { in.Language = "fr" }, "language"},
 		{"language given as a word", func(in *CreateAdaptationInput) { in.Language = "english" }, "language"},
-		{"language in upper case", func(in *CreateAdaptationInput) { in.Language = "FR" }, "language"},
+		{"language in upper case", func(in *CreateAdaptationInput) { in.Language = "FRA" }, "language"},
 		{"language with digits", func(in *CreateAdaptationInput) { in.Language = "fr2" }, "language"},
 		{"adaptation note too long", func(in *CreateAdaptationInput) { in.AdaptationNote = longNote }, "adaptation_note"},
 	}
@@ -316,7 +317,7 @@ func TestCreateAdaptationAcceptsBoundaryLengths(t *testing.T) {
 	input.Title = strings.Repeat("t", MaxTitleLen)
 	input.Body = strings.Repeat("b", MaxBodyLen)
 	input.AdaptationNote = strings.Repeat("n", MaxAdaptationNoteLength)
-	input.Language = "fr"
+	input.Language = "fra"
 
 	if _, err := service.CreateAdaptation(context.Background(), input); err != nil {
 		t.Fatalf("CreateAdaptation() error = %v, want nil at the documented limits", err)

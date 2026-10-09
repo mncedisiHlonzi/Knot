@@ -388,7 +388,7 @@ func englishComment() conversations.Comment {
 		ID:        testSourceCommentID,
 		VersionID: testVersionID,
 		AuthorID:  testUserID,
-		Language:  "en",
+		Language:  "eng",
 		Body:      "The first rain remembers every name.",
 		CreatedAt: testNow,
 		UpdatedAt: testNow,
@@ -397,13 +397,13 @@ func englishComment() conversations.Comment {
 
 // validCommentBody is a request body that passes every comment validation rule.
 func validCommentBody() string {
-	return `{"body":"The first rain remembers every name.","language":"en"}`
+	return `{"body":"The first rain remembers every name.","language":"eng"}`
 }
 
 // validBridgeBody is a request body that passes every bridge validation rule.
 func validBridgeBody() string {
 	return `{
-		"target_language": "fr",
+		"target_language": "fra",
 		"body": "La première pluie se souvient de chaque nom.",
 		"adaptation_note": "Rendered for French-speaking listeners."
 	}`
@@ -450,8 +450,8 @@ func TestCreateCommentHappyPath(t *testing.T) {
 	if body.Comment.AuthorID != testUserID {
 		t.Errorf("author id = %q, want the authenticated user %q", body.Comment.AuthorID, testUserID)
 	}
-	if body.Comment.Language != "en" {
-		t.Errorf("language = %q, want %q", body.Comment.Language, "en")
+	if body.Comment.Language != "eng" {
+		t.Errorf("language = %q, want %q", body.Comment.Language, "eng")
 	}
 }
 
@@ -460,7 +460,7 @@ func TestCreateCommentRejectsAuthorIDInBody(t *testing.T) {
 	store.versions[testVersionID] = true
 	handler := newConversationsHandler(t, store)
 
-	body := `{"body":"B","language":"en","author_id":"` + testUserID + `"}`
+	body := `{"body":"B","language":"eng","author_id":"` + testUserID + `"}`
 	recorder := doStoryRequest(handler, http.MethodPost, "/versions/"+testVersionID+"/comments", body, testAccessToken)
 
 	if recorder.Code != http.StatusBadRequest {
@@ -479,9 +479,10 @@ func TestCreateCommentValidationIsBadRequest(t *testing.T) {
 		name string
 		body string
 	}{
-		{name: "empty body", body: `{"body":"   ","language":"en"}`},
+		{name: "empty body", body: `{"body":"   ","language":"eng"}`},
 		{name: "missing language", body: `{"body":"B","language":""}`},
 		{name: "bad language", body: `{"body":"B","language":"e"}`},
+		{name: "two letter language", body: `{"body":"B","language":"en"}`},
 	}
 
 	for _, test := range tests {
@@ -700,7 +701,7 @@ func TestCreateBridgeRequiresAuthentication(t *testing.T) {
 func TestCreateBridgeHappyPath(t *testing.T) {
 	store := newMemoryConversationsStore()
 	store.seedComment(englishComment())
-	store.seedVersion(testFrenchVersionID, testStoryID, "fr")
+	store.seedVersion(testFrenchVersionID, testStoryID, "fra")
 	handler := newConversationsHandler(t, store)
 
 	recorder := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges", validBridgeBody(), testAccessToken)
@@ -721,8 +722,8 @@ func TestCreateBridgeHappyPath(t *testing.T) {
 	if body.Bridge.SourceCommentID != testSourceCommentID {
 		t.Errorf("bridge source id = %q, want %q", body.Bridge.SourceCommentID, testSourceCommentID)
 	}
-	if body.Bridge.TargetLanguage != "fr" {
-		t.Errorf("target language = %q, want %q", body.Bridge.TargetLanguage, "fr")
+	if body.Bridge.TargetLanguage != "fra" {
+		t.Errorf("target language = %q, want %q", body.Bridge.TargetLanguage, "fra")
 	}
 	if body.Bridge.AdaptationNote == nil {
 		t.Error("adaptation note = null, want the submitted note")
@@ -740,10 +741,10 @@ func TestCreateBridgeHappyPath(t *testing.T) {
 
 func TestCreateBridgeSameLanguageIsBadRequest(t *testing.T) {
 	store := newMemoryConversationsStore()
-	store.seedComment(englishComment()) // language "en"
+	store.seedComment(englishComment()) // language "eng"
 	handler := newConversationsHandler(t, store)
 
-	body := `{"target_language":"en","body":"Same language"}`
+	body := `{"target_language":"eng","body":"Same language"}`
 	recorder := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges", body, testAccessToken)
 
 	if recorder.Code != http.StatusBadRequest {
@@ -760,7 +761,7 @@ func TestCreateBridgeSameLanguageIsBadRequest(t *testing.T) {
 func TestCreateBridgeAlreadyBridgedIsBadRequest(t *testing.T) {
 	store := newMemoryConversationsStore()
 	store.seedComment(englishComment())
-	store.seedVersion(testFrenchVersionID, testStoryID, "fr")
+	store.seedVersion(testFrenchVersionID, testStoryID, "fra")
 	handler := newConversationsHandler(t, store)
 
 	if recorder := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges", validBridgeBody(), testAccessToken); recorder.Code != http.StatusCreated {
@@ -814,7 +815,7 @@ func TestCreateBridgeSourceNotFound(t *testing.T) {
 func TestCreateBridgeValidationIsBadRequest(t *testing.T) {
 	store := newMemoryConversationsStore()
 	store.seedComment(englishComment())
-	store.seedVersion(testFrenchVersionID, testStoryID, "fr")
+	store.seedVersion(testFrenchVersionID, testStoryID, "fra")
 	handler := newConversationsHandler(t, store)
 
 	tests := []struct {
@@ -823,7 +824,8 @@ func TestCreateBridgeValidationIsBadRequest(t *testing.T) {
 	}{
 		{name: "missing target language", body: `{"body":"B"}`},
 		{name: "bad target language", body: `{"target_language":"f","body":"B"}`},
-		{name: "empty body", body: `{"target_language":"fr","body":"  "}`},
+		{name: "two letter target language", body: `{"target_language":"fr","body":"B"}`},
+		{name: "empty body", body: `{"target_language":"fra","body":"  "}`},
 	}
 
 	for _, test := range tests {
@@ -856,7 +858,7 @@ func TestCreateBridgeUnexpectedFailureIsInternalError(t *testing.T) {
 func TestListBridgesHappyPath(t *testing.T) {
 	store := newMemoryConversationsStore()
 	store.seedComment(englishComment())
-	store.seedVersion(testFrenchVersionID, testStoryID, "fr")
+	store.seedVersion(testFrenchVersionID, testStoryID, "fra")
 	handler := newConversationsHandler(t, store)
 
 	if recorder := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges", validBridgeBody(), testAccessToken); recorder.Code != http.StatusCreated {
@@ -924,7 +926,7 @@ func TestListBridgesUnexpectedFailureIsInternalError(t *testing.T) {
 func TestGetBridgeHappyPath(t *testing.T) {
 	store := newMemoryConversationsStore()
 	store.seedComment(englishComment())
-	store.seedVersion(testFrenchVersionID, testStoryID, "fr")
+	store.seedVersion(testFrenchVersionID, testStoryID, "fra")
 	handler := newConversationsHandler(t, store)
 
 	created := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges", validBridgeBody(), testAccessToken)

@@ -131,7 +131,7 @@ func discoveryStory(place string, index int) stories.Story {
 		AuthorID:            testUserID,
 		RootVersionID:       discoverableID(index + 100),
 		Pillar:              stories.PillarWonder,
-		Language:            "en",
+		Language:            "eng",
 		Title:               "A story",
 		Body:                "Body",
 		ApproximateLocation: place,
@@ -162,7 +162,7 @@ func TestDiscoveryClustersReturnsClusters(t *testing.T) {
 					stories.PillarWonder:   2,
 					stories.PillarHeritage: 1,
 				},
-				Languages:     []string{"af", "en"},
+				Languages:     []string{"afr", "eng"},
 				LatestStoryAt: testNow,
 			},
 		},
@@ -202,7 +202,7 @@ func TestDiscoveryClustersAppliesFiltersAndClampsLimit(t *testing.T) {
 	store := &memoryDiscoveryStore{}
 	handler := newDiscoveryRouter(t, store)
 
-	recorder := doRequest(handler, http.MethodGet, "/discovery/clusters?pillar=heritage&language=fr&limit=999", "")
+	recorder := doRequest(handler, http.MethodGet, "/discovery/clusters?pillar=heritage&language=fra&limit=999", "")
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
@@ -210,8 +210,8 @@ func TestDiscoveryClustersAppliesFiltersAndClampsLimit(t *testing.T) {
 	if store.gotFilter.Pillar != stories.PillarHeritage {
 		t.Errorf("pillar = %q, want %q", store.gotFilter.Pillar, stories.PillarHeritage)
 	}
-	if store.gotFilter.Language != "fr" {
-		t.Errorf("language = %q, want %q", store.gotFilter.Language, "fr")
+	if store.gotFilter.Language != "fra" {
+		t.Errorf("language = %q, want %q", store.gotFilter.Language, "fra")
 	}
 	if store.gotFilter.Limit != discovery.MaxClusterLimit {
 		t.Errorf("limit = %d, want %d (clamped)", store.gotFilter.Limit, discovery.MaxClusterLimit)

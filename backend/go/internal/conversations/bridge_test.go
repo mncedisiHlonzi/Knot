@@ -12,7 +12,7 @@ func TestBridgeCarriesItsFields(t *testing.T) {
 		SourceCommentID: "66666666-6666-4666-8666-666666666666",
 		TargetCommentID: "88888888-8888-4888-8888-888888888888",
 		AuthorID:        "11111111-1111-4111-8111-111111111111",
-		TargetLanguage:  "fr",
+		TargetLanguage:  "fra",
 		AdaptationNote:  "Rendered for French-speaking listeners.",
 		CreatedAt:       created,
 	}
@@ -20,8 +20,8 @@ func TestBridgeCarriesItsFields(t *testing.T) {
 	if bridge.SourceCommentID == bridge.TargetCommentID {
 		t.Error("source and target comment ids are equal, want two distinct comments")
 	}
-	if bridge.TargetLanguage != "fr" {
-		t.Errorf("target language = %q, want %q", bridge.TargetLanguage, "fr")
+	if bridge.TargetLanguage != "fra" {
+		t.Errorf("target language = %q, want %q", bridge.TargetLanguage, "fra")
 	}
 	if bridge.AdaptationNote == "" {
 		t.Error("adaptation note is empty, want the stored note")
@@ -37,7 +37,7 @@ func TestBridgeAdaptationNoteIsOptional(t *testing.T) {
 	bridge := Bridge{
 		SourceCommentID: "66666666-6666-4666-8666-666666666666",
 		TargetCommentID: "88888888-8888-4888-8888-888888888888",
-		TargetLanguage:  "fr",
+		TargetLanguage:  "fra",
 	}
 
 	if bridge.AdaptationNote != "" {

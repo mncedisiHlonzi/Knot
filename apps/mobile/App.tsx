@@ -62,11 +62,11 @@ type Overlay =
 type AuthMode = 'login' | 'register';
 
 /**
- * The first preferred language tag that is not blank, or "en" when the profile
+ * The first preferred language tag that is not blank, or "eng" when the profile
  * names none. Used to seed the language field when adapting and commenting.
  */
 function preferredLanguage(user: User): string {
-  return user.preferred_languages.find((tag) => tag.trim() !== '') ?? 'en';
+  return user.preferred_languages.find((tag) => tag.trim() !== '') ?? 'eng';
 }
 
 /**

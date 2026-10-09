@@ -175,17 +175,16 @@ func validateCreateAdaptation(in CreateAdaptationInput) (StoryVersion, error) {
 	}, nil
 }
 
-// validateLanguage requires a canonical ISO 639-1 code and returns it unchanged.
+// validateLanguage requires a canonical ISO 639-3 code and returns it unchanged.
 //
-// The code must match exactly: "en" is accepted, while "EN", "eng", and
-// "English" are rejected, so a version's language is always a known code
-// (KNOT-ADR-045).
+// The code must match exactly: "eng" is accepted, while "ENG" and "en" are
+// rejected, so a version's language is always a known code (KNOT-ADR-046).
 func validateLanguage(raw string) (string, error) {
 	code := strings.TrimSpace(raw)
 	if !language.IsValid(code) {
 		return "", &ValidationError{
 			Field:   "language",
-			Message: "must be a valid ISO 639-1 language code, such as en or zu",
+			Message: "must be a valid ISO 639-3 language code, such as eng or zul",
 		}
 	}
 	return code, nil

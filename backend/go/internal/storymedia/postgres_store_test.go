@@ -74,7 +74,7 @@ func integrationSetup(t *testing.T) integrationEnv {
 		prefix+"author@example.test",
 		"$argon2id$v=19$m=65536,t=1,p=4$c2FsdA$a2V5",
 		"Story Media Author",
-		[]string{"en"},
+		[]string{"eng"},
 	).Scan(&author)
 	if err != nil {
 		pool.Close()

@@ -243,7 +243,7 @@ func doStoryRequest(handler http.Handler, method, path, body, token string) *htt
 func validStoryBody() string {
 	return `{
 		"pillar": "wonder",
-		"language": "en",
+		"language": "eng",
 		"title": "The first rain",
 		"body": "Grandmother said the first rain remembers every name.",
 		"approximate_location": "Cape Town",
@@ -295,7 +295,7 @@ func TestCreateStoryWithCoordinates(t *testing.T) {
 	store := &memoryStoryStore{}
 	handler := newStoriesHandler(t, store)
 
-	body := `{"pillar":"wonder","language":"en","title":"T","body":"B","approximate_location":"Manguzi","latitude":-26.9998,"longitude":32.7489,"place_country":"South Africa"}`
+	body := `{"pillar":"wonder","language":"eng","title":"T","body":"B","approximate_location":"Manguzi","latitude":-26.9998,"longitude":32.7489,"place_country":"South Africa"}`
 	recorder := doStoryRequest(handler, http.MethodPost, "/stories", body, testAccessToken)
 
 	if recorder.Code != http.StatusCreated {
@@ -378,7 +378,7 @@ func TestCreateStoryRejectsAuthorIDInBody(t *testing.T) {
 	store := &memoryStoryStore{}
 	handler := newStoriesHandler(t, store)
 
-	body := `{"pillar":"wonder","language":"en","title":"T","body":"B","author_id":"99999999-9999-4999-8999-999999999999"}`
+	body := `{"pillar":"wonder","language":"eng","title":"T","body":"B","author_id":"99999999-9999-4999-8999-999999999999"}`
 	recorder := doStoryRequest(handler, http.MethodPost, "/stories", body, testAccessToken)
 
 	if recorder.Code != http.StatusBadRequest {
@@ -397,14 +397,15 @@ func TestCreateStoryValidationIsBadRequest(t *testing.T) {
 		name string
 		body string
 	}{
-		{name: "missing title", body: `{"pillar":"wonder","language":"en","body":"B"}`},
-		{name: "blank body", body: `{"pillar":"wonder","language":"en","title":"T","body":"  "}`},
-		{name: "unknown pillar", body: `{"pillar":"chaos","language":"en","title":"T","body":"B"}`},
+		{name: "missing title", body: `{"pillar":"wonder","language":"eng","body":"B"}`},
+		{name: "blank body", body: `{"pillar":"wonder","language":"eng","title":"T","body":"  "}`},
+		{name: "unknown pillar", body: `{"pillar":"chaos","language":"eng","title":"T","body":"B"}`},
 		{name: "bad language", body: `{"pillar":"wonder","language":"e","title":"T","body":"B"}`},
-		{name: "latitude without longitude", body: `{"pillar":"wonder","language":"en","title":"T","body":"B","latitude":-26.9}`},
-		{name: "longitude without latitude", body: `{"pillar":"wonder","language":"en","title":"T","body":"B","longitude":32.7}`},
-		{name: "latitude out of range", body: `{"pillar":"wonder","language":"en","title":"T","body":"B","latitude":91,"longitude":0}`},
-		{name: "longitude out of range", body: `{"pillar":"wonder","language":"en","title":"T","body":"B","latitude":0,"longitude":181}`},
+		{name: "two letter language", body: `{"pillar":"wonder","language":"en","title":"T","body":"B"}`},
+		{name: "latitude without longitude", body: `{"pillar":"wonder","language":"eng","title":"T","body":"B","latitude":-26.9}`},
+		{name: "longitude without latitude", body: `{"pillar":"wonder","language":"eng","title":"T","body":"B","longitude":32.7}`},
+		{name: "latitude out of range", body: `{"pillar":"wonder","language":"eng","title":"T","body":"B","latitude":91,"longitude":0}`},
+		{name: "longitude out of range", body: `{"pillar":"wonder","language":"eng","title":"T","body":"B","latitude":0,"longitude":181}`},
 	}
 
 	for _, test := range tests {
@@ -782,7 +783,7 @@ func TestStoryDetailIncludesMedia(t *testing.T) {
 	created, err := store.CreateStory(context.Background(), stories.Story{
 		AuthorID: testUserID,
 		Pillar:   stories.PillarWonder,
-		Language: "en",
+		Language: "eng",
 		Title:    "The first rain",
 		Body:     "Grandmother said the first rain remembers every name.",
 	})
@@ -833,7 +834,7 @@ func TestStoryDetailEmitsEmptyMediaArrayNotNull(t *testing.T) {
 	created, err := store.CreateStory(context.Background(), stories.Story{
 		AuthorID: testUserID,
 		Pillar:   stories.PillarWonder,
-		Language: "en",
+		Language: "eng",
 		Title:    "No media here",
 		Body:     "Body",
 	})
@@ -862,7 +863,7 @@ func TestStoryFeedIncludesMediaPreview(t *testing.T) {
 	first, err := store.CreateStory(context.Background(), stories.Story{
 		AuthorID: testUserID,
 		Pillar:   stories.PillarWonder,
-		Language: "en",
+		Language: "eng",
 		Title:    "Has media",
 		Body:     "Body",
 	})
@@ -872,7 +873,7 @@ func TestStoryFeedIncludesMediaPreview(t *testing.T) {
 	second, err := store.CreateStory(context.Background(), stories.Story{
 		AuthorID: testUserID,
 		Pillar:   stories.PillarWonder,
-		Language: "en",
+		Language: "eng",
 		Title:    "No media",
 		Body:     "Body",
 	})
@@ -921,7 +922,7 @@ func TestStoryMediaEnrichmentFailureIsSwallowed(t *testing.T) {
 	created, err := store.CreateStory(context.Background(), stories.Story{
 		AuthorID: testUserID,
 		Pillar:   stories.PillarWonder,
-		Language: "en",
+		Language: "eng",
 		Title:    "Readable anyway",
 		Body:     "Body",
 	})

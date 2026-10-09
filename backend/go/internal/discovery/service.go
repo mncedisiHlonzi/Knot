@@ -29,7 +29,7 @@ func NewService(store DiscoveryStore) (*Service, error) {
 //
 // The filter is validated and normalised before it reaches the store: the pillar
 // must be one of the supported pillars, the language must be a canonical ISO
-// 639-1 code, and the limit must be within the package's bounds. A cluster list
+// 639-3 code, and the limit must be within the package's bounds. A cluster list
 // is always returned, never nil, so the HTTP layer never has to map nil onto an
 // empty array.
 func (s *Service) ListClusters(ctx context.Context, filter ClusterFilter) ([]PlaceCluster, error) {
@@ -119,11 +119,11 @@ func validateClusterFilter(filter ClusterFilter) (ClusterFilter, error) {
 	}
 
 	// An empty language means "do not filter by language"; a non-empty one must be
-	// a canonical ISO 639-1 code, matched exactly, so discovery accepts exactly the
-	// codes a story can be authored in (KNOT-ADR-045).
+	// a canonical ISO 639-3 code, matched exactly, so discovery accepts exactly the
+	// codes a story can be authored in (KNOT-ADR-046).
 	code := strings.TrimSpace(filter.Language)
 	if code != "" && !language.IsValid(code) {
-		return ClusterFilter{}, &ValidationError{Field: "language", Message: "must be a valid ISO 639-1 language code, such as en or zu"}
+		return ClusterFilter{}, &ValidationError{Field: "language", Message: "must be a valid ISO 639-3 language code, such as eng or zul"}
 	}
 
 	if filter.Limit < 1 || filter.Limit > MaxClusterLimit {

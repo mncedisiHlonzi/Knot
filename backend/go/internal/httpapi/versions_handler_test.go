@@ -123,7 +123,7 @@ func rootVersion() versions.StoryVersion {
 		ID:       testRootVersionID,
 		StoryID:  testStoryID,
 		AuthorID: testUserID,
-		Language: "en",
+		Language: "eng",
 		Title:    "The first rain",
 		Body:     "Grandmother said the first rain remembers every name.",
 	}
@@ -204,7 +204,7 @@ func newVersionsRouter(t *testing.T, logger *slog.Logger, service VersionsServic
 func validAdaptationBody() string {
 	return `{
 		"parent_version_id": "` + testRootVersionID + `",
-		"language": "fr",
+		"language": "fra",
 		"title": "La première pluie",
 		"body": "Grand-mère disait que la première pluie se souvient de chaque nom.",
 		"adaptation_note": "Rendered for French-speaking listeners."
@@ -254,8 +254,8 @@ func TestAdaptHappyPath(t *testing.T) {
 	if body.Version.ParentVersionID == nil || *body.Version.ParentVersionID != testRootVersionID {
 		t.Errorf("parent version id = %v, want %q", body.Version.ParentVersionID, testRootVersionID)
 	}
-	if body.Version.Language != "fr" {
-		t.Errorf("language = %q, want %q", body.Version.Language, "fr")
+	if body.Version.Language != "fra" {
+		t.Errorf("language = %q, want %q", body.Version.Language, "fra")
 	}
 	if body.Version.AdaptationNote == nil {
 		t.Error("adaptation note = null, want the submitted note")
@@ -272,7 +272,7 @@ func TestAdaptRejectsAuthorIDInBody(t *testing.T) {
 	store.seed(rootVersion())
 	handler := newVersionsHandler(t, store)
 
-	body := `{"parent_version_id":"` + testRootVersionID + `","language":"fr","title":"T","body":"B","author_id":"` + testUserID + `"}`
+	body := `{"parent_version_id":"` + testRootVersionID + `","language":"fra","title":"T","body":"B","author_id":"` + testUserID + `"}`
 	recorder := doStoryRequest(handler, http.MethodPost, "/stories/"+testStoryID+"/adapt", body, testAccessToken)
 
 	if recorder.Code != http.StatusBadRequest {
@@ -293,23 +293,27 @@ func TestAdaptValidationIsBadRequest(t *testing.T) {
 	}{
 		{
 			name: "missing parent version id",
-			body: `{"language":"fr","title":"T","body":"B"}`,
+			body: `{"language":"fra","title":"T","body":"B"}`,
 		},
 		{
 			name: "parent version id is not a uuid",
-			body: `{"parent_version_id":"not-a-uuid","language":"fr","title":"T","body":"B"}`,
+			body: `{"parent_version_id":"not-a-uuid","language":"fra","title":"T","body":"B"}`,
 		},
 		{
-			name: "language too short",
+			name: "language is not a known code",
 			body: `{"parent_version_id":"` + testRootVersionID + `","language":"f","title":"T","body":"B"}`,
 		},
 		{
+			name: "language is a two letter code",
+			body: `{"parent_version_id":"` + testRootVersionID + `","language":"fr","title":"T","body":"B"}`,
+		},
+		{
 			name: "empty title",
-			body: `{"parent_version_id":"` + testRootVersionID + `","language":"fr","title":"  ","body":"B"}`,
+			body: `{"parent_version_id":"` + testRootVersionID + `","language":"fra","title":"  ","body":"B"}`,
 		},
 		{
 			name: "empty body",
-			body: `{"parent_version_id":"` + testRootVersionID + `","language":"fr","title":"T","body":"   "}`,
+			body: `{"parent_version_id":"` + testRootVersionID + `","language":"fra","title":"T","body":"   "}`,
 		},
 	}
 
@@ -364,7 +368,7 @@ func TestAdaptParentVersionNotFound(t *testing.T) {
 	store.stories[testStoryID] = true
 	handler := newVersionsHandler(t, store)
 
-	body := `{"parent_version_id":"99999999-9999-4999-8999-999999999999","language":"fr","title":"T","body":"B"}`
+	body := `{"parent_version_id":"99999999-9999-4999-8999-999999999999","language":"fra","title":"T","body":"B"}`
 	recorder := doStoryRequest(handler, http.MethodPost, "/stories/"+testStoryID+"/adapt", body, testAccessToken)
 
 	if recorder.Code != http.StatusNotFound {
@@ -421,7 +425,7 @@ func TestTreeHappyPath(t *testing.T) {
 		StoryID:         testStoryID,
 		ParentVersionID: testRootVersionID,
 		AuthorID:        testUserID,
-		Language:        "fr",
+		Language:        "fra",
 		Title:           "La première pluie",
 		Body:            "Grand-mère disait que la première pluie se souvient de chaque nom.",
 	})

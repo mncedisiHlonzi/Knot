@@ -39,6 +39,7 @@ knot/
 ├── docs/                   Documentation
 ├── infrastructure/docker/  Local Docker Compose definitions (Postgres + Redis + MinIO)
 ├── scripts/                Developer scripts (dev-up / dev-down / dev-reset)
+├── tools/                  Generators (generate_languages.py regenerates the language list)
 └── ...                     Placeholder directories (see README.md)
 ```
 
@@ -276,33 +277,56 @@ signals the old screen had; that list is not reachable in the app today.
 
 ### Languages (`src/data/languages.ts`, `LanguagePicker`)
 
-A language is an ISO 639-1 code, and the canonical list of them is the single source of truth
-for what the API accepts (KNOT-ADR-045). It exists twice, deliberately:
+A language is an ISO 639-3 code — three lower-case letters — and the canonical list of them is
+the single source of truth for what the API accepts (KNOT-ADR-046). It exists twice,
+deliberately:
 
-- `backend/go/internal/language/languages.go` — 103 entries, sorted by name, served publicly
-  by `GET /languages`. Every domain validates with `language.IsValid(code)`.
-- `apps/mobile/src/data/languages.ts` — the same 103 entries, for the picker.
+- `backend/go/internal/language/languages.go` — 7,927 entries, sorted by name, served
+  publicly by `GET /languages`. Every domain validates with `language.IsValid(code)`.
+- `apps/mobile/src/data/languages.ts` — the same 7,927 entries, for the picker.
 
-**The two lists must stay identical.** `src/data/__tests__/languages.test.ts` reads the Go
-source and fails when they drift, so a change to one without the other is a red test rather
-than a subtle production bug. That check skips itself when only the mobile folder is checked
-out (a mobile-only CI job still runs the rest of the suite).
+**Both are generated, and the two must stay identical.** Do not edit the entries by hand.
+They come from the SIL International ISO 639-3 reference table, and
+`tools/generate_languages.py` rewrites the block between the `BEGIN GENERATED` and
+`END GENERATED` markers in each file, leaving the prose and the hand-written helpers around
+them alone. To regenerate:
 
-Adding a language is therefore a two-file change, in this order: add the entry to the Go list
-(keeping it sorted by name), add the same entry to the TypeScript list, run both test suites.
-Do not add a region variant (`pt-BR`) or a three-letter code with no ISO 639-1 code: the
-contract is exactly the two-letter set, which is why Northern Sotho's `nso` is not offered.
+```bash
+curl -sSL -o /tmp/iso-639-3.tab https://iso639-3.sil.org/sites/iso639-3/files/downloads/iso-639-3.tab
+python3 tools/generate_languages.py --source /tmp/iso-639-3.tab
+```
+
+The script refuses a table that does not look right — a code that is not three lower-case
+letters, a duplicated code or name, fewer than 7,000 entries — so a truncated download fails
+loudly instead of quietly shrinking the list. It keeps only `Id` and `Ref_Name`: no scope, no
+language type, no ISO 639-2 aliases. Names are the registry's reference names, verbatim,
+including `Pedi` for `nso`.
+
+`src/data/__tests__/languages.test.ts` reads the Go source and compares the two lists entry by
+entry, so a change to one without the other is a red test rather than a subtle production bug.
+That check skips itself when only the mobile folder is checked out (a mobile-only CI job still
+runs the rest of the suite).
+
+Because the list is generated, **adding a language is not a code change at all**: it is a new
+revision of the registry table plus a regeneration. Do not hand-add an entry, do not add a
+region variant (`pt-BR`), and do not invent a code — if the registry does not name it, the API
+will not accept it.
 
 `apps/mobile/src/components/LanguagePicker.tsx` is the one way a form asks for a language. It
 takes `mode: 'single' | 'multiple'` and searches the list **in memory** — no request, and no
 free text that could become a stored value. Use it rather than a `TextInput`: Register uses
 `multiple`, and Create Story, Adapt Story, and Bridge use `single`. Display a stored code with
 `languageName(code)`, which falls back to the raw code for a value the list does not know; do
-not render `"zu"` where a person expects "Zulu".
+not render `"zul"` where a person expects "Zulu".
 
-The comment composer on `CommentThreadScreen` is the one exception: it is a fixed-height bar,
-so it keeps a compact code field. It is still validated with `isLanguageCode`, so it cannot
-store a non-canonical code, but it offers no suggestions.
+A search over 7,927 names returns several matches for a short query — `zul` also matches
+`Zulgo-Gemzek` — which is why the picker caps the result list and why `findLanguage` and
+`languageName` go through a `Map` index rather than scanning.
+
+The comment composer on `CommentThreadScreen` is the one exception to the picker: it is a
+fixed-height bar, so it keeps a compact code field with a three-letter placeholder. It is
+still validated with `isLanguageCode`, so it cannot store a non-canonical code, but it offers
+no suggestions.
 
 ### Native dependencies (Mapbox, AsyncStorage)
 
@@ -874,35 +898,60 @@ is public and does not collide with `GET /users/{id}/rooted` or `GET /users/{id}
 
 ### Languages (the canonical list)
 
-`backend/go/internal/language` is the canonical ISO 639-1 list and the only place a language
-code is defined (KNOT-ADR-045). It is a compile-time constant — no table, no cache, and a
+`backend/go/internal/language` is the canonical ISO 639-3 list and the only place a language
+code is defined (KNOT-ADR-046). It is a compile-time constant — no table, no cache, and a
 lookup that cannot fail:
 
 ```go
 if !language.IsValid(code) {
-    return "", &ValidationError{Field: "language", Message: "must be a valid ISO 639-1 language code, such as en or zu"}
+    return "", &ValidationError{Field: "language", Message: "must be a valid ISO 639-3 language code, such as eng or zul"}
 }
 ```
 
-Validation **matches exactly**, so callers must not lower-case first: `en` is accepted, and
-`EN`, `eng`, and `English` are rejected. That is what keeps one language to one stored
+Validation **matches exactly**, so callers must not lower-case first: `eng` is accepted, and
+`ENG`, `en`, and `English` are rejected. That is what keeps one language to one stored
 spelling. `strings` trimming still happens, and a blank entry in `preferred_languages` is
 dropped rather than rejected.
 
 Every domain that holds a language delegates to it — `stories`, `versions`, `conversations`,
-`identity`, and the discovery cluster filter — so the old per-package "2-8 letters" rules and
-their `minLanguageLen`/`isLanguageTag` helpers are gone. There is no `CHECK` constraint: a
-language list in PostgreSQL would need a migration per language added and would live in two
-places.
+`identity`, and the discovery cluster filter — so there is one rule, not five. There is no
+`CHECK` constraint: a language list in PostgreSQL would need a migration per registry update
+and would live in two places.
 
 `GET /languages` is served by `handleLanguages` in `internal/httpapi/router.go` — a `Router`
 method like `handleHealth`, not a handler type, so `NewRouter`'s signature is unchanged. It
 is public, needs no service, and returns `{"languages": [{"code", "name"}, ...]}` built from
-`language.All()`, which returns a copy so a caller cannot mutate the list.
+`language.All()`, which returns a copy so a caller cannot mutate the list. The response is
+about 270 KB and is deliberately not paginated: the client caches it.
 
-**The list is duplicated in `apps/mobile/src/data/languages.ts` and the two must stay
-identical**; a mobile test reads this file and fails on drift. Adding a language is a
-two-file change — see [Languages](#languages-src-datalanguagests-languagepicker) above.
+### Migration `0011`: ISO 639-1 to ISO 639-3
+
+KNOT-015d stored two-letter codes; KNOT-015d-fix made the code three letters, so
+`migrations/0011_iso_639_3.up.sql` rewrites the values already in the database. It touches
+the four columns that hold a language — `story_versions.language`, `comments.language`,
+`bridges.target_language`, `users.preferred_languages` — and nothing else. `stories` is not
+among them: migration `0003` dropped `stories.language` when content moved into a root
+version.
+
+Three properties are worth knowing before changing it:
+
+- **It is idempotent.** Every statement matches only values that are exactly two characters,
+  so a second run changes nothing.
+- **It does not guess.** The 184 ISO 639-1 codes and their counterparts are carried in a
+  temporary table taken from the same SIL table the list is generated from, and a two-letter
+  value with no counterpart is left as it is. `DROP TABLE` at the end means no permanent
+  object is added.
+- **Its `down` is best effort.** It reverses three-letter codes that have a two-letter
+  ancestor and leaves the rest alone, so `nso` survives a round trip. A database that has been
+  through `up` and then `down` holds a mix of widths, because a stored code records no
+  history.
+
+`migrations/iso6393_test.go` exercises the real files against the real schema: it seeds
+`en`, `zu`, `fr`, an `af` bridge, mixed and empty `preferred_languages`, and an unmapped `zz`,
+runs `up`, asserts every mapping, runs `up` again to prove idempotency, runs `down`, and
+asserts the best-effort reversal. It all happens inside a transaction that is always rolled
+back, so the test leaves the database untouched. It skips when `KNOT_POSTGRES_DSN` is unset or
+the tables are missing.
 
 ### Migrations
 

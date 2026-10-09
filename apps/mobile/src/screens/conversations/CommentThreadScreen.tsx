@@ -35,7 +35,7 @@ type CommentThreadScreenProps = {
 const MAX_BODY_LENGTH = 5000;
 
 /** The language the comment box falls back to when the caller suggests nothing usable. */
-const DEFAULT_COMPOSE_LANGUAGE = 'en';
+const DEFAULT_COMPOSE_LANGUAGE = 'eng';
 
 /**
  * Returns the first client-side validation problem, or undefined when the form is
@@ -244,7 +244,7 @@ export default function CommentThreadScreen({
             onChangeText={setComposeLanguage}
             autoCapitalize="none"
             autoCorrect={false}
-            placeholder="en"
+            placeholder="eng"
             placeholderTextColor={colors.text.secondary}
             accessibilityLabel="Comment language code"
           />

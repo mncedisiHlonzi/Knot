@@ -96,7 +96,7 @@ func integrationSetup(t *testing.T) integrationEnv {
 		prefix+"author@example.test",
 		"$argon2id$v=19$m=65536,t=1,p=4$c2FsdA$a2V5",
 		"Integration Author",
-		[]string{"en"},
+		[]string{"eng"},
 	).Scan(&author)
 	if err != nil {
 		pool.Close()
@@ -129,7 +129,7 @@ func newIntegrationStory(t *testing.T, env integrationEnv, name string) (storyID
 	story, err := env.storyStore.CreateStory(context.Background(), stories.Story{
 		AuthorID:  env.author,
 		Pillar:    stories.PillarHeritage,
-		Language:  "en",
+		Language:  "eng",
 		Title:     "Integration " + name,
 		Body:      "Body for " + name,
 		MediaURLs: []string{},
@@ -184,7 +184,7 @@ func TestPostgresStoreCreateCommentRoundTripAndGet(t *testing.T) {
 	created, err := env.store.CreateComment(ctx, Comment{
 		VersionID: versionID,
 		AuthorID:  env.author,
-		Language:  "en",
+		Language:  "eng",
 		Body:      "The first rain remembers every name.",
 	})
 	if err != nil {
@@ -229,7 +229,7 @@ func TestPostgresStoreCreateCommentForeignKeyConstraints(t *testing.T) {
 			comment: Comment{
 				VersionID: "99999999-9999-4999-8999-999999999999",
 				AuthorID:  env.author,
-				Language:  "en",
+				Language:  "eng",
 				Body:      "Orphan comment.",
 			},
 			wantCode: func(err error) bool { return errors.Is(err, ErrNotFound) },
@@ -239,7 +239,7 @@ func TestPostgresStoreCreateCommentForeignKeyConstraints(t *testing.T) {
 			comment: Comment{
 				VersionID: "99999999-9999-4999-8999-999999999999",
 				AuthorID:  "99999999-9999-4999-8999-999999999998",
-				Language:  "en",
+				Language:  "eng",
 				Body:      "No such author.",
 			},
 			wantCode: func(err error) bool { return err != nil },
@@ -270,7 +270,7 @@ func TestPostgresStoreListCommentsPaginatesAcrossPages(t *testing.T) {
 		if _, err := env.store.CreateComment(ctx, Comment{
 			VersionID: versionID,
 			AuthorID:  env.author,
-			Language:  "en",
+			Language:  "eng",
 			Body:      fmt.Sprintf("comment %d", i),
 		}); err != nil {
 			t.Fatalf("CreateComment(%d) error = %v, want nil", i, err)
@@ -375,12 +375,12 @@ func TestPostgresStoreCreateBridgeCommitsBothRows(t *testing.T) {
 	ctx := context.Background()
 
 	storyID, versionID := newIntegrationStory(t, env, "bridge")
-	frenchVersionID := adaptToLanguage(t, env, storyID, versionID, "fr")
+	frenchVersionID := adaptToLanguage(t, env, storyID, versionID, "fra")
 
 	source, err := env.store.CreateComment(ctx, Comment{
 		VersionID: versionID,
 		AuthorID:  env.author,
-		Language:  "en",
+		Language:  "eng",
 		Body:      "The first rain remembers every name.",
 	})
 	if err != nil {
@@ -390,7 +390,7 @@ func TestPostgresStoreCreateBridgeCommitsBothRows(t *testing.T) {
 	bridge, target, err := env.store.CreateBridge(ctx, Comment{
 		VersionID: frenchVersionID,
 		AuthorID:  env.author,
-		Language:  "fr",
+		Language:  "fra",
 		Body:      "La première pluie se souvient de chaque nom.",
 	}, source.ID, "Rendered for French-speaking listeners.")
 	if err != nil {
@@ -420,7 +420,7 @@ func TestPostgresStoreCreateBridgeCommitsBothRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetComment(target) error = %v, want nil", err)
 	}
-	if fetchedTarget.Language != "fr" || fetchedTarget.VersionID != frenchVersionID {
+	if fetchedTarget.Language != "fra" || fetchedTarget.VersionID != frenchVersionID {
 		t.Errorf("target = %+v, want a French comment on the French version", fetchedTarget)
 	}
 }
@@ -430,19 +430,19 @@ func TestPostgresStoreCreateBridgeRejectsSecondBridgeIntoTheSameLanguage(t *test
 	ctx := context.Background()
 
 	storyID, versionID := newIntegrationStory(t, env, "one-per-language")
-	frenchVersionID := adaptToLanguage(t, env, storyID, versionID, "fr")
+	frenchVersionID := adaptToLanguage(t, env, storyID, versionID, "fra")
 
 	source, err := env.store.CreateComment(ctx, Comment{
 		VersionID: versionID,
 		AuthorID:  env.author,
-		Language:  "en",
+		Language:  "eng",
 		Body:      "The first rain remembers every name.",
 	})
 	if err != nil {
 		t.Fatalf("CreateComment(source) error = %v, want nil", err)
 	}
 
-	target := Comment{VersionID: frenchVersionID, AuthorID: env.author, Language: "fr", Body: "Première traduction."}
+	target := Comment{VersionID: frenchVersionID, AuthorID: env.author, Language: "fra", Body: "Première traduction."}
 	if _, _, err := env.store.CreateBridge(ctx, target, source.ID, ""); err != nil {
 		t.Fatalf("first CreateBridge() error = %v, want nil", err)
 	}
@@ -452,7 +452,7 @@ func TestPostgresStoreCreateBridgeRejectsSecondBridgeIntoTheSameLanguage(t *test
 	// A second bridge of the same source into the same language must be refused
 	// by bridges_one_per_target_language, and the transaction must roll back the
 	// target comment it inserted first.
-	target2 := Comment{VersionID: frenchVersionID, AuthorID: env.author, Language: "fr", Body: "Deuxième traduction."}
+	target2 := Comment{VersionID: frenchVersionID, AuthorID: env.author, Language: "fra", Body: "Deuxième traduction."}
 	if _, _, err := env.store.CreateBridge(ctx, target2, source.ID, ""); !errors.Is(err, ErrAlreadyBridged) {
 		t.Fatalf("second CreateBridge() error = %v, want ErrAlreadyBridged", err)
 	}
@@ -471,7 +471,7 @@ func TestPostgresStoreBridgesUniquePairRejectsDuplicatePair(t *testing.T) {
 	source, err := env.store.CreateComment(ctx, Comment{
 		VersionID: versionID,
 		AuthorID:  env.author,
-		Language:  "en",
+		Language:  "eng",
 		Body:      "Source.",
 	})
 	if err != nil {
@@ -480,7 +480,7 @@ func TestPostgresStoreBridgesUniquePairRejectsDuplicatePair(t *testing.T) {
 	target, err := env.store.CreateComment(ctx, Comment{
 		VersionID: versionID,
 		AuthorID:  env.author,
-		Language:  "fr",
+		Language:  "fra",
 		Body:      "Cible.",
 	})
 	if err != nil {
@@ -514,9 +514,9 @@ func TestPostgresStoreFindTargetVersion(t *testing.T) {
 	ctx := context.Background()
 
 	storyID, rootVersionID := newIntegrationStory(t, env, "find-target")
-	frenchVersionID := adaptToLanguage(t, env, storyID, rootVersionID, "fr")
+	frenchVersionID := adaptToLanguage(t, env, storyID, rootVersionID, "fra")
 
-	found, err := env.store.FindTargetVersion(ctx, rootVersionID, "fr")
+	found, err := env.store.FindTargetVersion(ctx, rootVersionID, "fra")
 	if err != nil {
 		t.Fatalf("FindTargetVersion() error = %v, want nil", err)
 	}
@@ -529,9 +529,9 @@ func TestPostgresStoreFindTargetVersion(t *testing.T) {
 		sourceVersionID string
 		targetLanguage  string
 	}{
-		{name: "no version in the language", sourceVersionID: rootVersionID, targetLanguage: "de"},
-		{name: "malformed source version", sourceVersionID: "not-a-uuid", targetLanguage: "fr"},
-		{name: "unknown source version", sourceVersionID: "99999999-9999-4999-8999-999999999999", targetLanguage: "fr"},
+		{name: "no version in the language", sourceVersionID: rootVersionID, targetLanguage: "deu"},
+		{name: "malformed source version", sourceVersionID: "not-a-uuid", targetLanguage: "fra"},
+		{name: "unknown source version", sourceVersionID: "99999999-9999-4999-8999-999999999999", targetLanguage: "fra"},
 	}
 
 	for _, test := range tests {
@@ -550,14 +550,14 @@ func TestPostgresStoreFindTargetVersionIsDeterministicWhenAmbiguous(t *testing.T
 	ctx := context.Background()
 
 	storyID, rootVersionID := newIntegrationStory(t, env, "ambiguous-target")
-	first := adaptToLanguage(t, env, storyID, rootVersionID, "fr")
-	second := adaptToLanguage(t, env, storyID, rootVersionID, "fr")
+	first := adaptToLanguage(t, env, storyID, rootVersionID, "fra")
+	second := adaptToLanguage(t, env, storyID, rootVersionID, "fra")
 
-	got, err := env.store.FindTargetVersion(ctx, rootVersionID, "fr")
+	got, err := env.store.FindTargetVersion(ctx, rootVersionID, "fra")
 	if err != nil {
 		t.Fatalf("FindTargetVersion() error = %v, want nil", err)
 	}
-	again, err := env.store.FindTargetVersion(ctx, rootVersionID, "fr")
+	again, err := env.store.FindTargetVersion(ctx, rootVersionID, "fra")
 	if err != nil {
 		t.Fatalf("FindTargetVersion() error = %v, want nil", err)
 	}
@@ -575,17 +575,17 @@ func TestPostgresStoreGetBridgeRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	storyID, versionID := newIntegrationStory(t, env, "get-bridge")
-	frenchVersionID := adaptToLanguage(t, env, storyID, versionID, "fr")
+	frenchVersionID := adaptToLanguage(t, env, storyID, versionID, "fra")
 
 	source, err := env.store.CreateComment(ctx, Comment{
-		VersionID: versionID, AuthorID: env.author, Language: "en", Body: "Source.",
+		VersionID: versionID, AuthorID: env.author, Language: "eng", Body: "Source.",
 	})
 	if err != nil {
 		t.Fatalf("CreateComment() error = %v, want nil", err)
 	}
 
 	created, _, err := env.store.CreateBridge(ctx, Comment{
-		VersionID: frenchVersionID, AuthorID: env.author, Language: "fr", Body: "Cible.",
+		VersionID: frenchVersionID, AuthorID: env.author, Language: "fra", Body: "Cible.",
 	}, source.ID, "note")
 	if err != nil {
 		t.Fatalf("CreateBridge() error = %v, want nil", err)
@@ -595,7 +595,7 @@ func TestPostgresStoreGetBridgeRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetBridge() error = %v, want nil", err)
 	}
-	if fetched.ID != created.ID || fetched.TargetLanguage != "fr" || fetched.AdaptationNote != "note" {
+	if fetched.ID != created.ID || fetched.TargetLanguage != "fra" || fetched.AdaptationNote != "note" {
 		t.Errorf("fetched = %+v, want it to match the created bridge %+v", fetched, created)
 	}
 
@@ -611,17 +611,17 @@ func TestPostgresStoreListBridgesForCommentSeesBothEnds(t *testing.T) {
 	ctx := context.Background()
 
 	storyID, versionID := newIntegrationStory(t, env, "bridges-for-comment")
-	frenchVersionID := adaptToLanguage(t, env, storyID, versionID, "fr")
+	frenchVersionID := adaptToLanguage(t, env, storyID, versionID, "fra")
 
 	source, err := env.store.CreateComment(ctx, Comment{
-		VersionID: versionID, AuthorID: env.author, Language: "en", Body: "Source.",
+		VersionID: versionID, AuthorID: env.author, Language: "eng", Body: "Source.",
 	})
 	if err != nil {
 		t.Fatalf("CreateComment() error = %v, want nil", err)
 	}
 
 	created, target, err := env.store.CreateBridge(ctx, Comment{
-		VersionID: frenchVersionID, AuthorID: env.author, Language: "fr", Body: "Cible.",
+		VersionID: frenchVersionID, AuthorID: env.author, Language: "fra", Body: "Cible.",
 	}, source.ID, "")
 	if err != nil {
 		t.Fatalf("CreateBridge() error = %v, want nil", err)
@@ -647,17 +647,17 @@ func TestPostgresStoreListBridgesForStory(t *testing.T) {
 	ctx := context.Background()
 
 	storyID, versionID := newIntegrationStory(t, env, "bridges-for-story")
-	frenchVersionID := adaptToLanguage(t, env, storyID, versionID, "fr")
+	frenchVersionID := adaptToLanguage(t, env, storyID, versionID, "fra")
 	otherStoryID, _ := newIntegrationStory(t, env, "other-story")
 
 	source, err := env.store.CreateComment(ctx, Comment{
-		VersionID: versionID, AuthorID: env.author, Language: "en", Body: "Source.",
+		VersionID: versionID, AuthorID: env.author, Language: "eng", Body: "Source.",
 	})
 	if err != nil {
 		t.Fatalf("CreateComment() error = %v, want nil", err)
 	}
 	created, _, err := env.store.CreateBridge(ctx, Comment{
-		VersionID: frenchVersionID, AuthorID: env.author, Language: "fr", Body: "Cible.",
+		VersionID: frenchVersionID, AuthorID: env.author, Language: "fra", Body: "Cible.",
 	}, source.ID, "")
 	if err != nil {
 		t.Fatalf("CreateBridge() error = %v, want nil", err)

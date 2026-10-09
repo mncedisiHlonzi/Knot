@@ -123,7 +123,7 @@ func storyActivity() profile.Activity {
 		Payload: profile.Payload{
 			Title:    "The first rain",
 			Pillar:   "wonder",
-			Language: "en",
+			Language: "eng",
 		},
 	}
 }
@@ -189,7 +189,7 @@ func TestGetProfileStoryPayloadIsMinimal(t *testing.T) {
 	}
 
 	body := recorder.Body.String()
-	if !strings.Contains(body, `"payload":{"title":"The first rain","pillar":"wonder","language":"en"}`) {
+	if !strings.Contains(body, `"payload":{"title":"The first rain","pillar":"wonder","language":"eng"}`) {
 		t.Errorf("body = %s, want a story payload of exactly title, pillar, language", body)
 	}
 	if strings.Contains(body, `"story_id"`) {

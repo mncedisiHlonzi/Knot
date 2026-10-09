@@ -47,7 +47,7 @@ func storyFixture(id, authorID string) stories.Story {
 		AuthorID:      authorID,
 		RootVersionID: "0f6c2b1a-9e2d-4c7b-8a31-6d5e4f3c2b1a",
 		Pillar:        stories.PillarWonder,
-		Language:      "en",
+		Language:      "eng",
 		Title:         "The first rain",
 		Body:          "Grandmother said the first rain remembers every name.",
 		MediaURLs:     []string{},
@@ -61,7 +61,7 @@ func versionFixture(id, authorID string) versions.StoryVersion {
 		ID:        id,
 		StoryID:   testStoryID,
 		AuthorID:  authorID,
-		Language:  "en",
+		Language:  "eng",
 		Title:     "The first rain",
 		Body:      "Grandmother said the first rain remembers every name.",
 		CreatedAt: testNow,
@@ -74,7 +74,7 @@ func commentFixture(id, authorID string) conversations.Comment {
 		ID:        id,
 		VersionID: testVersionID,
 		AuthorID:  authorID,
-		Language:  "en",
+		Language:  "eng",
 		Body:      "The first rain remembers every name.",
 		CreatedAt: testNow,
 		UpdatedAt: testNow,
@@ -87,7 +87,7 @@ func bridgeFixture(id, authorID string) conversations.Bridge {
 		SourceCommentID: testSourceCommentID,
 		TargetCommentID: testTargetCommentID,
 		AuthorID:        authorID,
-		TargetLanguage:  "fr",
+		TargetLanguage:  "fra",
 		CreatedAt:       testNow,
 	}
 }
@@ -209,7 +209,7 @@ func TestAdaptResponseAttachesAuthorRooted(t *testing.T) {
 		&fakeVersionsService{createResult: versionFixture("11111111-1111-4111-8111-111111111111", testUserID)},
 		&fakeConversationsService{})
 
-	body := `{"parent_version_id": "` + testRootVersionID + `", "language": "fr", "title": "t", "body": "b"}`
+	body := `{"parent_version_id": "` + testRootVersionID + `", "language": "fra", "title": "t", "body": "b"}`
 	recorder := doStoryRequest(handler, http.MethodPost, "/stories/"+testStoryID+"/adapt", body, testAccessToken)
 
 	if recorder.Code != http.StatusCreated {
@@ -268,7 +268,7 @@ func TestCreateCommentAttachesAuthorRooted(t *testing.T) {
 		&fakeConversationsService{createCommentResult: commentFixture("66666666-6666-4666-8666-666666666661", testUserID)})
 
 	recorder := doStoryRequest(handler, http.MethodPost, "/versions/"+testVersionID+"/comments",
-		`{"body": "hi", "language": "en"}`, testAccessToken)
+		`{"body": "hi", "language": "eng"}`, testAccessToken)
 
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusCreated, recorder.Body.String())
@@ -297,7 +297,7 @@ func TestCreateBridgeAttachesToAllThreeEntities(t *testing.T) {
 		})
 
 	recorder := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges",
-		`{"target_language": "fr", "body": "hi"}`, testAccessToken)
+		`{"target_language": "fra", "body": "hi"}`, testAccessToken)
 
 	if recorder.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusCreated, recorder.Body.String())

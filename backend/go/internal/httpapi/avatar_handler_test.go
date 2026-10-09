@@ -231,7 +231,7 @@ func newAvatarTestEnv(t *testing.T) *avatarTestEnv {
 		ID:                 testAvatarUserID,
 		Email:              "ada@example.com",
 		DisplayName:        "Ada Lovelace",
-		PreferredLanguages: []string{"en"},
+		PreferredLanguages: []string{"eng"},
 		CreatedAt:          time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC),
 	}
 

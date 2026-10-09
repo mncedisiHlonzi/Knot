@@ -86,7 +86,7 @@ func integrationSetup(t *testing.T) integrationEnv {
 			prefix+label+"@example.test",
 			"$argon2id$v=19$m=65536,t=1,p=4$c2FsdA$a2V5",
 			"Integration "+label,
-			[]string{"en"},
+			[]string{"eng"},
 		).Scan(&id)
 		if err != nil {
 			t.Fatalf("could not create the integration %s: %v", label, err)

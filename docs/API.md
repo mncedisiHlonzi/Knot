@@ -59,15 +59,16 @@ is needed, because a picker is needed before anyone has registered.
 ```json
 {
   "languages": [
-    { "code": "en", "name": "English" },
-    { "code": "zu", "name": "Zulu" }
+    { "code": "eng", "name": "English" },
+    { "code": "zul", "name": "Zulu" }
   ]
 }
 ```
 
 `languages` is always an array, never `null`, sorted alphabetically by `name`. The
-response is the whole list: it is a compile-time constant of 103 entries, small
-enough not to paginate. `code` is an ISO 639-1 code, two lower-case letters.
+response is the whole list — **7,927 entries, about 270 KB** — and it is not
+paginated: it is a compile-time constant on the server that a client caches for the
+life of the process. `code` is an ISO 639-3 code, three lower-case letters.
 
 **Every language field below accepts exactly these codes, matched exactly.** See
 [Languages](#languages).
@@ -75,22 +76,32 @@ enough not to paginate. `code` is an ISO 639-1 code, two lower-case letters.
 ## Languages
 
 A user, story, version, comment, or bridge names its language with an
-**ISO 639-1 code**: two lower-case ASCII letters, such as `en` or `zu`.
+**ISO 639-3 code**: three lower-case ASCII letters, such as `eng` or `zul`.
 `GET /languages` is the authoritative list, and it is duplicated on the device so
-the picker cannot offer a value the server rejects (KNOT-ADR-045).
+the picker cannot offer a value the server rejects (KNOT-ADR-046).
+
+ISO 639-3 rather than ISO 639-1: the two-letter set names only the 184 languages
+that happen to have a two-letter code, which excluded Sepedi (`nso`) and thousands
+of other languages people actually tell stories in. ISO 639-3 names every language
+with one consistent three-letter code.
 
 Three rules follow from that, and apply to `language`, `preferred_languages`, and
 `target_language` alike:
 
-- The code must be in the list. `English`, `eng`, `nso`, `zz`, and `en-ZA` are all
-  rejected with `400 validation_error`.
-- **Case matters.** `EN` is rejected; a client sends `en`. The server does not
+- The code must be in the list. `English`, `eng`, `nso` (a two-letter code), `zzz`,
+  and `en-ZA` are all rejected with `400 validation_error`.
+- **Case matters.** `ENG` is rejected; a client sends `eng`. The server does not
   case-fold, so one language has one stored spelling.
 - Surrounding whitespace is trimmed, and an empty entry in `preferred_languages` is
   dropped rather than rejected.
 
-The list deliberately excludes three-letter codes that have no ISO 639-1 code —
-notably Northern Sotho's `nso` — and region variants such as `pt-BR`.
+A code is three letters, never two, so a client that still holds a two-letter value
+from an earlier release must map it before sending it. Region variants such as
+`pt-BR` remain out of scope: a language is a code, not a locale.
+
+Names are the ISO 639-3 reference names (SIL), in English and verbatim — Sepedi is
+listed as `Pedi` — so the list can be diffed against a future revision of the
+registry.
 
 ## POST /auth/register
 
@@ -103,7 +114,7 @@ Creates an account and returns a token pair.
   "email": "ada@example.com",
   "password": "at-least-8-characters",
   "display_name": "Ada Lovelace",
-  "preferred_languages": ["en", "fr"],
+  "preferred_languages": ["eng", "fra"],
   "approximate_location": "Cape Town",
   "phone": "+27000000000"
 }
@@ -114,7 +125,7 @@ Creates an account and returns a token pair.
 | `email`                | yes      | Valid address, at most 254 characters, stored lower-cased        |
 | `password`             | yes      | At least 8 characters, at most 1024 bytes                        |
 | `display_name`         | yes      | 1-80 characters after trimming                                   |
-| `preferred_languages`  | no       | An array of at most 20 ISO 639-1 codes; blanks dropped. See [Languages](#languages) |
+| `preferred_languages`  | no       | An array of at most 20 ISO 639-3 codes; blanks dropped. See [Languages](#languages) |
 | `approximate_location` | no       | At most 120 characters                                           |
 | `phone`                | no       | At most 32 characters                                            |
 
@@ -126,7 +137,7 @@ Creates an account and returns a token pair.
     "id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
     "email": "ada@example.com",
     "display_name": "Ada Lovelace",
-    "preferred_languages": ["en", "fr"],
+    "preferred_languages": ["eng", "fra"],
     "approximate_location": "Cape Town",
     "phone": "+27000000000",
     "created_at": "2026-10-07T18:26:37.134182+02:00",
@@ -233,7 +244,7 @@ is simply not reused.
     "id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
     "email": "ada@example.com",
     "display_name": "Ada Lovelace",
-    "preferred_languages": ["en"],
+    "preferred_languages": ["eng"],
     "approximate_location": "Cape Town",
     "phone": "+27000000000",
     "created_at": "2026-10-07T18:26:37.134182+02:00",
@@ -282,7 +293,7 @@ and the pillar it belongs to.
   "author_avatar_url": "/users/7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8/avatar?v=ada.png",
   "root_version_id": "0f6c2b1a-9e2d-4c7b-8a31-6d5e4f3c2b1a",
   "pillar": "wonder",
-  "language": "en",
+  "language": "eng",
   "title": "The first rain",
   "body": "Grandmother said the first rain remembers every name.",
   "approximate_location": "Cape Town",
@@ -353,7 +364,7 @@ and `updated_at` are generated server-side.
 ```json
 {
   "pillar": "wonder",
-  "language": "en",
+  "language": "eng",
   "title": "The first rain",
   "body": "Grandmother said the first rain remembers every name.",
   "approximate_location": "Cape Town",
@@ -368,7 +379,7 @@ and `updated_at` are generated server-side.
 | Field                  | Required | Rules                                                        |
 | ---------------------- | -------- | ------------------------------------------------------------ |
 | `pillar`               | yes      | Exactly `wonder` or `heritage`                               |
-| `language`             | yes      | A canonical ISO 639-1 code, such as `en` or `zu`. See [Languages](#languages) |
+| `language`             | yes      | A canonical ISO 639-3 code, such as `eng` or `zul`. See [Languages](#languages) |
 | `title`                | yes      | 1-200 characters after trimming                              |
 | `body`                 | yes      | 1-10000 characters; stored verbatim, so formatting survives  |
 | `approximate_location` | no       | At most 100 characters after trimming                        |
@@ -548,7 +559,7 @@ KNOT-ADR-011 in [`docs/DECISIONS.md`](DECISIONS.md).
   "author_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
   "author_display_name": "Ada Lovelace",
   "author_avatar_url": "/users/7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8/avatar?v=ada.png",
-  "language": "en",
+  "language": "eng",
   "title": "The first rain",
   "body": "Grandmother said the first rain remembers every name.",
   "adaptation_note": null,
@@ -575,7 +586,7 @@ echo of the request.
 ```json
 {
   "parent_version_id": "0f6c2b1a-9e2d-4c7b-8a31-6d5e4f3c2b1a",
-  "language": "fr",
+  "language": "fra",
   "title": "La première pluie",
   "body": "Grand-mère disait que la première pluie se souvient de chaque nom.",
   "adaptation_note": "Rendered for French-speaking listeners."
@@ -585,7 +596,7 @@ echo of the request.
 | Field               | Required | Rules                                                    |
 | ------------------- | -------- | -------------------------------------------------------- |
 | `parent_version_id` | yes      | UUID. Must belong to the story named in the path          |
-| `language`          | yes      | A canonical ISO 639-1 code, such as `fr` or `zu`. See [Languages](#languages) |
+| `language`          | yes      | A canonical ISO 639-3 code, such as `fra` or `zul`. See [Languages](#languages) |
 | `title`             | yes      | 1-200 characters after trimming                           |
 | `body`              | yes      | 1-10000 characters; stored verbatim                        |
 | `adaptation_note`   | no       | At most 1000 characters after trimming                     |
@@ -657,7 +668,7 @@ conversations rather than adding to one. See KNOT-ADR-014 in
   "author_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
   "author_display_name": "Ada Lovelace",
   "author_avatar_url": null,
-  "language": "en",
+  "language": "eng",
   "body": "The first rain remembers every name.",
   "created_at": "2026-10-08T18:26:37.134182+02:00",
   "updated_at": "2026-10-08T18:26:37.134182+02:00"
@@ -674,7 +685,7 @@ conversations rather than adding to one. See KNOT-ADR-014 in
   "author_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
   "author_display_name": "Ada Lovelace",
   "author_avatar_url": "/users/7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8/avatar?v=ada.png",
-  "target_language": "fr",
+  "target_language": "fra",
   "adaptation_note": "Rendered for French-speaking listeners.",
   "created_at": "2026-10-08T18:30:00.000000+02:00"
 }
@@ -694,13 +705,13 @@ comment, wrapped as `{ "comment": { ... } }`.
 **Request**
 
 ```json
-{ "body": "The first rain remembers every name.", "language": "en" }
+{ "body": "The first rain remembers every name.", "language": "eng" }
 ```
 
 | Field      | Required | Rules                            |
 | ---------- | -------- | -------------------------------- |
 | `body`     | yes      | 1-5000 characters; stored verbatim |
-| `language` | yes      | A canonical ISO 639-1 code, such as `en`. See [Languages](#languages) |
+| `language` | yes      | A canonical ISO 639-3 code, such as `eng`. See [Languages](#languages) |
 
 **There is no `author_id` field.** The commenter is taken from the access token.
 
@@ -746,7 +757,7 @@ Returns **200** with:
     "author_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
     "author_display_name": "Ada Lovelace",
     "author_avatar_url": null,
-    "language": "en",
+    "language": "eng",
     "body": "The first rain remembers every name.",
     "created_at": "2026-10-08T18:26:37.134182+02:00",
     "updated_at": "2026-10-08T18:26:37.134182+02:00"
@@ -769,9 +780,9 @@ comments, so a client does not have to fetch them:
 
 ```json
 {
-  "bridge": { "id": "...", "source_comment_id": "...", "target_comment_id": "...", "target_language": "fr" },
-  "source_comment": { "id": "...", "language": "en" },
-  "target_comment": { "id": "...", "language": "fr" }
+  "bridge": { "id": "...", "source_comment_id": "...", "target_comment_id": "...", "target_language": "fra" },
+  "source_comment": { "id": "...", "language": "eng" },
+  "target_comment": { "id": "...", "language": "fra" }
 }
 ```
 
@@ -779,7 +790,7 @@ comments, so a client does not have to fetch them:
 
 ```json
 {
-  "target_language": "fr",
+  "target_language": "fra",
   "body": "La première pluie se souvient de chaque nom.",
   "adaptation_note": "Rendered for French-speaking listeners."
 }
@@ -787,7 +798,7 @@ comments, so a client does not have to fetch them:
 
 | Field             | Required | Rules                                                                         |
 | ----------------- | -------- | ----------------------------------------------------------------------------- |
-| `target_language` | yes      | A canonical ISO 639-1 code, such as `fr`; must differ from the source comment's language. See [Languages](#languages) |
+| `target_language` | yes      | A canonical ISO 639-3 code, such as `fra`; must differ from the source comment's language. See [Languages](#languages) |
 | `body`            | yes      | The target comment's body, 1-5000 characters                                   |
 | `adaptation_note` | no       | At most 1000 characters after trimming                                          |
 
@@ -994,7 +1005,7 @@ authored — stories, adaptations, comments, and bridges. It is how the app answ
       "kind": "story",
       "id": "d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b",
       "created_at": "2026-10-09T18:26:37.134182+02:00",
-      "payload": { "title": "The first rain", "pillar": "wonder", "language": "en" }
+      "payload": { "title": "The first rain", "pillar": "wonder", "language": "eng" }
     }
   ],
   "next_cursor": ""
@@ -1070,7 +1081,7 @@ though it is not in the client's fallback lookup table.
   "longitude": 32.7489,
   "story_count": 42,
   "pillar_counts": { "wonder": 30, "heritage": 12 },
-  "languages": ["af", "en", "xh"],
+  "languages": ["afr", "eng", "xho"],
   "latest_story_at": "2026-10-08T12:00:00Z"
 }
 ```
@@ -1094,7 +1105,7 @@ Returns **200** with `{ "clusters": [ ... ] }`, ordered by `story_count` descend
 | Query      | Required | Rules                                                           |
 | ---------- | -------- | --------------------------------------------------------------- |
 | `pillar`   | no       | `wonder` or `heritage`; keeps only places with a story under it  |
-| `language` | no       | A canonical ISO 639-1 code; keeps only places with a version in that language |
+| `language` | no       | A canonical ISO 639-3 code; keeps only places with a version in that language |
 | `limit`    | no       | 1-500. Defaults to 100; a larger value is clamped to 500         |
 
 `clusters` is always an array, never `null`.

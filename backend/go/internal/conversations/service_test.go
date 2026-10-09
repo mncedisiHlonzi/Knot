@@ -235,7 +235,7 @@ func sourceComment() Comment {
 		ID:        sourceCommentID,
 		VersionID: versionID,
 		AuthorID:  authorID,
-		Language:  "en",
+		Language:  "eng",
 		Body:      "The first rain remembers every name.",
 	}
 }
@@ -244,7 +244,7 @@ func validCommentInput() CreateCommentInput {
 	return CreateCommentInput{
 		VersionID: versionID,
 		AuthorID:  authorID,
-		Language:  "en",
+		Language:  "eng",
 		Body:      "The first rain remembers every name.",
 	}
 }
@@ -253,7 +253,7 @@ func validBridgeInput() CreateBridgeInput {
 	return CreateBridgeInput{
 		SourceCommentID: sourceCommentID,
 		AuthorID:        authorID,
-		TargetLanguage:  "fr",
+		TargetLanguage:  "fra",
 		Body:            "La première pluie se souvient de chaque nom.",
 		AdaptationNote:  "Rendered for French-speaking listeners.",
 	}
@@ -294,15 +294,15 @@ func TestCreateCommentTrimsLanguageAndPreservesBody(t *testing.T) {
 	service, comments, _ := newTestService(t)
 
 	input := validCommentInput()
-	input.Language = " en "
+	input.Language = " eng "
 	input.Body = "  indented body  "
 
 	if _, err := service.CreateComment(context.Background(), input); err != nil {
 		t.Fatalf("CreateComment() error = %v, want nil", err)
 	}
 
-	if comments.gotCreate.Language != "en" {
-		t.Errorf("language = %q, want %q", comments.gotCreate.Language, "en")
+	if comments.gotCreate.Language != "eng" {
+		t.Errorf("language = %q, want %q", comments.gotCreate.Language, "eng")
 	}
 	if comments.gotCreate.Body != "  indented body  " {
 		t.Errorf("body = %q, want the author's formatting preserved", comments.gotCreate.Body)
@@ -322,8 +322,9 @@ func TestCreateCommentValidation(t *testing.T) {
 		{"empty body", func(in *CreateCommentInput) { in.Body = "   " }, "body"},
 		{"body too long", func(in *CreateCommentInput) { in.Body = longBody }, "body"},
 		{"unknown language code", func(in *CreateCommentInput) { in.Language = "e" }, "language"},
+		{"two letter code", func(in *CreateCommentInput) { in.Language = "en" }, "language"},
 		{"language given as a word", func(in *CreateCommentInput) { in.Language = "english" }, "language"},
-		{"language in upper case", func(in *CreateCommentInput) { in.Language = "EN" }, "language"},
+		{"language in upper case", func(in *CreateCommentInput) { in.Language = "ENG" }, "language"},
 		{"language with digits", func(in *CreateCommentInput) { in.Language = "en2" }, "language"},
 	}
 
@@ -570,14 +571,14 @@ func TestCreateBridgeHappyPath(t *testing.T) {
 	if bridges.gotSourceVersionID != versionID {
 		t.Errorf("target lookup source version = %q, want %q", bridges.gotSourceVersionID, versionID)
 	}
-	if bridges.gotTargetLanguage != "fr" {
-		t.Errorf("target lookup language = %q, want %q", bridges.gotTargetLanguage, "fr")
+	if bridges.gotTargetLanguage != "fra" {
+		t.Errorf("target lookup language = %q, want %q", bridges.gotTargetLanguage, "fra")
 	}
 	if bridges.gotTarget.VersionID != otherVersionID {
 		t.Errorf("target version id = %q, want the resolved target version %q", bridges.gotTarget.VersionID, otherVersionID)
 	}
-	if bridges.gotTarget.Language != "fr" {
-		t.Errorf("target language = %q, want %q", bridges.gotTarget.Language, "fr")
+	if bridges.gotTarget.Language != "fra" {
+		t.Errorf("target language = %q, want %q", bridges.gotTarget.Language, "fra")
 	}
 	if bridges.gotTarget.AuthorID != authorID {
 		t.Errorf("target author id = %q, want the bridger %q", bridges.gotTarget.AuthorID, authorID)
@@ -593,7 +594,7 @@ func TestCreateBridgeNormalisesFields(t *testing.T) {
 	bridges.findTargetResult = otherVersionID
 
 	input := validBridgeInput()
-	input.TargetLanguage = " fr "
+	input.TargetLanguage = " fra "
 	input.Body = "  indented  "
 	input.AdaptationNote = "  a note  "
 
@@ -601,11 +602,11 @@ func TestCreateBridgeNormalisesFields(t *testing.T) {
 		t.Fatalf("CreateBridge() error = %v, want nil", err)
 	}
 
-	if bridges.gotTarget.Language != "fr" {
-		t.Errorf("target language = %q, want %q", bridges.gotTarget.Language, "fr")
+	if bridges.gotTarget.Language != "fra" {
+		t.Errorf("target language = %q, want %q", bridges.gotTarget.Language, "fra")
 	}
-	if bridges.gotTargetLanguage != "fr" {
-		t.Errorf("target lookup language = %q, want the normalised %q", bridges.gotTargetLanguage, "fr")
+	if bridges.gotTargetLanguage != "fra" {
+		t.Errorf("target lookup language = %q, want the normalised %q", bridges.gotTargetLanguage, "fra")
 	}
 	if bridges.gotTarget.Body != "  indented  " {
 		t.Errorf("target body = %q, want the author's formatting preserved", bridges.gotTarget.Body)
@@ -629,8 +630,9 @@ func TestCreateBridgeValidation(t *testing.T) {
 		{"empty body", func(in *CreateBridgeInput) { in.Body = "   " }, "body"},
 		{"body too long", func(in *CreateBridgeInput) { in.Body = longBody }, "body"},
 		{"unknown target language code", func(in *CreateBridgeInput) { in.TargetLanguage = "f" }, "target_language"},
+		{"two letter target language", func(in *CreateBridgeInput) { in.TargetLanguage = "fr" }, "target_language"},
 		{"target language given as a word", func(in *CreateBridgeInput) { in.TargetLanguage = "english" }, "target_language"},
-		{"target language in upper case", func(in *CreateBridgeInput) { in.TargetLanguage = "FR" }, "target_language"},
+		{"target language in upper case", func(in *CreateBridgeInput) { in.TargetLanguage = "FRA" }, "target_language"},
 		{"target language with digits", func(in *CreateBridgeInput) { in.TargetLanguage = "fr2" }, "target_language"},
 		{"adaptation note too long", func(in *CreateBridgeInput) { in.AdaptationNote = longNote }, "adaptation_note"},
 	}
@@ -682,10 +684,10 @@ func TestCreateBridgeMalformedSourceIdIsNotFound(t *testing.T) {
 
 func TestCreateBridgeSameLanguageIsRejected(t *testing.T) {
 	service, comments, bridges := newTestService(t)
-	comments.getResult = sourceComment() // language "en"
+	comments.getResult = sourceComment() // language "eng"
 
 	input := validBridgeInput()
-	input.TargetLanguage = "en"
+	input.TargetLanguage = "eng"
 
 	_, _, _, err := service.CreateBridge(context.Background(), input)
 	if !errors.Is(err, ErrValidation) {
@@ -794,13 +796,13 @@ func TestCreateBridgeStoreFailureIsWrapped(t *testing.T) {
 
 func TestGetBridgeReturnsStoreResult(t *testing.T) {
 	service, _, bridges := newTestService(t)
-	bridges.getResult = Bridge{ID: bridgeID, SourceCommentID: sourceCommentID, TargetLanguage: "fr"}
+	bridges.getResult = Bridge{ID: bridgeID, SourceCommentID: sourceCommentID, TargetLanguage: "fra"}
 
 	bridge, err := service.GetBridge(context.Background(), bridgeID)
 	if err != nil {
 		t.Fatalf("GetBridge() error = %v, want nil", err)
 	}
-	if bridge.ID != bridgeID || bridge.TargetLanguage != "fr" {
+	if bridge.ID != bridgeID || bridge.TargetLanguage != "fra" {
 		t.Errorf("bridge = %+v, want the stored bridge", bridge)
 	}
 }
@@ -847,7 +849,7 @@ func TestGetCommentReturnsStoreResult(t *testing.T) {
 		VersionID: versionID,
 		StoryID:   storyID,
 		AuthorID:  authorID,
-		Language:  "en",
+		Language:  "eng",
 		Body:      "The first rain remembers every name.",
 	}
 
@@ -904,7 +906,7 @@ func TestListBridgesForComment(t *testing.T) {
 		{name: "one", bridges: []Bridge{{ID: bridgeID, SourceCommentID: sourceCommentID}}},
 		{name: "many", bridges: []Bridge{
 			{ID: bridgeID, SourceCommentID: sourceCommentID},
-			{ID: bridgeID, TargetCommentID: sourceCommentID, TargetLanguage: "fr"},
+			{ID: bridgeID, TargetCommentID: sourceCommentID, TargetLanguage: "fra"},
 		}},
 	}
 

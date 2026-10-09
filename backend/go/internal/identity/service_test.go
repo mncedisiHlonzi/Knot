@@ -129,7 +129,7 @@ func validRegisterInput() RegisterInput {
 		Email:               "Ada@Example.COM",
 		Password:            "correct horse battery staple",
 		DisplayName:         "Ada Lovelace",
-		PreferredLanguages:  []string{"en", " fr "},
+		PreferredLanguages:  []string{"eng", " fra "},
 		ApproximateLocation: "Cape Town",
 		Phone:               "+27000000000",
 	}
@@ -172,8 +172,8 @@ func TestRegisterSuccess(t *testing.T) {
 	if result.User.ApproximateLocation != "Cape Town" {
 		t.Errorf("location = %q, want %q", result.User.ApproximateLocation, "Cape Town")
 	}
-	if len(result.User.PreferredLanguages) != 2 || result.User.PreferredLanguages[1] != "fr" {
-		t.Errorf("languages = %v, want [en fr] with entries trimmed", result.User.PreferredLanguages)
+	if len(result.User.PreferredLanguages) != 2 || result.User.PreferredLanguages[1] != "fra" {
+		t.Errorf("languages = %v, want [eng fra] with entries trimmed", result.User.PreferredLanguages)
 	}
 
 	if result.Tokens.AccessToken == "" {

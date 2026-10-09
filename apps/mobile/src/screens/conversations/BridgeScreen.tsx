@@ -159,7 +159,7 @@ export default function BridgeScreen({
         selected={targetLanguage}
         onSelect={(chosen) => setTargetLanguage(chosen.code)}
         onClear={() => setTargetLanguage('')}
-        placeholder="Search, e.g. French or fr"
+        placeholder="Search, e.g. French or fra"
       />
 
       <Text style={styles.label}>Your comment</Text>

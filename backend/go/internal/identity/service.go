@@ -353,7 +353,7 @@ func validateDisplayName(raw string) (string, error) {
 }
 
 // validateLanguages trims the entries, drops blanks, and requires every remaining
-// entry to be a canonical ISO 639-1 code.
+// entry to be a canonical ISO 639-3 code.
 func validateLanguages(raw []string) ([]string, error) {
 	if len(raw) > maxLanguages {
 		return nil, &ValidationError{Field: "preferred_languages", Message: fmt.Sprintf("must contain at most %d entries", maxLanguages)}
@@ -366,7 +366,7 @@ func validateLanguages(raw []string) ([]string, error) {
 			continue
 		}
 		if !language.IsValid(trimmed) {
-			return nil, &ValidationError{Field: "preferred_languages", Message: "entries must be valid ISO 639-1 language codes, such as en or zu"}
+			return nil, &ValidationError{Field: "preferred_languages", Message: "entries must be valid ISO 639-3 language codes, such as eng or zul"}
 		}
 		valid = append(valid, trimmed)
 	}

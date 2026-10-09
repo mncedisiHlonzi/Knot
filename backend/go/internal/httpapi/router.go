@@ -209,8 +209,8 @@ type languagesResponse struct {
 	Languages []languageResponse `json:"languages"`
 }
 
-// handleLanguages serves GET /languages: the canonical ISO 639-1 list the API
-// accepts for every language field (KNOT-ADR-045).
+// handleLanguages serves GET /languages: the canonical ISO 639-3 list the API
+// accepts for every language field (KNOT-ADR-046).
 //
 // It needs no service: the list is a compile-time constant. The route is public,
 // because a client needs the list to offer a picker before anyone has registered.

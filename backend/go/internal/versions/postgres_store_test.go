@@ -84,7 +84,7 @@ func integrationSetup(t *testing.T) integrationEnv {
 		prefix+"author@example.test",
 		"$argon2id$v=19$m=65536,t=1,p=4$c2FsdA$a2V5",
 		"Integration Author",
-		[]string{"en"},
+		[]string{"eng"},
 	).Scan(&author)
 	if err != nil {
 		pool.Close()
@@ -118,7 +118,7 @@ func newIntegrationStory(t *testing.T, env integrationEnv, name string) stories.
 	story, err := env.storyStore.CreateStory(context.Background(), stories.Story{
 		AuthorID:  env.author,
 		Pillar:    stories.PillarHeritage,
-		Language:  "en",
+		Language:  "eng",
 		Title:     "Integration " + name,
 		Body:      "Body for " + name,
 		MediaURLs: []string{},
@@ -155,7 +155,7 @@ func TestPostgresStoreCreateVersionAsChildRoundTrip(t *testing.T) {
 		StoryID:         story.ID,
 		ParentVersionID: story.RootVersionID,
 		AuthorID:        env.author,
-		Language:        "fr",
+		Language:        "fra",
 		Title:           "La première pluie",
 		Body:            "Grand-mère disait que la première pluie se souvient de chaque nom.",
 		AdaptationNote:  "Rendered for French-speaking listeners.",
@@ -173,8 +173,8 @@ func TestPostgresStoreCreateVersionAsChildRoundTrip(t *testing.T) {
 	if created.ParentVersionID != story.RootVersionID {
 		t.Errorf("parent version id = %q, want the root %q", created.ParentVersionID, story.RootVersionID)
 	}
-	if created.Language != "fr" {
-		t.Errorf("language = %q, want %q", created.Language, "fr")
+	if created.Language != "fra" {
+		t.Errorf("language = %q, want %q", created.Language, "fra")
 	}
 	if created.AdaptationNote != "Rendered for French-speaking listeners." {
 		t.Errorf("adaptation note = %q, want the stored note", created.AdaptationNote)
@@ -205,7 +205,7 @@ func TestPostgresStoreCreateVersionWithoutOptionalNote(t *testing.T) {
 		StoryID:         story.ID,
 		ParentVersionID: story.RootVersionID,
 		AuthorID:        env.author,
-		Language:        "en",
+		Language:        "eng",
 		Title:           "A retelling",
 		Body:            "Same story, plainer words.",
 	})
@@ -230,7 +230,7 @@ func TestPostgresStoreRejectsASecondRootVersion(t *testing.T) {
 	_, err := env.store.CreateVersion(ctx, StoryVersion{
 		StoryID:  story.ID,
 		AuthorID: env.author,
-		Language: "en",
+		Language: "eng",
 		Title:    "Second root",
 		Body:     "Should never be stored.",
 	})
@@ -255,7 +255,7 @@ func TestPostgresStoreListByStoryReturnsOnlyThatStorysVersions(t *testing.T) {
 			StoryID:         storyA.ID,
 			ParentVersionID: storyA.RootVersionID,
 			AuthorID:        env.author,
-			Language:        "fr",
+			Language:        "fra",
 			Title:           fmt.Sprintf("A child %d", i),
 			Body:            "Body A",
 		}); err != nil {
@@ -325,7 +325,7 @@ func TestPostgresStoreCreateVersionRejectsUnknownStory(t *testing.T) {
 	_, err := env.store.CreateVersion(context.Background(), StoryVersion{
 		StoryID:  "99999999-9999-4999-8999-999999999999",
 		AuthorID: env.author,
-		Language: "en",
+		Language: "eng",
 		Title:    "Orphan",
 		Body:     "No such story.",
 	})
@@ -344,7 +344,7 @@ func TestPostgresStoreCreateVersionRejectsUnknownParent(t *testing.T) {
 		StoryID:         story.ID,
 		ParentVersionID: "99999999-9999-4999-8999-999999999999",
 		AuthorID:        env.author,
-		Language:        "en",
+		Language:        "eng",
 		Title:           "Dangling",
 		Body:            "No such parent.",
 	})

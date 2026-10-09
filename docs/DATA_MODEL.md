@@ -22,9 +22,32 @@ Migrations live in `backend/go/migrations/` and are applied with
 | `0008`  | `story_media` | The `story_media` table, its indexes and constraints |
 | `0009`  | `structured_place` | The `stories` and `rooted_signals` `latitude`/`longitude`/`place_country` columns |
 | `0010`  | `notifications` | The `notifications` table, its inbox index, and its unread partial index |
+| `0011`  | `iso_639_3` | Rewrites every stored language from a two-letter ISO 639-1 code to its three-letter ISO 639-3 counterpart |
 
 Applied versions are recorded in the `schema_migrations` table, which the runner creates
 on first use.
+
+### Migration `0011`: ISO 639-1 to ISO 639-3
+
+KNOT-015d stored ISO 639-1 codes. KNOT-015d-fix moved the contract to ISO 639-3
+(KNOT-ADR-046), which names every language rather than the 184 that happen to have a
+two-letter code, so existing rows had to be rewritten. The migration touches the
+four columns that hold a language — `story_versions.language`, `comments.language`,
+`bridges.target_language`, and `users.preferred_languages` — and nothing else.
+
+It carries the 184 ISO 639-1 codes and their ISO 639-3 counterparts in a temporary
+mapping table, taken from the `Part1` column of the SIL reference table, so the map
+agrees with the canonical list by construction. Every statement matches only values
+that are exactly two characters, which makes the migration idempotent and means a
+two-letter value with no counterpart is left alone rather than guessed at. The map is
+dropped at the end of the same transaction, so no permanent object is added and the
+schema's shape is unchanged — only the values in four columns.
+
+The `down` migration is **best effort**: it reverses the 184 codes that have a
+two-letter counterpart and leaves every other three-letter code as it is. Codes such
+as `nso` (Sepedi) therefore survive a round trip unchanged, because a stored code
+carries no record of which migration wrote it. Nothing is deleted and no field is
+nulled in either direction.
 
 ## `users`
 
@@ -35,7 +58,7 @@ on first use.
 | `phone`                | `text`                   | yes      | `NULL`             | Optional contact number                          |
 | `password_hash`        | `text`                   | no       | —                  | argon2id PHC string. Never returned by the API   |
 | `display_name`         | `text`                   | no       | —                  | 1-80 characters                                  |
-| `preferred_languages`  | `text[]`                 | no       | `'{}'`             | ISO 639-1 codes, at most 20. The application always writes an array, never `NULL`, and rejects any code outside the canonical list (KNOT-ADR-045) |
+| `preferred_languages`  | `text[]`                 | no       | `'{}'`             | ISO 639-3 codes, at most 20. The application always writes an array, never `NULL`, and rejects any code outside the canonical list (KNOT-ADR-046) |
 | `approximate_location` | `text`                   | yes      | `NULL`             | Coarse location only; precise location is out of scope |
 | `avatar_url`           | `text`                   | yes      | `NULL`             | Object key of the avatar in the media bucket, **not** a public URL. See below |
 | `created_at`           | `timestamptz`            | no       | `now()`            |                                                  |
@@ -178,7 +201,7 @@ KNOT-ADR-012.
 | `story_id`           | `uuid`        | no       | —                   | References `stories(id)`; the story this version belongs to            |
 | `parent_version_id`  | `uuid`        | yes      | `NULL`              | References `story_versions(id)`. The version this one adapts. `NULL` marks a story's root version |
 | `author_id`          | `uuid`        | no       | —                   | References `users(id)`. The person who wrote this version; for a root version, the story's original author |
-| `language`           | `text`        | no       | —                   | Two-letter ISO 639-1 code, lower case, from the canonical list (KNOT-ADR-045) |
+| `language`           | `text`        | no       | —                   | Three-letter ISO 639-3 code, lower case, from the canonical list (KNOT-ADR-046) |
 | `title`              | `text`        | no       | —                   | 1-200 characters                                                      |
 | `body`               | `text`        | no       | —                   | The version itself, 1-10000 characters, stored verbatim                |
 | `adaptation_note`    | `text`        | yes      | `NULL`              | The adapter's optional note, up to 1000 characters                     |
@@ -243,7 +266,7 @@ See KNOT-ADR-014.
 | `id`         | `uuid`        | no       | `gen_random_uuid()` | Primary key                                        |
 | `version_id` | `uuid`        | no       | —                   | References `story_versions(id)`; the version commented on |
 | `author_id`  | `uuid`        | no       | —                   | References `users(id)`; the commenter               |
-| `language`   | `text`        | no       | —                   | Two-letter ISO 639-1 code, lower case, from the canonical list (KNOT-ADR-045) |
+| `language`   | `text`        | no       | —                   | Three-letter ISO 639-3 code, lower case, from the canonical list (KNOT-ADR-046) |
 | `body`       | `text`        | no       | —                   | 1-5000 characters, stored verbatim                  |
 | `created_at` | `timestamptz` | no       | `now()`             | The thread's primary sort key                       |
 | `updated_at` | `timestamptz` | no       | `now()`             | Set on insert. No trigger yet: editing a comment is a later task |
@@ -280,7 +303,7 @@ and KNOT-ADR-015.
 | `source_comment_id` | `uuid`        | no       | —                   | References `comments(id)`; the comment bridged from                  |
 | `target_comment_id` | `uuid`        | no       | —                   | References `comments(id)`; the new comment in the target language     |
 | `author_id`         | `uuid`        | no       | —                   | References `users(id)`; the bridger, and the target comment's author  |
-| `target_language`   | `text`        | no       | —                   | Two-letter ISO 639-1 code, lower case, from the canonical list (KNOT-ADR-045) |
+| `target_language`   | `text`        | no       | —                   | Three-letter ISO 639-3 code, lower case, from the canonical list (KNOT-ADR-046) |
 | `adaptation_note`   | `text`        | yes      | `NULL`              | The bridger's optional note, up to 1000 characters                    |
 | `created_at`        | `timestamptz` | no       | `now()`             |                                                                      |
 

@@ -41,8 +41,8 @@ export type LanguagePickerProps = SingleLanguagePickerProps | MultipleLanguagePi
  * A searchable picker over the canonical language list.
  *
  * It is deliberately not a text field for a language name: the value stored is an
- * ISO 639-1 code, and the only codes that exist are the ones the server accepts
- * (KNOT-ADR-045). Searching the list on the device means a typo can never become
+ * ISO 639-3 code, and the only codes that exist are the ones the server accepts
+ * (KNOT-ADR-046). Searching the list on the device means a typo can never become
  * a stored language, and no request is needed to fill the list.
  *
  * In `single` mode, choosing a language replaces the current one and the chip's

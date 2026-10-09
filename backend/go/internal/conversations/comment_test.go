@@ -57,7 +57,7 @@ func TestCommentCarriesItsFields(t *testing.T) {
 		ID:        "66666666-6666-4666-8666-666666666666",
 		VersionID: "44444444-4444-4444-8444-444444444444",
 		AuthorID:  "11111111-1111-4111-8111-111111111111",
-		Language:  "en",
+		Language:  "eng",
 		Body:      "The first rain remembers every name.",
 		CreatedAt: created,
 		UpdatedAt: created,
@@ -66,8 +66,8 @@ func TestCommentCarriesItsFields(t *testing.T) {
 	if comment.ID == "" || comment.VersionID == "" || comment.AuthorID == "" {
 		t.Error("a comment id, version id, or author id is empty, want all three set")
 	}
-	if comment.Language != "en" {
-		t.Errorf("language = %q, want %q", comment.Language, "en")
+	if comment.Language != "eng" {
+		t.Errorf("language = %q, want %q", comment.Language, "eng")
 	}
 	if !comment.CreatedAt.Equal(created) {
 		t.Errorf("created at = %v, want %v", comment.CreatedAt, created)

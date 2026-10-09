@@ -44,7 +44,7 @@ func sampleResult() *identity.AuthResult {
 			ID:                  "11111111-1111-4111-8111-111111111111",
 			Email:               "ada@example.com",
 			DisplayName:         "Ada Lovelace",
-			PreferredLanguages:  []string{"en", "fr"},
+			PreferredLanguages:  []string{"eng", "fra"},
 			ApproximateLocation: "Cape Town",
 			Phone:               "+27000000000",
 			PasswordHash:        "$argon2id$v=19$m=65536,t=1,p=4$c2FsdA$c2VjcmV0",
@@ -192,17 +192,17 @@ func TestLanguagesServesTheCanonicalList(t *testing.T) {
 	var body languagesResponse
 	decodeBody(t, recorder, &body)
 
-	if len(body.Languages) < 80 {
-		t.Fatalf("len(languages) = %d, want at least 80", len(body.Languages))
+	if len(body.Languages) < 7000 {
+		t.Fatalf("len(languages) = %d, want at least 7000", len(body.Languages))
 	}
 
 	// The list is the contract every language field is validated against, so the
-	// shape is checked here too: two lower-case letters, a name, no duplicates.
+	// shape is checked here too: three lower-case letters, a name, no duplicates.
 	seen := make(map[string]string, len(body.Languages))
 	previous := ""
 	for _, item := range body.Languages {
-		if len(item.Code) != 2 {
-			t.Errorf("code %q is not two characters", item.Code)
+		if len(item.Code) != 3 {
+			t.Errorf("code %q is not three characters", item.Code)
 		}
 		if item.Code != strings.ToLower(item.Code) {
 			t.Errorf("code %q is not lower case", item.Code)
@@ -223,12 +223,12 @@ func TestLanguagesServesTheCanonicalList(t *testing.T) {
 
 	// Spot-check the names a client shows for codes the product promises.
 	want := map[string]string{
-		"en": "English",
-		"zu": "Zulu",
-		"af": "Afrikaans",
-		"xh": "Xhosa",
-		"fr": "French",
-		"pt": "Portuguese",
+		"eng": "English",
+		"zul": "Zulu",
+		"afr": "Afrikaans",
+		"xho": "Xhosa",
+		"fra": "French",
+		"por": "Portuguese",
 	}
 	for code, name := range want {
 		if seen[code] != name {
@@ -236,9 +236,12 @@ func TestLanguagesServesTheCanonicalList(t *testing.T) {
 		}
 	}
 
-	// nso is deliberately absent: it has no ISO 639-1 code.
-	if _, offered := seen["nso"]; offered {
-		t.Error("nso is offered, want it absent: it has no ISO 639-1 code")
+	// nso is present now: ISO 639-3 names every language, which is the whole point
+	// of moving off ISO 639-1 (KNOT-ADR-046).
+	if name, offered := seen["nso"]; !offered {
+		t.Error("nso is not offered, want it present: ISO 639-3 names Sepedi")
+	} else if name != "Pedi" {
+		t.Errorf("languages[%q] = %q, want %q", "nso", name, "Pedi")
 	}
 }
 
@@ -250,7 +253,7 @@ func TestRegisterHappyPath(t *testing.T) {
 		"email": "ada@example.com",
 		"password": "correct horse battery staple",
 		"display_name": "Ada Lovelace",
-		"preferred_languages": ["en", "fr"],
+		"preferred_languages": ["eng", "fra"],
 		"approximate_location": "Cape Town",
 		"phone": "+27000000000"
 	}`)

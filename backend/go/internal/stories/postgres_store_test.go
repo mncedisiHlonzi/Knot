@@ -74,7 +74,7 @@ func integrationSetup(t *testing.T) integrationStore {
 		prefix+"author@example.test",
 		"$argon2id$v=19$m=65536,t=1,p=4$c2FsdA$a2V5",
 		"Integration Author",
-		[]string{"en"},
+		[]string{"eng"},
 	).Scan(&author)
 	if err != nil {
 		pool.Close()
@@ -105,7 +105,7 @@ func newIntegrationStory(author, name string) Story {
 	return Story{
 		AuthorID:            author,
 		Pillar:              PillarHeritage,
-		Language:            "en",
+		Language:            "eng",
 		Title:               "Integration " + name,
 		Body:                "Body for " + name,
 		ApproximateLocation: "Cape Town",
@@ -433,7 +433,7 @@ func TestPostgresStoreCreateStoryRollsBackWhenVersionInsertFails(t *testing.T) {
 	_, err := env.store.CreateStory(ctx, Story{
 		AuthorID:  env.author,
 		Pillar:    PillarHeritage,
-		Language:  "en",
+		Language:  "eng",
 		Title:     "Rollback candidate",
 		Body:      "this body contains a NUL byte: \x00",
 		MediaURLs: []string{},

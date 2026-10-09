@@ -77,7 +77,7 @@ func newIntegrationUser(prefix, name string) *User {
 		Email:              prefix + name + "@example.test",
 		PasswordHash:       "$argon2id$v=19$m=65536,t=1,p=4$c2FsdA$a2V5",
 		DisplayName:        "Integration " + name,
-		PreferredLanguages: []string{"en"},
+		PreferredLanguages: []string{"eng"},
 	}
 }
 
@@ -105,8 +105,8 @@ func TestPostgresStoreCreateUser(t *testing.T) {
 	if created.CreatedAt.IsZero() || created.UpdatedAt.IsZero() {
 		t.Error("timestamps are zero, want database-generated values")
 	}
-	if len(created.PreferredLanguages) != 1 || created.PreferredLanguages[0] != "en" {
-		t.Errorf("languages = %v, want [en]", created.PreferredLanguages)
+	if len(created.PreferredLanguages) != 1 || created.PreferredLanguages[0] != "eng" {
+		t.Errorf("languages = %v, want [eng]", created.PreferredLanguages)
 	}
 	if created.Phone != "" || created.ApproximateLocation != "" {
 		t.Errorf("nullable columns = (%q, %q), want empty strings", created.Phone, created.ApproximateLocation)
@@ -120,7 +120,7 @@ func TestPostgresStoreCreateUserRoundTripsOptionalFields(t *testing.T) {
 	user := newIntegrationUser(prefix, "optional")
 	user.Phone = "+27000000000"
 	user.ApproximateLocation = "Cape Town"
-	user.PreferredLanguages = []string{"en", "zu", "fr"}
+	user.PreferredLanguages = []string{"eng", "zul", "fra"}
 
 	created, err := store.CreateUser(ctx, user)
 	if err != nil {

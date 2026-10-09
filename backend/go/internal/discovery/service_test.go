@@ -67,7 +67,7 @@ func TestListClustersPassesFilterThrough(t *testing.T) {
 
 	_, err := service.ListClusters(context.Background(), ClusterFilter{
 		Pillar:   stories.PillarWonder,
-		Language: "en",
+		Language: "eng",
 		Limit:    25,
 	})
 	if err != nil {
@@ -77,8 +77,8 @@ func TestListClustersPassesFilterThrough(t *testing.T) {
 	if store.gotFilter.Pillar != stories.PillarWonder {
 		t.Errorf("pillar = %q, want %q", store.gotFilter.Pillar, stories.PillarWonder)
 	}
-	if store.gotFilter.Language != "en" {
-		t.Errorf("language = %q, want %q", store.gotFilter.Language, "en")
+	if store.gotFilter.Language != "eng" {
+		t.Errorf("language = %q, want %q", store.gotFilter.Language, "eng")
 	}
 	if store.gotFilter.Limit != 25 {
 		t.Errorf("limit = %d, want 25", store.gotFilter.Limit)
@@ -89,15 +89,15 @@ func TestListClustersTrimsLanguageButRequiresACanonicalCode(t *testing.T) {
 	store := &fakeStore{}
 	service := newTestService(t, store)
 
-	if _, err := service.ListClusters(context.Background(), ClusterFilter{Language: " en ", Limit: 10}); err != nil {
+	if _, err := service.ListClusters(context.Background(), ClusterFilter{Language: " eng ", Limit: 10}); err != nil {
 		t.Fatalf("ListClusters() error = %v, want nil", err)
 	}
-	if store.gotFilter.Language != "en" {
-		t.Errorf("language = %q, want %q (trimmed)", store.gotFilter.Language, "en")
+	if store.gotFilter.Language != "eng" {
+		t.Errorf("language = %q, want %q (trimmed)", store.gotFilter.Language, "eng")
 	}
 
 	// The filter is matched exactly, like every other language field.
-	if _, err := service.ListClusters(context.Background(), ClusterFilter{Language: "EN", Limit: 10}); err == nil {
+	if _, err := service.ListClusters(context.Background(), ClusterFilter{Language: "ENG", Limit: 10}); err == nil {
 		t.Fatal("ListClusters() error = nil, want a rejection for the non-canonical \"EN\"")
 	}
 }

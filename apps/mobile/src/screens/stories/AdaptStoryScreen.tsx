@@ -34,7 +34,7 @@ const MAX_TITLE_LENGTH = 200;
 const MAX_NOTE_LENGTH = 1000;
 
 /** The language the form starts with when the caller offers nothing usable. */
-const DEFAULT_LANGUAGE = 'en';
+const DEFAULT_LANGUAGE = 'eng';
 
 /**
  * Returns the first client-side validation problem, or undefined when the form is
@@ -173,7 +173,7 @@ export default function AdaptStoryScreen({
             selected={language}
             onSelect={(chosen) => setLanguage(chosen.code)}
             onClear={() => setLanguage('')}
-            placeholder="Search, e.g. French or fr"
+            placeholder="Search, e.g. French or fra"
           />
 
           <Text style={styles.label}>Title</Text>

@@ -188,11 +188,11 @@ func TestPostgresStoreListClustersAggregates(t *testing.T) {
 	lagos := "Lagos " + token
 
 	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
-	createStoryAt(t, pool, userID, capeTown, "wonder", "en", base)
-	createStoryAt(t, pool, userID, capeTown, "wonder", "en", base.Add(time.Minute))
-	createStoryAt(t, pool, userID, capeTown, "heritage", "af", base.Add(2*time.Minute))
-	createStoryAt(t, pool, userID, nairobi, "wonder", "en", base.Add(3*time.Minute))
-	createStoryAt(t, pool, userID, lagos, "heritage", "en", base.Add(4*time.Minute))
+	createStoryAt(t, pool, userID, capeTown, "wonder", "eng", base)
+	createStoryAt(t, pool, userID, capeTown, "wonder", "eng", base.Add(time.Minute))
+	createStoryAt(t, pool, userID, capeTown, "heritage", "afr", base.Add(2*time.Minute))
+	createStoryAt(t, pool, userID, nairobi, "wonder", "eng", base.Add(3*time.Minute))
+	createStoryAt(t, pool, userID, lagos, "heritage", "eng", base.Add(4*time.Minute))
 
 	clusters, err := store.ListClusters(ctx, ClusterFilter{Limit: 100})
 	if err != nil {
@@ -214,8 +214,8 @@ func TestPostgresStoreListClustersAggregates(t *testing.T) {
 	if group[0].PillarCounts[stories.PillarWonder] != 2 || group[0].PillarCounts[stories.PillarHeritage] != 1 {
 		t.Errorf("Cape Town pillar_counts = %v, want wonder:2 heritage:1", group[0].PillarCounts)
 	}
-	if len(group[0].Languages) != 2 || group[0].Languages[0] != "af" || group[0].Languages[1] != "en" {
-		t.Errorf("Cape Town languages = %v, want [af en]", group[0].Languages)
+	if len(group[0].Languages) != 2 || group[0].Languages[0] != "afr" || group[0].Languages[1] != "eng" {
+		t.Errorf("Cape Town languages = %v, want [afr eng]", group[0].Languages)
 	}
 
 	// latest_story_at is the newest story's creation time.
@@ -279,8 +279,8 @@ func TestPostgresStoreListClustersLegacyRowsHaveNilCoordinates(t *testing.T) {
 
 	place := "Smallville " + token
 	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
-	createStoryAt(t, pool, userID, place, "wonder", "en", base)
-	createStoryAt(t, pool, userID, place, "wonder", "en", base.Add(time.Minute))
+	createStoryAt(t, pool, userID, place, "wonder", "eng", base)
+	createStoryAt(t, pool, userID, place, "wonder", "eng", base.Add(time.Minute))
 
 	clusters, err := store.ListClusters(ctx, ClusterFilter{Limit: 100})
 	if err != nil {
@@ -310,10 +310,10 @@ func TestPostgresStoreListClustersFilterByPillar(t *testing.T) {
 	lagos := "Lagos " + token
 
 	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
-	createStoryAt(t, pool, userID, capeTown, "wonder", "en", base)
-	createStoryAt(t, pool, userID, capeTown, "heritage", "en", base.Add(time.Minute))
-	createStoryAt(t, pool, userID, nairobi, "wonder", "en", base.Add(2*time.Minute))
-	createStoryAt(t, pool, userID, lagos, "heritage", "en", base.Add(3*time.Minute))
+	createStoryAt(t, pool, userID, capeTown, "wonder", "eng", base)
+	createStoryAt(t, pool, userID, capeTown, "heritage", "eng", base.Add(time.Minute))
+	createStoryAt(t, pool, userID, nairobi, "wonder", "eng", base.Add(2*time.Minute))
+	createStoryAt(t, pool, userID, lagos, "heritage", "eng", base.Add(3*time.Minute))
 
 	clusters, err := store.ListClusters(ctx, ClusterFilter{Pillar: stories.PillarHeritage, Limit: 100})
 	if err != nil {
@@ -344,11 +344,11 @@ func TestPostgresStoreListClustersFilterByLanguage(t *testing.T) {
 	nairobi := "Nairobi " + token
 
 	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
-	createStoryAt(t, pool, userID, capeTown, "wonder", "en", base)
-	createStoryAt(t, pool, userID, capeTown, "heritage", "af", base.Add(time.Minute))
-	createStoryAt(t, pool, userID, nairobi, "wonder", "en", base.Add(2*time.Minute))
+	createStoryAt(t, pool, userID, capeTown, "wonder", "eng", base)
+	createStoryAt(t, pool, userID, capeTown, "heritage", "afr", base.Add(time.Minute))
+	createStoryAt(t, pool, userID, nairobi, "wonder", "eng", base.Add(2*time.Minute))
 
-	clusters, err := store.ListClusters(ctx, ClusterFilter{Language: "af", Limit: 100})
+	clusters, err := store.ListClusters(ctx, ClusterFilter{Language: "afr", Limit: 100})
 	if err != nil {
 		t.Fatalf("ListClusters() error = %v, want nil", err)
 	}
@@ -370,8 +370,8 @@ func TestPostgresStoreListStoriesAtPlaceMatchesNormalisedPlace(t *testing.T) {
 
 	place := "Cape Town " + token
 	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
-	createStoryAt(t, pool, userID, place, "wonder", "en", base)
-	createStoryAt(t, pool, userID, place, "heritage", "af", base.Add(time.Minute))
+	createStoryAt(t, pool, userID, place, "wonder", "eng", base)
+	createStoryAt(t, pool, userID, place, "heritage", "afr", base.Add(time.Minute))
 
 	// The store expects the already-normalised place: trimmed and lower-cased.
 	page, next, err := store.ListStoriesAtPlace(ctx, strings.ToLower(place), nil, 10)
@@ -404,7 +404,7 @@ func TestPostgresStoreListStoriesAtPlacePaginates(t *testing.T) {
 	place := "Pagination Town " + token
 	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
 	for i := 0; i < 5; i++ {
-		createStoryAt(t, pool, userID, place, "wonder", "en", base.Add(time.Duration(i)*time.Minute))
+		createStoryAt(t, pool, userID, place, "wonder", "eng", base.Add(time.Duration(i)*time.Minute))
 	}
 
 	placeLower := strings.ToLower(place)

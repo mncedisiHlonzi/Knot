@@ -66,7 +66,7 @@ func TestPlaceClusterCarriesTheAggregate(t *testing.T) {
 			stories.PillarWonder:   2,
 			stories.PillarHeritage: 1,
 		},
-		Languages:     []string{"af", "en"},
+		Languages:     []string{"afr", "eng"},
 		LatestStoryAt: latest,
 	}
 

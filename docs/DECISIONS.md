@@ -1019,7 +1019,7 @@ The S3 implementation sets the SDK's `GetObjectInput.Range` field, so the object
 
 **Decision ID:** KNOT-ADR-045
 **Date:** 2026-10-09
-**Status:** Accepted
+**Status:** Superseded by KNOT-ADR-046 (the code set and its width changed; everything else in this decision still holds)
 
 **Context:** Every domain that stores a language — `users.preferred_languages`, `stories`/`story_versions.language`, `comments.language`, `bridges.target_language`, and the discovery cluster filter — validated with its own hand-written rule: trim, lower-case, then require 2-8 ASCII letters. That accepted `english`, `tsonga`, and `EN` as three spellings of what a person meant, so the same language could be stored several ways and grouping by language would silently split. The mobile app asked users to type a code into a text field, in one case comma-separated.
 
@@ -1042,3 +1042,36 @@ The S3 implementation sets the SDK's `GetObjectInput.Range` field, so the object
 **Reason:** Consistency at the boundary is cheaper than reconciliation afterwards. A language is an identifier, not free text, and the only way to guarantee that one language has one spelling is to accept exactly the codes that exist.
 
 **Consequences:** Adding a language is a two-file change (Go and TypeScript) plus a deploy, and the mobile test suite reads the Go source to fail when the two lists drift, skipping that check when only the mobile folder is present. Two lists rather than one is a real duplication cost, accepted because the app must work offline and the server cannot be the app's only source of truth. The comment composer's code field is still validated against the canonical list, so it cannot store a non-canonical code, but it offers no suggestions — a disclosed inconsistency with the other four forms. Finally, tightening validation is not retroactive: rows written under the old rule keep their values, and any such value simply no longer validates if it is sent back.
+
+---
+
+## KNOT-ADR-046 — A language is a canonical ISO 639-3 code, and the existing rows are migrated to it
+
+**Decision ID:** KNOT-ADR-046
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** KNOT-ADR-045 made a language a canonical ISO 639-1 code so that one language would have one stored spelling. That worked, but the code set was wrong: ISO 639-1 contains only the 184 languages that happen to have a two-letter code. Sepedi, the language of roughly 4.7 million people, has no two-letter code, so the app could not name it — the list excluded `nso`, `tso`'s neighbours, and thousands of other languages that people actually tell stories in. The founder found this on device: the picker offered 103 languages and refused the ones the product exists to serve.
+
+**Decision:**
+- The canonical code is **ISO 639-3**: three lower-case ASCII letters, such as `eng` or `zul`. `backend/go/internal/language` holds all **7,927** of them, sorted by name, as a compile-time constant.
+- The list and its mobile mirror at `apps/mobile/src/data/languages.ts` are **generated** from the SIL International ISO 639-3 reference table by `tools/generate_languages.py`, which rewrites only the block between `BEGIN GENERATED` and `END GENERATED` in each file. Only `Id` and `Ref_Name` are kept: no scope, no language type, no ISO 639-2 aliases.
+- Names are the registry's reference names, in English and **verbatim**, including `Pedi` for `nso`. A name is not translated or hand-corrected, so the list can be diffed against a future revision of the table.
+- `GET /languages` is unchanged in shape and returns the whole list — about 270 KB — with no pagination. It stays a `Router` method.
+- `migrations/0011_iso_639_3` rewrites the four columns that store a language from their two-letter code to the matching three-letter one. Its `down` is best effort and loses nothing: codes with no two-letter counterpart stay as they are.
+- Region variants (`pt-BR`) remain out of scope, as they were.
+- The existing picker UI does not change. Only strings that named a two-letter example were corrected, because a placeholder saying "Zulu or zu" would now instruct the user to type a value the server rejects.
+
+**Alternatives Considered:**
+1. **Keep ISO 639-1 and add a hand-written supplement for the missing languages** — rejected. It invents codes outside any standard, and the supplement would never stop growing.
+2. **ISO 639-2 (three letters)** — rejected. It covers ~500 languages, still missing the great majority, and its B/T duplicate codes (`ger`/`deu`) would reintroduce the "two spellings for one language" problem this line of decisions exists to remove.
+3. **BCP 47 tags with a primary subtag** — rejected again, for the reason ADR-045 gave: Knot stores a language, not a locale, and a tag invites regional variants the product has no use for.
+4. **A `languages` database table** — rejected. The list changes rarely, and a table would need seeding, a migration per update, and a round trip in every form.
+5. **Hand-assembling or hand-editing the list** — rejected. 7,927 entries cannot be maintained by hand; a generator is what makes "regenerate from the source" a real instruction rather than advice.
+6. **Trimming the list to "languages people are likely to use"** — rejected. That judgement is exactly what excluded Sepedi, and the picker's search makes a long list navigable.
+7. **Paginating or filtering `GET /languages` server-side** — rejected for this task. A single response the client caches is simpler, and a `?q=` parameter would put the search on the network on every keystroke.
+8. **Deleting or nulling values the migration cannot map** — rejected. A migration must not destroy data to tidy up after a decision.
+
+**Reason:** A canonical code list is only as good as its coverage. ISO 639-3 is the standard built for that coverage, it is maintained by a registry rather than by us, and it is a superset of ISO 639-1's own coverage — so every value the old contract allowed has an exact counterpart to migrate to, which is what makes the rewrite a mapping rather than a guess.
+
+**Consequences:** The canonical list is ~2.2 MB across the two generated files, and a language code is now three characters everywhere, so anything holding a stored two-letter value must map it before sending it. The picker's search now returns several matches for a short query — `zul` also matches `Zulgo-Gemzek` — which is inherent to searching 7,927 names and is why the result list is capped. `stories` never had a `language` column (migration `0003` dropped it), so the migration covers four columns, not the five the task description named. Applying the migration is a **one-way value rewrite**: a database that has been through it and then through `down` holds a mix of two- and three-letter codes, because a stored code records no history. The `down` migration therefore reverses every three-letter code with a two-letter ancestor, including codes that were never two letters in the first place — the honest outcome for a rollback path that should rarely run. Finally, the mobile drift test is now the mechanism that keeps two 7,927-entry lists in step; without it they would diverge on the first edit.

@@ -36,7 +36,7 @@ type CreateStoryScreenProps = {
 };
 
 /** The language the form starts with. */
-const DEFAULT_LANGUAGE = 'en';
+const DEFAULT_LANGUAGE = 'eng';
 
 /** Field limits, mirroring the server's rules so the user is told early. */
 const MAX_TITLE_LENGTH = 200;
@@ -256,7 +256,7 @@ export default function CreateStoryScreen({
         selected={language}
         onSelect={(chosen) => setLanguage(chosen.code)}
         onClear={() => setLanguage('')}
-        placeholder="Search, e.g. Zulu or zu"
+        placeholder="Search, e.g. Zulu or zul"
       />
 
       <Text style={styles.label}>Approximate place (optional)</Text>

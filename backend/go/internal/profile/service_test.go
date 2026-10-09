@@ -73,7 +73,7 @@ func storyActivity() Activity {
 		Kind:      KindStory,
 		ID:        testActivityID,
 		CreatedAt: time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC),
-		Payload:   Payload{Title: "The first rain", Pillar: "wonder", Language: "en"},
+		Payload:   Payload{Title: "The first rain", Pillar: "wonder", Language: "eng"},
 	}
 }
 
