@@ -4,6 +4,7 @@ import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from '
 import { describeError } from '../../api/client';
 import { notificationsApi } from '../../api/notifications';
 import { FEED_PAGE_SIZE, Story, storiesApi } from '../../api/stories';
+import AuthorLine from '../../components/AuthorLine';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type FeedScreenProps = {
@@ -20,20 +21,6 @@ type FeedScreenProps = {
   /** Called when the person signs out. */
   readonly onSignOut: () => void;
 };
-
-/**
- * Renders a story's timestamp as a short, locale-independent date.
- *
- * An unparseable timestamp is shown verbatim rather than as "Invalid Date", so a
- * server-side format change is visible instead of confusing.
- */
-function formatDate(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toISOString().slice(0, 10);
-}
 
 /**
  * The public story feed, newest first.
@@ -182,8 +169,17 @@ export default function FeedScreen({
       renderItem={({ item }) => (
         <Pressable style={styles.card} onPress={() => onOpenStory(item.id)}>
           <Text style={styles.cardTitle}>{item.title}</Text>
+          <View style={styles.cardAuthor}>
+            <AuthorLine
+              displayName={item.author_display_name}
+              avatarUrl={item.author_avatar_url}
+              createdAt={item.created_at}
+              rooted={item.author_rooted}
+              size="small"
+            />
+          </View>
           <Text style={styles.cardMeta}>
-            {item.pillar} · {item.language} · {formatDate(item.created_at)}
+            {item.pillar} · {item.language}
             {item.sensitive ? ' · sensitive' : ''}
           </Text>
           {item.approximate_location !== '' ? (
@@ -244,6 +240,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginTop: spacing.md,
     padding: spacing.lg,
+  },
+  cardAuthor: {
+    marginTop: spacing.xs,
   },
   cardMeta: {
     color: colors.text.secondary,

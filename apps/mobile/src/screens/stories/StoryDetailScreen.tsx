@@ -15,9 +15,9 @@ import Video from 'react-native-video';
 import { describeError } from '../../api/client';
 import { Story, StoryMedia, storiesApi } from '../../api/stories';
 import { versionsApi } from '../../api/versions';
+import AuthorLine from '../../components/AuthorLine';
 import CameraCaptureBadge from '../../components/CameraCaptureBadge';
 import MediaGalleryModal from '../../components/MediaGalleryModal';
-import RootedBadge from '../../components/RootedBadge';
 import { API_BASE_URL } from '../../config/api';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
 
@@ -158,21 +158,21 @@ export default function StoryDetailScreen({
       {story !== undefined ? (
         <>
           <Text style={styles.title}>{story.title}</Text>
+          <View style={styles.authorRow}>
+            <AuthorLine
+              displayName={story.author_display_name}
+              avatarUrl={story.author_avatar_url}
+              createdAt={story.created_at}
+              rooted={story.author_rooted}
+              size="medium"
+            />
+          </View>
           <Text style={styles.meta}>
-            {story.pillar} · {story.language} · {story.created_at}
+            {story.pillar} · {story.language}
             {story.sensitive ? ' · sensitive' : ''}
           </Text>
           {story.approximate_location !== '' ? (
             <Text style={styles.meta}>{story.approximate_location}</Text>
-          ) : null}
-
-          {story.author_rooted ? (
-            <View style={styles.rootedRow}>
-              <RootedBadge
-                place={story.author_rooted.place}
-                durationBucket={story.author_rooted.duration_bucket}
-              />
-            </View>
           ) : null}
 
           <Text style={styles.body}>{story.body}</Text>
@@ -241,6 +241,9 @@ export default function StoryDetailScreen({
 }
 
 const styles = StyleSheet.create({
+  authorRow: {
+    marginTop: spacing.sm,
+  },
   body: {
     color: colors.text.primary,
     fontSize: fontSizes.md,
@@ -295,9 +298,6 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     fontSize: fontSizes.lg,
     marginLeft: 3,
-  },
-  rootedRow: {
-    marginTop: spacing.sm,
   },
   secondaryButton: {
     alignItems: 'center',

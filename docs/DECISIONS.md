@@ -912,3 +912,28 @@ The S3 implementation sets the SDK's `GetObjectInput.Range` field, so the object
 **Reason:** A one-method interface declared by the caller is the smallest contract that keeps the dependency graph acyclic and each package ignorant of the others' types, and it matches the existing pattern for cross-domain reads (the Narrow interfaces in `httpapi/enrich.go`).
 
 **Consequences:** There is a small amount of duplicated shape — two `Notifier` interfaces, and a `VersionAuthor` read on the conversations store that exists only for this — but no package grows an API it does not need, and the notifications package can be tested with primitives and no fixtures from other domains. Adding a fourth event means adding a method to the interface of the domain that produces it and one hook call; nothing else changes.
+
+## KNOT-ADR-041 — Every authored response carries a display name and avatar, enriched in one batched lookup
+
+**Decision ID:** KNOT-ADR-041
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** Content responses named their author only by `author_id`, a UUID. The mobile app had no way to render a name or an avatar from that alone: there is no public "read a user by id" route, and adding one would fan a feed page out into a request per card. Attribution had therefore been filled in ad hoc — the inbox had actor names and avatars, comments had a name, the language tree and the feed had almost nothing — so the same author rendered differently on every screen.
+
+**Decision:**
+- Every response that names an author carries **`author_display_name`** (string) and **`author_avatar_url`** (a path on this API, or `null` when the author has no avatar), in addition to the existing `author_id` and `author_rooted`.
+- The fields are attached at the **HTTP layer** by a single `authorAttributions` helper in `internal/httpapi/enrich.go`, which resolves every distinct author id in a response in **one batched call** to `identity.Service.UsersByIDs`. There is never a query per row, and no entity table is widened.
+- `author_avatar_url` is the backend path `/users/{id}/avatar?v=…`, never a link to object storage. A client resolves it against the API base URL and renders the author's initials when it is `null`.
+- A failed lookup is swallowed: attribution is supplementary, so the content still returns, with an empty name and a `null` avatar — the rule the Rooted enrichment already followed (KNOT-ADR-017).
+- The mobile app renders attribution through **one component**, `AuthorLine`, so a story, a version, a comment, and a bridge all read the same way.
+
+**Alternatives Considered:**
+1. **Add name and avatar columns to stories, versions, comments, and bridges** — rejected. It denormalizes identity into four domains, goes stale on a rename or an avatar change, and each row already stores the author's id.
+2. **A public `GET /users/{id}` route for the client to call** — rejected for this. It turns a feed page into N+1 requests, and it exposes a profile surface the product has not designed (that is KNOT-015c).
+3. **Resolve attribution per row inside each handler** — rejected. A page of 20 comments would be 20 lookups; the batch is one.
+4. **Enrich only the detail responses** — rejected. The feed and the language tree were exactly the screens missing attribution.
+
+**Reason:** Attribution is a presentation concern over an id the entity already stores, and it has the same shape in every domain. Doing it once, in one batched read at the edge, keeps it consistent, keeps the storage model normalized, and keeps the cost independent of page size.
+
+**Consequences:** Every authored response gains two fields and every content handler gains one dependency (`AuthorLookup`), plus one batched read per response. The wire format grows additively, so a client that ignores the fields is unaffected. The notifications inbox already resolved actors this way; its `NotificationActors` is now an alias of the same `AuthorLookup` contract, so there is one enrichment interface rather than two.

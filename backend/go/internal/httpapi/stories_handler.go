@@ -31,18 +31,22 @@ type StoriesService interface {
 // StoriesHandler serves the story endpoints.
 type StoriesHandler struct {
 	service StoriesService
+	authors AuthorLookup
 	rooted  RootedLookup
 	media   StoryMediaLookup
 	logger  *slog.Logger
 }
 
-// NewStoriesHandler returns a handler backed by service. The rooted lookup is used
-// to attach each author's inline Rooted summary to a story response, and the media
-// lookup attaches the story's media (in full on the detail, as a single preview on
-// the feed).
-func NewStoriesHandler(service StoriesService, rooted RootedLookup, media StoryMediaLookup, logger *slog.Logger) (*StoriesHandler, error) {
+// NewStoriesHandler returns a handler backed by service. The author lookup names and
+// pictures each story's author (one batched read per response), the rooted lookup
+// attaches that author's inline Rooted summary, and the media lookup attaches the
+// story's media (in full on the detail, as a single preview on the feed).
+func NewStoriesHandler(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, logger *slog.Logger) (*StoriesHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a service")
+	}
+	if authors == nil {
+		return nil, fmt.Errorf("httpapi: stories handler requires an author lookup")
 	}
 	if rooted == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a rooted lookup")
@@ -53,7 +57,7 @@ func NewStoriesHandler(service StoriesService, rooted RootedLookup, media StoryM
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a logger")
 	}
-	return &StoriesHandler{service: service, rooted: rooted, media: media, logger: logger}, nil
+	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, logger: logger}, nil
 }
 
 // createStoryRequest is the POST /stories body.
@@ -83,8 +87,14 @@ type createStoryRequest struct {
 // content, resolved from story_versions. root_version_id names that version, so
 // a client can adapt the story from the root without a second lookup.
 type storyResponse struct {
-	ID                  string         `json:"id"`
-	AuthorID            string         `json:"author_id"`
+	ID       string `json:"id"`
+	AuthorID string `json:"author_id"`
+	// AuthorDisplayName and AuthorAvatarURL are the author's inline attribution,
+	// filled by one batched lookup per response. AuthorAvatarURL is the backend
+	// path to fetch an avatar from, or null when the author has none, so a client
+	// renders initials (KNOT-ADR-041).
+	AuthorDisplayName   string         `json:"author_display_name"`
+	AuthorAvatarURL     *string        `json:"author_avatar_url"`
 	RootVersionID       string         `json:"root_version_id"`
 	Pillar              stories.Pillar `json:"pillar"`
 	Language            string         `json:"language"`
@@ -160,7 +170,10 @@ func (h *StoriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, storyEnvelope{Story: newStoryResponse(created)})
+	response := newStoryResponse(created)
+	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, created.AuthorID)
+
+	writeJSON(w, http.StatusCreated, storyEnvelope{Story: response})
 }
 
 // Get handles GET /stories/{id}. The route is public.
@@ -173,6 +186,7 @@ func (h *StoriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	response := newStoryResponse(story)
 	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{story.AuthorID})[story.AuthorID]
+	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, story.AuthorID)
 	response.Media = storyMediaForDetail(r.Context(), h.media, h.logger, story.ID)
 
 	writeJSON(w, http.StatusOK, storyEnvelope{Story: response})
@@ -196,9 +210,19 @@ func (h *StoriesHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]storyResponse, 0, len(page))
 	ids := make([]string, 0, len(page))
+	authorIDs := make([]string, 0, len(page))
 	for _, story := range page {
 		items = append(items, newStoryResponse(story))
 		ids = append(ids, story.ID)
+		authorIDs = append(authorIDs, story.AuthorID)
+	}
+
+	// One batched read names and pictures every author on the page.
+	attributions := authorAttributions(r.Context(), h.authors, h.logger, authorIDs)
+	for i := range items {
+		attribution := attributions[items[i].AuthorID]
+		items[i].AuthorDisplayName = attribution.DisplayName
+		items[i].AuthorAvatarURL = optionalString(attribution.AvatarURL)
 	}
 
 	previews := storyMediaPreviews(r.Context(), h.media, h.logger, ids)

@@ -25,13 +25,11 @@ type NotificationsService interface {
 
 // NotificationActors resolves the users behind a page of notification actors.
 //
-// It is one batched read, so rendering an inbox page costs one query for every
-// distinct actor rather than one query per notification. It is deliberately
-// narrower than the whole identity service: the handler only needs to name and
-// picture an actor, not to register, log in, or change an account.
-type NotificationActors interface {
-	UsersByIDs(ctx context.Context, ids []string) (map[string]*identity.User, error)
-}
+// It is the shared AuthorLookup contract: one batched read, so rendering an inbox
+// page costs one query for every distinct actor rather than one per notification.
+// It is a named alias rather than a second interface so the inbox and the content
+// handlers depend on one enrichment contract (KNOT-ADR-041).
+type NotificationActors = AuthorLookup
 
 // NotificationsHandler serves the in-app inbox.
 type NotificationsHandler struct {

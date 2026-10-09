@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/knot/backend/internal/conversations"
+	"github.com/knot/backend/internal/identity"
 	"github.com/knot/backend/internal/rooted"
 	"github.com/knot/backend/internal/stories"
 	"github.com/knot/backend/internal/versions"
@@ -380,5 +381,237 @@ func TestEnrichmentFailureDoesNotFailTheResponse(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), `"author_rooted":null`) {
 		t.Errorf("body = %s, want the story with a null author_rooted", recorder.Body.String())
+	}
+}
+
+// authorUser is a resolved account fixture for the attribution tests. An empty
+// avatarKey means the user has no avatar, which the wire turns into a null URL.
+func authorUser(id, displayName, avatarKey string) *identity.User {
+	return &identity.User{ID: id, DisplayName: displayName, AvatarURL: avatarKey}
+}
+
+func TestStoryDetailAttachesAuthorAttribution(t *testing.T) {
+	service := &fakeRootedService{users: map[string]*identity.User{
+		authorA: authorUser(authorA, "Ada Lovelace", "avatars/"+authorA+"/pic.png"),
+	}}
+	handler := newRouterWithRooted(t, discardLogger(), service,
+		&fakeStoriesService{getResult: storyFixture("d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b", authorA)},
+		&fakeVersionsService{}, &fakeConversationsService{})
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories/d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b", "", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body storyEnvelope
+	decodeBody(t, recorder, &body)
+
+	if body.Story.AuthorDisplayName != "Ada Lovelace" {
+		t.Errorf("author_display_name = %q, want %q", body.Story.AuthorDisplayName, "Ada Lovelace")
+	}
+	want := "/users/" + authorA + "/avatar?v=pic.png"
+	if body.Story.AuthorAvatarURL == nil || *body.Story.AuthorAvatarURL != want {
+		t.Errorf("author_avatar_url = %v, want %q", body.Story.AuthorAvatarURL, want)
+	}
+	if service.userCalls != 1 {
+		t.Errorf("author lookups = %d, want exactly 1 for the response", service.userCalls)
+	}
+}
+
+func TestAuthorAvatarIsNullWhenTheAuthorHasNone(t *testing.T) {
+	service := &fakeRootedService{users: map[string]*identity.User{
+		authorB: authorUser(authorB, "Grace Hopper", ""),
+	}}
+	handler := newRouterWithRooted(t, discardLogger(), service,
+		&fakeStoriesService{getResult: storyFixture("d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b", authorB)},
+		&fakeVersionsService{}, &fakeConversationsService{})
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories/d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b", "", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	var body storyEnvelope
+	decodeBody(t, recorder, &body)
+
+	if body.Story.AuthorDisplayName != "Grace Hopper" {
+		t.Errorf("author_display_name = %q, want %q", body.Story.AuthorDisplayName, "Grace Hopper")
+	}
+	if body.Story.AuthorAvatarURL != nil {
+		t.Errorf("author_avatar_url = %q, want null when the author has no avatar", *body.Story.AuthorAvatarURL)
+	}
+}
+
+func TestStoryFeedBatchesAuthorAttributionOnce(t *testing.T) {
+	feed := []stories.Story{
+		storyFixture("11111111-1111-4111-8111-111111111111", authorA),
+		storyFixture("22222222-2222-4222-8222-222222222222", authorB),
+		storyFixture("33333333-3333-4333-8333-333333333333", authorA),
+	}
+	service := &fakeRootedService{users: map[string]*identity.User{
+		authorA: authorUser(authorA, "Ada Lovelace", ""),
+		authorB: authorUser(authorB, "Grace Hopper", ""),
+	}}
+	handler := newRouterWithRooted(t, discardLogger(), service,
+		&fakeStoriesService{listResult: feed}, &fakeVersionsService{}, &fakeConversationsService{})
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories", "", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body listStoriesResponse
+	decodeBody(t, recorder, &body)
+
+	if len(body.Stories) != 3 {
+		t.Fatalf("stories = %d, want 3", len(body.Stories))
+	}
+	if body.Stories[0].AuthorDisplayName != "Ada Lovelace" {
+		t.Errorf("story 0 author_display_name = %q, want %q", body.Stories[0].AuthorDisplayName, "Ada Lovelace")
+	}
+	if body.Stories[1].AuthorDisplayName != "Grace Hopper" {
+		t.Errorf("story 1 author_display_name = %q, want %q", body.Stories[1].AuthorDisplayName, "Grace Hopper")
+	}
+	if body.Stories[2].AuthorDisplayName != "Ada Lovelace" {
+		t.Errorf("story 2 author_display_name = %q, want the repeated author's name", body.Stories[2].AuthorDisplayName)
+	}
+	if service.userCalls != 1 {
+		t.Errorf("author lookups = %d, want exactly 1 for the whole feed page", service.userCalls)
+	}
+	if len(service.gotUserIDs) != 2 {
+		t.Errorf("author ids = %v, want the 2 distinct authors", service.gotUserIDs)
+	}
+}
+
+func TestLanguageTreeAttachesAuthorAttribution(t *testing.T) {
+	tree := []versions.StoryVersion{versionFixture("11111111-1111-4111-8111-111111111111", authorA)}
+	service := &fakeRootedService{users: map[string]*identity.User{
+		authorA: authorUser(authorA, "Ada Lovelace", ""),
+	}}
+	handler := newRouterWithRooted(t, discardLogger(), service, &fakeStoriesService{},
+		&fakeVersionsService{treeResult: tree}, &fakeConversationsService{})
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories/"+testStoryID+"/tree", "", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body treeResponse
+	decodeBody(t, recorder, &body)
+
+	if len(body.Versions) != 1 || body.Versions[0].AuthorDisplayName != "Ada Lovelace" {
+		t.Fatalf("versions = %+v, want one version attributed to Ada Lovelace", body.Versions)
+	}
+	if service.userCalls != 1 {
+		t.Errorf("author lookups = %d, want exactly 1", service.userCalls)
+	}
+}
+
+func TestCommentListAttachesAuthorAttribution(t *testing.T) {
+	comments := []conversations.Comment{
+		commentFixture("66666666-6666-4666-8666-666666666661", authorA),
+		commentFixture("66666666-6666-4666-8666-666666666662", authorB),
+	}
+	service := &fakeRootedService{users: map[string]*identity.User{
+		authorA: authorUser(authorA, "Ada Lovelace", "avatars/"+authorA+"/a.png"),
+		authorB: authorUser(authorB, "Grace Hopper", ""),
+	}}
+	handler := newRouterWithRooted(t, discardLogger(), service, &fakeStoriesService{}, &fakeVersionsService{},
+		&fakeConversationsService{listCommentsResult: comments})
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/versions/"+testVersionID+"/comments", "", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body commentListResponse
+	decodeBody(t, recorder, &body)
+
+	if len(body.Comments) != 2 {
+		t.Fatalf("comments = %d, want 2", len(body.Comments))
+	}
+	if body.Comments[0].AuthorDisplayName != "Ada Lovelace" {
+		t.Errorf("comment 0 author_display_name = %q, want %q", body.Comments[0].AuthorDisplayName, "Ada Lovelace")
+	}
+	if body.Comments[1].AuthorDisplayName != "Grace Hopper" {
+		t.Errorf("comment 1 author_display_name = %q, want %q", body.Comments[1].AuthorDisplayName, "Grace Hopper")
+	}
+	if body.Comments[1].AuthorAvatarURL != nil {
+		t.Errorf("comment 1 author_avatar_url = %q, want null for an author with no avatar", *body.Comments[1].AuthorAvatarURL)
+	}
+	if service.userCalls != 1 {
+		t.Errorf("author lookups = %d, want exactly 1", service.userCalls)
+	}
+}
+
+func TestGetCommentAttachesAuthorAttribution(t *testing.T) {
+	service := &fakeRootedService{users: map[string]*identity.User{
+		authorA: authorUser(authorA, "Ada Lovelace", ""),
+	}}
+	handler := newRouterWithRooted(t, discardLogger(), service, &fakeStoriesService{}, &fakeVersionsService{},
+		&fakeConversationsService{getCommentResult: commentFixture(testSourceCommentID, authorA)})
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/comments/"+testSourceCommentID, "", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body commentDetailEnvelope
+	decodeBody(t, recorder, &body)
+
+	if body.Comment.AuthorDisplayName != "Ada Lovelace" {
+		t.Errorf("author_display_name = %q, want %q", body.Comment.AuthorDisplayName, "Ada Lovelace")
+	}
+	if service.userCalls != 1 {
+		t.Errorf("author lookups = %d, want exactly 1", service.userCalls)
+	}
+}
+
+func TestGetBridgeAttachesAuthorAttribution(t *testing.T) {
+	service := &fakeRootedService{users: map[string]*identity.User{
+		authorA: authorUser(authorA, "Ada Lovelace", ""),
+	}}
+	handler := newRouterWithRooted(t, discardLogger(), service, &fakeStoriesService{}, &fakeVersionsService{},
+		&fakeConversationsService{getBridgeResult: bridgeFixture(testBridgeID, authorA)})
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/bridges/"+testBridgeID, "", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body bridgeEnvelope
+	decodeBody(t, recorder, &body)
+
+	if body.Bridge.AuthorDisplayName != "Ada Lovelace" {
+		t.Errorf("author_display_name = %q, want %q", body.Bridge.AuthorDisplayName, "Ada Lovelace")
+	}
+	if service.userCalls != 1 {
+		t.Errorf("author lookups = %d, want exactly 1", service.userCalls)
+	}
+}
+
+func TestAuthorAttributionFailureDoesNotFailTheResponse(t *testing.T) {
+	service := &fakeRootedService{userErr: errors.New("identity table is unavailable")}
+	handler := newRouterWithRooted(t, discardLogger(), service,
+		&fakeStoriesService{getResult: storyFixture("d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b", authorA)},
+		&fakeVersionsService{}, &fakeConversationsService{})
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories/d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b", "", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d — attribution is supplementary", recorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(recorder.Body.String(), `"author_avatar_url":null`) {
+		t.Errorf("body = %s, want a null author_avatar_url", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), `"author_display_name":""`) {
+		t.Errorf("body = %s, want an empty author_display_name", recorder.Body.String())
 	}
 }

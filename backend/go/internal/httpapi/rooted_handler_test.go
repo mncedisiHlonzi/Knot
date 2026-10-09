@@ -9,8 +9,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/knot/backend/internal/identity"
 	"github.com/knot/backend/internal/rooted"
 )
+
+// testEnricher is the pair of batched lookups the content handlers enrich with.
+// One fake implements both, so a router test drives rooted and author enrichment
+// together.
+type testEnricher interface {
+	RootedService
+	AuthorLookup
+}
 
 // testRootedAt is the fixed timestamp the rooted fixtures are stamped with.
 var testRootedAt = time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
@@ -38,6 +47,13 @@ type fakeRootedService struct {
 	publicCalls  int
 	batchCalls   int
 	gotBatchIDs  []string
+
+	// users and userErr back the author lookup (UsersByIDs), so this one fake
+	// serves both enrichment dependencies a content handler needs.
+	users      map[string]*identity.User
+	userErr    error
+	userCalls  int
+	gotUserIDs []string
 }
 
 func (f *fakeRootedService) SetSignal(_ context.Context, userID string, in rooted.SetSignalInput) (rooted.Signal, error) {
@@ -69,6 +85,24 @@ func (f *fakeRootedService) BatchGetPrimaryPublicSignals(_ context.Context, user
 	return f.batchResult, nil
 }
 
+// UsersByIDs satisfies AuthorLookup, so the same fake backs both the rooted and
+// the author enrichment lookups in the router tests.
+func (f *fakeRootedService) UsersByIDs(_ context.Context, ids []string) (map[string]*identity.User, error) {
+	f.userCalls++
+	f.gotUserIDs = append(f.gotUserIDs, ids...)
+	if f.userErr != nil {
+		return nil, f.userErr
+	}
+
+	out := make(map[string]*identity.User, len(ids))
+	for _, id := range ids {
+		if user, ok := f.users[id]; ok {
+			out[id] = user
+		}
+	}
+	return out, nil
+}
+
 // rootedSignal is a well-formed stored signal for testUserID.
 func rootedSignal() rooted.Signal {
 	return rooted.Signal{
@@ -84,9 +118,9 @@ func rootedSignal() rooted.Signal {
 }
 
 // newRouterWithRooted assembles the full router the way cmd/knot does, with both
-// the Rooted routes and the content-enrichment lookup backed by rootedService, so
-// the tests exercise the real middleware chain and route table.
-func newRouterWithRooted(t *testing.T, logger *slog.Logger, rootedService RootedService, storiesService StoriesService, versionsService VersionsService, conversationsService ConversationsService) http.Handler {
+// the Rooted routes and the content enrichment lookups backed by enricher, so the
+// tests exercise the real middleware chain and route table.
+func newRouterWithRooted(t *testing.T, logger *slog.Logger, enricher testEnricher, storiesService StoriesService, versionsService VersionsService, conversationsService ConversationsService) http.Handler {
 	t.Helper()
 
 	authHandler, err := NewAuthHandler(&fakeAuthService{}, logger)
@@ -94,22 +128,22 @@ func newRouterWithRooted(t *testing.T, logger *slog.Logger, rootedService Rooted
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandler(storiesService, rootedService, &fakeStoryMediaLookup{}, logger)
+	storiesHandler, err := NewStoriesHandler(storiesService, enricher, enricher, &fakeStoryMediaLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
 
-	versionsHandler, err := NewVersionsHandler(versionsService, rootedService, logger)
+	versionsHandler, err := NewVersionsHandler(versionsService, enricher, enricher, logger)
 	if err != nil {
 		t.Fatalf("NewVersionsHandler() error = %v, want nil", err)
 	}
 
-	conversationsHandler, err := NewConversationsHandler(conversationsService, rootedService, logger)
+	conversationsHandler, err := NewConversationsHandler(conversationsService, enricher, enricher, logger)
 	if err != nil {
 		t.Fatalf("NewConversationsHandler() error = %v, want nil", err)
 	}
 
-	rootedHandler, err := NewRootedHandler(rootedService, logger)
+	rootedHandler, err := NewRootedHandler(enricher, logger)
 	if err != nil {
 		t.Fatalf("NewRootedHandler() error = %v, want nil", err)
 	}
@@ -134,7 +168,7 @@ func newRouterWithRooted(t *testing.T, logger *slog.Logger, rootedService Rooted
 
 // newRootedRouter is newRouterWithRooted with the other handlers left as inert
 // fakes, for the Rooted endpoint tests.
-func newRootedRouter(t *testing.T, rootedService RootedService) http.Handler {
+func newRootedRouter(t *testing.T, rootedService testEnricher) http.Handler {
 	t.Helper()
 	return newRouterWithRooted(
 		t,

@@ -15,6 +15,13 @@ export type Comment = {
   readonly id: string;
   readonly version_id: string;
   readonly author_id: string;
+  /**
+   * The author's display name and avatar path, attached by the server. The avatar
+   * is a relative path on the API, or null when the author has no avatar (the
+   * client then renders initials).
+   */
+  readonly author_display_name: string;
+  readonly author_avatar_url: string | null;
   readonly language: string;
   readonly body: string;
   readonly created_at: string;
@@ -65,6 +72,13 @@ export type Bridge = {
   readonly source_comment_id: string;
   readonly target_comment_id: string;
   readonly author_id: string;
+  /**
+   * The bridger's display name and avatar path, attached by the server. The avatar
+   * is a relative path on the API, or null when the bridger has no avatar (the
+   * client then renders initials).
+   */
+  readonly author_display_name: string;
+  readonly author_avatar_url: string | null;
   readonly target_language: string;
   readonly adaptation_note: string | null;
   readonly created_at: string;

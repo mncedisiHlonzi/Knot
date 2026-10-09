@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"github.com/knot/backend/internal/identity"
 	"github.com/knot/backend/internal/rooted"
 	"github.com/knot/backend/internal/storymedia"
 )
@@ -155,4 +156,82 @@ func uniqueAuthorIDs(ids []string) []string {
 	}
 
 	return out
+}
+
+// AuthorLookup is the attribution dependency: one batched read of the accounts
+// behind a set of author ids.
+//
+// It is deliberately narrower than the whole identity service. A content handler
+// only needs to name and picture an author, not to register, log in, or change an
+// account, so it depends on the single method that does that. It is the same
+// shape the notifications handler already consumes, so the two share one contract
+// (KNOT-ADR-041).
+type AuthorLookup interface {
+	UsersByIDs(ctx context.Context, ids []string) (map[string]*identity.User, error)
+}
+
+// authorAttribution is the resolved public attribution of one author: the display
+// name to show, and the backend path of their avatar ("" when they have none).
+type authorAttribution struct {
+	// DisplayName is the author's name, or "" when their account could not be
+	// resolved (for example, a deleted user).
+	DisplayName string
+	// AvatarURL is the backend path to fetch the avatar from (see avatarPathFor),
+	// or "" when the author has no avatar. The wire projection turns "" into null
+	// so the client renders initials.
+	AvatarURL string
+}
+
+// authorAttributions loads the display name and avatar of every distinct author id
+// in one batched call, keyed by author id.
+//
+// It is the parallel of authorRootedSummaries: every response that names an author
+// goes through here once, so attribution costs one query per response rather than
+// one per row (KNOT-ADR-041).
+//
+// Enrichment is supplementary, so a failure is logged and swallowed rather than
+// failing the whole response: content must stay readable when identity is
+// unavailable. An author with no resolvable account has no entry, and the response
+// carries an empty display name and a null avatar for them.
+func authorAttributions(ctx context.Context, lookup AuthorLookup, logger *slog.Logger, authorIDs []string) map[string]authorAttribution {
+	unique := uniqueAuthorIDs(authorIDs)
+	if len(unique) == 0 {
+		return nil
+	}
+
+	users, err := lookup.UsersByIDs(ctx, unique)
+	if err != nil {
+		logger.WarnContext(
+			ctx,
+			"author enrichment failed",
+			slog.String("request_id", RequestIDFromContext(ctx)),
+			slog.String("error", err.Error()),
+		)
+		return nil
+	}
+
+	if len(users) == 0 {
+		return nil
+	}
+
+	attributions := make(map[string]authorAttribution, len(users))
+	for authorID, user := range users {
+		if user == nil {
+			continue
+		}
+		attributions[authorID] = authorAttribution{
+			DisplayName: user.DisplayName,
+			AvatarURL:   avatarPathFor(user),
+		}
+	}
+
+	return attributions
+}
+
+// authorFields resolves a single author's display name and wire avatar (null when
+// they have none) in one batched read. It is the single-entity counterpart of
+// authorAttributions, for the routes that project exactly one author.
+func authorFields(ctx context.Context, authors AuthorLookup, logger *slog.Logger, authorID string) (string, *string) {
+	attribution := authorAttributions(ctx, authors, logger, []string{authorID})[authorID]
+	return attribution.DisplayName, optionalString(attribution.AvatarURL)
 }

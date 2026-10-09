@@ -235,6 +235,8 @@ and the pillar it belongs to.
 {
   "id": "d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b",
   "author_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
+  "author_display_name": "Ada Lovelace",
+  "author_avatar_url": "/users/7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8/avatar?v=ada.png",
   "root_version_id": "0f6c2b1a-9e2d-4c7b-8a31-6d5e4f3c2b1a",
   "pillar": "wonder",
   "language": "en",
@@ -283,6 +285,12 @@ one thumbnail without downloading every item's metadata. It is always an array, 
 
 `GET /stories/{id}` also carries `author_rooted`, the author's inline Rooted summary, or
 `null`. See [`author_rooted` on content responses](#author_rooted-on-content-responses).
+
+`author_display_name` is the author's name, and `author_avatar_url` is a path on this API
+(`/users/{id}/avatar`) that resolves to their avatar — or `null` when they have no avatar,
+in which case a client renders their initials. Both are attached by one batched lookup per
+response, so a card can attribute a story without a request per row (KNOT-ADR-041).
+See [Author attribution](#author-attribution) for the shared contract.
 
 `language`, `title`, and `body` are the content of the story's **root version**, and
 `root_version_id` names that version. A story's content is not stored on the story
@@ -495,6 +503,8 @@ KNOT-ADR-011 in [`docs/DECISIONS.md`](DECISIONS.md).
   "story_id": "d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b",
   "parent_version_id": null,
   "author_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
+  "author_display_name": "Ada Lovelace",
+  "author_avatar_url": "/users/7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8/avatar?v=ada.png",
   "language": "en",
   "title": "The first rain",
   "body": "Grandmother said the first rain remembers every name.",
@@ -506,7 +516,9 @@ KNOT-ADR-011 in [`docs/DECISIONS.md`](DECISIONS.md).
 
 `parent_version_id` is `null` for a story's root version and a version id for an
 adaptation. `adaptation_note` is `null` when the adapter left none. Version responses also
-carry `author_rooted`, the author's inline Rooted summary, or `null`. See
+carry `author_rooted`, the author's inline Rooted summary, or `null`. Every version
+response also carries `author_display_name` and `author_avatar_url` — see
+[Author attribution](#author-attribution). See
 [`author_rooted` on content responses](#author_rooted-on-content-responses).
 
 ### POST /stories/{id}/adapt
@@ -600,6 +612,8 @@ conversations rather than adding to one. See KNOT-ADR-014 in
   "id": "66666666-6666-4666-8666-666666666666",
   "version_id": "44444444-4444-4444-8444-444444444444",
   "author_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
+  "author_display_name": "Ada Lovelace",
+  "author_avatar_url": null,
   "language": "en",
   "body": "The first rain remembers every name.",
   "created_at": "2026-10-08T18:26:37.134182+02:00",
@@ -615,6 +629,8 @@ conversations rather than adding to one. See KNOT-ADR-014 in
   "source_comment_id": "66666666-6666-4666-8666-666666666666",
   "target_comment_id": "88888888-8888-4888-8888-888888888888",
   "author_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
+  "author_display_name": "Ada Lovelace",
+  "author_avatar_url": "/users/7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8/avatar?v=ada.png",
   "target_language": "fr",
   "adaptation_note": "Rendered for French-speaking listeners.",
   "created_at": "2026-10-08T18:30:00.000000+02:00"
@@ -622,7 +638,9 @@ conversations rather than adding to one. See KNOT-ADR-014 in
 ```
 
 `adaptation_note` is `null` when the bridger left none. Comment and bridge responses also
-carry `author_rooted`, the author's inline Rooted summary, or `null`. See
+carry `author_rooted`, the author's inline Rooted summary, or `null`, and the attribution
+pair `author_display_name` / `author_avatar_url` — see
+[Author attribution](#author-attribution). See
 [`author_rooted` on content responses](#author_rooted-on-content-responses).
 
 ### POST /versions/{id}/comments
@@ -683,6 +701,8 @@ Returns **200** with:
     "version_id": "44444444-4444-4444-8444-444444444444",
     "story_id": "33333333-3333-4333-8333-333333333333",
     "author_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
+    "author_display_name": "Ada Lovelace",
+    "author_avatar_url": null,
     "language": "en",
     "body": "The first rain remembers every name.",
     "created_at": "2026-10-08T18:26:37.134182+02:00",
@@ -691,10 +711,10 @@ Returns **200** with:
 }
 ```
 
-`story_id` is the story the comment's version belongs to. A comment row does not
-store it, so the server resolves it from the version. Unlike the list and create
-responses, this projection carries no `author_rooted`: the caller already knows the
-actor (a notification names them), and this route exists to resolve an id.
+`story_id` is the story the comment's version belongs to. A comment row does not store it,
+so the server resolves it from the version. The response carries the same author attribution
+as every other comment response — `author_display_name`, `author_avatar_url`, and
+`author_rooted` — see [Author attribution](#author-attribution).
 
 **Errors:** `404 not_found` (no such comment, or the id is not a UUID),
 `500 internal_error`.
@@ -864,11 +884,46 @@ in a response, never one query per row.
 | ------------------------------------------------------------------------------------ | ------------------------------------- |
 | `GET /stories/{id}`                                                                    | the story's author                     |
 | `POST /stories/{id}/adapt`, `GET /stories/{id}/tree`, `GET /versions/{id}`             | each version's author                  |
-| `POST /versions/{id}/comments`, `GET /versions/{id}/comments`                           | each comment's author                  |
+| `POST /versions/{id}/comments`, `GET /versions/{id}/comments`, `GET /comments/{id}`     | each comment's author                  |
 | `POST /comments/{id}/bridges`, `GET /comments/{id}/bridges`, `GET /bridges/{id}`       | each bridge's author (and, on create, both comments' authors) |
 
 `GET /stories` (the feed) and `POST /stories` do not populate the field: it is present
 there but always `null`.
+
+### Author attribution
+
+Every response that names an author carries the author's display name and avatar, so a
+client can attribute content without a request per row:
+
+```json
+{
+  "author_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
+  "author_display_name": "Ada Lovelace",
+  "author_avatar_url": "/users/7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8/avatar?v=ada.png"
+}
+```
+
+- `author_display_name` is the account's display name, or `""` when the account can no
+  longer be resolved (for example, a deleted user).
+- `author_avatar_url` is a path on this API (`/users/{id}/avatar`, never a link to object
+  storage), or `null` when the author has no avatar. A client resolves it against the API
+  base URL and renders the author's initials when it is `null`.
+
+`author_id` alone is not enough for a client to render attribution: there is no public
+"read a user" route. These fields close that gap. They are attached by **one batched
+lookup per response** — every distinct author id in a response is resolved in a single
+call — never one query per row, and never by widening an entity's stored columns
+(KNOT-ADR-041).
+
+| Response                                                                                          | Attribution describes            |
+| ------------------------------------------------------------------------------------------------- | -------------------------------- |
+| `POST /stories`, `GET /stories`, `GET /stories/{id}`                                              | the story's author                |
+| `POST /stories/{id}/adapt`, `GET /stories/{id}/tree`, `GET /versions/{id}`                         | each version's author             |
+| `POST /versions/{id}/comments`, `GET /versions/{id}/comments`, `GET /comments/{id}`                | each comment's author             |
+| `POST /comments/{id}/bridges`, `GET /comments/{id}/bridges`, `GET /bridges/{id}`                   | the bridger (and, on create, both comments' authors) |
+
+Attribution is supplementary: if the lookup fails, the response still returns, with
+`author_display_name` empty and `author_avatar_url` `null`.
 
 ## Discovery
 

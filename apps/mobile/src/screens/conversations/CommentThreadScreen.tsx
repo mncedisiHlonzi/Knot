@@ -12,7 +12,7 @@ import {
 
 import { describeError } from '../../api/client';
 import { Comment, THREAD_PAGE_SIZE, conversationsApi } from '../../api/conversations';
-import RootedBadge from '../../components/RootedBadge';
+import AuthorLine from '../../components/AuthorLine';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
 
 type CommentThreadScreenProps = {
@@ -31,23 +31,6 @@ type CommentThreadScreenProps = {
 /** Field limits, mirroring the server's rules so the user is told early. */
 const MAX_BODY_LENGTH = 5000;
 const LANGUAGE_PATTERN = /^[A-Za-z]{2,8}$/;
-
-/** The first eight characters of an author id, so commenters are distinguishable. */
-function authorPrefix(authorId: string): string {
-  return authorId.slice(0, 8);
-}
-
-/**
- * Renders a comment's timestamp as a short, locale-independent date and time.
- * An unparseable timestamp is shown verbatim rather than as "Invalid Date".
- */
-function formatDate(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toISOString().slice(0, 16).replace('T', ' ');
-}
 
 /**
  * Returns the first client-side validation problem, or undefined when the form is
@@ -202,17 +185,13 @@ export default function CommentThreadScreen({
           <View style={styles.card}>
             <View style={styles.cardMeta}>
               <Text style={styles.badge}>{item.language}</Text>
-              <Text style={styles.author}>{authorPrefix(item.author_id)}</Text>
-              {item.author_rooted ? (
-                <View style={styles.rootedBadge}>
-                  <RootedBadge
-                    place={item.author_rooted.place}
-                    durationBucket={item.author_rooted.duration_bucket}
-                    compact
-                  />
-                </View>
-              ) : null}
-              <Text style={styles.date}>{formatDate(item.created_at)}</Text>
+              <AuthorLine
+                displayName={item.author_display_name}
+                avatarUrl={item.author_avatar_url}
+                createdAt={item.created_at}
+                rooted={item.author_rooted}
+                size="small"
+              />
             </View>
             <Text style={styles.body}>{item.body}</Text>
             <Pressable style={styles.bridgeButton} onPress={() => onBridge(item)}>
@@ -276,11 +255,6 @@ export default function CommentThreadScreen({
 }
 
 const styles = StyleSheet.create({
-  author: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    marginLeft: spacing.sm,
-  },
   badge: {
     backgroundColor: colors.border.subtle,
     borderRadius: radius.sm,
@@ -315,6 +289,8 @@ const styles = StyleSheet.create({
   cardMeta: {
     alignItems: 'center',
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
   },
   composer: {
     borderTopColor: colors.border.default,
@@ -339,11 +315,6 @@ const styles = StyleSheet.create({
   container: {
     backgroundColor: colors.bg.primary,
     flex: 1,
-  },
-  date: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    marginLeft: spacing.sm,
   },
   disabled: {
     opacity: 0.5,
@@ -397,9 +368,6 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     fontSize: fontSizes.base,
     fontWeight: fontWeights.semiBold,
-  },
-  rootedBadge: {
-    marginLeft: spacing.sm,
   },
   secondaryButton: {
     alignItems: 'center',

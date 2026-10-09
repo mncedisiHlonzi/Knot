@@ -344,17 +344,17 @@ func newConversationsRouter(t *testing.T, logger *slog.Logger, service Conversat
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, logger)
+	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
 
-	versionsHandler, err := NewVersionsHandler(&fakeVersionsService{}, &fakeRootedService{}, logger)
+	versionsHandler, err := NewVersionsHandler(&fakeVersionsService{}, &fakeAuthorService{}, &fakeRootedService{}, logger)
 	if err != nil {
 		t.Fatalf("NewVersionsHandler() error = %v, want nil", err)
 	}
 
-	conversationsHandler, err := NewConversationsHandler(service, &fakeRootedService{}, logger)
+	conversationsHandler, err := NewConversationsHandler(service, &fakeAuthorService{}, &fakeRootedService{}, logger)
 	if err != nil {
 		t.Fatalf("NewConversationsHandler() error = %v, want nil", err)
 	}
@@ -1045,14 +1045,17 @@ func TestGetCommentUnexpectedFailureIsInternalError(t *testing.T) {
 func TestNewConversationsHandlerRejectsMissingDependencies(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	if _, err := NewConversationsHandler(nil, &fakeRootedService{}, logger); err == nil {
-		t.Error("NewConversationsHandler(nil, rooted, logger) error = nil, want an error")
+	if _, err := NewConversationsHandler(nil, &fakeAuthorService{}, &fakeRootedService{}, logger); err == nil {
+		t.Error("NewConversationsHandler(nil, authors, rooted, logger) error = nil, want an error")
 	}
-	if _, err := NewConversationsHandler(&fakeConversationsService{}, &fakeRootedService{}, nil); err == nil {
-		t.Error("NewConversationsHandler(service, rooted, nil) error = nil, want an error")
+	if _, err := NewConversationsHandler(&fakeConversationsService{}, nil, &fakeRootedService{}, logger); err == nil {
+		t.Error("NewConversationsHandler(service, nil authors, rooted, logger) error = nil, want an error")
 	}
-	if _, err := NewConversationsHandler(&fakeConversationsService{}, nil, logger); err == nil {
-		t.Error("NewConversationsHandler(service, nil, logger) error = nil, want an error")
+	if _, err := NewConversationsHandler(&fakeConversationsService{}, &fakeAuthorService{}, &fakeRootedService{}, nil); err == nil {
+		t.Error("NewConversationsHandler(service, authors, rooted, nil) error = nil, want an error")
+	}
+	if _, err := NewConversationsHandler(&fakeConversationsService{}, &fakeAuthorService{}, nil, logger); err == nil {
+		t.Error("NewConversationsHandler(service, authors, nil rooted, logger) error = nil, want an error")
 	}
 }
 

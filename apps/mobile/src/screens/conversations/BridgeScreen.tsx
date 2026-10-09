@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { describeError } from '../../api/client';
 import { Comment, CreateBridgePayload, conversationsApi } from '../../api/conversations';
+import AuthorLine from '../../components/AuthorLine';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
 
 type BridgeScreenProps = {
@@ -28,11 +29,6 @@ type BridgeScreenProps = {
 const MAX_BODY_LENGTH = 5000;
 const MAX_NOTE_LENGTH = 1000;
 const LANGUAGE_PATTERN = /^[A-Za-z]{2,8}$/;
-
-/** The first eight characters of an author id, so contributors are distinguishable. */
-function authorPrefix(authorId: string): string {
-  return authorId.slice(0, 8);
-}
 
 /**
  * The first preferred language that differs from the source comment's language,
@@ -136,9 +132,16 @@ export default function BridgeScreen({
       </Text>
 
       <Text style={styles.label}>You are bridging</Text>
-      <Text style={styles.sourceMeta}>
-        {sourceComment.language} · {authorPrefix(sourceComment.author_id)}
-      </Text>
+      <View style={styles.sourceMetaRow}>
+        <Text style={styles.sourceLanguage}>{sourceComment.language}</Text>
+        <AuthorLine
+          displayName={sourceComment.author_display_name}
+          avatarUrl={sourceComment.author_avatar_url}
+          createdAt={sourceComment.created_at}
+          rooted={sourceComment.author_rooted}
+          size="small"
+        />
+      </View>
       <Text style={styles.sourceBody}>{sourceComment.body}</Text>
 
       <Text style={styles.label}>Target language</Text>
@@ -253,9 +256,15 @@ const styles = StyleSheet.create({
     lineHeight: lineHeights.base,
     marginTop: 6,
   },
-  sourceMeta: {
+  sourceLanguage: {
     color: colors.text.secondary,
     fontSize: fontSizes.sm,
+  },
+  sourceMetaRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
     marginTop: 6,
   },
   title: {

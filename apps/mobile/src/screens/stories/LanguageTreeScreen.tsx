@@ -3,7 +3,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 
 import { describeError } from '../../api/client';
 import { StoryVersion, versionDepths, versionsApi } from '../../api/versions';
-import RootedBadge from '../../components/RootedBadge';
+import AuthorLine from '../../components/AuthorLine';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type LanguageTreeScreenProps = {
@@ -15,11 +15,6 @@ type LanguageTreeScreenProps = {
 
 /** How far each level of the tree is indented, in points. */
 const INDENT_PER_LEVEL = spacing.lg;
-
-/** The first eight characters of an author id, so contributors are distinguishable. */
-function authorPrefix(authorId: string): string {
-  return authorId.slice(0, 8);
-}
 
 /**
  * The Language Tree: every version of a story, indented by how far it sits from
@@ -83,17 +78,16 @@ export default function LanguageTreeScreen({
           <Text style={styles.rowTitle}>{version.title}</Text>
           <View style={styles.rowMeta}>
             <Text style={styles.badge}>{version.language}</Text>
-            <Text style={styles.author}>{authorPrefix(version.author_id)}</Text>
-            {version.author_rooted ? (
-              <View style={styles.rootedBadge}>
-                <RootedBadge
-                  place={version.author_rooted.place}
-                  durationBucket={version.author_rooted.duration_bucket}
-                  compact
-                />
-              </View>
-            ) : null}
             {version.parent_version_id === null ? <Text style={styles.rootTag}>root</Text> : null}
+          </View>
+          <View style={styles.rowAuthor}>
+            <AuthorLine
+              displayName={version.author_display_name}
+              avatarUrl={version.author_avatar_url}
+              createdAt={version.created_at}
+              rooted={version.author_rooted}
+              size="small"
+            />
           </View>
           {version.adaptation_note !== null && version.adaptation_note !== '' ? (
             <Text style={styles.note}>{version.adaptation_note}</Text>
@@ -111,11 +105,6 @@ export default function LanguageTreeScreen({
 }
 
 const styles = StyleSheet.create({
-  author: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    marginLeft: spacing.sm,
-  },
   badge: {
     backgroundColor: colors.border.subtle,
     borderRadius: radius.sm,
@@ -158,9 +147,6 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.sm,
     marginLeft: spacing.sm,
   },
-  rootedBadge: {
-    marginLeft: spacing.sm,
-  },
   row: {
     backgroundColor: colors.bg.surface,
     borderColor: colors.border.subtle,
@@ -169,6 +155,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     marginTop: spacing.md,
     padding: spacing.lg,
+  },
+  rowAuthor: {
+    marginTop: 6,
   },
   rowMeta: {
     alignItems: 'center',

@@ -27,16 +27,20 @@ type ConversationsService interface {
 // ConversationsHandler serves the comment and bridge endpoints.
 type ConversationsHandler struct {
 	service ConversationsService
+	authors AuthorLookup
 	rooted  RootedLookup
 	logger  *slog.Logger
 }
 
-// NewConversationsHandler returns a handler backed by service. The rooted lookup
-// is used to attach each author's inline Rooted summary to comment and bridge
-// responses.
-func NewConversationsHandler(service ConversationsService, rooted RootedLookup, logger *slog.Logger) (*ConversationsHandler, error) {
+// NewConversationsHandler returns a handler backed by service. The author lookup
+// names and pictures every author named by a response (one batched read per
+// response), and the rooted lookup attaches each author's inline Rooted summary.
+func NewConversationsHandler(service ConversationsService, authors AuthorLookup, rooted RootedLookup, logger *slog.Logger) (*ConversationsHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: conversations handler requires a service")
+	}
+	if authors == nil {
+		return nil, fmt.Errorf("httpapi: conversations handler requires an author lookup")
 	}
 	if rooted == nil {
 		return nil, fmt.Errorf("httpapi: conversations handler requires a rooted lookup")
@@ -44,7 +48,7 @@ func NewConversationsHandler(service ConversationsService, rooted RootedLookup, 
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: conversations handler requires a logger")
 	}
-	return &ConversationsHandler{service: service, rooted: rooted, logger: logger}, nil
+	return &ConversationsHandler{service: service, authors: authors, rooted: rooted, logger: logger}, nil
 }
 
 // createCommentRequest is the POST /versions/{id}/comments body.
@@ -75,6 +79,12 @@ type commentResponse struct {
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// AuthorDisplayName and AuthorAvatarURL are the author's inline attribution,
+	// filled by one batched lookup per response. AuthorAvatarURL is the backend
+	// path to fetch an avatar from, or null when the author has none, so a client
+	// renders initials (KNOT-ADR-041).
+	AuthorDisplayName string  `json:"author_display_name"`
+	AuthorAvatarURL   *string `json:"author_avatar_url"`
 	// AuthorRooted is the comment author's primary public Rooted signal, or null
 	// when they have none. It is a summary (place and duration only), attached at
 	// the HTTP layer; see KNOT-ADR-017.
@@ -88,11 +98,10 @@ type commentEnvelope struct {
 }
 
 // commentDetailResponse is the GET /comments/{id} projection of a comment. It is
-// a separate type from commentResponse for two reasons: it carries story_id, the
-// story the comment's version belongs to, which the service resolves so a client
-// can open the comment's thread without a second lookup; and it deliberately
-// omits author_rooted, because a notification already names the actor and this
-// route exists to resolve an id rather than to render a profile (KNOT-015a).
+// a separate type from commentResponse because it also carries story_id, the story
+// the comment's version belongs to, which the service resolves so a client can open
+// the comment's thread without a second lookup. It carries the same author
+// attribution as every other comment response (KNOT-ADR-041).
 type commentDetailResponse struct {
 	ID        string    `json:"id"`
 	VersionID string    `json:"version_id"`
@@ -102,6 +111,13 @@ type commentDetailResponse struct {
 	Body      string    `json:"body"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	// AuthorDisplayName and AuthorAvatarURL are the author's inline attribution,
+	// filled by one batched lookup. AuthorAvatarURL is null when the author has no
+	// avatar (KNOT-ADR-041).
+	AuthorDisplayName string  `json:"author_display_name"`
+	AuthorAvatarURL   *string `json:"author_avatar_url"`
+	// AuthorRooted is the comment author's primary public Rooted signal, or null.
+	AuthorRooted *rootedSummary `json:"author_rooted"`
 }
 
 // commentDetailEnvelope wraps a single resolved comment.
@@ -125,6 +141,11 @@ type bridgeResponse struct {
 	TargetLanguage  string    `json:"target_language"`
 	AdaptationNote  *string   `json:"adaptation_note"`
 	CreatedAt       time.Time `json:"created_at"`
+	// AuthorDisplayName and AuthorAvatarURL are the bridger's inline attribution,
+	// filled by one batched lookup per response. AuthorAvatarURL is the backend
+	// path to fetch an avatar from, or null when the bridger has none (KNOT-ADR-041).
+	AuthorDisplayName string  `json:"author_display_name"`
+	AuthorAvatarURL   *string `json:"author_avatar_url"`
 	// AuthorRooted is the bridger's primary public Rooted signal, or null when they
 	// have none. It is a summary (place and duration only), attached at the HTTP
 	// layer; see KNOT-ADR-017.
@@ -181,6 +202,7 @@ func (h *ConversationsHandler) CreateComment(w http.ResponseWriter, r *http.Requ
 
 	response := newCommentResponse(created)
 	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{created.AuthorID})[created.AuthorID]
+	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, created.AuthorID)
 
 	writeJSON(w, http.StatusCreated, commentEnvelope{Comment: response})
 }
@@ -206,10 +228,15 @@ func (h *ConversationsHandler) ListComments(w http.ResponseWriter, r *http.Reque
 	for _, comment := range page {
 		authorIDs = append(authorIDs, comment.AuthorID)
 	}
+	// One batched read per lookup names and pictures every author on the page.
 	summaries := authorRootedSummaries(r.Context(), h.rooted, h.logger, authorIDs)
+	attributions := authorAttributions(r.Context(), h.authors, h.logger, authorIDs)
 	for _, comment := range page {
 		item := newCommentResponse(comment)
 		item.AuthorRooted = summaries[comment.AuthorID]
+		attribution := attributions[comment.AuthorID]
+		item.AuthorDisplayName = attribution.DisplayName
+		item.AuthorAvatarURL = optionalString(attribution.AvatarURL)
 		items = append(items, item)
 	}
 
@@ -245,10 +272,15 @@ func (h *ConversationsHandler) CreateBridge(w http.ResponseWriter, r *http.Reque
 	bridgeItem := newBridgeResponse(bridge)
 	sourceItem := newCommentResponse(source)
 	targetItem := newCommentResponse(target)
-	summaries := authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{bridge.AuthorID, source.AuthorID, target.AuthorID})
+	authorIDs := []string{bridge.AuthorID, source.AuthorID, target.AuthorID}
+	summaries := authorRootedSummaries(r.Context(), h.rooted, h.logger, authorIDs)
+	attributions := authorAttributions(r.Context(), h.authors, h.logger, authorIDs)
 	bridgeItem.AuthorRooted = summaries[bridge.AuthorID]
 	sourceItem.AuthorRooted = summaries[source.AuthorID]
 	targetItem.AuthorRooted = summaries[target.AuthorID]
+	bridgeItem.AuthorDisplayName, bridgeItem.AuthorAvatarURL = attributions[bridge.AuthorID].DisplayName, optionalString(attributions[bridge.AuthorID].AvatarURL)
+	sourceItem.AuthorDisplayName, sourceItem.AuthorAvatarURL = attributions[source.AuthorID].DisplayName, optionalString(attributions[source.AuthorID].AvatarURL)
+	targetItem.AuthorDisplayName, targetItem.AuthorAvatarURL = attributions[target.AuthorID].DisplayName, optionalString(attributions[target.AuthorID].AvatarURL)
 
 	writeJSON(w, http.StatusCreated, createBridgeResponse{
 		Bridge:        bridgeItem,
@@ -271,9 +303,13 @@ func (h *ConversationsHandler) ListBridges(w http.ResponseWriter, r *http.Reques
 		authorIDs = append(authorIDs, bridge.AuthorID)
 	}
 	summaries := authorRootedSummaries(r.Context(), h.rooted, h.logger, authorIDs)
+	attributions := authorAttributions(r.Context(), h.authors, h.logger, authorIDs)
 	for _, bridge := range bridges {
 		item := newBridgeResponse(bridge)
 		item.AuthorRooted = summaries[bridge.AuthorID]
+		attribution := attributions[bridge.AuthorID]
+		item.AuthorDisplayName = attribution.DisplayName
+		item.AuthorAvatarURL = optionalString(attribution.AvatarURL)
 		items = append(items, item)
 	}
 
@@ -290,6 +326,7 @@ func (h *ConversationsHandler) GetBridge(w http.ResponseWriter, r *http.Request)
 
 	response := newBridgeResponse(bridge)
 	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{bridge.AuthorID})[bridge.AuthorID]
+	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, bridge.AuthorID)
 
 	writeJSON(w, http.StatusOK, bridgeEnvelope{Bridge: response})
 }
@@ -306,7 +343,11 @@ func (h *ConversationsHandler) GetComment(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	writeJSON(w, http.StatusOK, commentDetailEnvelope{Comment: newCommentDetailResponse(comment)})
+	response := newCommentDetailResponse(comment)
+	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{comment.AuthorID})[comment.AuthorID]
+	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, comment.AuthorID)
+
+	writeJSON(w, http.StatusOK, commentDetailEnvelope{Comment: response})
 }
 
 // parseCommentsLimit reads the optional "limit" query parameter.

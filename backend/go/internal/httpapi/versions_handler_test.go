@@ -161,17 +161,17 @@ func newVersionsRouter(t *testing.T, logger *slog.Logger, service VersionsServic
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, logger)
+	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
 
-	versionsHandler, err := NewVersionsHandler(service, &fakeRootedService{}, logger)
+	versionsHandler, err := NewVersionsHandler(service, &fakeAuthorService{}, &fakeRootedService{}, logger)
 	if err != nil {
 		t.Fatalf("NewVersionsHandler() error = %v, want nil", err)
 	}
 
-	conversationsHandler, err := NewConversationsHandler(&fakeConversationsService{}, &fakeRootedService{}, logger)
+	conversationsHandler, err := NewConversationsHandler(&fakeConversationsService{}, &fakeAuthorService{}, &fakeRootedService{}, logger)
 	if err != nil {
 		t.Fatalf("NewConversationsHandler() error = %v, want nil", err)
 	}
@@ -544,14 +544,17 @@ func TestGetVersionUnexpectedFailureIsInternalError(t *testing.T) {
 func TestNewVersionsHandlerRejectsMissingDependencies(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	if _, err := NewVersionsHandler(nil, &fakeRootedService{}, logger); err == nil {
-		t.Error("NewVersionsHandler(nil, rooted, logger) error = nil, want an error")
+	if _, err := NewVersionsHandler(nil, &fakeAuthorService{}, &fakeRootedService{}, logger); err == nil {
+		t.Error("NewVersionsHandler(nil, authors, rooted, logger) error = nil, want an error")
 	}
-	if _, err := NewVersionsHandler(&fakeVersionsService{}, &fakeRootedService{}, nil); err == nil {
-		t.Error("NewVersionsHandler(service, rooted, nil) error = nil, want an error")
+	if _, err := NewVersionsHandler(&fakeVersionsService{}, nil, &fakeRootedService{}, logger); err == nil {
+		t.Error("NewVersionsHandler(service, nil authors, rooted, logger) error = nil, want an error")
 	}
-	if _, err := NewVersionsHandler(&fakeVersionsService{}, nil, logger); err == nil {
-		t.Error("NewVersionsHandler(service, nil, logger) error = nil, want an error")
+	if _, err := NewVersionsHandler(&fakeVersionsService{}, &fakeAuthorService{}, &fakeRootedService{}, nil); err == nil {
+		t.Error("NewVersionsHandler(service, authors, rooted, nil) error = nil, want an error")
+	}
+	if _, err := NewVersionsHandler(&fakeVersionsService{}, &fakeAuthorService{}, nil, logger); err == nil {
+		t.Error("NewVersionsHandler(service, authors, nil rooted, logger) error = nil, want an error")
 	}
 }
 

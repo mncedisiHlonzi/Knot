@@ -199,7 +199,10 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	storiesHandler, err := httpapi.NewStoriesHandler(storiesService, rootedService, storyMediaService, logger)
+	// The identity service doubles as the batched author lookup every content
+	// handler enriches with, so a response names and pictures its authors without
+	// a query per row (KNOT-ADR-041).
+	storiesHandler, err := httpapi.NewStoriesHandler(storiesService, service, rootedService, storyMediaService, logger)
 	if err != nil {
 		return err
 	}
@@ -238,7 +241,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	versionsHandler, err := httpapi.NewVersionsHandler(versionsService, rootedService, logger)
+	versionsHandler, err := httpapi.NewVersionsHandler(versionsService, service, rootedService, logger)
 	if err != nil {
 		return err
 	}
@@ -255,7 +258,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	conversationsHandler, err := httpapi.NewConversationsHandler(conversationsService, rootedService, logger)
+	conversationsHandler, err := httpapi.NewConversationsHandler(conversationsService, service, rootedService, logger)
 	if err != nil {
 		return err
 	}

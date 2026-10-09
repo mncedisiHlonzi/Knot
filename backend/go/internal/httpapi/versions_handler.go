@@ -23,15 +23,20 @@ type VersionsService interface {
 // VersionsHandler serves the Tell My People endpoints.
 type VersionsHandler struct {
 	service VersionsService
+	authors AuthorLookup
 	rooted  RootedLookup
 	logger  *slog.Logger
 }
 
-// NewVersionsHandler returns a handler backed by service. The rooted lookup is
-// used to attach each author's inline Rooted summary to a version response.
-func NewVersionsHandler(service VersionsService, rooted RootedLookup, logger *slog.Logger) (*VersionsHandler, error) {
+// NewVersionsHandler returns a handler backed by service. The author lookup names
+// and pictures each version's author (one batched read per response), and the
+// rooted lookup attaches that author's inline Rooted summary.
+func NewVersionsHandler(service VersionsService, authors AuthorLookup, rooted RootedLookup, logger *slog.Logger) (*VersionsHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: versions handler requires a service")
+	}
+	if authors == nil {
+		return nil, fmt.Errorf("httpapi: versions handler requires an author lookup")
 	}
 	if rooted == nil {
 		return nil, fmt.Errorf("httpapi: versions handler requires a rooted lookup")
@@ -39,7 +44,7 @@ func NewVersionsHandler(service VersionsService, rooted RootedLookup, logger *sl
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: versions handler requires a logger")
 	}
-	return &VersionsHandler{service: service, rooted: rooted, logger: logger}, nil
+	return &VersionsHandler{service: service, authors: authors, rooted: rooted, logger: logger}, nil
 }
 
 // createAdaptationRequest is the POST /stories/{id}/adapt body.
@@ -62,16 +67,22 @@ type createAdaptationRequest struct {
 // ParentVersionID and AdaptationNote are pointers so an absent value is JSON
 // null: the root version has no parent, and an adapter may leave no note.
 type versionResponse struct {
-	ID              string    `json:"id"`
-	StoryID         string    `json:"story_id"`
-	ParentVersionID *string   `json:"parent_version_id"`
-	AuthorID        string    `json:"author_id"`
-	Language        string    `json:"language"`
-	Title           string    `json:"title"`
-	Body            string    `json:"body"`
-	AdaptationNote  *string   `json:"adaptation_note"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID              string  `json:"id"`
+	StoryID         string  `json:"story_id"`
+	ParentVersionID *string `json:"parent_version_id"`
+	AuthorID        string  `json:"author_id"`
+	// AuthorDisplayName and AuthorAvatarURL are the author's inline attribution,
+	// filled by one batched lookup per response. AuthorAvatarURL is the backend
+	// path to fetch an avatar from, or null when the author has none, so a client
+	// renders initials (KNOT-ADR-041).
+	AuthorDisplayName string    `json:"author_display_name"`
+	AuthorAvatarURL   *string   `json:"author_avatar_url"`
+	Language          string    `json:"language"`
+	Title             string    `json:"title"`
+	Body              string    `json:"body"`
+	AdaptationNote    *string   `json:"adaptation_note"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 	// AuthorRooted is the version author's primary public Rooted signal, or null
 	// when they have none. It is a summary (place and duration only), attached at
 	// the HTTP layer; see KNOT-ADR-017.
@@ -126,6 +137,7 @@ func (h *VersionsHandler) Adapt(w http.ResponseWriter, r *http.Request) {
 
 	response := newVersionResponse(created)
 	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{created.AuthorID})[created.AuthorID]
+	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, created.AuthorID)
 
 	writeJSON(w, http.StatusCreated, versionEnvelope{Version: response})
 }
@@ -144,12 +156,17 @@ func (h *VersionsHandler) Tree(w http.ResponseWriter, r *http.Request) {
 	for _, version := range list {
 		authorIDs = append(authorIDs, version.AuthorID)
 	}
+	// One batched read per lookup names and pictures every author in the tree.
 	summaries := authorRootedSummaries(r.Context(), h.rooted, h.logger, authorIDs)
+	attributions := authorAttributions(r.Context(), h.authors, h.logger, authorIDs)
 
 	items := make([]versionResponse, 0, len(list))
 	for _, version := range list {
 		item := newVersionResponse(version)
 		item.AuthorRooted = summaries[version.AuthorID]
+		attribution := attributions[version.AuthorID]
+		item.AuthorDisplayName = attribution.DisplayName
+		item.AuthorAvatarURL = optionalString(attribution.AvatarURL)
 		items = append(items, item)
 	}
 
@@ -166,6 +183,7 @@ func (h *VersionsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	response := newVersionResponse(version)
 	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{version.AuthorID})[version.AuthorID]
+	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, version.AuthorID)
 
 	writeJSON(w, http.StatusOK, versionEnvelope{Version: response})
 }

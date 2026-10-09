@@ -83,17 +83,17 @@ func (f *fakeNotificationsService) MarkAllRead(_ context.Context, userID string)
 	return f.markAllResult, f.markAllErr
 }
 
-// fakeNotificationActors is the batched user lookup the handler enriches with. It
+// fakeAuthorService is the batched user lookup the handler enriches with. It
 // records the ids it was asked for, so a test can prove the enrichment is one
 // deduplicated call.
-type fakeNotificationActors struct {
+type fakeAuthorService struct {
 	users  map[string]*identity.User
 	err    error
 	gotIDs []string
 	calls  int
 }
 
-func (f *fakeNotificationActors) UsersByIDs(_ context.Context, ids []string) (map[string]*identity.User, error) {
+func (f *fakeAuthorService) UsersByIDs(_ context.Context, ids []string) (map[string]*identity.User, error) {
 	f.calls++
 	f.gotIDs = append(f.gotIDs, ids...)
 	if f.err != nil {
@@ -192,7 +192,7 @@ func (f *fakeNotifier) NotifyBridgeCreated(_ context.Context, recipientID, actor
 func newTestNotificationsHandler(t *testing.T, logger *slog.Logger) *NotificationsHandler {
 	t.Helper()
 
-	handler, err := NewNotificationsHandler(&fakeNotificationsService{}, &fakeNotificationActors{users: map[string]*identity.User{}}, &fakeRootedService{}, logger)
+	handler, err := NewNotificationsHandler(&fakeNotificationsService{}, &fakeAuthorService{users: map[string]*identity.User{}}, &fakeRootedService{}, logger)
 	if err != nil {
 		t.Fatalf("NewNotificationsHandler() error = %v, want nil", err)
 	}
@@ -225,17 +225,17 @@ func newNotificationsRouter(t *testing.T, logger *slog.Logger, notificationsHand
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, logger)
+	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
 
-	versionsHandler, err := NewVersionsHandler(&fakeVersionsService{}, &fakeRootedService{}, logger)
+	versionsHandler, err := NewVersionsHandler(&fakeVersionsService{}, &fakeAuthorService{}, &fakeRootedService{}, logger)
 	if err != nil {
 		t.Fatalf("NewVersionsHandler() error = %v, want nil", err)
 	}
 
-	conversationsHandler, err := NewConversationsHandler(&fakeConversationsService{}, &fakeRootedService{}, logger)
+	conversationsHandler, err := NewConversationsHandler(&fakeConversationsService{}, &fakeAuthorService{}, &fakeRootedService{}, logger)
 	if err != nil {
 		t.Fatalf("NewConversationsHandler() error = %v, want nil", err)
 	}
@@ -270,16 +270,16 @@ func newNotificationsRouter(t *testing.T, logger *slog.Logger, notificationsHand
 func TestNewNotificationsHandlerRejectsMissingDependencies(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	if _, err := NewNotificationsHandler(nil, &fakeNotificationActors{}, &fakeRootedService{}, logger); err == nil {
+	if _, err := NewNotificationsHandler(nil, &fakeAuthorService{}, &fakeRootedService{}, logger); err == nil {
 		t.Error("NewNotificationsHandler(nil service) error = nil, want an error")
 	}
 	if _, err := NewNotificationsHandler(&fakeNotificationsService{}, nil, &fakeRootedService{}, logger); err == nil {
 		t.Error("NewNotificationsHandler(nil users) error = nil, want an error")
 	}
-	if _, err := NewNotificationsHandler(&fakeNotificationsService{}, &fakeNotificationActors{}, nil, logger); err == nil {
+	if _, err := NewNotificationsHandler(&fakeNotificationsService{}, &fakeAuthorService{}, nil, logger); err == nil {
 		t.Error("NewNotificationsHandler(nil rooted) error = nil, want an error")
 	}
-	if _, err := NewNotificationsHandler(&fakeNotificationsService{}, &fakeNotificationActors{}, &fakeRootedService{}, nil); err == nil {
+	if _, err := NewNotificationsHandler(&fakeNotificationsService{}, &fakeAuthorService{}, &fakeRootedService{}, nil); err == nil {
 		t.Error("NewNotificationsHandler(nil logger) error = nil, want an error")
 	}
 }
@@ -302,7 +302,7 @@ func TestNotificationsRequireAuthentication(t *testing.T) {
 	for _, route := range routes {
 		t.Run(route.method+" "+route.path, func(t *testing.T) {
 			service := &fakeNotificationsService{}
-			handler := newNotificationsHandler(t, service, &fakeNotificationActors{}, &fakeRootedService{})
+			handler := newNotificationsHandler(t, service, &fakeAuthorService{}, &fakeRootedService{})
 
 			recorder := doStoryRequest(handler, route.method, route.path, "", "")
 
@@ -325,7 +325,7 @@ func TestNotificationsRequireAuthentication(t *testing.T) {
 
 func TestListNotificationsHappyPath(t *testing.T) {
 	service := &fakeNotificationsService{listResult: []notifications.Notification{notificationFixture()}}
-	users := &fakeNotificationActors{users: map[string]*identity.User{testNotificationActorID: notificationActor()}}
+	users := &fakeAuthorService{users: map[string]*identity.User{testNotificationActorID: notificationActor()}}
 	rootedLookup := &fakeRootedService{batchResult: map[string]*rooted.Signal{
 		testNotificationActorID: {
 			ID:             "99999999-9999-4999-8999-999999999999",
@@ -398,7 +398,7 @@ func TestListNotificationsHappyPath(t *testing.T) {
 
 func TestListNotificationsMarksReadNotifications(t *testing.T) {
 	service := &fakeNotificationsService{listResult: []notifications.Notification{readNotificationFixture()}}
-	handler := newNotificationsHandler(t, service, &fakeNotificationActors{}, &fakeRootedService{})
+	handler := newNotificationsHandler(t, service, &fakeAuthorService{}, &fakeRootedService{})
 
 	recorder := doStoryRequest(handler, http.MethodGet, "/notifications", "", testAccessToken)
 
@@ -422,7 +422,7 @@ func TestListNotificationsDeduplicatesActorLookups(t *testing.T) {
 	second.ID = testSecondNotificationID
 
 	service := &fakeNotificationsService{listResult: []notifications.Notification{notificationFixture(), second}}
-	users := &fakeNotificationActors{users: map[string]*identity.User{testNotificationActorID: notificationActor()}}
+	users := &fakeAuthorService{users: map[string]*identity.User{testNotificationActorID: notificationActor()}}
 	handler := newNotificationsHandler(t, service, users, &fakeRootedService{})
 
 	recorder := doStoryRequest(handler, http.MethodGet, "/notifications", "", testAccessToken)
@@ -447,7 +447,7 @@ func TestListNotificationsDeduplicatesActorLookups(t *testing.T) {
 
 func TestListNotificationsEmptyInboxIsAnArray(t *testing.T) {
 	service := &fakeNotificationsService{listResult: []notifications.Notification{}}
-	handler := newNotificationsHandler(t, service, &fakeNotificationActors{}, &fakeRootedService{})
+	handler := newNotificationsHandler(t, service, &fakeAuthorService{}, &fakeRootedService{})
 
 	recorder := doStoryRequest(handler, http.MethodGet, "/notifications", "", testAccessToken)
 
@@ -464,7 +464,7 @@ func TestListNotificationsPaginates(t *testing.T) {
 		listResult: []notifications.Notification{notificationFixture()},
 		listNext:   "next-page-cursor",
 	}
-	handler := newNotificationsHandler(t, service, &fakeNotificationActors{}, &fakeRootedService{})
+	handler := newNotificationsHandler(t, service, &fakeAuthorService{}, &fakeRootedService{})
 
 	recorder := doStoryRequest(handler, http.MethodGet, "/notifications?limit=5&cursor=abc", "", testAccessToken)
 
@@ -488,7 +488,7 @@ func TestListNotificationsPaginates(t *testing.T) {
 
 func TestListNotificationsClampsLimit(t *testing.T) {
 	service := &fakeNotificationsService{listResult: []notifications.Notification{}}
-	handler := newNotificationsHandler(t, service, &fakeNotificationActors{}, &fakeRootedService{})
+	handler := newNotificationsHandler(t, service, &fakeAuthorService{}, &fakeRootedService{})
 
 	recorder := doStoryRequest(handler, http.MethodGet, "/notifications?limit=500", "", testAccessToken)
 
@@ -504,7 +504,7 @@ func TestListNotificationsRejectsBadLimit(t *testing.T) {
 	for _, raw := range []string{"0", "-1", "abc"} {
 		t.Run(raw, func(t *testing.T) {
 			service := &fakeNotificationsService{listResult: []notifications.Notification{}}
-			handler := newNotificationsHandler(t, service, &fakeNotificationActors{}, &fakeRootedService{})
+			handler := newNotificationsHandler(t, service, &fakeAuthorService{}, &fakeRootedService{})
 
 			recorder := doStoryRequest(handler, http.MethodGet, "/notifications?limit="+raw, "", testAccessToken)
 
@@ -523,7 +523,7 @@ func TestListNotificationsRejectsBadLimit(t *testing.T) {
 
 func TestListNotificationsUnknownActorIsNull(t *testing.T) {
 	service := &fakeNotificationsService{listResult: []notifications.Notification{notificationFixture()}}
-	handler := newNotificationsHandler(t, service, &fakeNotificationActors{}, &fakeRootedService{})
+	handler := newNotificationsHandler(t, service, &fakeAuthorService{}, &fakeRootedService{})
 
 	recorder := doStoryRequest(handler, http.MethodGet, "/notifications", "", testAccessToken)
 
@@ -541,7 +541,7 @@ func TestListNotificationsUnknownActorIsNull(t *testing.T) {
 
 func TestListNotificationsSurvivesActorLookupFailure(t *testing.T) {
 	service := &fakeNotificationsService{listResult: []notifications.Notification{notificationFixture()}}
-	users := &fakeNotificationActors{err: errors.New("database is down")}
+	users := &fakeAuthorService{err: errors.New("database is down")}
 	handler := newNotificationsHandler(t, service, users, &fakeRootedService{})
 
 	recorder := doStoryRequest(handler, http.MethodGet, "/notifications", "", testAccessToken)
@@ -563,7 +563,7 @@ func TestListNotificationsSurvivesActorLookupFailure(t *testing.T) {
 
 func TestListNotificationsSurvivesRootedFailure(t *testing.T) {
 	service := &fakeNotificationsService{listResult: []notifications.Notification{notificationFixture()}}
-	users := &fakeNotificationActors{users: map[string]*identity.User{testNotificationActorID: notificationActor()}}
+	users := &fakeAuthorService{users: map[string]*identity.User{testNotificationActorID: notificationActor()}}
 	rootedLookup := &fakeRootedService{batchErr: errors.New("rooted is down")}
 	handler := newNotificationsHandler(t, service, users, rootedLookup)
 
@@ -586,7 +586,7 @@ func TestListNotificationsSurvivesRootedFailure(t *testing.T) {
 
 func TestListNotificationsServiceFailureIsGeneric(t *testing.T) {
 	service := &fakeNotificationsService{listErr: errors.New("connection reset by peer")}
-	handler := newNotificationsHandler(t, service, &fakeNotificationActors{}, &fakeRootedService{})
+	handler := newNotificationsHandler(t, service, &fakeAuthorService{}, &fakeRootedService{})
 
 	recorder := doStoryRequest(handler, http.MethodGet, "/notifications", "", testAccessToken)
 
@@ -607,7 +607,7 @@ func TestListNotificationsServiceFailureIsGeneric(t *testing.T) {
 
 func TestUnreadCount(t *testing.T) {
 	service := &fakeNotificationsService{countResult: 3}
-	handler := newNotificationsHandler(t, service, &fakeNotificationActors{}, &fakeRootedService{})
+	handler := newNotificationsHandler(t, service, &fakeAuthorService{}, &fakeRootedService{})
 
 	recorder := doStoryRequest(handler, http.MethodGet, "/notifications/unread_count", "", testAccessToken)
 
@@ -628,7 +628,7 @@ func TestUnreadCount(t *testing.T) {
 
 func TestUnreadCountServiceFailureIsGeneric(t *testing.T) {
 	service := &fakeNotificationsService{countErr: errors.New("connection reset by peer")}
-	handler := newNotificationsHandler(t, service, &fakeNotificationActors{}, &fakeRootedService{})
+	handler := newNotificationsHandler(t, service, &fakeAuthorService{}, &fakeRootedService{})
 
 	recorder := doStoryRequest(handler, http.MethodGet, "/notifications/unread_count", "", testAccessToken)
 
@@ -643,7 +643,7 @@ func TestUnreadCountServiceFailureIsGeneric(t *testing.T) {
 
 func TestMarkRead(t *testing.T) {
 	service := &fakeNotificationsService{}
-	handler := newNotificationsHandler(t, service, &fakeNotificationActors{}, &fakeRootedService{})
+	handler := newNotificationsHandler(t, service, &fakeAuthorService{}, &fakeRootedService{})
 
 	recorder := doStoryRequest(handler, http.MethodPost, "/notifications/"+testNotificationID+"/read", "", testAccessToken)
 
@@ -663,7 +663,7 @@ func TestMarkRead(t *testing.T) {
 
 func TestMarkReadMissingNotification(t *testing.T) {
 	service := &fakeNotificationsService{markReadErr: notifications.ErrNotFound}
-	handler := newNotificationsHandler(t, service, &fakeNotificationActors{}, &fakeRootedService{})
+	handler := newNotificationsHandler(t, service, &fakeAuthorService{}, &fakeRootedService{})
 
 	recorder := doStoryRequest(handler, http.MethodPost, "/notifications/"+testNotificationID+"/read", "", testAccessToken)
 
@@ -677,7 +677,7 @@ func TestMarkReadMissingNotification(t *testing.T) {
 
 func TestMarkReadValidatesTheId(t *testing.T) {
 	service := &fakeNotificationsService{markReadErr: notifications.ErrNotFound}
-	handler := newNotificationsHandler(t, service, &fakeNotificationActors{}, &fakeRootedService{})
+	handler := newNotificationsHandler(t, service, &fakeAuthorService{}, &fakeRootedService{})
 
 	recorder := doStoryRequest(handler, http.MethodPost, "/notifications/not-a-uuid/read", "", testAccessToken)
 
@@ -688,7 +688,7 @@ func TestMarkReadValidatesTheId(t *testing.T) {
 
 func TestMarkReadServiceFailureIsGeneric(t *testing.T) {
 	service := &fakeNotificationsService{markReadErr: errors.New("connection reset by peer")}
-	handler := newNotificationsHandler(t, service, &fakeNotificationActors{}, &fakeRootedService{})
+	handler := newNotificationsHandler(t, service, &fakeAuthorService{}, &fakeRootedService{})
 
 	recorder := doStoryRequest(handler, http.MethodPost, "/notifications/"+testNotificationID+"/read", "", testAccessToken)
 
@@ -703,7 +703,7 @@ func TestMarkReadServiceFailureIsGeneric(t *testing.T) {
 
 func TestMarkAllRead(t *testing.T) {
 	service := &fakeNotificationsService{markAllResult: 4}
-	handler := newNotificationsHandler(t, service, &fakeNotificationActors{}, &fakeRootedService{})
+	handler := newNotificationsHandler(t, service, &fakeAuthorService{}, &fakeRootedService{})
 
 	recorder := doStoryRequest(handler, http.MethodPost, "/notifications/read_all", "", testAccessToken)
 
@@ -724,7 +724,7 @@ func TestMarkAllRead(t *testing.T) {
 
 func TestMarkAllReadServiceFailureIsGeneric(t *testing.T) {
 	service := &fakeNotificationsService{markAllErr: errors.New("connection reset by peer")}
-	handler := newNotificationsHandler(t, service, &fakeNotificationActors{}, &fakeRootedService{})
+	handler := newNotificationsHandler(t, service, &fakeAuthorService{}, &fakeRootedService{})
 
 	recorder := doStoryRequest(handler, http.MethodPost, "/notifications/read_all", "", testAccessToken)
 

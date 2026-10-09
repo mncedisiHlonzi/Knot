@@ -19,6 +19,13 @@ export type StoryVersion = {
   /** The version this one adapts, or null for a story's root version. */
   readonly parent_version_id: string | null;
   readonly author_id: string;
+  /**
+   * The author's display name and avatar path, attached by the server. The avatar
+   * is a relative path on the API, or null when the author has no avatar (the
+   * client then renders initials).
+   */
+  readonly author_display_name: string;
+  readonly author_avatar_url: string | null;
   readonly language: string;
   readonly title: string;
   readonly body: string;

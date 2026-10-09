@@ -232,6 +232,27 @@ imported directly. Values that fall between the documented scale steps stay nume
 example a `paddingVertical: 10`), and `BRAND.md` remains the source of truth for every
 token value.
 
+### Author attribution (`AuthorLine`)
+
+Every screen that shows user-generated content attributes it through one component,
+`apps/mobile/src/components/AuthorLine.tsx`: an avatar, the author's display name, an
+optional `RootedBadge`, and the content's timestamp as a relative phrase. It takes
+`displayName`, `avatarUrl`, `createdAt`, `rooted`, and an optional `size`
+(`small` / `medium` / `large`), and omits any segment whose input is missing.
+
+- The avatar is an `<Image>` when `avatarUrl` is set, resolved against `API_BASE_URL`. The
+  server sends a relative path (`/users/{id}/avatar`), or `null` for an author with none.
+- With no avatar it falls back to initials from `getInitials` in
+  `apps/mobile/src/utils/initials.ts` (first and last word, up to two letters, `?` when the
+  name is blank).
+- The timestamp is rendered with `formatRelativeTime` from
+  `apps/mobile/src/utils/time.ts`, never as a raw ISO string.
+
+The fields come from the API — `author_display_name` and `author_avatar_url` on stories,
+versions, comments, and bridges (KNOT-ADR-041) — so a screen never has to call the identity
+service for a name. Render attribution by passing an entity's fields to `AuthorLine`; do not
+hand-roll the markup on a new screen.
+
 ### Native dependencies (Mapbox, AsyncStorage)
 
 The Discovery Map uses **`@rnmapbox/maps`** (KNOT-011a, KNOT-ADR-026) — the app's first native
@@ -714,6 +735,16 @@ WHERE is_primary = true AND is_public = true AND user_id = ANY($1)
 That is the single batch query behind the enrichment; `$1` is a `uuid[]`, so `user_id`'s
 index stays usable. The `author_rooted` projection carries only `place` and
 `duration_bucket`.
+
+**Author attribution** uses the same shape for a different lookup. The helper is
+`authorAttributions` in the same file, and the dependency is the narrow `AuthorLookup`
+interface (one method, `UsersByIDs`). Every response that names an author is decorated with
+`author_display_name` and `author_avatar_url` in **one batched read per response**; a
+single-entity route goes through `authorFields`, which is the one-author case of the same
+helper. `author_avatar_url` is the backend path from `avatarPathFor` — or `null` when the
+author has no avatar — and a failed lookup is logged and swallowed, leaving an empty name
+and a `null` avatar rather than failing the response (KNOT-ADR-041). The notifications
+handler consumes the same contract: its `NotificationActors` is an alias of `AuthorLookup`.
 
 ### Notifications
 

@@ -45,6 +45,14 @@ export type Story = {
   readonly id: string;
   readonly author_id: string;
   /**
+   * The author's display name and avatar path, attached by the server so a card
+   * can attribute the story without a second request. `author_avatar_url` is a
+   * relative path on the API, or null when the author has no avatar (the client
+   * then renders initials).
+   */
+  readonly author_display_name: string;
+  readonly author_avatar_url: string | null;
+  /**
    * The id of the story's root version. The content fields below (language,
    * title, body) are the root version's content; adapting a story starts from
    * this version.
