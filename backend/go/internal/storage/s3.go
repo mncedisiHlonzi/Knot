@@ -111,6 +111,33 @@ func (s *S3Storage) Get(ctx context.Context, key string) (io.ReadCloser, string,
 	return out.Body, contentType, nil
 }
 
+// GetRange returns the bytes [start, end] inclusive of the object at key.
+//
+// The S3 API supports ranges natively through the GetObject request's Range
+// field, so only the requested bytes cross the wire and the cost of a seek is
+// proportional to the range rather than to the object. The object's content type
+// is not returned: a ranged read is used to continue a response whose
+// content type was already decided from the stored row (KNOT-ADR-033).
+func (s *S3Storage) GetRange(ctx context.Context, key string, start, end int64) (io.ReadCloser, error) {
+	if start < 0 || end < start {
+		return nil, fmt.Errorf("storage: invalid range %d-%d for %q", start, end, key)
+	}
+
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+		Range:  aws.String(fmt.Sprintf("bytes=%d-%d", start, end)),
+	})
+	if err != nil {
+		if isNotFound(err) {
+			return nil, s.classifyMiss(ctx, err)
+		}
+		return nil, fmt.Errorf("storage: get range %q: %w", key, err)
+	}
+
+	return out.Body, nil
+}
+
 // Delete removes key. S3 deletes are idempotent, so a key that is already absent
 // is not an error.
 func (s *S3Storage) Delete(ctx context.Context, key string) error {

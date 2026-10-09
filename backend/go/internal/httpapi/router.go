@@ -42,13 +42,14 @@ type Router struct {
 	rooted         *RootedHandler
 	discovery      *DiscoveryHandler
 	avatar         *AvatarHandler
+	storyMedia     *StoryMediaHandler
 	authMiddleware *AuthMiddleware
 	version        string
 	logger         *slog.Logger
 }
 
 // NewRouter returns the root handler for the API.
-func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, avatarHandler *AvatarHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
+func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, avatarHandler *AvatarHandler, storyMediaHandler *StoryMediaHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
 	if auth == nil {
 		return nil, errNilHandler("auth")
 	}
@@ -70,6 +71,9 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 	if avatarHandler == nil {
 		return nil, errNilHandler("avatar")
 	}
+	if storyMediaHandler == nil {
+		return nil, errNilHandler("story media")
+	}
 	if authMiddleware == nil {
 		return nil, errNilHandler("auth middleware")
 	}
@@ -84,6 +88,7 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 		rooted:         rootedHandler,
 		discovery:      discoveryHandler,
 		avatar:         avatarHandler,
+		storyMedia:     storyMediaHandler,
 		authMiddleware: authMiddleware,
 		version:        version,
 		logger:         logger,
@@ -138,6 +143,15 @@ func (r *Router) Handler() http.Handler {
 	// client and its bucket can stay private.
 	mux.HandleFunc("POST /users/me/avatar", r.authMiddleware.Require(r.avatar.Upload))
 	mux.HandleFunc("GET /users/{id}/avatar", r.avatar.Get)
+
+	// Story media: images and videos attached to a story. Attaching and deleting
+	// require an access token; listing and streaming are open, because a story's
+	// media is part of a public story. The bytes are proxied by this backend, so
+	// the object store is never reachable from a client (KNOT-ADR-029).
+	mux.HandleFunc("POST /stories/{id}/media", r.authMiddleware.Require(r.storyMedia.Create))
+	mux.HandleFunc("GET /stories/{id}/media", r.storyMedia.List)
+	mux.HandleFunc("DELETE /stories/{id}/media/{mid}", r.authMiddleware.Require(r.storyMedia.Delete))
+	mux.HandleFunc("GET /stories/{id}/media/{mid}/content", r.storyMedia.Content)
 
 	return withRequestID(withRequestLogging(r.logger, withRecover(r.logger, mux)))
 }

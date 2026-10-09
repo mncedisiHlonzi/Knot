@@ -28,11 +28,12 @@ Every error uses the same envelope:
 | 400    | `invalid_request`   | Body is not a single valid JSON object, or has unknown fields; or an avatar upload is not `multipart/form-data` with a `file` field |
 | 401    | `invalid_credentials` | Login failed. Deliberately identical for a wrong password and an unknown email |
 | 401    | `unauthorized`      | A protected route was called without a valid access token. Identical for a missing, malformed, expired, or wrong-type token |
-| 404    | `not_found`         | The requested resource (story, version, comment, bridge, user, or avatar) does not exist, or its id is not a UUID |
+| 403    | `forbidden`         | You are not allowed to change this resource: only a story's author may attach media, and only the author or the uploader may delete it |
+| 404    | `not_found`         | The requested resource (story, version, comment, bridge, user, avatar, or media) does not exist, or its id is not a UUID |
 | 405    | *(empty body)*      | Method not allowed for that path                     |
 | 409    | `email_taken`       | That email is already registered                     |
-| 413    | `request_too_large` | Body exceeded 1 MiB, or an avatar exceeded 5 MiB     |
-| 415    | `unsupported_media_type` | The uploaded avatar is not a JPEG, PNG, or WebP  |
+| 413    | `request_too_large` | Body exceeded 1 MiB; an avatar exceeded 5 MiB; or an image exceeded 10 MiB, or a video 100 MiB |
+| 415    | `unsupported_media_type` | The uploaded avatar is not a JPEG, PNG, or WebP, or the uploaded story media is not a JPEG, PNG, WebP, MP4, or MOV |
 | 500    | `internal_error`    | Something failed server-side. No internal detail is returned |
 
 ## GET /health
@@ -136,9 +137,9 @@ identical message, so the endpoint cannot be used to discover which accounts exi
 ## Authentication
 
 `POST /stories`, `POST /stories/{id}/adapt`, `POST /versions/{id}/comments`,
-`POST /comments/{id}/bridges`, `POST /users/me/rooted`, `GET /users/me/rooted`, and
-`POST /users/me/avatar` are protected routes. Every other route is public and needs no
-credentials.
+`POST /comments/{id}/bridges`, `POST /users/me/rooted`, `GET /users/me/rooted`,
+`POST /users/me/avatar`, `POST /stories/{id}/media`, and `DELETE /stories/{id}/media/{mid}`
+are protected routes. Every other route is public and needs no credentials.
 
 A protected route requires an access token in the standard header:
 
@@ -241,6 +242,21 @@ and the pillar it belongs to.
   "body": "Grandmother said the first rain remembers every name.",
   "approximate_location": "Cape Town",
   "media_urls": ["https://example.com/rain.jpg"],
+  "media": [
+    {
+      "id": "9b2c7d1e-...-4a6f",
+      "media_type": "image",
+      "source": "camera",
+      "mime_type": "image/jpeg",
+      "width": 1024,
+      "height": 768,
+      "duration_ms": null,
+      "size_bytes": 204800,
+      "display_order": 0,
+      "created_at": "2026-10-09T18:26:37.134182+02:00",
+      "url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content"
+    }
+  ],
   "sensitive": false,
   "created_at": "2026-10-07T18:26:37.134182+02:00",
   "updated_at": "2026-10-07T18:26:37.134182+02:00"
@@ -249,6 +265,12 @@ and the pillar it belongs to.
 
 `media_urls` is always an array, never `null`. `approximate_location` is an empty string
 when it was not given.
+
+`media` is the story's attached files (see [Story media](#story-media)). On
+`GET /stories/{id}` it is the full list in `display_order`. On the feed (`GET /stories`) it
+is a **single-item preview** — the first item only, or an empty array — so a card can show
+one thumbnail without downloading every item's metadata. It is always an array, never
+`null`.
 
 `GET /stories/{id}` also carries `author_rooted`, the author's inline Rooted summary, or
 `null`. See [`author_rooted` on content responses](#author_rooted-on-content-responses).
@@ -333,6 +355,105 @@ shift the pages, and no story is skipped or repeated. The cursor is exclusive: i
 
 **Errors:** `400 validation_error` (an unreadable `cursor`, or a `limit` that is not a
 positive integer), `500 internal_error`.
+
+## Story media
+
+Images and videos attached to a story. The bytes live in object storage, but they are
+**only ever read and written by the backend**: no presigned URL is issued, no bucket is
+public, and a media item's `url` is a path on this API rather than a link to a store
+(KNOT-ADR-028, KNOT-ADR-029). See [the story object](#the-story-object) for the `media`
+array they appear in.
+
+Each uploaded file records how it was obtained: `source` is `camera` when it was captured
+with the device camera and `gallery` when it was chosen from the photo library. The mobile
+client draws a capture badge from it (KNOT-ADR-030, KNOT-ADR-031).
+
+| Route                                       | Auth     | Purpose                                |
+| ------------------------------------------- | -------- | -------------------------------------- |
+| `POST /stories/{id}/media`                  | `Bearer` | Attach an image or video to a story     |
+| `GET /stories/{id}/media`                   | public   | List a story's media, in display order  |
+| `GET /stories/{id}/media/{mid}/content`     | public   | Stream the bytes (supports `Range`)     |
+| `DELETE /stories/{id}/media/{mid}`          | `Bearer` | Remove a media item                     |
+
+### The media object
+
+```json
+{
+  "id": "9b2c7d1e-...-4a6f",
+  "media_type": "image",
+  "source": "camera",
+  "mime_type": "image/jpeg",
+  "width": 1024,
+  "height": 768,
+  "duration_ms": null,
+  "size_bytes": 204800,
+  "display_order": 0,
+  "created_at": "2026-10-09T18:26:37.134182+02:00",
+  "url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content"
+}
+```
+
+`media_type` is `image` or `video`. `source` is `camera` or `gallery`. `width`, `height`,
+and `duration_ms` are `null` when the client did not report them. `url` is a **relative**
+path: resolve it against the API base URL. The object's storage key is never returned.
+
+### POST /stories/{id}/media
+
+`Content-Type: multipart/form-data`, with the file in a field named **`file`** and the
+origin in a field named **`source`**. Optional fields `width`, `height`, and `duration_ms`
+may carry the picker's metadata. Only the story's **author** may attach media in the MVP;
+any other authenticated user is `403 forbidden`.
+
+| Constraint | Rule                                                                         |
+| ---------- | ---------------------------------------------------------------------------- |
+| Images     | JPEG, PNG, or WebP, at most **10 MiB**                                        |
+| Videos     | MP4 or MOV, at most **100 MiB**                                               |
+| Type       | Decided by inspecting the bytes, not by the `Content-Type` you declare        |
+| Body       | Must be `multipart/form-data` carrying a `file` field                         |
+
+`display_order` is assigned by the server: each upload appends after the story's current
+last item, so the order matches the upload order.
+
+**201** — `{ "media": { ... } }`, the stored item.
+
+**Errors:** `400 invalid_request` (not multipart, or no `file` field), `400 validation_error`
+(a bad `source`), `401 unauthorized`, `403 forbidden` (not the story's author),
+`404 not_found` (the story does not exist), `413 request_too_large`, `415
+unsupported_media_type`, `500 internal_error`.
+
+### GET /stories/{id}/media
+
+Returns **200** with the story's media, in display order:
+
+```json
+{ "media": [ { "id": "...", "media_type": "image", "source": "camera", "url": "..." } ] }
+```
+
+`media` is always an array, never `null`. A story that does not exist is `404 not_found`.
+
+**Errors:** `404 not_found`, `500 internal_error`.
+
+### GET /stories/{id}/media/{mid}/content
+
+Streams the bytes with the stored `Content-Type`, `Cache-Control: public, max-age=3600`,
+`Accept-Ranges: bytes`, and `X-Content-Type-Options: nosniff`.
+
+**Range support.** A valid single-range `Range: bytes=start-end` header (also `bytes=start-`
+and `bytes=-suffix`) is answered **206 Partial Content** with a `Content-Range` header and
+exactly the requested bytes. With no header, or an unusable one, the whole object is
+answered **200** (KNOT-ADR-032). Multi-range requests are treated as unusable.
+
+A media id that does not exist — or a row whose object is missing — returns `404 not_found`.
+
+**Errors:** `404 not_found`, `500 internal_error`.
+
+### DELETE /stories/{id}/media/{mid}
+
+Removes the object from storage (best-effort) and deletes the row. Only the story's author
+or the item's uploader may delete it; anyone else is `403 forbidden`. Returns **204** with
+no body.
+
+**Errors:** `401 unauthorized`, `403 forbidden`, `404 not_found`, `500 internal_error`.
 
 ## Versions and the Language Tree
 

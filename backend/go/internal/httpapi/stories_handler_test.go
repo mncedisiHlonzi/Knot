@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/knot/backend/internal/stories"
+	"github.com/knot/backend/internal/storymedia"
 )
 
 // testUserID is the authenticated author id the fake token parser reports.
@@ -164,8 +165,16 @@ func newStoriesHandlerWithService(t *testing.T, service StoriesService) http.Han
 }
 
 // newRouter assembles the full router the way cmd/knot does, so the tests
-// exercise the real middleware chain and route table.
+// exercise the real middleware chain and route table. The stories handler's media
+// lookup is inert.
 func newRouter(t *testing.T, logger *slog.Logger, service StoriesService) http.Handler {
+	t.Helper()
+	return newRouterWithMediaLookup(t, logger, service, &fakeStoryMediaLookup{})
+}
+
+// newRouterWithMediaLookup is newRouter with an explicit media lookup, so the
+// media array attached to story responses can be asserted.
+func newRouterWithMediaLookup(t *testing.T, logger *slog.Logger, service StoriesService, lookup StoryMediaLookup) http.Handler {
 	t.Helper()
 
 	authHandler, err := NewAuthHandler(&fakeAuthService{}, logger)
@@ -173,7 +182,7 @@ func newRouter(t *testing.T, logger *slog.Logger, service StoriesService) http.H
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandler(service, &fakeRootedService{}, logger)
+	storiesHandler, err := NewStoriesHandler(service, &fakeRootedService{}, lookup, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
@@ -203,7 +212,7 @@ func newRouter(t *testing.T, logger *slog.Logger, service StoriesService) http.H
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}
 
-	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, newTestAvatarHandler(t, logger), authMiddleware, "0.1.0", logger)
+	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, newTestAvatarHandler(t, logger), newTestStoryMediaHandler(t, logger), authMiddleware, "0.1.0", logger)
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v, want nil", err)
 	}
@@ -659,14 +668,17 @@ func TestListStoriesUnexpectedFailureIsInternalError(t *testing.T) {
 func TestNewStoriesHandlerRejectsMissingDependencies(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	if _, err := NewStoriesHandler(nil, &fakeRootedService{}, logger); err == nil {
-		t.Error("NewStoriesHandler(nil, rooted, logger) error = nil, want an error")
+	if _, err := NewStoriesHandler(nil, &fakeRootedService{}, &fakeStoryMediaLookup{}, logger); err == nil {
+		t.Error("NewStoriesHandler(nil, rooted, media, logger) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeRootedService{}, nil); err == nil {
-		t.Error("NewStoriesHandler(service, rooted, nil) error = nil, want an error")
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, nil); err == nil {
+		t.Error("NewStoriesHandler(service, rooted, media, nil) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, nil, logger); err == nil {
-		t.Error("NewStoriesHandler(service, nil, logger) error = nil, want an error")
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, nil, &fakeStoryMediaLookup{}, logger); err == nil {
+		t.Error("NewStoriesHandler(service, nil, media, logger) error = nil, want an error")
+	}
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeRootedService{}, nil, logger); err == nil {
+		t.Error("NewStoriesHandler(service, rooted, nil, logger) error = nil, want an error")
 	}
 }
 
@@ -690,3 +702,190 @@ var _ StoriesService = (*fakeStoriesService)(nil)
 
 // ensure the in-memory store satisfies the domain contract at compile time.
 var _ stories.StoryStore = (*memoryStoryStore)(nil)
+
+// sampleMedia builds a storymedia item for the media-enrichment tests.
+func sampleMedia(storyID, mediaID string) storymedia.StoryMedia {
+	return storymedia.StoryMedia{
+		ID:           mediaID,
+		StoryID:      storyID,
+		UploaderID:   testUserID,
+		StorageKey:   "story-media/" + storyID + "/" + mediaID + ".jpg",
+		MediaType:    storymedia.MediaTypeImage,
+		MimeType:     "image/jpeg",
+		Source:       storymedia.MediaSourceCamera,
+		SizeBytes:    2048,
+		DisplayOrder: 0,
+		CreatedAt:    testNow,
+	}
+}
+
+// TestStoryDetailIncludesMedia pins that GET /stories/{id} carries the story's
+// full media list, each item with a relative content URL.
+func TestStoryDetailIncludesMedia(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	store := &memoryStoryStore{}
+	created, err := store.CreateStory(context.Background(), stories.Story{
+		AuthorID: testUserID,
+		Pillar:   stories.PillarWonder,
+		Language: "en",
+		Title:    "The first rain",
+		Body:     "Grandmother said the first rain remembers every name.",
+	})
+	if err != nil {
+		t.Fatalf("CreateStory() error = %v, want nil", err)
+	}
+
+	const mediaID = "00000000-0000-4000-8000-000000009999"
+	lookup := &fakeStoryMediaLookup{
+		byStory: map[string][]storymedia.StoryMedia{created.ID: {sampleMedia(created.ID, mediaID)}},
+	}
+
+	service, err := stories.NewService(store)
+	if err != nil {
+		t.Fatalf("stories.NewService() error = %v, want nil", err)
+	}
+	handler := newRouterWithMediaLookup(t, logger, service, lookup)
+
+	recorder := doRequest(handler, http.MethodGet, "/stories/"+created.ID, "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body storyEnvelope
+	decodeBody(t, recorder, &body)
+
+	if len(body.Story.Media) != 1 {
+		t.Fatalf("media count = %d, want 1", len(body.Story.Media))
+	}
+	item := body.Story.Media[0]
+	if item.ID != mediaID {
+		t.Errorf("media id = %q, want %q", item.ID, mediaID)
+	}
+	if item.Source != "camera" {
+		t.Errorf("media source = %q, want camera", item.Source)
+	}
+	if want := "/stories/" + created.ID + "/media/" + mediaID + "/content"; item.URL != want {
+		t.Errorf("media url = %q, want %q", item.URL, want)
+	}
+}
+
+// TestStoryDetailEmitsEmptyMediaArrayNotNull pins that the field is always an
+// array, so a client never has to special-case null.
+func TestStoryDetailEmitsEmptyMediaArrayNotNull(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	store := &memoryStoryStore{}
+	created, err := store.CreateStory(context.Background(), stories.Story{
+		AuthorID: testUserID,
+		Pillar:   stories.PillarWonder,
+		Language: "en",
+		Title:    "No media here",
+		Body:     "Body",
+	})
+	if err != nil {
+		t.Fatalf("CreateStory() error = %v, want nil", err)
+	}
+
+	service, err := stories.NewService(store)
+	if err != nil {
+		t.Fatalf("stories.NewService() error = %v, want nil", err)
+	}
+	handler := newRouterWithMediaLookup(t, logger, service, &fakeStoryMediaLookup{})
+
+	recorder := doRequest(handler, http.MethodGet, "/stories/"+created.ID, "")
+	if !strings.Contains(recorder.Body.String(), `"media":[]`) {
+		t.Errorf("body = %s, want an empty media array rather than null", recorder.Body.String())
+	}
+}
+
+// TestStoryFeedIncludesMediaPreview pins that the feed carries a single-item
+// preview per story, and an empty array for a story with no media.
+func TestStoryFeedIncludesMediaPreview(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	store := &memoryStoryStore{}
+	first, err := store.CreateStory(context.Background(), stories.Story{
+		AuthorID: testUserID,
+		Pillar:   stories.PillarWonder,
+		Language: "en",
+		Title:    "Has media",
+		Body:     "Body",
+	})
+	if err != nil {
+		t.Fatalf("CreateStory() error = %v, want nil", err)
+	}
+	second, err := store.CreateStory(context.Background(), stories.Story{
+		AuthorID: testUserID,
+		Pillar:   stories.PillarWonder,
+		Language: "en",
+		Title:    "No media",
+		Body:     "Body",
+	})
+	if err != nil {
+		t.Fatalf("CreateStory() error = %v, want nil", err)
+	}
+
+	const mediaID = "00000000-0000-4000-8000-000000008888"
+	lookup := &fakeStoryMediaLookup{
+		first: map[string]storymedia.StoryMedia{first.ID: sampleMedia(first.ID, mediaID)},
+	}
+
+	service, err := stories.NewService(store)
+	if err != nil {
+		t.Fatalf("stories.NewService() error = %v, want nil", err)
+	}
+	handler := newRouterWithMediaLookup(t, logger, service, lookup)
+
+	recorder := doRequest(handler, http.MethodGet, "/stories", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body listStoriesResponse
+	decodeBody(t, recorder, &body)
+
+	byID := make(map[string][]storyMediaResponse, len(body.Stories))
+	for _, story := range body.Stories {
+		byID[story.ID] = story.Media
+	}
+
+	if got := byID[first.ID]; len(got) != 1 || got[0].ID != mediaID {
+		t.Errorf("story with media = %+v, want one preview item %q", got, mediaID)
+	}
+	if got := byID[second.ID]; len(got) != 0 {
+		t.Errorf("story without media = %+v, want an empty preview list", got)
+	}
+}
+
+// TestStoryMediaEnrichmentFailureIsSwallowed pins that a media lookup error does
+// not make a story unreadable: the media is supplementary.
+func TestStoryMediaEnrichmentFailureIsSwallowed(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	store := &memoryStoryStore{}
+	created, err := store.CreateStory(context.Background(), stories.Story{
+		AuthorID: testUserID,
+		Pillar:   stories.PillarWonder,
+		Language: "en",
+		Title:    "Readable anyway",
+		Body:     "Body",
+	})
+	if err != nil {
+		t.Fatalf("CreateStory() error = %v, want nil", err)
+	}
+
+	service, err := stories.NewService(store)
+	if err != nil {
+		t.Fatalf("stories.NewService() error = %v, want nil", err)
+	}
+	handler := newRouterWithMediaLookup(t, logger, service, &fakeStoryMediaLookup{err: errors.New("media read failed")})
+
+	recorder := doRequest(handler, http.MethodGet, "/stories/"+created.ID, "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d even when media enrichment fails", recorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(recorder.Body.String(), `"media":[]`) {
+		t.Errorf("body = %s, want an empty media array on enrichment failure", recorder.Body.String())
+	}
+}

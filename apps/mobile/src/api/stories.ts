@@ -5,14 +5,40 @@
  * handling is identical to the auth endpoints: a failure is always an `ApiError`
  * carrying the server's machine-readable code.
  */
-import { request } from './client';
+import { request, uploadFile } from './client';
 import type { AuthorRooted } from './rooted';
+import { MAX_IMAGE_BYTES, MAX_VIDEO_BYTES } from '../config/dev';
 
 /** The two storytelling lenses a story can be filed under. */
 export type Pillar = 'wonder' | 'heritage';
 
 /** The pillar values, in the order the UI offers them. */
 export const PILLARS: readonly Pillar[] = ['wonder', 'heritage'];
+
+/** The coarse kind of a piece of story media. */
+export type MediaType = 'image' | 'video';
+
+/** How a piece of story media was obtained. */
+export type MediaSource = 'camera' | 'gallery';
+
+/** A piece of media attached to a story. */
+export type StoryMedia = {
+  readonly id: string;
+  readonly media_type: MediaType;
+  readonly source: MediaSource;
+  readonly mime_type: string;
+  readonly width: number | null;
+  readonly height: number | null;
+  readonly duration_ms: number | null;
+  readonly size_bytes: number;
+  readonly display_order: number;
+  readonly created_at: string;
+  /**
+   * The path on the API that serves the bytes. It is a relative path
+   * (`/stories/{id}/media/{mid}/content`); resolve it against the API base URL.
+   */
+  readonly url: string;
+};
 
 /** A story as returned by the API. */
 export type Story = {
@@ -38,6 +64,12 @@ export type Story = {
    * server attaches it to the story detail response.
    */
   readonly author_rooted?: AuthorRooted | null;
+  /**
+   * The story's attached media. On the detail it is the full list in display
+   * order; on the feed it is a single-item preview (or an empty array). Always
+   * present on responses from the current server, never null.
+   */
+  readonly media?: readonly StoryMedia[];
 };
 
 /** The request body for POST /stories. */
@@ -92,6 +124,81 @@ function feedQuery(options: ListStoriesOptions): string {
   }
 
   return parts.length === 0 ? '' : `?${parts.join('&')}`;
+}
+
+/** The body returned by POST /stories/{id}/media. */
+export type StoryMediaResponse = {
+  readonly media: StoryMedia;
+};
+
+/** Optional metadata a picker can report alongside the file. */
+export type StoryMediaMetadata = {
+  readonly width?: number;
+  readonly height?: number;
+  readonly durationMs?: number;
+};
+
+/** The file extensions the server accepts for story media, keyed by MIME type. */
+const MEDIA_EXTENSIONS: Readonly<Record<string, string>> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+};
+
+/** Picks a filename for the multipart upload; the server re-sniffs the bytes. */
+function mediaFileName(mimeType: string): string {
+  return `story-media.${MEDIA_EXTENSIONS[mimeType] ?? 'bin'}`;
+}
+
+/**
+ * Refuses a file the server's limit would reject, before the upload is started,
+ * so an oversized file does not spend the user's data only to be refused.
+ */
+function assertWithinLimit(mimeType: string, fileSize: number): void {
+  const limit = mimeType.startsWith('video/') ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+  if (fileSize > limit) {
+    throw new Error(`That file is larger than the ${Math.round(limit / (1024 * 1024))} MB limit.`);
+  }
+}
+
+/**
+ * POST /stories/{id}/media — attaches one image or video to a story.
+ *
+ * The uploader is taken from `token` by the server; it is never sent in the body.
+ * The response carries the stored media, including its stable `url`.
+ *
+ * `source` records whether the file came from the camera or the gallery, which is
+ * what the capture badge is drawn from.
+ */
+export function uploadStoryMedia(
+  storyId: string,
+  uri: string,
+  mimeType: string,
+  source: MediaSource,
+  token: string,
+  fileSize: number,
+  metadata: StoryMediaMetadata = {},
+): Promise<StoryMedia> {
+  assertWithinLimit(mimeType, fileSize);
+
+  const fields: Record<string, string> = { source };
+  if (metadata.width !== undefined) {
+    fields.width = String(metadata.width);
+  }
+  if (metadata.height !== undefined) {
+    fields.height = String(metadata.height);
+  }
+  if (metadata.durationMs !== undefined) {
+    fields.duration_ms = String(metadata.durationMs);
+  }
+
+  return uploadFile<StoryMediaResponse>(`/stories/${encodeURIComponent(storyId)}/media`, {
+    file: { uri, name: mediaFileName(mimeType), type: mimeType },
+    fields,
+    token,
+  }).then((response) => response.media);
 }
 
 /** The story endpoints. */

@@ -19,6 +19,7 @@ const SESSION: Session = {
     approximate_location: 'Cape Town',
     phone: '',
     created_at: '2026-10-09T00:00:00Z',
+    avatar_url: '',
   },
 };
 

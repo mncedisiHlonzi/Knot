@@ -22,6 +22,12 @@ export const colors = {
     surface: '#1E293B',
     inverse: '#FFFFFF',
   },
+  /**
+   * A translucent scrim drawn behind a modal sheet. It is a navy tint of
+   * `bg.primary` rather than an opaque fill, so the screen stays faintly visible
+   * underneath while the sheet reads as the foreground.
+   */
+  overlay: 'rgba(15, 23, 42, 0.7)',
   border: {
     subtle: '#1E293B',
     default: '#334155',

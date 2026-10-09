@@ -1,7 +1,7 @@
 # Knot — Data Model
 
-**Status: MVP, subject to change.** Six tables exist today: `users`, `stories`,
-`story_versions`, `comments`, `bridges`, and `rooted_signals`.
+**Status: MVP, subject to change.** Seven tables exist today: `users`, `stories`,
+`story_versions`, `comments`, `bridges`, `rooted_signals`, and `story_media`.
 
 Migrations live in `backend/go/migrations/` and are applied with
 `go run ./cmd/knot migrate up`. See the "Migrations" section of
@@ -18,6 +18,7 @@ Migrations live in `backend/go/migrations/` and are applied with
 | `0005`  | `rooted`  | The `rooted_signals` table, its indexes, and its duration-bucket constraint |
 | `0006`  | `discovery` | The `stories.approximate_location_lower` column, its backfill, and its index |
 | `0007`  | `user_avatar` | The `users.avatar_url` column |
+| `0008`  | `story_media` | The `story_media` table, its indexes and constraints |
 
 Applied versions are recorded in the `schema_migrations` table, which the runner creates
 on first use.
@@ -347,3 +348,65 @@ setting `is_public` to `false`. Two read rules follow from that:
 The inline `author_rooted` enrichment on content responses is a summary, not a lookup: it
 carries only `place` and `duration_bucket`, never the signal's id, its owner, or its
 timestamps. See KNOT-ADR-017.
+
+## `story_media`
+
+A piece of media is one image or video attached to a story. The bytes live in the media
+bucket; a row records where the object is, how to render it, and — the point of the
+feature — whether it was captured with the device camera or chosen from the gallery. See
+KNOT-ADR-030.
+
+| Column          | Type          | Nullable | Default             | Notes                                                                 |
+| --------------- | ------------- | -------- | ------------------- | --------------------------------------------------------------------- |
+| `id`            | `uuid`        | no       | `gen_random_uuid()` | Primary key                                                           |
+| `story_id`      | `uuid`        | no       | —                   | References `stories(id)`; the story the media belongs to               |
+| `uploader_id`   | `uuid`        | no       | —                   | References `users(id)`; who uploaded it (the story's author in the MVP) |
+| `storage_key`   | `text`        | no       | —                   | The object key in the media bucket, `story-media/{story_id}/{uuid}.{ext}`, **not** a public URL |
+| `media_type`    | `text`        | no       | —                   | `CHECK (media_type IN ('image', 'video'))`                             |
+| `mime_type`     | `text`        | no       | —                   | The sniffed content type (JPEG/PNG/WebP/MP4/MOV)                       |
+| `source`        | `text`        | no       | —                   | `CHECK (source IN ('camera', 'gallery'))`                              |
+| `width`         | `integer`     | yes      | `NULL`              | Pixel width when the client reported it                                |
+| `height`        | `integer`     | yes      | `NULL`              | Pixel height when the client reported it                               |
+| `duration_ms`   | `integer`     | yes      | `NULL`              | A video's duration in milliseconds when known                          |
+| `size_bytes`    | `bigint`      | no       | —                   | The stored object's size                                               |
+| `display_order` | `integer`     | no       | `0`                 | Position within the story; lower comes first. Appended on upload        |
+| `created_at`    | `timestamptz` | no       | `now()`             |                                                                        |
+
+### Indexes and constraints
+
+| Name                             | Kind        | Columns                        | Purpose                                                        |
+| -------------------------------- | ----------- | ------------------------------ | -------------------------------------------------------------- |
+| `story_media_pkey`               | Primary key | `id`                           | Row identity                                                    |
+| `story_media_story_id_order_idx` | Btree index | `(story_id, display_order)`    | Reads every item of a story in presentation order                |
+| `story_media_uploader_id_idx`    | Btree index | `uploader_id`                  | "Media by this uploader", and the cascade on user deletion       |
+| `story_media_story_id_fkey`      | Foreign key | `story_id` → `stories(id)`     | `ON DELETE CASCADE`: deleting a story removes its media          |
+| `story_media_uploader_id_fkey`   | Foreign key | `uploader_id` → `users(id)`    | `ON DELETE CASCADE`: deleting an account removes its media       |
+| `story_media_media_type_check`   | Check       | `media_type`                   | The media-type set is closed in the database, not only in Go      |
+| `story_media_source_check`       | Check       | `source`                       | The source set (`camera`/`gallery`) is closed in the database     |
+
+### `storage_key` holds a key, not a URL
+
+Like `users.avatar_url`, `storage_key` is the **object key** inside the media bucket — for
+example `story-media/d6b53a2c-…/0f8b1c2d-….jpg` — never a link to object storage. The
+bucket stays private and every byte reaches a client through the backend (KNOT-ADR-029).
+API responses translate the key into `/stories/{id}/media/{mid}/content`, which is the
+only form a client ever sees; the key itself is never serialised.
+
+The object name ends in a random UUID so uploading a new file never overwrites the bytes
+an in-flight response is still serving, and the key cannot be derived from the public path.
+
+### `source` is the feature
+
+`source` is `camera` when the file was captured with the device camera and `gallery` when
+it was chosen from the photo library. The mobile picker sets it; the server stores and
+returns it; the UI draws a capture badge from it. It is the reason the table exists rather
+than the older `stories.media_urls` array.
+
+### Deliberate omissions
+
+- **No thumbnails, transcoding, or moderation.** Each is a separate feature with its own
+  task; the row stores the original as uploaded.
+- **No hard cap on media count per story** in the database. The client aims for 10, and
+  `display_order` keeps the order stable whatever the count.
+- **No `updated_at`.** Media is immutable once uploaded; replacing it means deleting and
+  re-uploading.

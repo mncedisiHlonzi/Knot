@@ -39,3 +39,16 @@ export const DEV_API_URL = 'http://10.27.80.173:8080';
  * one lives in `~/.gradle/gradle.properties` and must never be committed.
  */
 export const KNOT_MAPBOX_TOKEN = LOCAL_MAPBOX_TOKEN;
+
+/**
+ * Upload size limits for story media, mirroring the backend's rules so the client
+ * refuses an oversized file before spending the user's data on the upload
+ * (KNOT-ADR-032).
+ *
+ *   - Images (JPEG, PNG, WebP): at most 10 MiB.
+ *   - Videos (MP4, MOV):        at most 100 MiB.
+ *
+ * Avatars have their own, smaller 5 MiB limit, enforced by the backend alone.
+ */
+export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+export const MAX_VIDEO_BYTES = 100 * 1024 * 1024;

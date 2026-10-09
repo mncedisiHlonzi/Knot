@@ -16,6 +16,12 @@ export type User = {
   readonly approximate_location: string;
   readonly phone: string;
   readonly created_at: string;
+  /**
+   * The path on the API that serves the user's avatar, or an empty string when
+   * they have none. It is a relative path (`/users/{id}/avatar?v=…`), never a
+   * link to object storage; resolve it against the API base URL to render it.
+   */
+  readonly avatar_url: string;
 };
 
 /** The body returned by both register and login. */
@@ -169,6 +175,80 @@ export function describeError(error: unknown): string {
     return error.message;
   }
   return 'something went wrong';
+}
+
+/**
+ * A file to upload: the local URI the OS handed the picker, a filename, and its
+ * MIME type. React Native's FormData accepts this object in place of a Blob.
+ */
+export type UploadFilePart = {
+  readonly uri: string;
+  readonly name: string;
+  readonly type: string;
+};
+
+/** Options for a multipart upload. */
+export type UploadOptions = {
+  readonly file: UploadFilePart;
+  /** Extra non-file fields, sent as multipart form fields. */
+  readonly fields?: Readonly<Record<string, string>>;
+  /** Access token for a protected endpoint. */
+  readonly token?: string;
+};
+
+/**
+ * Performs a multipart POST and returns the parsed JSON body, or throws an
+ * ApiError.
+ *
+ * It shares the error envelope and the network-failure message with `request`; it
+ * exists separately because a multipart body must not declare a Content-Type —
+ * the runtime sets it, boundary and all.
+ */
+export async function uploadFile<T>(path: string, options: UploadOptions): Promise<T> {
+  const url = `${API_BASE_URL}${path}`;
+
+  const form = new FormData();
+  // React Native's FormData accepts {uri, name, type} where the DOM types expect
+  // a Blob; the cast is the documented React Native idiom.
+  form.append('file', options.file as unknown as Blob);
+  for (const [key, value] of Object.entries(options.fields ?? {})) {
+    form.append(key, value);
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        ...(options.token === undefined ? {} : { Authorization: `Bearer ${options.token}` }),
+      },
+      body: form,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown network failure';
+    throw new ApiError(`could not reach the Knot API: ${message}`, 0, NETWORK_ERROR_CODE);
+  }
+
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw toApiError(response.status, text);
+  }
+
+  if (text === '') {
+    return undefined as T;
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new ApiError(
+      'the Knot API returned a malformed response',
+      response.status,
+      'invalid_response',
+    );
+  }
 }
 
 /** The Knot API endpoints this app currently uses. */

@@ -1,8 +1,26 @@
 import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import {
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
 import { describeError } from '../../api/client';
-import { CreateStoryPayload, PILLARS, Pillar, Story, storiesApi } from '../../api/stories';
+import {
+  CreateStoryPayload,
+  PILLARS,
+  Pillar,
+  Story,
+  storiesApi,
+  uploadStoryMedia,
+} from '../../api/stories';
+import CameraCaptureBadge from '../../components/CameraCaptureBadge';
+import MediaPickerSheet, { PickedMedia } from '../../components/MediaPickerSheet';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type CreateStoryScreenProps = {
@@ -70,6 +88,19 @@ export default function CreateStoryScreen({
   const [sensitive, setSensitive] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
+  const [media, setMedia] = useState<readonly PickedMedia[]>([]);
+  const [pickerVisible, setPickerVisible] = useState(false);
+  // Set once the story has been created. If a media upload then fails, the story
+  // already exists, so a retry reuses it rather than publishing a duplicate.
+  const [createdStory, setCreatedStory] = useState<Story | undefined>(undefined);
+
+  function addMedia(picked: PickedMedia): void {
+    setMedia((current) => [...current, picked]);
+  }
+
+  function removeMedia(index: number): void {
+    setMedia((current) => current.filter((_, i) => i !== index));
+  }
 
   async function handleSubmit(): Promise<void> {
     const problem = validateForm(title, body, language, location);
@@ -92,9 +123,28 @@ export default function CreateStoryScreen({
     };
 
     try {
-      const result = await storiesApi.createStory(token, payload);
-      onCreated(result.story);
+      // Create the story once. On a retry after a media failure it is reused.
+      let story = createdStory;
+      if (story === undefined) {
+        const result = await storiesApi.createStory(token, payload);
+        story = result.story;
+        setCreatedStory(story);
+      }
+
+      // Upload the media sequentially: one request at a time, so a large video
+      // is not competing for bandwidth with the next file (KNOT-ADR-032).
+      for (const item of media) {
+        await uploadStoryMedia(story.id, item.uri, item.mimeType, item.source, token, item.size, {
+          ...(item.width === undefined ? {} : { width: item.width }),
+          ...(item.height === undefined ? {} : { height: item.height }),
+          ...(item.duration === undefined ? {} : { durationMs: Math.round(item.duration * 1000) }),
+        });
+      }
+
+      onCreated(story);
     } catch (caught) {
+      // A media failure leaves the story in place: it is already published, so it
+      // is kept and the error shown rather than rolled back.
       setError(describeError(caught));
     } finally {
       setSubmitting(false);
@@ -108,6 +158,44 @@ export default function CreateStoryScreen({
       </Pressable>
 
       <Text style={styles.title}>Tell a story</Text>
+
+      <Text style={styles.label}>Media</Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.thumbnails}
+        contentContainerStyle={styles.thumbnailsContent}
+      >
+        <Pressable
+          style={styles.addMedia}
+          onPress={() => setPickerVisible(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Add media"
+        >
+          <Text style={styles.addMediaText}>+ Add media</Text>
+        </Pressable>
+
+        {media.map((item, index) => (
+          <View key={`${item.uri}-${index}`} style={styles.thumbnail}>
+            {item.type === 'image' ? (
+              <Image style={styles.thumbnailImage} source={{ uri: item.uri }} />
+            ) : (
+              <View style={[styles.thumbnailImage, styles.videoPlaceholder]}>
+                <Text style={styles.playIcon}>▶</Text>
+              </View>
+            )}
+            {item.source === 'camera' ? <CameraCaptureBadge style={styles.badge} /> : null}
+            <Pressable
+              style={styles.removeButton}
+              onPress={() => removeMedia(index)}
+              accessibilityRole="button"
+              accessibilityLabel="Remove media"
+            >
+              <Text style={styles.removeText}>×</Text>
+            </Pressable>
+          </View>
+        ))}
+      </ScrollView>
 
       <Text style={styles.label}>Pillar</Text>
       <View style={styles.pillars}>
@@ -194,11 +282,40 @@ export default function CreateStoryScreen({
       >
         <Text style={styles.buttonText}>{submitting ? 'Publishing…' : 'Publish story'}</Text>
       </Pressable>
+
+      <MediaPickerSheet
+        visible={pickerVisible}
+        onClose={() => setPickerVisible(false)}
+        onPicked={addMedia}
+        onError={setError}
+      />
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
+  addMedia: {
+    alignItems: 'center',
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    height: 88,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    width: 88,
+  },
+  addMediaText: {
+    color: colors.text.brand,
+    fontSize: fontSizes.sm,
+    fontWeight: fontWeights.semiBold,
+    textAlign: 'center',
+  },
+  badge: {
+    position: 'absolute',
+    right: spacing.xs,
+    top: spacing.xs,
+  },
   button: {
     alignItems: 'center',
     backgroundColor: colors.brand.purple,
@@ -282,14 +399,60 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     marginTop: 6,
   },
+  playIcon: {
+    color: colors.text.primary,
+    fontSize: fontSizes.lg,
+  },
+  removeButton: {
+    alignItems: 'center',
+    backgroundColor: colors.bg.secondary,
+    borderColor: colors.border.default,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: 22,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: -6,
+    top: -6,
+    width: 22,
+  },
+  removeText: {
+    color: colors.text.primary,
+    fontSize: fontSizes.base,
+    fontWeight: fontWeights.bold,
+    lineHeight: 18,
+  },
   switchRow: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: spacing.md,
   },
+  thumbnail: {
+    height: 88,
+    marginLeft: spacing.md,
+    width: 88,
+  },
+  thumbnailImage: {
+    backgroundColor: colors.bg.surface,
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    height: 88,
+    width: 88,
+  },
+  thumbnails: {
+    marginTop: 6,
+  },
+  thumbnailsContent: {
+    paddingRight: spacing.sm,
+  },
   title: {
     color: colors.text.primary,
     fontSize: fontSizes.xl,
     fontWeight: fontWeights.bold,
+  },
+  videoPlaceholder: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

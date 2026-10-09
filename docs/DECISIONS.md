@@ -667,3 +667,95 @@ Both local paths are in `.gitignore`, and `docs/DEVELOPMENT.md`, "Local secrets 
 
 **Consequences:** Avatar bandwidth and CPU run through the API process; if that ever becomes the bottleneck, the fix is to introduce a cache in front of `GET /users/{id}/avatar`, not to expose the bucket. Storing a key in a column named `avatar_url` is a small, permanent wart that has to be explained wherever the schema is read, which is why `docs/DATA_MODEL.md` says so at the column. Replacing an avatar deletes the previous object best-effort: if that deletion fails, the result is an orphaned object rather than a broken profile, and nothing currently sweeps orphans. The `storage.Storage` interface keeps the store swappable — a hosted S3 in production is a configuration change plus a bucket policy, not a handler change. Because the object key is not derived from anything public, a schema rollback (`0007` down) drops the column and intentionally leaves the objects in place rather than destroying user data.
 
+## KNOT-ADR-030 — Story media is a table with a `source` column
+
+**Decision ID:** KNOT-ADR-030
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** KNOT-013 introduces images and videos into stories, and the feature that makes it *this* feature rather than a generic attachment: a file captured with the device camera must be distinguishable from one chosen out of the gallery, so the UI can show a capture badge. A story already has a `media_urls text[]` column, but an array of strings can hold neither the origin of a file nor the metadata (dimensions, duration, size) the client needs to render it, and it cannot reference an object in the media bucket introduced in KNOT-012.
+
+**Decision:** Story media is a new `story_media` table (migration `0008`), not an extension of `stories.media_urls`:
+- Columns: `id`, `story_id` (FK, cascade), `uploader_id` (FK, cascade), `storage_key`, `media_type` (`image`/`video`), `mime_type`, `source` (`camera`/`gallery`), `width`, `height`, `duration_ms`, `size_bytes`, `display_order`, `created_at`.
+- `storage_key` holds the **object key** in the media bucket (`story-media/{story_id}/{uuid}.{ext}`), never a URL, exactly as `users.avatar_url` does (KNOT-ADR-029).
+- `source` is a `CHECK`-constrained closed set, so the camera/gallery distinction is enforced by the database, not only by the application.
+- `display_order` is appended by the server on upload, so the order matches upload order without the client managing it.
+- The existing `stories.media_urls` column is left as it is: it still accepts free-text links, and the new table is the home for uploaded files. Removing `media_urls` is a separate cleanup.
+
+**Alternatives Considered:**
+1. **Store an array of objects (JSONB) on `stories`** — rejected. PostgreSQL would not enforce the MIME, media-type, or source sets, and querying "media for this story" would mean unpacking JSON in the application.
+2. **Separate `story_images` and `story_videos` tables** — rejected. Every read would union them, and the source badge would be duplicated; one table with a `media_type` discriminator is simpler and the row shape is otherwise identical.
+3. **Keep only `media_urls` and encode the source in the URL** — rejected. It puts application meaning into an opaque string and still cannot store dimensions or duration.
+
+**Reason:** Media is a first-class entity per story with its own metadata and lifecycle, and the camera/gallery origin is the feature. A table models that directly, and the foreign keys make deletion correct for free (deleting a story or a user removes its rows).
+
+**Consequences:** A story now has two media concepts during the transition — the legacy `media_urls` array and `story_media` — which the API keeps separate. The `source` distinction is stored and returned but not yet used for anything beyond the badge; moderation or filtering on it is a later task. An orphaned object can result if a row insert fails after the object is written; the service deletes it best-effort, and nothing sweeps leftovers yet (the same gap as avatars).
+
+## KNOT-ADR-031 — `react-native-image-picker` covers camera and gallery
+
+**Decision ID:** KNOT-ADR-031
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** The mobile app must let a user capture a photo or video with the camera *and* choose one from the gallery, for both story media and the profile picture. It is the first camera/library integration in the app, which runs on React Native 0.76 with the New Architecture disabled (KNOT-ADR-021) and has a deliberately small dependency set (KNOT-ADR-002).
+
+**Decision:** Use **`react-native-image-picker`** (`^8.2.1`) for all four paths — camera photo, camera video, gallery photo, gallery video — through `launchCamera` and `launchImageLibrary`. One dependency covers both sources and both media kinds, and its `Asset` result carries the URI, MIME type, size, and dimensions the upload needs. The picker reports no Android permission requirement in its own documentation, so the app declares no `CAMERA` permission: declaring it would force a runtime permission request and a `SecurityException` if denied. Only the Android 11+ `<queries>` entries for the two capture intents are declared.
+
+**Alternatives Considered:**
+1. **`react-native-image-crop-picker`** — rejected. It pulls in cropping, which is an explicit non-goal of this task, and a heavier native surface.
+2. **`expo-image-picker`** — rejected. The app is a bare React Native project with no Expo runtime, and adding one for a single module is disproportionate.
+3. **A separate camera library plus a separate picker** — rejected. Two native modules where one suffices, and two permission stories.
+
+**Reason:** One well-maintained library covers exactly the four entry points the task needs, returns the metadata the backend stores, and needs no manifest permission, which keeps the Android build simple on the legacy architecture.
+
+**Consequences:** Camera capture and video recording can only be verified on a physical device; the simulator has no camera, so those paths are unverified by this task (see the task's Known issues). The library is a native module, so the Android build must be re-run after installing it. iOS usage strings (`NSCameraUsageDescription`, `NSPhotoLibraryUsageDescription`, `NSMicrophoneUsageDescription`) are declared in `Info.plist`; without them iOS refuses to show the picker.
+
+## KNOT-ADR-032 — Videos up to 100 MiB, streamed with HTTP Range requests
+
+**Decision ID:** KNOT-ADR-032
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** Story media includes video, which a phone camera produces in tens of megabytes. Two questions follow: how large a video the API accepts, and how a client plays one without downloading the whole file before it can start. Mobile data in Knot's target context is metered and often slow, so making a user download 100 MiB to watch ten seconds is unacceptable.
+
+**Decision:**
+- **Upload limits:** images (JPEG/PNG/WebP) at most **10 MiB**; videos (MP4/MOV) at most **100 MiB**. The whole `POST .../media` body is capped at 100 MiB plus multipart overhead, and the per-type limit is enforced by the domain after the sniffed type is known.
+- **Playback:** `GET /stories/{id}/media/{mid}/content` honours a single-range HTTP `Range: bytes=start-end` header, answering **206 Partial Content** with `Content-Range` and `Accept-Ranges: bytes`; the S3 object is fetched with a native range so only the requested bytes leave the object store (KNOT-ADR-033). A request with no Range, or an unusable one, gets the whole object with **200**.
+- **Client:** `react-native-video` (`^6.19.3`) plays the video, requesting ranges automatically.
+
+**Alternatives Considered:**
+1. **Progressive download only (no Range)** — rejected. The player could not seek, and it would buffer the whole file before playback in the worst case.
+2. **HLS/DASH segmentation with transcode** — rejected as out of scope. Transcoding is an explicit non-goal of this task; ranges over the original MP4 are enough for MVP playback.
+3. **A 25 MiB video cap** — rejected. It is below what a short phone video produces, which would make the feature frustrating for its main use case.
+4. **Presigned URLs for playback** — rejected for the same reasons as KNOT-ADR-029: it exposes the bucket and moves format and authorization decisions out of the backend.
+
+**Reason:** Range requests are the minimal mechanism that makes video seekable and startable without a full download, and they need no transcoding pipeline. A per-type size cap keeps a single upload bounded while allowing a real video.
+
+**Consequences:** The API process carries video bytes, and a 100 MiB upload over a slow link can take a while; the server's `ReadTimeout`/`WriteTimeout` (10 s) are tuned for small JSON bodies and may need raising before large videos are uploaded over the public internet — recorded as a known issue, not changed here (no CI/infra changes in this task). Mobile uploads are sequential (one file at a time) for the same reason. Playback quality is whatever the device recorded; there is no adaptive bitrate. Oversized uploads are refused with `413` before storage.
+
+## KNOT-ADR-033 — `GetRange` added to the Storage interface for video streaming
+
+**Decision ID:** KNOT-ADR-033
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** KNOT-ADR-032 requires the backend to serve part of an object. The storage layer introduced in KNOT-012 exposes only `Put`, `Get` (whole object), `Delete`, and `Exists`. Answering a Range request by fetching the whole object and discarding the parts outside the range would work, but it would transfer a 100 MiB object to send a 1 MiB seek, which defeats the purpose.
+
+**Decision:** Add one method to `internal/storage`:
+
+```go
+// GetRange returns a reader for the byte range [start, end] inclusive.
+GetRange(ctx context.Context, key string, start, end int64) (io.ReadCloser, error)
+```
+
+The S3 implementation sets the SDK's `GetObjectInput.Range` field, so the object store itself returns only the requested bytes. The in-memory test double implements it by slicing, and the shared storage contract test asserts it, so the double and the real store cannot drift. The handler never applies a range itself; it parses the header once with `storymedia.ParseRange` to decide 206-vs-200 and to build `Content-Range`, and the service uses the same helper to fetch the matching bytes, so the two cannot disagree.
+
+**Alternatives Considered:**
+1. **Reuse `Get` and seek/discard** — rejected as the general case. It is correct but transfers the whole object; it is noted in the interface doc as the fallback an implementation without native range support may use.
+2. **Return range metadata from `Get`** — rejected. It would change the shape of every `Get` call for a need only media has.
+3. **A media-specific storage method** — rejected. Ranges are a property of object storage, not of story media; the storage contract is the right home.
+
+**Reason:** Native ranges are the whole point of the feature, and the S3 API supports them directly. One narrow method keeps the change small and confined, and the shared contract test keeps the in-memory double honest.
+
+**Consequences:** The `Storage` interface is five methods wide rather than four, and every implementation (the S3 store and the test doubles in `internal/storage` and `internal/httpapi`) must provide `GetRange`. A range that is syntactically valid but unsatisfiable for the object's size is never sent to storage: the handler clamps against the row's `size_bytes` and falls back to a full 200, so the object store is not asked for a range it would reject with a 416.
+

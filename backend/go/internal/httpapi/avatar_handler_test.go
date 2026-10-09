@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/jpeg"
 	"image/png"
@@ -98,6 +99,24 @@ func (s *memStorage) Delete(_ context.Context, key string) error {
 	delete(s.objects, key)
 
 	return nil
+}
+
+func (s *memStorage) GetRange(_ context.Context, key string, start, end int64) (io.ReadCloser, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	object, ok := s.objects[key]
+	if !ok {
+		return nil, storage.ErrObjectNotFound
+	}
+	if end >= int64(len(object.data)) {
+		end = int64(len(object.data)) - 1
+	}
+	if start < 0 || end < start {
+		return nil, fmt.Errorf("memStorage: invalid range %d-%d", start, end)
+	}
+
+	return io.NopCloser(bytes.NewReader(object.data[start : end+1])), nil
 }
 
 func (s *memStorage) Exists(_ context.Context, key string) (bool, error) {
@@ -319,7 +338,7 @@ func newAvatarTestRouter(t *testing.T, env *avatarTestEnv) http.Handler {
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, &fakeRootedService{}, logger)
+	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
@@ -357,6 +376,7 @@ func newAvatarTestRouter(t *testing.T, env *avatarTestEnv) http.Handler {
 		rootedHandler,
 		discoveryHandler,
 		env.handler,
+		newTestStoryMediaHandler(t, logger),
 		authMiddleware,
 		"0.1.0",
 		logger,

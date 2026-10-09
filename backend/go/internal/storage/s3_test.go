@@ -76,6 +76,28 @@ func (m *memoryStorage) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
+func (m *memoryStorage) GetRange(ctx context.Context, key string, start, end int64) (io.ReadCloser, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	object, ok := m.objects[key]
+	if !ok {
+		return nil, ErrObjectNotFound
+	}
+	if start < 0 || end < start || start >= int64(len(object.body)) {
+		return nil, fmt.Errorf("memoryStorage: range %d-%d outside object of %d bytes", start, end, len(object.body))
+	}
+	if end >= int64(len(object.body)) {
+		end = int64(len(object.body)) - 1
+	}
+
+	return io.NopCloser(bytes.NewReader(object.body[start : end+1])), nil
+}
+
 func (m *memoryStorage) Exists(ctx context.Context, key string) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -144,6 +166,27 @@ func runStorageContract(t *testing.T, store Storage, prefix string) {
 	// Get of a missing key is the sentinel, not a raw driver error.
 	if _, _, err := store.Get(ctx, missingKey); !errors.Is(err, ErrObjectNotFound) {
 		t.Errorf("Get(absent) error = %v, want ErrObjectNotFound", err)
+	}
+
+	// GetRange returns exactly the requested inclusive slice of the object.
+	ranged, err := store.GetRange(ctx, key, 5, 11)
+	if err != nil {
+		t.Fatalf("GetRange() error = %v, want nil", err)
+	}
+	slice, readErr := io.ReadAll(ranged)
+	if readErr != nil {
+		t.Fatalf("reading ranged object: %v", readErr)
+	}
+	if closeErr := ranged.Close(); closeErr != nil {
+		t.Fatalf("closing ranged object: %v", closeErr)
+	}
+	if want := payload[5:12]; !bytes.Equal(slice, want) {
+		t.Errorf("GetRange(5, 11) = %q, want %q", slice, want)
+	}
+
+	// A ranged read of a missing key is also the sentinel.
+	if _, err := store.GetRange(ctx, missingKey, 0, 1); !errors.Is(err, ErrObjectNotFound) {
+		t.Errorf("GetRange(absent) error = %v, want ErrObjectNotFound", err)
 	}
 
 	// Delete removes the object, and deleting an absent key is not an error.

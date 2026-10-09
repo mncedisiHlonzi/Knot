@@ -36,6 +36,7 @@ import (
 	"github.com/knot/backend/internal/rooted"
 	"github.com/knot/backend/internal/storage"
 	"github.com/knot/backend/internal/stories"
+	"github.com/knot/backend/internal/storymedia"
 	"github.com/knot/backend/internal/versions"
 	"github.com/knot/backend/migrations"
 )
@@ -168,7 +169,41 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	storiesHandler, err := httpapi.NewStoriesHandler(storiesService, rootedService, logger)
+	// Media storage. Avatars and story media are written and read by this process
+	// only: the bucket is private and no client is ever handed a link to it
+	// (KNOT-ADR-028, KNOT-ADR-029). Building the client performs no I/O, so a
+	// server that starts while the object store is down still answers everything
+	// else, and the first upload is what reports that the store is unreachable.
+	mediaStorage, err := storage.NewS3Storage(
+		ctx,
+		cfg.S3Endpoint,
+		cfg.S3Region,
+		cfg.S3AccessKey,
+		cfg.S3SecretKey,
+		cfg.S3Bucket,
+	)
+	if err != nil {
+		return err
+	}
+
+	// Story media. The service owns the object store and the rows, so the stories
+	// handler reuses the very same service as its media enrichment lookup.
+	storyMediaStore, err := storymedia.NewPostgresStore(pool)
+	if err != nil {
+		return err
+	}
+
+	storyMediaService, err := storymedia.NewService(storyMediaStore, mediaStorage, logger)
+	if err != nil {
+		return err
+	}
+
+	storiesHandler, err := httpapi.NewStoriesHandler(storiesService, rootedService, storyMediaService, logger)
+	if err != nil {
+		return err
+	}
+
+	storyMediaHandler, err := httpapi.NewStoryMediaHandler(storyMediaService, logger)
 	if err != nil {
 		return err
 	}
@@ -225,23 +260,6 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	// Media storage. Avatars are written and read by this process only: the bucket
-	// is private and no client is ever handed a link to it (KNOT-ADR-028,
-	// KNOT-ADR-029). Building the client performs no I/O, so a server that starts
-	// while the object store is down still answers everything else, and the first
-	// upload is what reports that the store is unreachable.
-	mediaStorage, err := storage.NewS3Storage(
-		ctx,
-		cfg.S3Endpoint,
-		cfg.S3Region,
-		cfg.S3AccessKey,
-		cfg.S3SecretKey,
-		cfg.S3Bucket,
-	)
-	if err != nil {
-		return err
-	}
-
 	avatarHandler, err := httpapi.NewAvatarHandler(service, mediaStorage, logger)
 	if err != nil {
 		return err
@@ -254,7 +272,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, avatarHandler, authMiddleware, appinfo.Version, logger)
+	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, avatarHandler, storyMediaHandler, authMiddleware, appinfo.Version, logger)
 	if err != nil {
 		return err
 	}

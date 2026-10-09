@@ -1,9 +1,20 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import { User, describeError } from '../../api/client';
 import { RootedSignal, rootedApi } from '../../api/rooted';
+import { uploadAvatar } from '../../api/users';
+import MediaPickerSheet, { PickedMedia } from '../../components/MediaPickerSheet';
 import RootedBadge from '../../components/RootedBadge';
+import { API_BASE_URL } from '../../config/api';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type ProfileScreenProps = {
@@ -15,9 +26,29 @@ type ProfileScreenProps = {
   readonly currentUser: User;
   /** Called when the person wants to set or replace their Rooted signal. */
   readonly onSetRooted: () => void;
+  /** Called with the updated user after a successful avatar upload. */
+  readonly onUserUpdated: (user: User) => void;
   /** Called when the person returns to the previous screen. */
   readonly onBack: () => void;
 };
+
+/**
+ * The initials to show when a user has no avatar: the first letter of their first
+ * two words, upper-cased. Falls back to the email's first letter, then "?".
+ */
+function initialsFor(user: User): string {
+  const words = user.display_name
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word !== '');
+  if (words.length >= 2) {
+    return (words[0][0] + words[1][0]).toUpperCase();
+  }
+  if (words.length === 1) {
+    return words[0].slice(0, 2).toUpperCase();
+  }
+  return (user.email[0] ?? '?').toUpperCase();
+}
 
 /**
  * A person's profile: who they are, and where they are Rooted.
@@ -32,6 +63,7 @@ export default function ProfileScreen({
   token,
   currentUser,
   onSetRooted,
+  onUserUpdated,
   onBack,
 }: ProfileScreenProps): React.ReactElement {
   const isOwn = currentUser.id === userId;
@@ -39,6 +71,9 @@ export default function ProfileScreen({
   const [signals, setSignals] = useState<readonly RootedSignal[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [pickerVisible, setPickerVisible] = useState(false);
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | undefined>(undefined);
 
   const load = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -60,6 +95,29 @@ export default function ProfileScreen({
     void load();
   }, [load]);
 
+  /**
+   * Uploads the chosen image as the avatar. The response is the updated user, so
+   * the caller can re-render with the new URL without a second request.
+   */
+  const handleAvatarPicked = useCallback(
+    async (media: PickedMedia): Promise<void> => {
+      setAvatarError(undefined);
+      setUploadingAvatar(true);
+      try {
+        const updated = await uploadAvatar(media.uri, media.mimeType, token);
+        onUserUpdated(updated);
+      } catch (caught) {
+        setAvatarError(describeError(caught));
+      } finally {
+        setUploadingAvatar(false);
+      }
+    },
+    [onUserUpdated, token],
+  );
+
+  const avatarUri =
+    currentUser.avatar_url === '' ? undefined : `${API_BASE_URL}${currentUser.avatar_url}`;
+
   return (
     <ScrollView contentContainerStyle={styles.content}>
       <Pressable style={styles.link} onPress={onBack}>
@@ -68,8 +126,49 @@ export default function ProfileScreen({
 
       {isOwn ? (
         <>
+          <View style={styles.avatarRow}>
+            {avatarUri === undefined ? (
+              <View style={styles.avatarFallback}>
+                <Text style={styles.avatarInitials}>{initialsFor(currentUser)}</Text>
+              </View>
+            ) : (
+              <Image
+                style={styles.avatar}
+                source={{ uri: avatarUri }}
+                accessibilityLabel="your profile picture"
+              />
+            )}
+          </View>
           <Text style={styles.title}>{currentUser.display_name}</Text>
           <Text style={styles.meta}>{currentUser.email}</Text>
+
+          <Pressable
+            style={[styles.secondaryButton, uploadingAvatar ? styles.buttonDisabled : null]}
+            onPress={() => {
+              setAvatarError(undefined);
+              setPickerVisible(true);
+            }}
+            disabled={uploadingAvatar}
+          >
+            <Text style={styles.secondaryButtonText}>
+              {uploadingAvatar
+                ? 'Uploading…'
+                : currentUser.avatar_url === ''
+                  ? 'Add avatar'
+                  : 'Edit avatar'}
+            </Text>
+          </Pressable>
+          {avatarError !== undefined ? <Text style={styles.error}>{avatarError}</Text> : null}
+
+          <MediaPickerSheet
+            visible={pickerVisible}
+            allowVideo={false}
+            onClose={() => setPickerVisible(false)}
+            onPicked={(media) => {
+              void handleAvatarPicked(media);
+            }}
+            onError={setAvatarError}
+          />
         </>
       ) : (
         <Text style={styles.title}>Profile</Text>
@@ -105,6 +204,35 @@ export default function ProfileScreen({
 }
 
 const styles = StyleSheet.create({
+  avatar: {
+    borderColor: colors.border.default,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: 96,
+    width: 96,
+  },
+  avatarFallback: {
+    alignItems: 'center',
+    backgroundColor: colors.bg.surface,
+    borderColor: colors.border.default,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    height: 96,
+    justifyContent: 'center',
+    width: 96,
+  },
+  avatarInitials: {
+    color: colors.text.primary,
+    fontSize: fontSizes.xl,
+    fontWeight: fontWeights.bold,
+  },
+  avatarRow: {
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  buttonDisabled: {
+    opacity: 0.5,
+  },
   content: {
     backgroundColor: colors.bg.primary,
     padding: spacing.xl,
@@ -148,6 +276,19 @@ const styles = StyleSheet.create({
     color: colors.text.secondary,
     fontSize: fontSizes.sm,
     marginLeft: spacing.sm,
+  },
+  secondaryButton: {
+    alignItems: 'center',
+    borderColor: colors.border.default,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginTop: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  secondaryButtonText: {
+    color: colors.text.primary,
+    fontSize: fontSizes.base,
+    fontWeight: fontWeights.semiBold,
   },
   sectionTitle: {
     color: colors.text.primary,

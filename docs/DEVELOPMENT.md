@@ -100,7 +100,7 @@ writes objects (KNOT-ADR-028, KNOT-ADR-029).
 | S3 API              | `http://127.0.0.1:9000`                                            |
 | Web console         | `http://127.0.0.1:9001`                                            |
 | Bucket              | `knot-media` (`KNOT_S3_BUCKET`)                                     |
-| Object layout       | `avatars/<user id>/<uuid>.jpg`                                     |
+| Object layout       | Avatars: `avatars/<user id>/<uuid>.{jpg,png,webp}`. Story media: `story-media/<story id>/<uuid>.{jpg,png,webp,mp4,mov}` |
 | Data directory      | `/bitnami/minio/data` in the container, on the `knot_minio_data` named volume |
 | Credentials         | `KNOT_S3_ACCESS_KEY` / `KNOT_S3_SECRET_KEY`, which are the same values the container is given as `KNOT_MINIO_ROOT_USER` / `KNOT_MINIO_ROOT_PASSWORD` |
 | Health              | `curl -f http://127.0.0.1:9000/minio/health/live`                   |
@@ -128,6 +128,29 @@ curl -X POST http://localhost:8080/users/me/avatar \
 # Prove that an unknown user is a plain 404, not a store error
 curl -i http://localhost:8080/users/00000000-0000-4000-8000-000000000000/avatar
 ```
+
+Story media (KNOT-013) lands under the `story-media/` prefix, one folder per story. In the
+console (`http://127.0.0.1:9001`, sign in with the `.env` values) open the `knot-media`
+bucket and browse that prefix; with `mc`:
+
+```bash
+# Every story-media object, newest first
+docker compose -f infrastructure/docker/docker-compose.yml exec minio \
+  /opt/bitnami/minio-client/bin/mc ls --recursive local/knot-media/story-media/
+
+# Attach a small image to a story, then stream it back
+curl -X POST http://localhost:8080/stories/$KNOT_STORY_ID/media \
+  -H "Authorization: Bearer $KNOT_ACCESS_TOKEN" \
+  -F file=@photo.png -F source=camera
+
+# Range request: expect 206 with a Content-Range header
+curl -i -H 'Range: bytes=0-99' \
+  http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content
+```
+
+Deleting a media row does **not** remove the object from the bucket in the console view
+until the `DELETE` endpoint is called; a row and its object are removed together by
+`DELETE /stories/{id}/media/{mid}`.
 
 Because the data directory is on a named volume, `scripts/dev-down.sh` keeps every
 uploaded avatar and `scripts/dev-reset.sh` deletes it along with the databases.
@@ -234,6 +257,22 @@ installed by `npm install` and needs no key or configuration, but because it is 
 changed the native app: after pulling this change, run `npm install` and then **rebuild** —
 `npx react-native run-android` on Android (run `pod install` in `ios/` first on iOS). A Metro
 reload alone is not enough.
+
+**`react-native-image-picker`** and **`react-native-video`** (KNOT-013, KNOT-ADR-031) are the
+media modules: the picker covers camera and gallery for photos and videos, and the player
+streams story videos. Both are native, so after `npm install` the Android and iOS apps must be
+**rebuilt**, exactly like AsyncStorage. There are no keys to configure.
+
+Android camera note: the picker deliberately requires **no** `CAMERA` permission — declaring it
+would force a runtime permission request and a `SecurityException` if it were denied, which is
+why the app does not declare it. The only manifest change is a `<queries>` block for the
+Android 11+ capture intents (`IMAGE_CAPTURE`, `VIDEO_CAPTURE`), so the camera app stays
+resolvable. The gallery picker uses the Android Photo Picker and needs no storage permission.
+On iOS the picker needs `NSCameraUsageDescription`, `NSPhotoLibraryUsageDescription`, and
+`NSMicrophoneUsageDescription`, all declared in `ios/Knot/Info.plist`.
+
+Camera capture and video playback can only be exercised on a physical device — a simulator has
+no camera, and video playback needs an object the backend is actually serving.
 
 ### Mapbox setup
 

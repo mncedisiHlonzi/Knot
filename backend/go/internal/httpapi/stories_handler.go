@@ -32,22 +32,28 @@ type StoriesService interface {
 type StoriesHandler struct {
 	service StoriesService
 	rooted  RootedLookup
+	media   StoryMediaLookup
 	logger  *slog.Logger
 }
 
 // NewStoriesHandler returns a handler backed by service. The rooted lookup is used
-// to attach each author's inline Rooted summary to a story response.
-func NewStoriesHandler(service StoriesService, rooted RootedLookup, logger *slog.Logger) (*StoriesHandler, error) {
+// to attach each author's inline Rooted summary to a story response, and the media
+// lookup attaches the story's media (in full on the detail, as a single preview on
+// the feed).
+func NewStoriesHandler(service StoriesService, rooted RootedLookup, media StoryMediaLookup, logger *slog.Logger) (*StoriesHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a service")
 	}
 	if rooted == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a rooted lookup")
 	}
+	if media == nil {
+		return nil, fmt.Errorf("httpapi: stories handler requires a story media lookup")
+	}
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a logger")
 	}
-	return &StoriesHandler{service: service, rooted: rooted, logger: logger}, nil
+	return &StoriesHandler{service: service, rooted: rooted, media: media, logger: logger}, nil
 }
 
 // createStoryRequest is the POST /stories body.
@@ -90,6 +96,10 @@ type storyResponse struct {
 	// have none. It is a summary (place and duration only), attached at the HTTP
 	// layer; see KNOT-ADR-017.
 	AuthorRooted *rootedSummary `json:"author_rooted"`
+	// Media is the story's attached media, never null. On the story detail it is
+	// the full list in display order; on the feed it is a single-item preview (or
+	// an empty array) so a card can show a thumbnail.
+	Media []storyMediaResponse `json:"media"`
 }
 
 // storyEnvelope wraps a single story, so the response shape can gain sibling
@@ -152,6 +162,7 @@ func (h *StoriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	response := newStoryResponse(story)
 	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{story.AuthorID})[story.AuthorID]
+	response.Media = storyMediaForDetail(r.Context(), h.media, h.logger, story.ID)
 
 	writeJSON(w, http.StatusOK, storyEnvelope{Story: response})
 }
@@ -173,8 +184,17 @@ func (h *StoriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	items := make([]storyResponse, 0, len(page))
+	ids := make([]string, 0, len(page))
 	for _, story := range page {
 		items = append(items, newStoryResponse(story))
+		ids = append(ids, story.ID)
+	}
+
+	previews := storyMediaPreviews(r.Context(), h.media, h.logger, ids)
+	for i := range items {
+		if preview, ok := previews[items[i].ID]; ok {
+			items[i].Media = preview
+		}
 	}
 
 	writeJSON(w, http.StatusOK, listStoriesResponse{Stories: items, NextCursor: next})
@@ -237,9 +257,11 @@ func newStoryResponse(story stories.Story) storyResponse {
 	}
 
 	return storyResponse{
-		ID:                  story.ID,
-		AuthorID:            story.AuthorID,
-		RootVersionID:       story.RootVersionID,
+		ID:            story.ID,
+		AuthorID:      story.AuthorID,
+		RootVersionID: story.RootVersionID,
+		// Emit [] rather than null until the enrichment fills it in.
+		Media:               []storyMediaResponse{},
 		Pillar:              story.Pillar,
 		Language:            story.Language,
 		Title:               story.Title,

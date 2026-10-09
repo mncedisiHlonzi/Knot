@@ -154,6 +154,21 @@ export default function App(): React.ReactElement {
   }
 
   /**
+   * Replaces the session's user after a profile change (an avatar upload). The
+   * updated copy is written back to storage so it survives a restart.
+   */
+  function handleUserUpdated(user: User): void {
+    setSession((current) => {
+      if (current === null) {
+        return current;
+      }
+      const next: Session = { ...current, user };
+      void saveSession(next);
+      return next;
+    });
+  }
+
+  /**
    * Renders the active tab's screen.
    *
    * The session is passed in rather than read from state so the type checker can
@@ -184,6 +199,7 @@ export default function App(): React.ReactElement {
             token={current.accessToken}
             currentUser={current.user}
             onSetRooted={() => setOverlays((stack) => pushOverlay(stack, { name: 'rootedSetup' }))}
+            onUserUpdated={handleUserUpdated}
             onBack={() => setTab('feed')}
           />
         );
