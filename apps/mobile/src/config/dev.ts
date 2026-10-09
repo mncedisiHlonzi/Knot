@@ -1,3 +1,5 @@
+import { KNOT_MAPBOX_TOKEN as LOCAL_MAPBOX_TOKEN } from './secrets.local';
+
 /**
  * The backend URL for local development.
  *
@@ -21,3 +23,19 @@
  * To read the Mac's current Wi-Fi address:  ipconfig getifaddr en0
  */
 export const DEV_API_URL = 'http://10.27.80.173:8080';
+
+/**
+ * The Mapbox public access token (starts with `pk.`), used by the Discovery Map.
+ *
+ * The real value lives in `secrets.local.ts`, which is **gitignored** and must
+ * never be committed (KNOT-ADR-027); `secrets.example.ts` is the committed
+ * template to copy from. The committed `secrets.local.d.ts` declares the module
+ * so `npm run typecheck` still succeeds before the local file has been created —
+ * in that case Mapbox renders an invalid-token tile rather than crashing. See
+ * docs/DEVELOPMENT.md, "Local secrets setup (after cloning)".
+ *
+ * This is the *public* token, safe for client-side use. It is NOT the *secret*
+ * downloads token (`sk.`) that Gradle uses to fetch the Mapbox native SDK; that
+ * one lives in `~/.gradle/gradle.properties` and must never be committed.
+ */
+export const KNOT_MAPBOX_TOKEN = LOCAL_MAPBOX_TOKEN;

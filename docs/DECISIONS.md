@@ -486,9 +486,11 @@ Nothing stops a non-UUID string from being passed as an id at compile time; the 
 
 ## KNOT-ADR-022 — react-native-maps pinned to 1.14.0
 
+> **Superseded by KNOT-ADR-026.** The Discovery Map no longer uses `react-native-maps`; it uses Mapbox (`@rnmapbox/maps`).
+
 **Decision ID:** KNOT-ADR-022
 **Date:** 2026-10-08
-**Status:** Accepted
+**Status:** Superseded by KNOT-ADR-026
 
 **Context:** KNOT-008 (KNOT-ADR-018) added `react-native-maps` at `^1.29.11`. With the New Architecture disabled (KNOT-ADR-021), the Android build of `1.29.11` fails to compile: it uses `ViewManagerWithGeneratedInterface`, an API that only exists under the New Architecture, so its generated interfaces are not produced on the legacy architecture.
 
@@ -507,9 +509,11 @@ Nothing stops a non-UUID string from being passed as an id at compile time; the 
 
 ## KNOT-ADR-023 — OpenStreetMap tile provider for MVP
 
+> **Superseded by KNOT-ADR-026.** OSM's tile server returns an `x-blocked` header to anonymous clients and `react-native-maps` cannot send identifying headers, so its tiles never rendered; the map now uses Mapbox instead.
+
 **Decision ID:** KNOT-ADR-023
 **Date:** 2026-10-08
-**Status:** Accepted
+**Status:** Superseded by KNOT-ADR-026
 
 **Context:** `react-native-maps` on Android draws its basemap with the Google Maps SDK by default. Rendering it requires a Google Cloud project with a valid billing method and an API key, even for usage that stays inside the free tier. The founder has no billing-enabled Cloud account available, so the default basemap cannot render and the map shows no tiles.
 
@@ -563,3 +567,51 @@ Nothing stops a non-UUID string from being passed as an id at compile time; the 
 **Reason:** A stack is the smallest model that makes back correct and uniform — pop always reveals the previous screen, whether that is a tab or another overlay, so every screen's back action is the same function. It is pure array arithmetic, trivially testable, and adds no navigation dependency. Handling the Android hardware back button is part of the platform contract and was the concrete "stuck" bug.
 
 **Consequences:** Back targets are now derived from the stack rather than written per screen, so adding a screen means pushing it, not wiring a return path. There is still **no deep linking**, no per-tab navigation state, and no gesture or transition animation — the device back button and the on-screen "← Back" are the whole of back handling. The trigger to revisit is a flow the stack cannot express: a deep link into a nested screen, a real per-tab stack, or a modal that must survive a tab switch; at that point a router should supersede this ADR rather than be worked around. The four tab screens stay top-level. `CreateStoryScreen` and `ProfileScreen` also keep their pre-existing "Cancel"/"Back" affordances — those are tab-level actions, not overlay back navigation — and were left unchanged.
+
+---
+
+## KNOT-ADR-026 — The Discovery Map renders with Mapbox, not OSM
+
+**Decision ID:** KNOT-ADR-026
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** The Discovery Map has never rendered real tiles on Android. KNOT-008b drew OpenStreetMap raster tiles through react-native-maps' `UrlTile` (ADR-023), and KNOT-011 tried to force them to appear by disabling the Google base layer (`mapType="none"`) and ordering the overlay beneath the markers. Neither worked. The reason is outside our control: OpenStreetMap's tile server returns an `x-blocked` header to clients it cannot identify and expects an identifying `User-Agent`/`Referer`, while `react-native-maps` on Android fetches tiles through the platform SDK and exposes no way to set those headers. The screen showed an empty container (with a Google watermark) and no map, and every configuration avenue inside `react-native-maps` was exhausted.
+
+**Decision:** Render the map with **Mapbox** through **`@rnmapbox/maps`**, pinned to **10.2.10** — the newest release whose peer range (`react-native >=0.69`) covers the app's React Native 0.76 on the **legacy architecture** (10.3.0 moved to `>=0.79`). The map uses Mapbox's **public** access token (`pk.…`), which is safe to commit, and the Dark style so it sits on the navy canvas. `react-native-maps` is removed. The Android build fetches the native Mapbox SDK from Mapbox's Maven repository, which requires a **secret** downloads token (`sk.…`, scope `downloads:read`) held in the developer's user-level `~/.gradle/gradle.properties` and never committed. This **supersedes ADR-022 and ADR-023**.
+
+**Alternatives Considered:**
+1. **OSM through a WebView + Leaflet** — rejected. It would render, and it lets us set request headers, but a WebView map has worse gestures, no native annotation taps, and a second runtime inside the screen; it is a workaround, not a map.
+2. **Google Maps** — rejected. The Google Maps SDK for Android needs a billing-enabled Cloud project and an API key before a single tile renders, and the founder has no credit line available (the same reason ADR-023 originally avoided it).
+3. **MapTiler, Stadia, or Thunderforest raster tiles** — rejected. All are viable but have smaller free tiers and still ride on `UrlTile`, the component that could not send identifying headers in the first place; that is the exact failure being left behind.
+4. **No map** — rejected. The Discovery Map is a headline Phase 1 feature; removing it is a product decision, not a bug fix.
+5. **Re-enable the New Architecture to keep a newer `@rnmapbox/maps`** — rejected. That is ADR-021's NDK download, and 10.2.10 already supports the architecture we build.
+
+**Reason:** Mapbox ships a **native** map SDK, so rendering is done by the Mapbox engine using its own access token rather than by a tile overlay bolted onto the Google Maps SDK; the class of failure that produced the blank map cannot recur, because no `UrlTile` and no identifying-header problem are involved. `@rnmapbox/maps` is the maintained React Native binding for that SDK, and 10.2.10 matches both the React Native version and the architecture. A public client token keeps the setup honest: the only secret is a build-time downloads token that never enters the repository.
+
+**Consequences:** The app now depends on Mapbox. It needs a Mapbox account, and the free tier is **50,000 monthly active users** — generous for an MVP and a real ceiling to watch. The build needs a **secret** downloads token on each developer machine (`~/.gradle/gradle.properties`); without it Gradle cannot resolve `com.mapbox.maps:android`, so a new machine must be set up before its first Android build. The library logs a **deprecation warning** on the legacy architecture (it would prefer the New Architecture), so re-enabling that is a future driver — a reason to revisit ADR-021, not this one. Mapbox's logo and attribution are left enabled, as its terms require. The public token is **not** committed: it lives in the gitignored `src/config/secrets.local.ts` and `res/values/mapbox.xml`, copied from the committed `.example` templates (KNOT-ADR-027), and must be rotated in both local files if abused. `react-native-maps@1.14.0` (ADR-022) and the OSM tile provider (ADR-023) are superseded; their ADRs are kept for history. Replacing Mapbox later (MapLibre with self-hosted tiles, or Google Maps once billing exists) remains a contained change to one screen, because `DiscoveryMapScreen` still owns the whole map surface.
+
+---
+
+## KNOT-ADR-027 — Client-side configuration uses committed `.example` files and gitignored `.local` files
+
+**Decision ID:** KNOT-ADR-027
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** KNOT-011a committed a Mapbox **public** token (`pk.…`) directly into `apps/mobile/android/app/src/main/res/values/strings.xml` and `apps/mobile/src/config/dev.ts`. GitHub's Push Protection then blocked the push: its scanner cannot distinguish Mapbox's public (`pk.`) and secret (`sk.`) token formats, so it flagged both paths. The token was not a secret — public Mapbox tokens are designed to ship inside a client app — but a repository must not contain anything the scanner treats as a credential, or pushes stop working.
+
+**Decision:** Any client-side configuration that could be flagged as a token (public or secret) moves to a **gitignored** `.local` file, with a committed `.example` file beside it documenting the required shape. Developers copy `.example` → `.local` after cloning and fill in the real values. Concretely:
+- `apps/mobile/src/config/secrets.local.ts` (gitignored) ← `secrets.example.ts` (committed); a committed `secrets.local.d.ts` declares the module's type so TypeScript still compiles before the local file exists.
+- `apps/mobile/android/app/src/main/res/values/mapbox.xml` (gitignored) ← `apps/mobile/android/app/mapbox.example.xml` (committed); `strings.xml` no longer defines `mapbox_access_token`. The template sits **outside** the `res/` tree because Android compiles every XML file under `res/values/`, so an `.example` file there would define `mapbox_access_token` twice and fail the build with `Duplicate resources`.
+
+Both local paths are in `.gitignore`, and `docs/DEVELOPMENT.md`, "Local secrets setup (after cloning)", documents the copy step.
+
+**Alternatives Considered:**
+1. **Allow the push by marking the token a false positive** (GitHub's "allow this secret" / push-protection bypass) — rejected. It disables future protection at exactly those paths, so a real secret committed there later would pass.
+2. **Split the token across `strings.xml` and `dev.ts` so no single file matches the scanner** — rejected. It is fragile (the patterns change, and the pieces still reconstruct the token) and it hides the token shape instead of removing it from source control.
+3. **Server-side proxy for the token** — rejected. Mapbox's client token is designed for the client; a proxy adds a service, latency, and cost to solve a repository-hygiene problem.
+
+**Reason:** `.example` + gitignored `.local` is the standard, dependency-free way to keep real values out of git while giving every clone a working, self-documenting starting point. Plain TypeScript and Android XML are used rather than `.env` files because the bundler and Android's resource merger already understand them, so no loader or new dependency is introduced.
+
+**Consequences:** A fresh clone needs one manual step — create the two `.local` files from their `.example` templates — before the Android build or the Metro bundle will work. The committed `secrets.local.d.ts` keeps `npm run typecheck` green even before that step, so a missing file surfaces as a build/bundle error rather than a type error, which is where the remedy (copy the example) belongs. When mobile CI is added it must inject the token at build time (writing the `.local` files, or an equivalent), and that is a future task. The `.example` placeholders (`pk.REPLACE_WITH_YOUR_PUBLIC_MAPBOX_TOKEN`) are never valid tokens, so committing them cannot trip the scanner.

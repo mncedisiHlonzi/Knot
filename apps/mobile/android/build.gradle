@@ -6,6 +6,13 @@ buildscript {
         targetSdkVersion = 34
         //ndkVersion = "26.1.10909125"
         kotlinVersion = "1.9.25"
+        // @rnmapbox/maps reads this. This app builds the legacy architecture
+        // (newArchEnabled=false, KNOT-ADR-021) on React Native 0.76, which needs
+        // the pre-0.77 lifecycle API ("v25"). The library auto-detects the RN
+        // version and should choose v25 itself, but it falls back to the newer
+        // "v26" API when detection fails — which is wrong for RN < 0.78 — so it is
+        // pinned here. See docs/DECISIONS.md (KNOT-ADR-026).
+        RNMapboxMapsLifecycleCompat = "v25"
     }
     repositories {
         google()
@@ -19,3 +26,26 @@ buildscript {
 }
 
 apply plugin: "com.facebook.react.rootproject"
+
+allprojects {
+    repositories {
+        // Mapbox's native Maps SDK is not published to Maven Central; it is served
+        // from Mapbox's own Maven repository and requires HTTP Basic auth with a
+        // SECRET downloads token (scope `downloads:read`) as the password. That
+        // token must never be committed: it lives in the developer's user-level
+        // `~/.gradle/gradle.properties` as `MAPBOX_DOWNLOADS_TOKEN` and is read
+        // here through `project.properties`. Without it Gradle cannot resolve
+        // `com.mapbox.maps:android` and the Android build fails. See
+        // docs/DEVELOPMENT.md, "Mapbox setup".
+        maven {
+            url 'https://api.mapbox.com/downloads/v2/releases/maven'
+            authentication {
+                basic(BasicAuthentication)
+            }
+            credentials {
+                username = 'mapbox'
+                password = project.properties['MAPBOX_DOWNLOADS_TOKEN'] ?: ""
+            }
+        }
+    }
+}

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="mapbox_access_token">pk.REPLACE_WITH_YOUR_PUBLIC_MAPBOX_TOKEN</string>
+</resources>

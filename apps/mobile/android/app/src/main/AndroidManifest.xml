@@ -28,5 +28,13 @@
       <meta-data
         android:name="com.google.android.geo.API_KEY"
         android:value="@string/google_maps_api_key" />
+      <!-- Mapbox access token for the Discovery Map (KNOT-ADR-026). The value
+           comes from `@string/mapbox_access_token`, which is defined in the
+           gitignored `res/values/mapbox.xml` (KNOT-ADR-027) and is never
+           committed. The token is also set at runtime via
+           Mapbox.setAccessToken() in DiscoveryMapScreen. -->
+      <meta-data
+        android:name="com.mapbox.token"
+        android:value="@string/mapbox_access_token" />
     </application>
 </manifest>

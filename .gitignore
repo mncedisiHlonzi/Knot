@@ -5,6 +5,12 @@
 .env.*
 !.env.example
 
+# Local client-side secrets (KNOT-ADR-027): each is created locally by copying its
+# committed `.example` template, and is never committed. Only the `.example`
+# files and the `secrets.local.d.ts` type shim are tracked.
+apps/mobile/src/config/secrets.local.ts
+apps/mobile/android/app/src/main/res/values/mapbox.xml
+
 # ---------------------------------------------------------------------------
 # Node / JavaScript
 # ---------------------------------------------------------------------------

@@ -148,33 +148,95 @@ imported directly. Values that fall between the documented scale steps stay nume
 example a `paddingVertical: 10`), and `BRAND.md` remains the source of truth for every
 token value.
 
-### Native dependencies (react-native-maps, AsyncStorage)
+### Native dependencies (Mapbox, AsyncStorage)
 
-The Discovery Map uses **`react-native-maps`** (KNOT-008) — the first mobile dependency with a
-**native** component. The JavaScript layer (lint, typecheck, and Jest) runs with no native
+The Discovery Map uses **`@rnmapbox/maps`** (KNOT-011a, KNOT-ADR-026) — the app's first native
+**map** dependency. The JavaScript layer (lint, typecheck, and Jest) runs with no native
 build, so day-to-day work and CI are unaffected. The native projects are generated (KNOT-008a);
 these are the setup steps a native build needs:
 
+- **Android:** the native Mapbox SDK comes from Mapbox's own Maven repository and needs a
+  **secret** downloads token on the machine — see [Mapbox setup](#mapbox-setup) below. The map's
+  own access token is the **public** one and needs no extra step.
 - **iOS:** after `npm install`, run `cd apps/mobile/ios && pod install` before opening the
-  project in Xcode. Pods must be reinstalled whenever `react-native-maps` or React Native
+  project in Xcode. Pods must be reinstalled whenever `@rnmapbox/maps` or React Native
   itself changes.
-- **Android:** no API key is required. The map draws **OpenStreetMap** tiles through a `UrlTile`
-  component (KNOT-ADR-023), so the Google Maps SDK — and the billing-enabled Google Cloud
-  project and API key it would need — is not used. The `google_maps_api_key` placeholder in
-  `android/app/src/main/res/values/strings.xml` is left in place; it is unused by this path and
-  harmless.
 - The **native projects exist** (`apps/mobile/ios/` and `apps/mobile/android/`, added in
   KNOT-008a), so the map screen has a native host; see [Running the mobile app](#running-the-mobile-app)
   below.
 - The map resolves place names with a **local lookup table**
-  (`apps/mobile/src/data/placeCoordinates.ts`), not a geocoding service, so no key is needed at
-  all: neither to *use* the feature nor to render the basemap (OSM tiles need no key).
+  (`apps/mobile/src/data/placeCoordinates.ts`), not a geocoding service, so no geocoding key is
+  needed — only the Mapbox map token, which is a public client token.
 
 **`@react-native-async-storage/async-storage`** (KNOT-009) is the second native module. It is
 installed by `npm install` and needs no key or configuration, but because it is native it
 changed the native app: after pulling this change, run `npm install` and then **rebuild** —
 `npx react-native run-android` on Android (run `pod install` in `ios/` first on iOS). A Metro
 reload alone is not enough.
+
+### Mapbox setup
+
+The Discovery Map renders with Mapbox (KNOT-ADR-026). Two different tokens are involved, and
+they are easy to confuse:
+
+- **Public access token (`pk.…`)** — the token the app uses at runtime to draw tiles. Public
+  tokens are safe to ship inside a client app, but this one is **not committed**: it lives in
+  the gitignored local files `apps/mobile/src/config/secrets.local.ts` and
+  `apps/mobile/android/app/src/main/res/values/mapbox.xml` (KNOT-ADR-027). See
+  [Local secrets setup (after cloning)](#local-secrets-setup-after-cloning) below. If it is ever
+  abused, rotate it in the Mapbox console and update both local files.
+
+- **Secret downloads token (`sk.…`)** — used **only by Gradle** to download the native Mapbox
+  SDK from Mapbox's Maven repository. It is a credential and **must never be committed**. It
+  lives in the developer's user-level `~/.gradle/gradle.properties`:
+
+  ```properties
+  MAPBOX_DOWNLOADS_TOKEN=sk.xxxxxxxx.yyyyyyyy
+  ```
+
+  Create it in the Mapbox console with the **`downloads:read`** scope. `android/build.gradle`
+  reads it through `project.properties['MAPBOX_DOWNLOADS_TOKEN']` and uses it as the HTTP Basic
+  password for `https://api.mapbox.com/downloads/v2/releases/maven`.
+
+Without that secret token Gradle cannot resolve `com.mapbox.maps:android` and the Android build
+fails with a `Could not find com.mapbox.maps:android` error. The secret is a one-time,
+per-machine setup — it is not needed for lint, typecheck, Jest, or Metro. After this change, a
+first native build is `npm install` (to fetch `@rnmapbox/maps`) followed by
+`npx react-native run-android`.
+
+### Local secrets setup (after cloning)
+
+Two client-side config files hold the Mapbox **public** token. Neither is committed; each is
+created locally by copying its committed `.example` template and filling in the real value
+(KNOT-ADR-027). Run this once after cloning.
+
+| Create this local file (gitignored) | By copying this template (committed) |
+| --- | --- |
+| `apps/mobile/src/config/secrets.local.ts` | `apps/mobile/src/config/secrets.example.ts` |
+| `apps/mobile/android/app/src/main/res/values/mapbox.xml` | `apps/mobile/android/app/mapbox.example.xml` |
+
+```bash
+cd apps/mobile
+cp src/config/secrets.example.ts src/config/secrets.local.ts
+cp android/app/mapbox.example.xml android/app/src/main/res/values/mapbox.xml
+```
+
+Then replace `pk.REPLACE_WITH_YOUR_PUBLIC_MAPBOX_TOKEN` in **both** files with the public token
+from the Mapbox console (Account → Tokens). The two files must stay in sync.
+
+- **Never commit** either local file — both are in `.gitignore`. Only the `.example` templates
+  are tracked.
+- `apps/mobile/src/config/secrets.local.d.ts` **is** committed: it declares the local module's
+  shape so `npm run typecheck` still succeeds on a fresh clone before `secrets.local.ts` exists.
+  Metro (and the Android resource merger) still need the real files, so create them before
+  running `npm start` or `npx react-native run-android`.
+- These are deliberately plain TypeScript and Android XML rather than `.env` files: the bundler
+  and Android's resource merger already understand them, so no extra tooling or dependency is
+  needed.
+- The Android template lives at `apps/mobile/android/app/mapbox.example.xml`, **outside** the
+  `res/` tree on purpose: Android compiles every XML file under `res/values/`, so an `.example`
+  file placed there would define `mapbox_access_token` a second time and the build would fail
+  with `Duplicate resources`. Only the gitignored copy in `res/values/` is a real resource.
 
 ### Session persistence
 
@@ -197,7 +259,7 @@ successful login or register saves the session; signing out clears it.
 ### Running the mobile app
 
 The app is **bare React Native**, not Expo (KNOT-ADR-002): it has real `ios/` and `android/`
-projects and a native module (`react-native-maps`), so **Expo Go cannot run it**. A native build
+projects and native modules (`@rnmapbox/maps`, `@react-native-async-storage/async-storage`), so **Expo Go cannot run it**. A native build
 is required to see the app on a device or simulator.
 
 Prerequisites:
@@ -234,7 +296,7 @@ npx react-native run-ios        # or: npm run ios
 # open ios/Knot.xcworkspace
 ```
 
-`react-native-maps` is picked up by CocoaPods autolinking (`use_native_modules!` in
+`@rnmapbox/maps` is picked up by CocoaPods autolinking (`use_native_modules!` in
 `ios/Podfile`), so no extra Podfile entry is needed. `ios/Knot.xcworkspace` and
 `ios/Podfile.lock` are both generated by `pod install` and are git-ignored until the first
 successful build, after which the founder commits `Podfile.lock` deliberately.
@@ -246,11 +308,12 @@ cd apps/mobile
 npx react-native run-android    # or: npm run android
 ```
 
-No **Google Maps API key** is needed: the map renders **OpenStreetMap** tiles (KNOT-ADR-023), so
-`react-native-maps` does not use the Google Maps SDK. The committed `google_maps_api_key`
-placeholder in `android/app/src/main/res/values/strings.xml` (referenced from `AndroidManifest.xml`
-as `com.google.android.geo.API_KEY`) is left in place and unused. `android/local.properties`
-(which holds the SDK path) is git-ignored.
+The map renders with **Mapbox** (KNOT-ADR-026), so no **Google Maps API key** is needed; the
+committed `google_maps_api_key` placeholder and its `AndroidManifest.xml` meta-data are left in
+place but unused. Mapbox's **secret** downloads token must be present in
+`~/.gradle/gradle.properties` for the Android build to resolve the native SDK — see
+[Mapbox setup](#mapbox-setup). `android/local.properties` (which holds the SDK path) is
+git-ignored.
 
 For a **physical device**, see
 [Running the mobile app on Android (physical device)](#running-the-mobile-app-on-android-physical-device)
@@ -361,8 +424,9 @@ the app when it does; it is the only place to change.
 
 **Notes**
 
-- **No Google Maps API key is needed.** The map renders OpenStreetMap tiles through `UrlTile`
-  (KNOT-ADR-023); the Google Maps SDK and its billing requirement are not used.
+- **No Google Maps API key is needed.** The map renders with **Mapbox** (KNOT-ADR-026); the
+  Google Maps SDK and its billing requirement are not used. Mapbox's **secret** downloads token
+  must be in `~/.gradle/gradle.properties` for the build to resolve the native SDK.
 - **The New Architecture is disabled** (`newArchEnabled=false` in `android/gradle.properties`,
   KNOT-ADR-021). This is deliberate: it avoids the ~1.5 GB NDK download the New Architecture
   requires on Android. See ADR-021 for when to revisit it.

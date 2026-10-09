@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
-import MapView, { Marker, UrlTile } from 'react-native-maps';
+import Mapbox, { Camera, MapView, PointAnnotation } from '@rnmapbox/maps';
 
 import { describeError } from '../../api/client';
 import { PlaceCluster, discoveryApi } from '../../api/discovery';
 import { Pillar } from '../../api/stories';
+import { KNOT_MAPBOX_TOKEN } from '../../config/dev';
 import { coordinatesForPlace } from '../../data/placeCoordinates';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
@@ -23,13 +24,19 @@ const FILTERS: readonly { readonly value: PillarFilter; readonly label: string }
   { value: 'heritage', label: 'Heritage' },
 ];
 
-/** A world-scale starting region, so every plotted place is on screen. */
-const INITIAL_REGION = {
-  latitude: 10,
-  longitude: 10,
-  latitudeDelta: 120,
-  longitudeDelta: 120,
-};
+/**
+ * A world-scale starting camera, so every plotted place is on screen.
+ *
+ * Mapbox positions are `[longitude, latitude]` (GeoJSON order) — the opposite of
+ * the latitude/longitude object the previous react-native-maps screen used.
+ */
+const INITIAL_CENTER: [number, number] = [10, 10];
+const INITIAL_ZOOM = 1.2;
+
+// Mapbox needs its access token before any map mounts. Setting it once, at module
+// load, keeps it out of the component and off every render. The token is public
+// (see `config/dev.ts`).
+void Mapbox.setAccessToken(KNOT_MAPBOX_TOKEN);
 
 /**
  * Renders a story count with the right singular/plural noun.
@@ -41,7 +48,8 @@ function storyLabel(count: number): string {
 /**
  * Discovery, as a map.
  *
- * The server groups stories by place but stores no coordinates, so this screen
+ * The map is rendered natively with Mapbox (`@rnmapbox/maps`, KNOT-ADR-026). The
+ * server groups stories by place but stores no coordinates, so this screen
  * resolves each place to a point with a local lookup table
  * (`src/data/placeCoordinates.ts`). A place that is not in the table is not
  * plotted; it is listed below the map instead, so nothing is hidden.
@@ -105,51 +113,37 @@ export default function DiscoveryMapScreen({
       </View>
 
       {/*
-       * The map draws OpenStreetMap raster tiles rather than the platform's own
-       * basemap. On Android that basemap is the Google Maps SDK, which needs a
-       * billing-enabled Cloud project and an API key; OSM needs neither, which is
-       * what makes the map renderable for free at MVP scale (KNOT-ADR-023).
+       * The map is drawn natively with Mapbox (`@rnmapbox/maps`), superseding
+       * react-native-maps + OpenStreetMap (KNOT-ADR-026). OSM's tile server
+       * returns an `x-blocked` header to anonymous clients and react-native-maps
+       * cannot send identifying headers, so its tiles never rendered; Mapbox draws
+       * tiles from its own native SDK using an access token.
        *
-       * Why this is configured the way it is (KNOT-011):
-       *   - mapType="none" turns OFF the platform base layer. Without it, Android
-       *     drew the Google layer (the "Google" watermark, no real tiles) over the
-       *     top of the UrlTile overlay, so the screen showed an empty container.
-       *     With no base layer, the UrlTile is the only thing drawn.
-       *   - <UrlTile> is the LAST child and carries zIndex={-1}, so it sits beneath
-       *     the markers; some react-native-maps versions only paint a UrlTile that
-       *     is the final child of <MapView>.
-       *
-       * If tiles still do not render, diagnose in this order:
-       *   1. Watch Metro logs for network/fetch errors while this screen opens.
-       *   2. On a temporary debug screen, point a <UrlTile> at one hard-coded tile
-       *      URL to rule out the {z}/{x}/{y} template.
-       *   3. Confirm the tile server is reachable from this network:
-       *      curl -I https://tile.openstreetmap.org/0/0/0.png   (expect 200, image/png)
-       *   4. If a native raster overlay cannot be made to work, the fallback is a
-       *      WebView + Leaflet map — a separate future task, not this one.
+       * The token is the *public* one from `src/config/dev.ts`. The Dark style is
+       * used so the map sits on the app's navy canvas, and Mapbox's logo and
+       * attribution are left enabled (required by Mapbox's terms).
        */}
-      <MapView style={styles.map} initialRegion={INITIAL_REGION} mapType="none">
+      <MapView style={styles.map} styleURL={Mapbox.StyleURL.Dark}>
+        <Camera defaultSettings={{ centerCoordinate: INITIAL_CENTER, zoomLevel: INITIAL_ZOOM }} />
         {plotted.map((cluster) => {
           const coordinate = coordinatesForPlace(cluster.place);
           if (coordinate === undefined) {
             return null;
           }
           return (
-            <Marker
+            <PointAnnotation
               key={cluster.place}
-              coordinate={coordinate}
+              id={cluster.place}
+              coordinate={[coordinate.longitude, coordinate.latitude]}
               title={cluster.place}
-              description={storyLabel(cluster.story_count)}
-              onPress={() => onOpenPlace(cluster.place)}
-            />
+              onSelected={() => onOpenPlace(cluster.place)}
+            >
+              {/* PointAnnotation renders its child as the marker, so this is the
+                  pin: a brand-purple dot ringed in white to read on the dark map. */}
+              <View style={styles.marker} />
+            </PointAnnotation>
           );
         })}
-        <UrlTile
-          urlTemplate="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-          maximumZ={19}
-          tileSize={256}
-          zIndex={-1}
-        />
       </MapView>
 
       {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
@@ -235,6 +229,14 @@ const styles = StyleSheet.create({
     height: 280,
     marginTop: spacing.lg,
     width: '100%',
+  },
+  marker: {
+    backgroundColor: colors.brand.purple,
+    borderColor: colors.text.primary,
+    borderRadius: radius.pill,
+    borderWidth: 2,
+    height: 18,
+    width: 18,
   },
   placeMeta: {
     color: colors.text.secondary,
