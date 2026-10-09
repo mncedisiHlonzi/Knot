@@ -838,6 +838,61 @@ func TestGetBridgeStoreFailureIsWrapped(t *testing.T) {
 	}
 }
 
+func TestGetCommentReturnsStoreResult(t *testing.T) {
+	service, comments, _ := newTestService(t)
+	comments.getResult = Comment{
+		ID:        sourceCommentID,
+		VersionID: versionID,
+		StoryID:   storyID,
+		AuthorID:  authorID,
+		Language:  "en",
+		Body:      "The first rain remembers every name.",
+	}
+
+	comment, err := service.GetComment(context.Background(), sourceCommentID)
+	if err != nil {
+		t.Fatalf("GetComment() error = %v, want nil", err)
+	}
+	if comment.ID != sourceCommentID || comment.VersionID != versionID || comment.StoryID != storyID {
+		t.Errorf("comment = %+v, want the stored comment with its story resolved", comment)
+	}
+}
+
+func TestGetCommentMalformedIdIsNotFoundWithoutQueryingTheStore(t *testing.T) {
+	service, comments, _ := newTestService(t)
+
+	_, err := service.GetComment(context.Background(), "not-a-uuid")
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("errors.Is(err, ErrNotFound) = false, want true (err = %v)", err)
+	}
+	if comments.getCalls != 0 {
+		t.Errorf("store received %d get calls, want 0 — a malformed id cannot match a row", comments.getCalls)
+	}
+}
+
+func TestGetCommentNotFound(t *testing.T) {
+	service, comments, _ := newTestService(t)
+	comments.getErr = ErrNotFound
+
+	_, err := service.GetComment(context.Background(), sourceCommentID)
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("errors.Is(err, ErrNotFound) = false, want true (err = %v)", err)
+	}
+}
+
+func TestGetCommentStoreFailureIsWrapped(t *testing.T) {
+	service, comments, _ := newTestService(t)
+	comments.getErr = errors.New("connection reset")
+
+	_, err := service.GetComment(context.Background(), sourceCommentID)
+	if err == nil {
+		t.Fatal("GetComment() error = nil, want the store error")
+	}
+	if errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want an infrastructure error rather than not-found", err)
+	}
+}
+
 func TestListBridgesForComment(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, BackHandler, SafeAreaView, StyleSheet, View } from 'react-native';
 
 import type { AuthResponse, User } from './src/api/client';
-import type { Comment } from './src/api/conversations';
+import { conversationsApi, type Comment } from './src/api/conversations';
 import type { Notification } from './src/api/notifications';
 import type { Story } from './src/api/stories';
 import { versionsApi } from './src/api/versions';
@@ -229,26 +229,54 @@ export default function App(): React.ReactElement {
   /**
    * Opens what a notification points at.
    *
-   * Only a version can be resolved on the client: `GET /versions/{id}` also names
-   * the story, so a tap lands on that story's detail screen. A comment or a bridge
-   * carries an id the API does not resolve to a version (there is no "get comment
-   * by id" route), so those notifications are marked read and open nothing rather
-   * than pretending to navigate (KNOT-ADR-039).
+   * Each entity type resolves to a screen over one or two public GETs:
+   *
+   *   version.created  GET /versions/{id}                 -> the story detail
+   *   comment.created  GET /comments/{id}                 -> the comment's thread
+   *   bridge.created   GET /bridges/{id}, then the source -> the source's thread
+   *                    comment with GET /comments/{id}
+   *
+   * `GET /comments/{id}` names both the version and the story, so a resolved
+   * comment opens CommentThreadScreen with no further lookup. The read marker is
+   * written by the inbox before this runs, so this method only navigates.
+   * Content that can no longer be read (deleted, offline) simply does not open;
+   * the inbox stays where it is.
    */
   function handleOpenNotification(notification: Notification): void {
-    if (notification.entity_type !== 'version') {
-      return;
-    }
-
     void (async () => {
       try {
-        const { version } = await versionsApi.getVersion(notification.entity_id);
-        setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId: version.story_id }));
+        switch (notification.entity_type) {
+          case 'version': {
+            const { version } = await versionsApi.getVersion(notification.entity_id);
+            setOverlays((stack) =>
+              pushOverlay(stack, { name: 'detail', storyId: version.story_id }),
+            );
+            return;
+          }
+          case 'comment': {
+            const { comment } = await conversationsApi.getComment(notification.entity_id);
+            openCommentThread(comment.version_id, comment.story_id);
+            return;
+          }
+          case 'bridge': {
+            const { bridge } = await conversationsApi.getBridge(notification.entity_id);
+            const { comment } = await conversationsApi.getComment(bridge.source_comment_id);
+            openCommentThread(comment.version_id, comment.story_id);
+            return;
+          }
+          default:
+            // A notification the inbox does not produce today has nowhere to go.
+            return;
+        }
       } catch {
-        // A version that can no longer be read (a deleted story, an offline
-        // device) simply does not open; the inbox stays where it is.
+        // A version, comment, or bridge that can no longer be read does not open.
       }
     })();
+  }
+
+  /** Pushes the comment thread for a resolved version, over the inbox. */
+  function openCommentThread(versionId: string, storyId: string): void {
+    setOverlays((stack) => pushOverlay(stack, { name: 'comments', storyId, versionId }));
   }
 
   /**

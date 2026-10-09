@@ -17,6 +17,7 @@ import (
 // keeps handler tests free of a database.
 type ConversationsService interface {
 	CreateComment(ctx context.Context, in conversations.CreateCommentInput) (conversations.Comment, error)
+	GetComment(ctx context.Context, id string) (conversations.Comment, error)
 	ListComments(ctx context.Context, versionID string, rawCursor string, limit int) ([]conversations.Comment, string, error)
 	CreateBridge(ctx context.Context, in conversations.CreateBridgeInput) (conversations.Bridge, conversations.Comment, conversations.Comment, error)
 	GetBridge(ctx context.Context, id string) (conversations.Bridge, error)
@@ -84,6 +85,28 @@ type commentResponse struct {
 // fields later without breaking clients.
 type commentEnvelope struct {
 	Comment commentResponse `json:"comment"`
+}
+
+// commentDetailResponse is the GET /comments/{id} projection of a comment. It is
+// a separate type from commentResponse for two reasons: it carries story_id, the
+// story the comment's version belongs to, which the service resolves so a client
+// can open the comment's thread without a second lookup; and it deliberately
+// omits author_rooted, because a notification already names the actor and this
+// route exists to resolve an id rather than to render a profile (KNOT-015a).
+type commentDetailResponse struct {
+	ID        string    `json:"id"`
+	VersionID string    `json:"version_id"`
+	StoryID   string    `json:"story_id"`
+	AuthorID  string    `json:"author_id"`
+	Language  string    `json:"language"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// commentDetailEnvelope wraps a single resolved comment.
+type commentDetailEnvelope struct {
+	Comment commentDetailResponse `json:"comment"`
 }
 
 // commentListResponse is the GET /versions/{id}/comments body. NextCursor is the
@@ -271,6 +294,21 @@ func (h *ConversationsHandler) GetBridge(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, bridgeEnvelope{Bridge: response})
 }
 
+// GetComment handles GET /comments/{id}. The route is public.
+//
+// It resolves a comment id to the comment, its version, and its story, so a
+// notification tap can open the comment's thread. It is the only comment route
+// that requires the version's story to be resolved, hence its own response type.
+func (h *ConversationsHandler) GetComment(w http.ResponseWriter, r *http.Request) {
+	comment, err := h.service.GetComment(r.Context(), r.PathValue("id"))
+	if err != nil {
+		h.writeServiceError(w, r, err, "comment not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, commentDetailEnvelope{Comment: newCommentDetailResponse(comment)})
+}
+
 // parseCommentsLimit reads the optional "limit" query parameter.
 //
 // An absent limit means DefaultListLimit. A limit above MaxListLimit is clamped
@@ -325,6 +363,22 @@ func newCommentResponse(comment conversations.Comment) commentResponse {
 	return commentResponse{
 		ID:        comment.ID,
 		VersionID: comment.VersionID,
+		AuthorID:  comment.AuthorID,
+		Language:  comment.Language,
+		Body:      comment.Body,
+		CreatedAt: comment.CreatedAt,
+		UpdatedAt: comment.UpdatedAt,
+	}
+}
+
+// newCommentDetailResponse projects a resolved comment onto the wire format. It
+// carries the story id the service resolved, which the thread and list
+// projections do not.
+func newCommentDetailResponse(comment conversations.Comment) commentDetailResponse {
+	return commentDetailResponse{
+		ID:        comment.ID,
+		VersionID: comment.VersionID,
+		StoryID:   comment.StoryID,
 		AuthorID:  comment.AuthorID,
 		Language:  comment.Language,
 		Body:      comment.Body,

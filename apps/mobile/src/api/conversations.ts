@@ -37,6 +37,21 @@ export type CommentResponse = {
   readonly comment: Comment;
 };
 
+/**
+ * A comment as returned by `GET /comments/{id}`: the comment plus the id of the
+ * story its version belongs to. The list and create responses carry no
+ * `story_id`, because only a caller resolving a single comment needs to name the
+ * thread's story.
+ */
+export type CommentDetail = Comment & {
+  readonly story_id: string;
+};
+
+/** The body returned by GET /comments/{id}. */
+export type CommentDetailResponse = {
+  readonly comment: CommentDetail;
+};
+
 /** The body returned by GET /versions/{id}/comments. */
 export type CommentListResponse = {
   readonly comments: readonly Comment[];
@@ -136,6 +151,15 @@ export const conversationsApi = {
       `/versions/${encodeURIComponent(versionId)}/comments${threadQuery(options)}`,
       { method: 'GET' },
     );
+  },
+
+  /**
+   * GET /comments/{id} — resolves one comment, naming its version and story. It
+   * is how a notification that points at a comment finds the thread to open.
+   * Public.
+   */
+  getComment(id: string): Promise<CommentDetailResponse> {
+    return request<CommentDetailResponse>(`/comments/${encodeURIComponent(id)}`, { method: 'GET' });
   },
 
   /**

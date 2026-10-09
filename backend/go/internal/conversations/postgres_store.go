@@ -74,7 +74,12 @@ func (s *PostgresStore) CreateComment(ctx context.Context, comment Comment) (Com
 	return created, nil
 }
 
-// GetComment returns the comment with the given id, or ErrNotFound.
+// GetComment returns the comment with the given id, or ErrNotFound, together
+// with the id of the story its version belongs to (Comment.StoryID).
+//
+// A comment row does not name its story — its version does — so the story is
+// resolved by joining story_versions in the same query. The join cannot drop a
+// row: comments.version_id is a foreign key, so every comment has a version.
 //
 // A malformed id is treated as not-found rather than as a database error, which
 // keeps the id column's index usable instead of casting it to text in SQL.
@@ -83,9 +88,13 @@ func (s *PostgresStore) GetComment(ctx context.Context, id string) (Comment, err
 		return Comment{}, ErrNotFound
 	}
 
-	const query = `SELECT ` + commentColumns + ` FROM comments WHERE id = $1`
+	const query = `
+		SELECT c.id, c.version_id, c.author_id, c.language, c.body, c.created_at, c.updated_at, v.story_id
+		FROM comments c
+		JOIN story_versions v ON v.id = c.version_id
+		WHERE c.id = $1`
 
-	comment, err := scanComment(s.pool.QueryRow(ctx, query, id))
+	comment, err := scanCommentWithStory(s.pool.QueryRow(ctx, query, id))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Comment{}, ErrNotFound
@@ -399,6 +408,29 @@ func scanComment(row rowScanner) (Comment, error) {
 		&comment.Body,
 		&comment.CreatedAt,
 		&comment.UpdatedAt,
+	)
+	if err != nil {
+		return Comment{}, err
+	}
+
+	return comment, nil
+}
+
+// scanCommentWithStory reads one row of GetComment's join (the comment columns
+// plus the story id of the comment's version) into a Comment with StoryID set.
+// It returns the driver error unwrapped so callers can classify it.
+func scanCommentWithStory(row rowScanner) (Comment, error) {
+	var comment Comment
+
+	err := row.Scan(
+		&comment.ID,
+		&comment.VersionID,
+		&comment.AuthorID,
+		&comment.Language,
+		&comment.Body,
+		&comment.CreatedAt,
+		&comment.UpdatedAt,
+		&comment.StoryID,
 	)
 	if err != nil {
 		return Comment{}, err

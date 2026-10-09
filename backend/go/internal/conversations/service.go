@@ -219,6 +219,32 @@ func (s *Service) GetBridge(ctx context.Context, id string) (Bridge, error) {
 	return bridge, nil
 }
 
+// GetComment returns a single comment by id, with the id of the story its version
+// belongs to resolved (Comment.StoryID).
+//
+// It is how a notification tap resolves a comment id to the thread it belongs to:
+// the version and the story come back together, so the client needs no second
+// lookup.
+//
+// An id that is not canonical UUID text is reported as ErrNotFound rather than as
+// a validation error: the resource genuinely does not exist, and answering 404
+// keeps the id column's index usable instead of casting it to text in SQL.
+func (s *Service) GetComment(ctx context.Context, id string) (Comment, error) {
+	if !isUUID(id) {
+		return Comment{}, ErrNotFound
+	}
+
+	comment, err := s.comments.GetComment(ctx, id)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return Comment{}, ErrNotFound
+		}
+		return Comment{}, fmt.Errorf("conversations: get comment: %w", err)
+	}
+
+	return comment, nil
+}
+
 // ListBridgesForComment returns every bridge in which the comment is the source
 // or the target. A comment that does not exist is reported as ErrNotFound.
 func (s *Service) ListBridgesForComment(ctx context.Context, commentID string) ([]Bridge, error) {

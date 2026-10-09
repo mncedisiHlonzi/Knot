@@ -179,7 +179,7 @@ func TestPostgresStoreCreateCommentRoundTripAndGet(t *testing.T) {
 	env := integrationSetup(t)
 	ctx := context.Background()
 
-	_, versionID := newIntegrationStory(t, env, "comment")
+	storyID, versionID := newIntegrationStory(t, env, "comment")
 
 	created, err := env.store.CreateComment(ctx, Comment{
 		VersionID: versionID,
@@ -207,6 +207,12 @@ func TestPostgresStoreCreateCommentRoundTripAndGet(t *testing.T) {
 	}
 	if fetched.ID != created.ID || fetched.Body != created.Body || fetched.Language != created.Language {
 		t.Errorf("fetched = %+v, want it to match the created comment %+v", fetched, created)
+	}
+	// GetComment resolves the comment's version's story, which the comment row
+	// does not store, so a notification tap can open the thread without a second
+	// lookup.
+	if fetched.StoryID != storyID {
+		t.Errorf("fetched story id = %q, want %q (the version's story)", fetched.StoryID, storyID)
 	}
 }
 

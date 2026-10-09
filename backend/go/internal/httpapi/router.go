@@ -124,6 +124,7 @@ func (r *Router) Handler() http.Handler {
 	// Commenting and bridging require an access token; reading is open.
 	mux.HandleFunc("POST /versions/{id}/comments", r.authMiddleware.Require(r.conversations.CreateComment))
 	mux.HandleFunc("GET /versions/{id}/comments", r.conversations.ListComments)
+	mux.HandleFunc("GET /comments/{id}", r.conversations.GetComment)
 	mux.HandleFunc("POST /comments/{id}/bridges", r.authMiddleware.Require(r.conversations.CreateBridge))
 	mux.HandleFunc("GET /comments/{id}/bridges", r.conversations.ListBridges)
 	mux.HandleFunc("GET /bridges/{id}", r.conversations.GetBridge)

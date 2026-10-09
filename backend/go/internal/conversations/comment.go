@@ -97,6 +97,11 @@ type Comment struct {
 	ID string
 	// VersionID is the story version the comment is attached to.
 	VersionID string
+	// StoryID is the story the comment's version belongs to. A comment row does
+	// not store it — its version does — so it is resolved on demand by
+	// GetComment, which joins the version. CreateComment and ListComments leave
+	// it empty because the thread and create responses do not need it.
+	StoryID string
 	// AuthorID is the user who wrote the comment.
 	AuthorID string
 	// Language is the tag of the language the comment is written in.
@@ -131,7 +136,9 @@ type CommentStore interface {
 	// CreateComment inserts comment and returns the stored row. It returns
 	// ErrNotFound when the version the comment names does not exist.
 	CreateComment(ctx context.Context, comment Comment) (Comment, error)
-	// GetComment returns the comment with the given id, or ErrNotFound.
+	// GetComment returns the comment with the given id, or ErrNotFound. The
+	// returned comment also names the story its version belongs to (StoryID), so
+	// a caller can open the comment's thread without a second lookup.
 	GetComment(ctx context.Context, id string) (Comment, error)
 	// ListComments returns at most limit comments of one version, newest first,
 	// starting after cursor (nil starts at the newest). The returned cursor

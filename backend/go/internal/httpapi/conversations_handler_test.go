@@ -35,6 +35,9 @@ type fakeConversationsService struct {
 	listCommentsNext   string
 	listCommentsErr    error
 
+	getCommentResult conversations.Comment
+	getCommentErr    error
+
 	createBridgeBridge conversations.Bridge
 	createBridgeSource conversations.Comment
 	createBridgeTarget conversations.Comment
@@ -49,6 +52,10 @@ type fakeConversationsService struct {
 
 func (f *fakeConversationsService) CreateComment(_ context.Context, _ conversations.CreateCommentInput) (conversations.Comment, error) {
 	return f.createCommentResult, f.createCommentErr
+}
+
+func (f *fakeConversationsService) GetComment(_ context.Context, _ string) (conversations.Comment, error) {
+	return f.getCommentResult, f.getCommentErr
 }
 
 func (f *fakeConversationsService) ListComments(_ context.Context, _ string, _ string, _ int) ([]conversations.Comment, string, error) {
@@ -156,6 +163,11 @@ func (m *memoryConversationsStore) CreateComment(_ context.Context, comment conv
 func (m *memoryConversationsStore) GetComment(_ context.Context, id string) (conversations.Comment, error) {
 	for _, comment := range m.comments {
 		if comment.ID == id {
+			// Resolve the story the comment's version belongs to, exactly as the
+			// SQL store's JOIN does, so GET /comments/{id} can name it.
+			if version, ok := m.versionMeta[comment.VersionID]; ok {
+				comment.StoryID = version.storyID
+			}
 			return comment, nil
 		}
 	}
@@ -960,6 +972,67 @@ func TestGetBridgeUnexpectedFailureIsInternalError(t *testing.T) {
 	handler := newConversationsHandlerWithService(t, &fakeConversationsService{getBridgeErr: errors.New("connection reset")})
 
 	recorder := doStoryRequest(handler, http.MethodGet, "/bridges/"+testBridgeID, "", "")
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusInternalServerError)
+	}
+	if code := decodedErrorCode(t, recorder); code != codeInternal {
+		t.Errorf("error code = %q, want %q", code, codeInternal)
+	}
+}
+
+func TestGetCommentHappyPath(t *testing.T) {
+	store := newMemoryConversationsStore()
+	store.seedComment(englishComment())
+	handler := newConversationsHandler(t, store)
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/comments/"+testSourceCommentID, "", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body commentDetailEnvelope
+	decodeBody(t, recorder, &body)
+
+	if body.Comment.ID != testSourceCommentID {
+		t.Errorf("id = %q, want %q", body.Comment.ID, testSourceCommentID)
+	}
+	if body.Comment.VersionID != testVersionID {
+		t.Errorf("version id = %q, want %q", body.Comment.VersionID, testVersionID)
+	}
+	if body.Comment.StoryID != testStoryID {
+		t.Errorf("story id = %q, want %q (the version's story)", body.Comment.StoryID, testStoryID)
+	}
+}
+
+func TestGetCommentNotFound(t *testing.T) {
+	handler := newConversationsHandler(t, newMemoryConversationsStore())
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/comments/"+testSourceCommentID, "", "")
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+	}
+	if code := decodedErrorCode(t, recorder); code != codeNotFound {
+		t.Errorf("error code = %q, want %q", code, codeNotFound)
+	}
+}
+
+func TestGetCommentMalformedIDIsNotFound(t *testing.T) {
+	handler := newConversationsHandler(t, newMemoryConversationsStore())
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/comments/not-a-uuid", "", "")
+
+	if recorder.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+	}
+}
+
+func TestGetCommentUnexpectedFailureIsInternalError(t *testing.T) {
+	handler := newConversationsHandlerWithService(t, &fakeConversationsService{getCommentErr: errors.New("connection reset")})
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/comments/"+testSourceCommentID, "", "")
 
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusInternalServerError)

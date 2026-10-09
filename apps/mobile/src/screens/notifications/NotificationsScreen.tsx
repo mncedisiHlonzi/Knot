@@ -34,13 +34,13 @@ type NotificationsScreenProps = {
 /**
  * The entity types a notification can open.
  *
- * Only a version can be opened from the id the inbox carries: the API serves
- * `GET /versions/{id}`, which also names the story, so a tap can land on the story
- * behind it. A comment or a bridge id does not resolve to a version on the client
- * today (there is no "get comment by id" route), so those rows are marked read and
- * listed without a chevron rather than pretending to navigate.
+ * Each resolves to a screen over public GETs: a version names its story
+ * (`GET /versions/{id}`); a comment names its version and story
+ * (`GET /comments/{id}`); a bridge names its source comment, which resolves the
+ * same way. A version tap lands on the story detail, while a comment or a bridge
+ * lands on the comment's thread.
  */
-const OPENABLE_ENTITY_TYPES: readonly NotificationEntityType[] = ['version'];
+const OPENABLE_ENTITY_TYPES: readonly NotificationEntityType[] = ['version', 'comment', 'bridge'];
 
 /** Builds the absolute URL for an actor's avatar, or undefined when they have none. */
 function avatarSource(avatarUrl: string): { uri: string } | undefined {

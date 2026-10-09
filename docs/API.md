@@ -588,6 +588,7 @@ conversations rather than adding to one. See KNOT-ADR-014 in
 | ------------------------------ | -------- | ---------------------------------------- |
 | `POST /versions/{id}/comments` | `Bearer` | Comment on a version                      |
 | `GET /versions/{id}/comments`  | public   | Read a version's comments, newest first    |
+| `GET /comments/{id}`           | public   | Resolve one comment, with its story        |
 | `POST /comments/{id}/bridges`  | `Bearer` | Bridge a comment into another language     |
 | `GET /comments/{id}/bridges`   | public   | Bridges touching a comment                 |
 | `GET /bridges/{id}`            | public   | Read one bridge                            |
@@ -665,6 +666,37 @@ posted between two requests neither shifts nor repeats a page.
 
 **Errors:** `400 validation_error` (an unreadable `cursor`, or a `limit` that is not a
 positive integer), `404 not_found` (the version does not exist, or its id is not a UUID),
+`500 internal_error`.
+
+### GET /comments/{id}
+
+Resolves a comment id to the comment, its version, and its story. It exists so a
+notification that points at a comment can open that comment's thread without a
+second lookup.
+
+Returns **200** with:
+
+```json
+{
+  "comment": {
+    "id": "66666666-6666-4666-8666-666666666666",
+    "version_id": "44444444-4444-4444-8444-444444444444",
+    "story_id": "33333333-3333-4333-8333-333333333333",
+    "author_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
+    "language": "en",
+    "body": "The first rain remembers every name.",
+    "created_at": "2026-10-08T18:26:37.134182+02:00",
+    "updated_at": "2026-10-08T18:26:37.134182+02:00"
+  }
+}
+```
+
+`story_id` is the story the comment's version belongs to. A comment row does not
+store it, so the server resolves it from the version. Unlike the list and create
+responses, this projection carries no `author_rooted`: the caller already knows the
+actor (a notification names them), and this route exists to resolve an id.
+
+**Errors:** `404 not_found` (no such comment, or the id is not a UUID),
 `500 internal_error`.
 
 ### POST /comments/{id}/bridges
