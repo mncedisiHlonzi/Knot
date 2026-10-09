@@ -615,3 +615,55 @@ Both local paths are in `.gitignore`, and `docs/DEVELOPMENT.md`, "Local secrets 
 **Reason:** `.example` + gitignored `.local` is the standard, dependency-free way to keep real values out of git while giving every clone a working, self-documenting starting point. Plain TypeScript and Android XML are used rather than `.env` files because the bundler and Android's resource merger already understand them, so no loader or new dependency is introduced.
 
 **Consequences:** A fresh clone needs one manual step — create the two `.local` files from their `.example` templates — before the Android build or the Metro bundle will work. The committed `secrets.local.d.ts` keeps `npm run typecheck` green even before that step, so a missing file surfaces as a build/bundle error rather than a type error, which is where the remedy (copy the example) belongs. When mobile CI is added it must inject the token at build time (writing the `.local` files, or an equivalent), and that is a future task. The `.example` placeholders (`pk.REPLACE_WITH_YOUR_PUBLIC_MAPBOX_TOKEN`) are never valid tokens, so committing them cannot trip the scanner.
+
+## KNOT-ADR-028 — MinIO provides object storage for local development
+
+**Decision ID:** KNOT-ADR-028
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** KNOT-012 adds avatars, which are the first thing Knot stores that is not a row in PostgreSQL. Local development already runs PostgreSQL and Redis as containers declared in `infrastructure/docker/docker-compose.yml` (KNOT-007 era), so a developer needs no cloud account and no credentials to run the whole product. Object storage had to fit that pattern, and it had to be reachable by the backend through an S3-compatible API so the storage code is the same code that a hosted provider would use.
+
+**Decision:** `infrastructure/docker/docker-compose.yml` gains a `minio` service:
+- Host ports **9000** (S3 API) and **9001** (web console), matching the brief, with a `knot_minio_data` volume so objects survive a restart.
+- Root credentials come from `.env` (`KNOT_MINIO_ROOT_USER`, `KNOT_MINIO_ROOT_PASSWORD`) and are the same values the backend uses (`KNOT_S3_ACCESS_KEY`, `KNOT_S3_SECRET_KEY`), so there is one local credential pair, not two.
+- The media bucket (`KNOT_S3_BUCKET`, default `knot-media`) is created on first start through `MINIO_DEFAULT_BUCKETS`.
+- The healthcheck is an HTTP GET on `/minio/health/live`, so `docker ps` reports readiness the same way it does for PostgreSQL and Redis.
+
+**Image substitution.** The brief pinned `minio/minio`, which can no longer be pulled: MinIO withdrew its Docker Hub repository, so the Hub API answers `object not found`; `quay.io/minio/minio` answers `401 UNAUTHORIZED`; `bitnami/minio` has no published tags. The service therefore uses **`bitnamilegacy/minio:2025.7.23-debian-12-r5`** — the last Bitnami-published MinIO build, pinned exactly, and genuine MinIO rather than a substitute implementation. The compose file carries a comment saying why, so the deviation is visible at the point of use and not only here.
+
+**Alternatives Considered:**
+1. **Filesystem storage behind the `storage.Storage` interface** — rejected. It is the smallest possible change, but it would mean the S3 client, the endpoint configuration, and the path-style addressing were untested until a production store appeared, which is the point at which they are hardest to get right.
+2. **A hosted S3-compatible service (AWS S3, Cloudflare R2, Backblaze B2)** — rejected for local development. It makes running the product depend on network access, an account, and credentials that must be distributed to every developer.
+3. **Store avatar bytes in PostgreSQL (`bytea`)** — rejected. It works, and it would avoid a service, but it puts binary blobs in the same database as the query workload, and it teaches the codebase a storage shape that is wrong for every other kind of media the product will add.
+4. **`minio/minio` by digest from a mirror or an unofficial tag** — rejected. Pinning a digest whose origin cannot be verified trades one supply-chain risk for a worse one.
+
+**Reason:** A local, S3-compatible, credential-free-for-the-developer object store is exactly the shape the backend needs, and it is the shape the deployed product will use. Running the same code path locally as in production is worth an extra container. The image substitution is the only deviation and it is pinned, documented, and still MinIO.
+
+**Consequences:** `scripts/dev-up.sh` starts one more container, and a developer needs roughly another 200 MB of images and disk. The local root credentials are in `.env` and are deliberately weak; they are for a loopback-only service and must not be reused anywhere real. The substituted image differs from upstream in two details that compose now compensates for: the server's data directory is `/bitnami/minio/data` rather than `/data` (mounting the wrong one looks healthy while silently losing every object on the next container recreation), and `mc` is installed off `PATH`. The core MinIO project's own images are unreachable today, so the pinned legacy Bitnami image is a temporary dependency that should be revisited when MinIO publishes a pullable image again — the compose file names the pinned tag in one place, so that change is one line. Versioning, lifecycle rules, and object locking are not configured: this is local development storage, and the deployed choice of object store is a separate decision that has not been made yet.
+
+## KNOT-ADR-029 — Uploads and downloads are mediated by the backend
+
+**Decision ID:** KNOT-ADR-029
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** KNOT-012 needs a client to upload an avatar and every client to read one. The object store offers two obvious shortcuts: give the client a presigned URL that talks to the store directly, or make the bucket public so an object URL can simply be linked. Both remove the backend from the byte path. The task had to decide whether to take either.
+
+**Decision:** The backend is the only party that talks to the object store. The bucket stays private and no presigned URL, public bucket, CDN, or store hostname is ever exposed:
+- **Upload:** `POST /users/me/avatar` (`Bearer`), `multipart/form-data`, field `file`; at most **5 MiB**; the format is decided by **sniffing the uploaded bytes**, and only JPEG, PNG, and WebP are accepted.
+- **Object key:** `avatars/{user_id}/{random UUID}.{ext}`, minted by the backend. The handler passes it to the identity service, which refuses any key that is not a single object directly inside the caller's own prefix, so a bug in the HTTP layer cannot repoint another account's avatar.
+- **Storage:** `users.avatar_url` holds that **object key**, not a URL. The column name is pinned, but the value has to be the key, because the object name ends in a random UUID and cannot be derived from a fixed path.
+- **Download:** `GET /users/{id}/avatar` (public) streams the bytes with the stored `Content-Type`, `Cache-Control: public, max-age=3600`, and `X-Content-Type-Options: nosniff`.
+- **Wire format:** API responses never contain the key. `avatar_url` is `/users/{id}/avatar?v=<object name>`, so replacing an avatar yields a different URL and a cache keyed on the old one is not reused. Image resizing, moderation, and non-avatar media are out of scope.
+
+**Alternatives Considered:**
+1. **Presigned `PUT` for upload and presigned `GET` for download** — rejected. It hands a client a signed credential for a bucket, which means the bucket must be reachable from the internet and must answer CORS; the bytes land without the backend ever seeing them, so format and size are unenforceable; and revocation is per-URL and effectively impossible, since a signed URL is valid until it expires. It also makes the object store's hostname part of the client's contract.
+2. **Public bucket with plain object URLs** — rejected. There is no authorization at all: anyone who learns a key reads the object, and "the key contains a UUID" is obscurity, not access control. It also means an avatar cannot later be made private without a migration and a client change.
+3. **Return `/users/{id}/avatar` and derive the key from the path** — rejected. It reads better, but the object name must be unique per upload to avoid overwriting bytes an in-flight response is still serving, and a unique name cannot be derived from a constant path. The `v` parameter gives the same readability without losing the uniqueness.
+4. **Store avatar bytes in the database** — rejected for the same reason as in KNOT-ADR-028.
+
+**Reason:** Mediating every byte keeps one authorization check, one format check, and one size check in a place the backend controls, and it keeps the storage hostname out of the client contract entirely. The cost is that the API process carries avatar traffic, which at MVP scale is small and, more importantly, is not the forever-shape of the system: the same backend-mediated path is what lets a CDN or a presigned `GET` be introduced later without changing the wire format clients already use.
+
+**Consequences:** Avatar bandwidth and CPU run through the API process; if that ever becomes the bottleneck, the fix is to introduce a cache in front of `GET /users/{id}/avatar`, not to expose the bucket. Storing a key in a column named `avatar_url` is a small, permanent wart that has to be explained wherever the schema is read, which is why `docs/DATA_MODEL.md` says so at the column. Replacing an avatar deletes the previous object best-effort: if that deletion fails, the result is an orphaned object rather than a broken profile, and nothing currently sweeps orphans. The `storage.Storage` interface keeps the store swappable — a hosted S3 in production is a configuration change plus a bucket policy, not a handler change. Because the object key is not derived from anything public, a schema rollback (`0007` down) drops the column and intentionally leaves the objects in place rather than destroying user data.
+

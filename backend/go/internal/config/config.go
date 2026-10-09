@@ -32,6 +32,11 @@ const (
 	envKeyHTTPPort    = "KNOT_HTTP_PORT"
 	envKeyJWTSecret   = "KNOT_JWT_SECRET"
 	envKeyLogLevel    = "KNOT_LOG_LEVEL"
+	envKeyS3Endpoint  = "KNOT_S3_ENDPOINT"
+	envKeyS3Region    = "KNOT_S3_REGION"
+	envKeyS3AccessKey = "KNOT_S3_ACCESS_KEY"
+	envKeyS3SecretKey = "KNOT_S3_SECRET_KEY"
+	envKeyS3Bucket    = "KNOT_S3_BUCKET"
 )
 
 // Safe local defaults. These are placeholders that match .env.example and the
@@ -42,6 +47,15 @@ const (
 	defaultRedisAddr   = "localhost:6379"
 	defaultHTTPPort    = 8080
 	defaultLogLevel    = LogLevelInfo
+
+	// Local object storage: the MinIO container's published S3 port and its
+	// placeholder credentials (KNOT-ADR-028). These are local-only, exactly like
+	// the Postgres and Redis defaults above.
+	defaultS3Endpoint  = "http://127.0.0.1:9000"
+	defaultS3Region    = "us-east-1"
+	defaultS3AccessKey = "knot"
+	defaultS3SecretKey = "knot_local_only_change_me"
+	defaultS3Bucket    = "knot-media"
 )
 
 // LocalJWTSecretPlaceholder is the documented local-only signing secret. It is
@@ -79,6 +93,21 @@ type Config struct {
 	JWTSecret string
 	// LogLevel is the minimum level the structured logger emits.
 	LogLevel string
+
+	// S3Endpoint is the base URL of the S3-compatible object store that holds
+	// media. Locally this is the MinIO container published on the host
+	// (KNOT-ADR-028); in production it is the equivalent managed service.
+	S3Endpoint string
+	// S3Region is the signing region. MinIO ignores it, but the AWS SDK requires
+	// one and a real bucket has a real region.
+	S3Region string
+	// S3AccessKey is the object store's access key id.
+	S3AccessKey string
+	// S3SecretKey is the object store's secret access key. It is never logged and
+	// never serialised (Config has no String method).
+	S3SecretKey string
+	// S3Bucket is the bucket media objects are written to.
+	S3Bucket string
 }
 
 // Load reads configuration from the process environment.
@@ -86,11 +115,14 @@ type Config struct {
 // Rules:
 //   - KNOT_ENV unset or empty resolves to "local".
 //   - In "local", missing values fall back to safe local defaults and a missing
-//     JWT secret becomes LocalJWTSecretPlaceholder. Callers should check
-//     UsingInsecureJWTSecret and warn.
+//     JWT secret becomes LocalJWTSecretPlaceholder. Object storage falls back to
+//     the local MinIO container's endpoint and placeholder credentials. Callers
+//     should check UsingInsecureJWTSecret and warn.
 //   - In "ci", "test", or any other environment name, KNOT_POSTGRES_DSN,
 //     KNOT_REDIS_ADDR, and KNOT_JWT_SECRET are required, and the JWT secret must
-//     be at least MinJWTSecretBytes long. Load fails fast, naming every problem.
+//     be at least MinJWTSecretBytes long. KNOT_S3_ENDPOINT, KNOT_S3_ACCESS_KEY,
+//     and KNOT_S3_SECRET_KEY are required too: outside local there is no default
+//     object store to fall back to. Load fails fast, naming every problem.
 //   - KNOT_HTTP_PORT and KNOT_LOG_LEVEL must be valid when set.
 //
 // Load performs no I/O beyond reading environment variables.
@@ -112,6 +144,11 @@ func Load() (Config, error) {
 		HTTPPort:    httpPort,
 		JWTSecret:   strings.TrimSpace(os.Getenv(envKeyJWTSecret)),
 		LogLevel:    logLevel,
+		S3Endpoint:  strings.TrimSpace(os.Getenv(envKeyS3Endpoint)),
+		S3Region:    strings.TrimSpace(os.Getenv(envKeyS3Region)),
+		S3AccessKey: strings.TrimSpace(os.Getenv(envKeyS3AccessKey)),
+		S3SecretKey: strings.TrimSpace(os.Getenv(envKeyS3SecretKey)),
+		S3Bucket:    strings.TrimSpace(os.Getenv(envKeyS3Bucket)),
 	}
 
 	if cfg.Env == EnvLocal {
@@ -123,6 +160,21 @@ func Load() (Config, error) {
 		}
 		if cfg.JWTSecret == "" {
 			cfg.JWTSecret = LocalJWTSecretPlaceholder
+		}
+		if cfg.S3Endpoint == "" {
+			cfg.S3Endpoint = defaultS3Endpoint
+		}
+		if cfg.S3Region == "" {
+			cfg.S3Region = defaultS3Region
+		}
+		if cfg.S3AccessKey == "" {
+			cfg.S3AccessKey = defaultS3AccessKey
+		}
+		if cfg.S3SecretKey == "" {
+			cfg.S3SecretKey = defaultS3SecretKey
+		}
+		if cfg.S3Bucket == "" {
+			cfg.S3Bucket = defaultS3Bucket
 		}
 		return cfg, nil
 	}
@@ -136,6 +188,18 @@ func Load() (Config, error) {
 	}
 	if cfg.JWTSecret == "" {
 		missing = append(missing, envKeyJWTSecret)
+	}
+	// Object storage has no default outside local: a ci or test run must be told
+	// exactly which store it is writing to and with which credentials. Region and
+	// bucket keep their defaults (us-east-1, knot-media) in every environment.
+	if cfg.S3Endpoint == "" {
+		missing = append(missing, envKeyS3Endpoint)
+	}
+	if cfg.S3AccessKey == "" {
+		missing = append(missing, envKeyS3AccessKey)
+	}
+	if cfg.S3SecretKey == "" {
+		missing = append(missing, envKeyS3SecretKey)
 	}
 	if len(missing) > 0 {
 		return Config{}, fmt.Errorf(

@@ -7,6 +7,8 @@ foundation and early Phase 1.
 - Base URL: `http://localhost:8080` (see `KNOT_HTTP_PORT` and `KNOT_API_URL`).
 - All request and response bodies are JSON, sent with `Content-Type: application/json`.
 - Request bodies are limited to **1 MiB**. Unknown fields are **rejected**.
+- The one exception is `POST /users/me/avatar`, which takes `multipart/form-data` and is
+  limited to **5 MiB** (see [Avatars](#avatars)).
 - Every request is logged with a request id. Send `X-Request-ID` to correlate your own
   logs; the server echoes it back, and generates one when it is absent.
 
@@ -23,13 +25,14 @@ Every error uses the same envelope:
 | Status | `code`              | Meaning                                              |
 | ------ | ------------------- | ---------------------------------------------------- |
 | 400    | `validation_error`  | A field failed validation; `message` names the field  |
-| 400    | `invalid_request`   | Body is not a single valid JSON object, or has unknown fields |
+| 400    | `invalid_request`   | Body is not a single valid JSON object, or has unknown fields; or an avatar upload is not `multipart/form-data` with a `file` field |
 | 401    | `invalid_credentials` | Login failed. Deliberately identical for a wrong password and an unknown email |
 | 401    | `unauthorized`      | A protected route was called without a valid access token. Identical for a missing, malformed, expired, or wrong-type token |
-| 404    | `not_found`         | The requested resource (story, version, comment, bridge, or user) does not exist, or its id is not a UUID |
+| 404    | `not_found`         | The requested resource (story, version, comment, bridge, user, or avatar) does not exist, or its id is not a UUID |
 | 405    | *(empty body)*      | Method not allowed for that path                     |
 | 409    | `email_taken`       | That email is already registered                     |
-| 413    | `request_too_large` | Body exceeded 1 MiB                                  |
+| 413    | `request_too_large` | Body exceeded 1 MiB, or an avatar exceeded 5 MiB     |
+| 415    | `unsupported_media_type` | The uploaded avatar is not a JPEG, PNG, or WebP  |
 | 500    | `internal_error`    | Something failed server-side. No internal detail is returned |
 
 ## GET /health
@@ -82,7 +85,8 @@ Creates an account and returns a token pair.
     "preferred_languages": ["en", "fr"],
     "approximate_location": "Cape Town",
     "phone": "+27000000000",
-    "created_at": "2026-10-07T18:26:37.134182+02:00"
+    "created_at": "2026-10-07T18:26:37.134182+02:00",
+    "avatar_url": ""
   },
   "access_token": "<jwt>",
   "refresh_token": "<jwt>",
@@ -91,6 +95,22 @@ Creates an account and returns a token pair.
 ```
 
 The response never contains a password or a password hash.
+
+### The user object
+
+Register, login, and the avatar upload all return the same projection, so a client has
+one profile shape to parse.
+
+| Field                  | Type            | Notes                                                                    |
+| ---------------------- | --------------- | ------------------------------------------------------------------------ |
+| `id`                   | string (UUID)   |                                                                          |
+| `email`                | string          | Stored lower-cased                                                       |
+| `display_name`         | string          |                                                                          |
+| `preferred_languages`  | array of string | Always an array, never `null`                                            |
+| `approximate_location` | string          | `""` when unset                                                          |
+| `phone`                | string          | `""` when unset                                                          |
+| `created_at`           | string          | RFC3339                                                                  |
+| `avatar_url`           | string          | Path on this API, or `""` when the user has no avatar. Never a link to object storage — see [Avatars](#avatars) |
 
 **Errors:** `400 validation_error`, `400 invalid_request`, `409 email_taken`,
 `413 request_too_large`, `500 internal_error`.
@@ -116,8 +136,9 @@ identical message, so the endpoint cannot be used to discover which accounts exi
 ## Authentication
 
 `POST /stories`, `POST /stories/{id}/adapt`, `POST /versions/{id}/comments`,
-`POST /comments/{id}/bridges`, `POST /users/me/rooted`, and `GET /users/me/rooted` are
-protected routes. Every other route is public and needs no credentials.
+`POST /comments/{id}/bridges`, `POST /users/me/rooted`, `GET /users/me/rooted`, and
+`POST /users/me/avatar` are protected routes. Every other route is public and needs no
+credentials.
 
 A protected route requires an access token in the standard header:
 
@@ -130,6 +151,71 @@ refresh token presented as an access token is rejected. Every failure — no hea
 wrong scheme, an expired token, a foreign signature, a refresh token — returns the same
 `401 unauthorized` response, because the client's remedy is identical in each case and a
 distinguishable answer would confirm guesses about the token.
+
+## Avatars
+
+A user's profile image. The bytes live in object storage, but they are **only ever read
+and written by the backend**: no presigned URL is issued, no bucket is public, and
+`avatar_url` is a path on this API rather than a link to a store (KNOT-ADR-028,
+KNOT-ADR-029).
+
+| Route                    | Auth     | Purpose                            |
+| ------------------------ | -------- | ---------------------------------- |
+| `POST /users/me/avatar`  | `Bearer` | Upload or replace your own avatar   |
+| `GET /users/{id}/avatar` | public   | Fetch a user's avatar image         |
+
+### POST /users/me/avatar
+
+`Content-Type: multipart/form-data`, with the image in a field named **`file`**. The
+owner comes from the access token, never from the request, so one account can never write
+into another account's namespace.
+
+| Constraint | Rule                                                                        |
+| ---------- | --------------------------------------------------------------------------- |
+| Size       | At most **5 MiB**                                                            |
+| Format     | JPEG, PNG, or WebP. The type is decided by inspecting the bytes, not by the `Content-Type` you declare, so a mislabelled file is rejected rather than reflected back |
+| Body       | Must be `multipart/form-data` carrying a `file` field                        |
+
+Replacing an avatar stores a new object and deletes the previous one, so a user never
+accumulates avatars. The path is stable and only the `v` parameter changes: a client that
+strips the query string still reaches the current avatar, and a cache keyed on the old URL
+is simply not reused.
+
+**200**
+
+```json
+{
+  "user": {
+    "id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
+    "email": "ada@example.com",
+    "display_name": "Ada Lovelace",
+    "preferred_languages": ["en"],
+    "approximate_location": "Cape Town",
+    "phone": "+27000000000",
+    "created_at": "2026-10-07T18:26:37.134182+02:00",
+    "avatar_url": "/users/7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8/avatar?v=0f8b1c2d-9e34-4a7b-8c5d-1a2b3c4d5e6f.png"
+  }
+}
+```
+
+The body is the same user projection that register and login return, so a client does not
+need a second request to learn the new URL.
+
+**Errors:** `400 invalid_request` (not multipart, or no `file` field), `401 unauthorized`,
+`404 not_found` (the token's subject is not a user), `413 request_too_large`,
+`415 unsupported_media_type`, `500 internal_error`.
+
+### GET /users/{id}/avatar
+
+Serves the image bytes with the stored `Content-Type` and
+`Cache-Control: public, max-age=3600`. The query string is ignored: it exists so a
+replaced avatar gets a fresh URL and caches keyed on the old one are not reused.
+
+A user with no avatar, a user that does not exist, and a row whose object is missing all
+return the same `404 not_found`. They are deliberately indistinguishable, so this endpoint
+cannot be used to test whether an account exists.
+
+**Errors:** `404 not_found`, `500 internal_error`.
 
 ## Stories
 

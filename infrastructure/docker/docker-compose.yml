@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 # Knot — local development infrastructure.
 #
-# Scope: PostgreSQL + Redis for LOCAL DEVELOPMENT ONLY.
+# Scope: PostgreSQL + Redis + MinIO for LOCAL DEVELOPMENT ONLY.
 #
 #   * There is deliberately NO application service in this file. During local
 #     development the mobile app and the Go backend run on the host, and they
@@ -66,11 +66,54 @@ services:
       retries: 10
       start_period: 5s
 
+  # MinIO is the local S3-compatible object store for media (KNOT-ADR-028).
+  # The backend runs on the host and talks to it over the host-mapped S3 port; no
+  # application service lives here, exactly like Postgres and Redis.
+  #
+  # Image provenance: MinIO withdrew its own Docker Hub repository (`minio/minio`)
+  # and now serves community images from quay.io behind authentication, so this
+  # pins the same MinIO server as packaged by Bitnami's archived `bitnamilegacy`
+  # namespace — an anonymously pullable MinIO. It is LOCAL DEVELOPMENT ONLY.
+  # If you have registry access to MinIO's own image, swap the image line for
+  # `minio/minio:<release>`; nothing else here or in the backend depends on it.
+  minio:
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+    container_name: knot-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${KNOT_MINIO_ROOT_USER:-knot}
+      MINIO_ROOT_PASSWORD: ${KNOT_MINIO_ROOT_PASSWORD:-knot_local_only_change_me}
+      # Creates the bucket on first start, so the backend never needs
+      # bucket-management permissions. On a different MinIO image, create it with
+      # `mc mb local/${KNOT_S3_BUCKET:-knot-media}`.
+      MINIO_DEFAULT_BUCKETS: ${KNOT_S3_BUCKET:-knot-media}
+    ports:
+      # Local-only binding: host 127.0.0.1 -> container 9000 (S3 API) and 9001 (console).
+      - "127.0.0.1:${KNOT_MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${KNOT_MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      # The mount path is image-specific and must match the server's data
+      # directory, or objects are written into the container's writable layer and
+      # vanish when it is recreated. This image starts
+      #   minio server --certs-dir /certs --console-address :9001 --address :9000 /bitnami/minio/data
+      # so its data directory is /bitnami/minio/data. `minio/minio` uses /data.
+      - knot_minio_data:/bitnami/minio/data
+    networks:
+      - knot
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
 volumes:
   knot_postgres_data:
     name: knot_postgres_data
   knot_redis_data:
     name: knot_redis_data
+  knot_minio_data:
+    name: knot_minio_data
 
 networks:
   knot:

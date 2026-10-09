@@ -21,4 +21,9 @@ type UserStore interface {
 	// It is not used by Register or Login yet; it exists because verifying a JWT
 	// subject requires a way to resolve a user id, which the next task needs.
 	FindUserByID(ctx context.Context, id string) (*User, error)
+
+	// UpdateAvatarURL stores the object key of the user's current avatar and
+	// returns the stored row, including the refreshed updated_at. Passing ""
+	// clears the avatar. It returns ErrUserNotFound when no such user exists.
+	UpdateAvatarURL(ctx context.Context, userID, avatarURL string) (*User, error)
 }

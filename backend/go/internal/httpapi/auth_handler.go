@@ -77,6 +77,11 @@ type userResponse struct {
 	ApproximateLocation string    `json:"approximate_location"`
 	Phone               string    `json:"phone"`
 	CreatedAt           time.Time `json:"created_at"`
+	// AvatarURL is the path on this API that serves the user's avatar, or "" when
+	// the user has none. It is never a link to object storage: the bucket is
+	// private and every byte reaches the client through this backend
+	// (KNOT-ADR-029).
+	AvatarURL string `json:"avatar_url"`
 }
 
 // authResponse is returned by both register and login.
@@ -175,25 +180,39 @@ func (h *AuthHandler) writeDecodeError(w http.ResponseWriter, r *http.Request, e
 
 // newAuthResponse projects a domain result onto the wire format.
 func newAuthResponse(result *identity.AuthResult) authResponse {
-	languages := result.User.PreferredLanguages
+	return authResponse{
+		User:         newUserResponse(result.User),
+		AccessToken:  result.Tokens.AccessToken,
+		RefreshToken: result.Tokens.RefreshToken,
+		ExpiresIn:    result.Tokens.ExpiresIn,
+	}
+}
+
+// newUserResponse projects a domain user onto the wire format.
+//
+// PreferredLanguages is always an array, never null. AvatarURL is translated
+// from the stored object key into the path this API serves it from, so the key
+// never leaves the server.
+func newUserResponse(user *identity.User) userResponse {
+	if user == nil {
+		return userResponse{PreferredLanguages: []string{}}
+	}
+
+	languages := user.PreferredLanguages
 	if languages == nil {
 		// Emit [] rather than null for an empty list.
 		languages = []string{}
 	}
 
-	return authResponse{
-		User: userResponse{
-			ID:                  result.User.ID,
-			Email:               result.User.Email,
-			DisplayName:         result.User.DisplayName,
-			PreferredLanguages:  languages,
-			ApproximateLocation: result.User.ApproximateLocation,
-			Phone:               result.User.Phone,
-			CreatedAt:           result.User.CreatedAt,
-		},
-		AccessToken:  result.Tokens.AccessToken,
-		RefreshToken: result.Tokens.RefreshToken,
-		ExpiresIn:    result.Tokens.ExpiresIn,
+	return userResponse{
+		ID:                  user.ID,
+		Email:               user.Email,
+		DisplayName:         user.DisplayName,
+		PreferredLanguages:  languages,
+		ApproximateLocation: user.ApproximateLocation,
+		Phone:               user.Phone,
+		CreatedAt:           user.CreatedAt,
+		AvatarURL:           avatarPathFor(user),
 	}
 }
 

@@ -41,13 +41,14 @@ type Router struct {
 	conversations  *ConversationsHandler
 	rooted         *RootedHandler
 	discovery      *DiscoveryHandler
+	avatar         *AvatarHandler
 	authMiddleware *AuthMiddleware
 	version        string
 	logger         *slog.Logger
 }
 
 // NewRouter returns the root handler for the API.
-func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
+func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, avatarHandler *AvatarHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
 	if auth == nil {
 		return nil, errNilHandler("auth")
 	}
@@ -66,6 +67,9 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 	if discoveryHandler == nil {
 		return nil, errNilHandler("discovery")
 	}
+	if avatarHandler == nil {
+		return nil, errNilHandler("avatar")
+	}
 	if authMiddleware == nil {
 		return nil, errNilHandler("auth middleware")
 	}
@@ -79,6 +83,7 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 		conversations:  conversationsHandler,
 		rooted:         rootedHandler,
 		discovery:      discoveryHandler,
+		avatar:         avatarHandler,
 		authMiddleware: authMiddleware,
 		version:        version,
 		logger:         logger,
@@ -126,6 +131,13 @@ func (r *Router) Handler() http.Handler {
 	// "Cape%20Town" and reach the handler with "Cape Town".
 	mux.HandleFunc("GET /discovery/clusters", r.discovery.Clusters)
 	mux.HandleFunc("GET /discovery/places/{place}", r.discovery.PlaceStories)
+
+	// Avatars: a user's profile image. Uploading requires an access token;
+	// reading is open, because an avatar is part of a public profile. The bytes
+	// are proxied by this backend, so the object store is never reachable from a
+	// client and its bucket can stay private.
+	mux.HandleFunc("POST /users/me/avatar", r.authMiddleware.Require(r.avatar.Upload))
+	mux.HandleFunc("GET /users/{id}/avatar", r.avatar.Get)
 
 	return withRequestID(withRequestLogging(r.logger, withRecover(r.logger, mux)))
 }

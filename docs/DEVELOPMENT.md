@@ -9,11 +9,11 @@ How to set up and run the Knot foundation locally.
 | Node.js        | 24                 | 20      | Mobile tooling and package manager              |
 | npm            | Bundled with Node.js | (from Node.js) | The only package manager used          |
 | Go             | 1.27               | 1.22    | Backend; `backend/go/go.mod` declares `go 1.22`  |
-| Docker Desktop | Any recent version | n/a     | Local PostgreSQL + Redis only (Docker Compose)  |
+| Docker Desktop | Any recent version | n/a     | Local PostgreSQL + Redis + MinIO only (Docker Compose) |
 | Git            | Any recent version | n/a     | Version control                                 |
 | actionlint     | Optional           | 1.7.7   | Lints `.github/workflows/`; pinned in CI        |
 
-Docker is required **only** for local PostgreSQL and Redis. The mobile app and the Go
+Docker is required **only** for local PostgreSQL, Redis, and MinIO. The mobile app and the Go
 backend always run on the host — there is deliberately no application container.
 
 ### Version drift — read this before trusting the pins
@@ -37,26 +37,28 @@ knot/
 ├── apps/mobile/            React Native + TypeScript app
 ├── backend/go/             Go modular monolith
 ├── docs/                   Documentation
-├── infrastructure/docker/  Local Docker Compose definitions (Postgres + Redis)
+├── infrastructure/docker/  Local Docker Compose definitions (Postgres + Redis + MinIO)
 ├── scripts/                Developer scripts (dev-up / dev-down / dev-reset)
 └── ...                     Placeholder directories (see README.md)
 ```
 
-## Local infrastructure (PostgreSQL + Redis)
+## Local infrastructure (PostgreSQL + Redis + MinIO)
 
-Local PostgreSQL and Redis run in Docker via
+Local PostgreSQL, Redis, and MinIO run in Docker via
 `infrastructure/docker/docker-compose.yml`. That file contains **no application
 service** — the mobile app and the Go backend run on the host and reach the containers
 over `localhost`.
 
 - Images are pinned to specific minor versions (`postgres:16.4-alpine`,
-  `redis:7.4.0-alpine`). `latest` is never used.
+  `redis:7.4.0-alpine`, and a pinned MinIO tag — see below). `latest` is never used.
 - Ports bind to `127.0.0.1` only, so nothing is exposed to your network.
 - **PostgreSQL is published on host port `5433`, not the default `5432`.** This avoids a
   clash with any Postgres already installed on the developer's machine. Only the *host*
-  mapping changed — the container's internal port is still `5432`. Redis stays on `6379`.
+  mapping changed — the container's internal port is still `5432`. Redis stays on `6379`,
+  and MinIO stays on `9000`/`9001`.
   Override the host port with `KNOT_POSTGRES_PORT` if `5433` is also taken.
-- Data lives in the named volumes `knot_postgres_data` and `knot_redis_data`.
+- Data lives in the named volumes `knot_postgres_data`, `knot_redis_data`, and
+  `knot_minio_data`.
 - The CI "Services smoke" job uses the **same pinned versions**, so local and CI do not
   drift apart.
 
@@ -64,12 +66,12 @@ over `localhost`.
 
 | Script                 | What it does                                                       |
 | ---------------------- | ------------------------------------------------------------------ |
-| `scripts/dev-up.sh`    | Start PostgreSQL + Redis. Idempotent — safe to re-run.              |
+| `scripts/dev-up.sh`    | Start PostgreSQL + Redis + MinIO. Idempotent — safe to re-run.      |
 | `scripts/dev-down.sh`  | Stop them. **Named volumes are preserved**, so data survives.       |
 | `scripts/dev-reset.sh` | Stop them and **delete** the named volumes. Destructive.            |
 
 ```bash
-scripts/dev-up.sh             # start Postgres + Redis
+scripts/dev-up.sh             # start Postgres + Redis + MinIO
 scripts/dev-down.sh           # stop, keep data
 scripts/dev-reset.sh          # wipe all local data — prompts for confirmation
 scripts/dev-reset.sh --yes    # wipe all local data without a prompt
@@ -86,6 +88,65 @@ docker compose -f infrastructure/docker/docker-compose.yml --env-file .env up -d
 docker compose -f infrastructure/docker/docker-compose.yml --env-file .env down
 docker compose -f infrastructure/docker/docker-compose.yml config   # syntax check only
 ```
+
+### MinIO (media storage)
+
+MinIO is the local object store, and it is where avatars live. The bucket is private and
+no client ever talks to MinIO directly: the Go backend is the only party that reads or
+writes objects (KNOT-ADR-028, KNOT-ADR-029).
+
+| What                | Where                                                              |
+| ------------------- | ------------------------------------------------------------------ |
+| S3 API              | `http://127.0.0.1:9000`                                            |
+| Web console         | `http://127.0.0.1:9001`                                            |
+| Bucket              | `knot-media` (`KNOT_S3_BUCKET`)                                     |
+| Object layout       | `avatars/<user id>/<uuid>.jpg`                                     |
+| Data directory      | `/bitnami/minio/data` in the container, on the `knot_minio_data` named volume |
+| Credentials         | `KNOT_S3_ACCESS_KEY` / `KNOT_S3_SECRET_KEY`, which are the same values the container is given as `KNOT_MINIO_ROOT_USER` / `KNOT_MINIO_ROOT_PASSWORD` |
+| Health              | `curl -f http://127.0.0.1:9000/minio/health/live`                   |
+
+The data directory is **image-specific**, and mounting the wrong one fails quietly: the
+bucket is still created and uploads still succeed, but objects land in the container's
+writable layer and disappear the next time the container is recreated. This image runs
+`minio server ... /bitnami/minio/data`, so that is where the volume is mounted; upstream's
+`minio/minio` uses `/data`. The compose file comments on this at the mount.
+
+Open the console in a browser and sign in with the `.env` values (or the compose
+defaults), or use the bundled `mc` client. `mc` is **not on `PATH`**, so call it by full
+path:
+
+```bash
+# What is in the bucket?
+docker compose -f infrastructure/docker/docker-compose.yml exec minio \
+  /opt/bitnami/minio-client/bin/mc ls --recursive local/knot-media/
+
+# Upload an avatar the way the API does, then read it back
+curl -X POST http://localhost:8080/users/me/avatar \
+  -H "Authorization: Bearer $KNOT_ACCESS_TOKEN" \
+  -F file=@me.png
+
+# Prove that an unknown user is a plain 404, not a store error
+curl -i http://localhost:8080/users/00000000-0000-4000-8000-000000000000/avatar
+```
+
+Because the data directory is on a named volume, `scripts/dev-down.sh` keeps every
+uploaded avatar and `scripts/dev-reset.sh` deletes it along with the databases.
+
+Backend settings: `KNOT_S3_ENDPOINT`, `KNOT_S3_REGION`, `KNOT_S3_ACCESS_KEY`,
+`KNOT_S3_SECRET_KEY`, and `KNOT_S3_BUCKET` — see "Backend configuration" below. In
+`local` every one of them has a working default, so a fresh clone needs no `.env` edit to
+upload an avatar. Outside `local`, the endpoint and both credentials are required and the
+server refuses to start without them.
+
+> **Pinned image.** The compose file uses
+> `bitnamilegacy/minio:2025.7.23-debian-12-r5`. MinIO no longer publishes `minio/minio`
+> to Docker Hub (the Hub repository was withdrawn), `quay.io/minio/minio` requires
+> authentication, and `bitnami/minio` has no tags, so the last published Bitnami build of
+> genuine MinIO is pinned instead. It is a different image from the one upstream
+> documents, so two details differ and both are handled in the compose file: the data
+> directory (above) and the health check. The reason is repeated in a comment at the
+> service, and KNOT-ADR-028 records the decision.
+
 ## Git hooks
 
 The repository tracks its git hooks in `.githooks/`, activated with `core.hooksPath`.
@@ -495,6 +556,8 @@ curl -s -X POST http://localhost:8080/auth/register \
 | `GET /users/{id}/rooted`       | public   | `internal/httpapi/rooted_handler.go` |
 | `GET /discovery/clusters`      | public   | `internal/httpapi/discovery_handler.go` |
 | `GET /discovery/places/{place}` | public  | `internal/httpapi/discovery_handler.go` |
+| `POST /users/me/avatar`        | `Bearer` | `internal/httpapi/avatar_handler.go` |
+| `GET /users/{id}/avatar`       | public   | `internal/httpapi/avatar_handler.go` |
 
 Routes are declared in one place, `NewRouter` in `internal/httpapi/router.go`, using
 Go 1.22 method-qualified `ServeMux` patterns. There is no router dependency.
@@ -628,12 +691,20 @@ standard library only, and it stores values without connecting to anything.
 | `KNOT_HTTP_PORT`    | No — defaults to `8080`         | Must be 1-65535 when set                       |
 | `KNOT_LOG_LEVEL`    | No — defaults to `info`         | `debug`, `info`, `warn`, or `error`            |
 | `KNOT_JWT_SECRET`   | Only when `ci` / `test`         | Must be at least 32 bytes outside `local`      |
+| `KNOT_S3_ENDPOINT`  | Only when `ci` / `test`         | S3-compatible endpoint; has a local default    |
+| `KNOT_S3_ACCESS_KEY`| Only when `ci` / `test`         | Has a local default matching MinIO            |
+| `KNOT_S3_SECRET_KEY`| Only when `ci` / `test`         | Has a local default matching MinIO            |
+| `KNOT_S3_REGION`    | No — defaults to `us-east-1`    | MinIO ignores it; real S3 does not            |
+| `KNOT_S3_BUCKET`    | No — defaults to `knot-media`   | The bucket must already exist                   |
 
 - `local` (or unset): missing values fall back to the safe local defaults listed in
   `.env.example`. A missing JWT secret becomes the documented placeholder and the server
   logs a prominent warning.
-- `ci` / `test`: the Postgres DSN, Redis address, and JWT secret are all **required**,
-  the secret must be at least 32 bytes, and the backend fails fast naming every problem.
+- `ci` / `test`: the Postgres DSN, Redis address, object store endpoint, object store
+  credentials, and JWT secret are all **required**, the secret must be at least 32 bytes,
+  and the backend fails fast naming every problem. Region and bucket keep their defaults
+  everywhere, because they are not secrets and a wrong one is caught by the first request
+  rather than by a name that has to be repeated in every environment.
 - Any other value: treated as required too, so an unrecognised environment never
   silently receives local defaults.
 
@@ -661,10 +732,13 @@ git ls-files --error-unmatch .env.example   # should succeed (file is tracked)
 
 - The active variables are the `KNOT_*` ones:
   - `KNOT_ENV`, `KNOT_POSTGRES_DSN`, `KNOT_REDIS_ADDR`, `KNOT_HTTP_PORT`,
-    `KNOT_LOG_LEVEL`, `KNOT_JWT_SECRET` — read by the Go backend.
+    `KNOT_LOG_LEVEL`, `KNOT_JWT_SECRET`, `KNOT_S3_ENDPOINT`, `KNOT_S3_REGION`,
+    `KNOT_S3_ACCESS_KEY`, `KNOT_S3_SECRET_KEY`, `KNOT_S3_BUCKET` — read by the Go
+    backend.
   - `KNOT_POSTGRES_USER`, `KNOT_POSTGRES_PASSWORD`, `KNOT_POSTGRES_DB`,
-    `KNOT_POSTGRES_PORT`, `KNOT_REDIS_PORT` — consumed by
-    `infrastructure/docker/docker-compose.yml`.
+    `KNOT_POSTGRES_PORT`, `KNOT_REDIS_PORT`, `KNOT_MINIO_ROOT_USER`,
+    `KNOT_MINIO_ROOT_PASSWORD`, `KNOT_MINIO_PORT`, `KNOT_MINIO_CONSOLE_PORT` — consumed
+    by `infrastructure/docker/docker-compose.yml`.
   - `KNOT_API_URL` — the API base URL for the mobile app, read by
     `apps/mobile/src/config/api.ts` when the bundler inlines `process.env`.
 - The "reserved for later phases" block (`REDIS_URL`) is placeholder-only and **not used

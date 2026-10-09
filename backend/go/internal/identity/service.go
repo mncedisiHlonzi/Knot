@@ -175,6 +175,73 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*AuthResult, error)
 	return &AuthResult{User: user, Tokens: tokens}, nil
 }
 
+// UserByID resolves a user id to an account.
+//
+// It exists so handlers can turn the authenticated subject into a profile
+// without reaching for the store themselves. It returns ErrUserNotFound when no
+// such user exists.
+func (s *Service) UserByID(ctx context.Context, id string) (*User, error) {
+	user, err := s.store.FindUserByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("identity: find user by id: %w", err)
+	}
+	return user, nil
+}
+
+// SetAvatarURL records the object key of the user's current avatar and returns
+// the updated account.
+//
+// The key must sit directly under the user's own prefix in the media bucket, so
+// a mistake in the HTTP layer cannot make one account's avatar point at another
+// account's object. It returns ErrUserNotFound when no such user exists.
+func (s *Service) SetAvatarURL(ctx context.Context, userID, key string) (*User, error) {
+	if err := validateAvatarKey(userID, key); err != nil {
+		return nil, err
+	}
+
+	updated, err := s.store.UpdateAvatarURL(ctx, userID, key)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("identity: set avatar url: %w", err)
+	}
+
+	return updated, nil
+}
+
+// avatarKeyNamespace is the bucket prefix reserved for avatars. Every object in
+// it is namespaced by the owning user id, so a key can always be traced back to
+// exactly one account.
+const avatarKeyNamespace = "avatars/"
+
+// AvatarKeyPrefix returns the bucket prefix that belongs to userID. Callers that
+// mint avatar object keys use it so the namespace is spelled in exactly one place.
+func AvatarKeyPrefix(userID string) string {
+	return avatarKeyNamespace + userID + "/"
+}
+
+// validateAvatarKey rejects a key that is not a single object directly inside the
+// given user's own avatar prefix.
+func validateAvatarKey(userID, key string) error {
+	prefix := AvatarKeyPrefix(userID)
+	if !strings.HasPrefix(key, prefix) {
+		return &ValidationError{Field: "avatar", Message: "must be an object under the user's own avatar prefix"}
+	}
+
+	// The remainder must name one object and must not be able to climb out of the
+	// prefix with a slash.
+	object := strings.TrimPrefix(key, prefix)
+	if object == "" || strings.Contains(object, "/") {
+		return &ValidationError{Field: "avatar", Message: "must name a single object directly under the user's avatar prefix"}
+	}
+
+	return nil
+}
+
 // issueTokens mints both tokens for a user id.
 func (s *Service) issueTokens(userID string) (TokenPair, error) {
 	access, err := s.tokens.IssueAccessToken(userID)

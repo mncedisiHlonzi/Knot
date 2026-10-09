@@ -16,6 +16,11 @@ func clearEnv(t *testing.T) {
 		envKeyHTTPPort,
 		envKeyJWTSecret,
 		envKeyLogLevel,
+		envKeyS3Endpoint,
+		envKeyS3Region,
+		envKeyS3AccessKey,
+		envKeyS3SecretKey,
+		envKeyS3Bucket,
 	} {
 		t.Setenv(key, "")
 	}
@@ -129,7 +134,13 @@ func TestLoadCIFailsFastWhenAllRequiredVarsMissing(t *testing.T) {
 	if err == nil {
 		t.Fatal("Load() returned nil error, want error for env=ci with no variables set")
 	}
-	for _, want := range []string{envKeyPostgresDSN, envKeyRedisAddr} {
+	for _, want := range []string{
+		envKeyPostgresDSN,
+		envKeyRedisAddr,
+		envKeyS3Endpoint,
+		envKeyS3AccessKey,
+		envKeyS3SecretKey,
+	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not name missing variable %q", err.Error(), want)
 		}
@@ -170,14 +181,20 @@ func TestLoadTestFailsFastWhenRedisMissing(t *testing.T) {
 func TestLoadCIDoesNotApplyLocalDefaults(t *testing.T) {
 	clearEnv(t)
 	const (
-		wantDSN   = "postgres://ci:ci@127.0.0.1:5432/knot_test"
-		wantRedis = "127.0.0.1:6379"
-		wantJWT   = "ci-secret-that-is-at-least-32-bytes-long"
+		wantDSN     = "postgres://ci:ci@127.0.0.1:5432/knot_test"
+		wantRedis   = "127.0.0.1:6379"
+		wantJWT     = "ci-secret-that-is-at-least-32-bytes-long"
+		wantS3Host  = "http://object-store.internal:9000"
+		wantS3Key   = "ci-access-key"
+		wantS3Secrt = "ci-secret-key"
 	)
 	t.Setenv(envKeyEnv, EnvCI)
 	t.Setenv(envKeyPostgresDSN, wantDSN)
 	t.Setenv(envKeyRedisAddr, wantRedis)
 	t.Setenv(envKeyJWTSecret, wantJWT)
+	t.Setenv(envKeyS3Endpoint, wantS3Host)
+	t.Setenv(envKeyS3AccessKey, wantS3Key)
+	t.Setenv(envKeyS3SecretKey, wantS3Secrt)
 
 	cfg, err := Load()
 	if err != nil {
@@ -192,6 +209,60 @@ func TestLoadCIDoesNotApplyLocalDefaults(t *testing.T) {
 	}
 	if cfg.RedisAddr != wantRedis {
 		t.Errorf("RedisAddr = %q, want %q (no local default in ci)", cfg.RedisAddr, wantRedis)
+	}
+	if cfg.S3Endpoint != wantS3Host {
+		t.Errorf("S3Endpoint = %q, want %q (no local default in ci)", cfg.S3Endpoint, wantS3Host)
+	}
+	if cfg.S3AccessKey != wantS3Key || cfg.S3SecretKey != wantS3Secrt {
+		t.Errorf("S3 credentials = %q/%q, want %q/%q", cfg.S3AccessKey, cfg.S3SecretKey, wantS3Key, wantS3Secrt)
+	}
+}
+
+// TestLoadLocalAppliesObjectStorageDefaults pins the local object store to the
+// MinIO container's published port, so a fresh checkout can start with no .env.
+func TestLoadLocalAppliesObjectStorageDefaults(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error %v, want nil", err)
+	}
+
+	if cfg.S3Endpoint != defaultS3Endpoint {
+		t.Errorf("S3Endpoint = %q, want default %q", cfg.S3Endpoint, defaultS3Endpoint)
+	}
+	if cfg.S3Region != defaultS3Region {
+		t.Errorf("S3Region = %q, want default %q", cfg.S3Region, defaultS3Region)
+	}
+	if cfg.S3AccessKey != defaultS3AccessKey {
+		t.Errorf("S3AccessKey = %q, want default %q", cfg.S3AccessKey, defaultS3AccessKey)
+	}
+	if cfg.S3SecretKey != defaultS3SecretKey {
+		t.Errorf("S3SecretKey = %q, want default %q", cfg.S3SecretKey, defaultS3SecretKey)
+	}
+	if cfg.S3Bucket != defaultS3Bucket {
+		t.Errorf("S3Bucket = %q, want default %q", cfg.S3Bucket, defaultS3Bucket)
+	}
+}
+
+// TestLoadCIRequiresObjectStorageCredentials pins the fail-fast: a non-local
+// environment must be told which object store it may write to, with which
+// credentials. Region and bucket keep their defaults.
+func TestLoadCIRequiresObjectStorageCredentials(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envKeyEnv, EnvCI)
+	t.Setenv(envKeyPostgresDSN, "postgres://ci:ci@127.0.0.1:5432/knot_test")
+	t.Setenv(envKeyRedisAddr, "127.0.0.1:6379")
+	t.Setenv(envKeyJWTSecret, "ci-secret-that-is-at-least-32-bytes-long")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() returned nil error, want error for env=ci with no object storage configured")
+	}
+	for _, want := range []string{envKeyS3Endpoint, envKeyS3AccessKey, envKeyS3SecretKey} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name missing variable %q", err.Error(), want)
+		}
 	}
 }
 
@@ -320,6 +391,9 @@ func TestLoadNonLocalRejectsShortJWTSecret(t *testing.T) {
 	t.Setenv(envKeyEnv, EnvCI)
 	t.Setenv(envKeyPostgresDSN, "postgres://ci@127.0.0.1:5432/knot_test")
 	t.Setenv(envKeyRedisAddr, "127.0.0.1:6379")
+	t.Setenv(envKeyS3Endpoint, "http://object-store.internal:9000")
+	t.Setenv(envKeyS3AccessKey, "ci-access-key")
+	t.Setenv(envKeyS3SecretKey, "ci-secret-key")
 	t.Setenv(envKeyJWTSecret, "too-short")
 
 	_, err := Load()

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Knot — start local development infrastructure (PostgreSQL + Redis).
+# Knot — start local development infrastructure (PostgreSQL + Redis + MinIO).
 #
 # Brings up the containers defined in infrastructure/docker/docker-compose.yml.
 # The mobile app and the Go backend run on the host, so there is no application
@@ -46,12 +46,13 @@ else
   log "To customise, run: cp .env.example .env"
 fi
 
-log "Starting PostgreSQL and Redis..."
+log "Starting PostgreSQL, Redis, and MinIO..."
 compose up -d
 
 log "Current status:"
 compose ps
 
 log "Local infrastructure is up. Connection details come from .env"
-log "(defaults: postgres on localhost:5433, redis on localhost:6379)."
+log "(defaults: postgres on localhost:5433, redis on localhost:6379, minio on localhost:9000,"
+log " minio console on localhost:9001)."
 log "Stop it with:  scripts/dev-down.sh"

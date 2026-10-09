@@ -342,7 +342,7 @@ func newConversationsRouter(t *testing.T, logger *slog.Logger, service Conversat
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}
 
-	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, authMiddleware, "0.1.0", logger)
+	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, newTestAvatarHandler(t, logger), authMiddleware, "0.1.0", logger)
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v, want nil", err)
 	}

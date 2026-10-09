@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Knot — stop local development infrastructure (PostgreSQL + Redis).
+# Knot — stop local development infrastructure (PostgreSQL + Redis + MinIO).
 #
 # Stops and removes the containers. Named volumes are PRESERVED, so database and
 # cache contents survive. Use scripts/dev-reset.sh to wipe them.
@@ -33,7 +33,7 @@ command -v docker >/dev/null 2>&1 ||
   fail "Docker CLI not found. Install Docker Desktop and ensure 'docker' is on your PATH."
 [ -f "${COMPOSE_FILE}" ] || fail "Compose file not found: ${COMPOSE_FILE}"
 
-log "Stopping PostgreSQL and Redis..."
+log "Stopping PostgreSQL, Redis, and MinIO..."
 compose down
 
 log "Stopped. Named volumes were preserved (data is still on disk)."

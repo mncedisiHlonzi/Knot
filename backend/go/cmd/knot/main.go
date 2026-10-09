@@ -34,6 +34,7 @@ import (
 	"github.com/knot/backend/internal/httpapi"
 	"github.com/knot/backend/internal/identity"
 	"github.com/knot/backend/internal/rooted"
+	"github.com/knot/backend/internal/storage"
 	"github.com/knot/backend/internal/stories"
 	"github.com/knot/backend/internal/versions"
 	"github.com/knot/backend/migrations"
@@ -224,6 +225,28 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
+	// Media storage. Avatars are written and read by this process only: the bucket
+	// is private and no client is ever handed a link to it (KNOT-ADR-028,
+	// KNOT-ADR-029). Building the client performs no I/O, so a server that starts
+	// while the object store is down still answers everything else, and the first
+	// upload is what reports that the store is unreachable.
+	mediaStorage, err := storage.NewS3Storage(
+		ctx,
+		cfg.S3Endpoint,
+		cfg.S3Region,
+		cfg.S3AccessKey,
+		cfg.S3SecretKey,
+		cfg.S3Bucket,
+	)
+	if err != nil {
+		return err
+	}
+
+	avatarHandler, err := httpapi.NewAvatarHandler(service, mediaStorage, logger)
+	if err != nil {
+		return err
+	}
+
 	// The same issuer that signs access tokens verifies them on protected
 	// routes, so there is one source of truth for the signing key.
 	authMiddleware, err := httpapi.NewAuthMiddleware(tokens, logger)
@@ -231,7 +254,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, authMiddleware, appinfo.Version, logger)
+	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, avatarHandler, authMiddleware, appinfo.Version, logger)
 	if err != nil {
 		return err
 	}

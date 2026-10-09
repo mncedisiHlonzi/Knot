@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -72,6 +73,22 @@ func (s *fakeStore) FindUserByID(_ context.Context, id string) (*User, error) {
 	if !ok {
 		return nil, ErrUserNotFound
 	}
+
+	return user, nil
+}
+
+func (s *fakeStore) UpdateAvatarURL(_ context.Context, userID, avatarURL string) (*User, error) {
+	if s.findErr != nil {
+		return nil, s.findErr
+	}
+
+	user, ok := s.byID[userID]
+	if !ok {
+		return nil, ErrUserNotFound
+	}
+
+	user.AvatarURL = avatarURL
+	user.UpdatedAt = time.Now().UTC().Truncate(time.Microsecond)
 
 	return user, nil
 }
@@ -405,5 +422,151 @@ func TestLoginPropagatesStoreFailures(t *testing.T) {
 	}
 	if errors.Is(err, ErrInvalidCredentials) {
 		t.Errorf("Login() error = %v, want an internal error rather than invalid credentials", err)
+	}
+}
+
+// registerUser creates a user through the service, so the tests below run
+// against a row the store actually holds.
+func registerUser(t *testing.T, service *Service) *User {
+	t.Helper()
+
+	result, err := service.Register(context.Background(), validRegisterInput())
+	if err != nil {
+		t.Fatalf("Register() error = %v, want nil", err)
+	}
+
+	return result.User
+}
+
+func TestUserByID(t *testing.T) {
+	service := newTestService(t, newFakeStore())
+	user := registerUser(t, service)
+
+	found, err := service.UserByID(context.Background(), user.ID)
+	if err != nil {
+		t.Fatalf("UserByID() error = %v, want nil", err)
+	}
+	if found.ID != user.ID {
+		t.Errorf("id = %q, want %q", found.ID, user.ID)
+	}
+	if found.AvatarURL != "" {
+		t.Errorf("avatar_url = %q, want empty for a fresh user", found.AvatarURL)
+	}
+}
+
+func TestUserByIDMissing(t *testing.T) {
+	service := newTestService(t, newFakeStore())
+
+	_, err := service.UserByID(context.Background(), "00000000-0000-4000-8000-000000000000")
+	if !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("UserByID() error = %v, want ErrUserNotFound", err)
+	}
+}
+
+func TestUserByIDPropagatesStoreFailures(t *testing.T) {
+	store := newFakeStore()
+	store.findErr = errors.New("connection reset")
+	service := newTestService(t, store)
+
+	_, err := service.UserByID(context.Background(), "11111111-1111-4111-8111-111111111111")
+	if err == nil {
+		t.Fatal("UserByID() error = nil, want the store failure to propagate")
+	}
+	if errors.Is(err, ErrUserNotFound) {
+		t.Errorf("UserByID() error = %v, want an internal error rather than not-found", err)
+	}
+}
+
+func TestSetAvatarURLStoresAKeyInTheUsersOwnNamespace(t *testing.T) {
+	service := newTestService(t, newFakeStore())
+	user := registerUser(t, service)
+
+	key := AvatarKeyPrefix(user.ID) + "01234567-89ab-4def-8123-456789abcdef.png"
+
+	updated, err := service.SetAvatarURL(context.Background(), user.ID, key)
+	if err != nil {
+		t.Fatalf("SetAvatarURL() error = %v, want nil", err)
+	}
+	if updated.AvatarURL != key {
+		t.Errorf("avatar_url = %q, want %q", updated.AvatarURL, key)
+	}
+}
+
+// TestSetAvatarURLRejectsKeysOutsideTheUsersNamespace is the guard that keeps a
+// mistake in the HTTP layer from pointing one account's avatar at another
+// account's object, or at anything else in the bucket.
+func TestSetAvatarURLRejectsKeysOutsideTheUsersNamespace(t *testing.T) {
+	const otherID = "22222222-2222-4222-8222-222222222222"
+
+	tests := []struct {
+		name string
+		key  func(ownPrefix string) string
+	}{
+		{name: "empty", key: func(string) string { return "" }},
+		{name: "another user's prefix", key: func(string) string { return AvatarKeyPrefix(otherID) + "a.png" }},
+		{name: "the namespace itself", key: func(ownPrefix string) string { return ownPrefix }},
+		{name: "no namespace at all", key: func(string) string { return "a.png" }},
+		{name: "a neighbouring namespace", key: func(ownPrefix string) string { return strings.TrimSuffix(ownPrefix, "/") + "-x/a.png" }},
+		{name: "nested under the prefix", key: func(ownPrefix string) string { return ownPrefix + "nested/a.png" }},
+		{name: "traversal out of the prefix", key: func(ownPrefix string) string { return ownPrefix + "../" + otherID + "/a.png" }},
+		{name: "an absolute path", key: func(string) string { return "/etc/passwd" }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newFakeStore()
+			service := newTestService(t, store)
+			user := registerUser(t, service)
+
+			key := test.key(AvatarKeyPrefix(user.ID))
+
+			_, err := service.SetAvatarURL(context.Background(), user.ID, key)
+			if err == nil {
+				t.Fatalf("SetAvatarURL(%q) error = nil, want a validation error", key)
+			}
+
+			var validation *ValidationError
+			if !errors.As(err, &validation) {
+				t.Errorf("SetAvatarURL(%q) error = %v, want a *ValidationError", key, err)
+			}
+
+			if stored := store.byID[user.ID]; stored.AvatarURL != "" {
+				t.Errorf("stored avatar_url = %q, want it untouched", stored.AvatarURL)
+			}
+		})
+	}
+}
+
+func TestSetAvatarURLMissingUser(t *testing.T) {
+	service := newTestService(t, newFakeStore())
+	userID := "11111111-1111-4111-8111-111111111111"
+
+	_, err := service.SetAvatarURL(context.Background(), userID, AvatarKeyPrefix(userID)+"a.png")
+	if !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("SetAvatarURL() error = %v, want ErrUserNotFound", err)
+	}
+}
+
+func TestSetAvatarURLPropagatesStoreFailures(t *testing.T) {
+	store := newFakeStore()
+	service := newTestService(t, store)
+	user := registerUser(t, service)
+
+	store.findErr = errors.New("connection reset")
+
+	_, err := service.SetAvatarURL(context.Background(), user.ID, AvatarKeyPrefix(user.ID)+"a.png")
+	if err == nil {
+		t.Fatal("SetAvatarURL() error = nil, want the store failure to propagate")
+	}
+	if errors.Is(err, ErrUserNotFound) {
+		t.Errorf("SetAvatarURL() error = %v, want an internal error rather than not-found", err)
+	}
+}
+
+func TestAvatarKeyPrefix(t *testing.T) {
+	const userID = "11111111-1111-4111-8111-111111111111"
+
+	if got, want := AvatarKeyPrefix(userID), "avatars/"+userID+"/"; got != want {
+		t.Errorf("AvatarKeyPrefix() = %q, want %q", got, want)
 	}
 }

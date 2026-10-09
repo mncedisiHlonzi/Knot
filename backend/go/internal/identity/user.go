@@ -68,8 +68,12 @@ type User struct {
 	DisplayName         string
 	PreferredLanguages  []string
 	ApproximateLocation string
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	// AvatarURL is the object key of the user's avatar in the media bucket, not
+	// a public URL. Empty means the user has no avatar. The HTTP layer turns it
+	// into the backend path clients fetch (see avatar_handler.go).
+	AvatarURL string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // TokenType values carried in the "typ" claim so an access token can never be

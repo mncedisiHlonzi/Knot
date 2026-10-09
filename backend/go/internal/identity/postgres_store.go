@@ -16,7 +16,7 @@ const uniqueViolation = "23505"
 
 // userColumns is the canonical SELECT/RETURNING column list. It is a constant so
 // every query in this file stays consistent with scanUser.
-const userColumns = `id, email, phone, password_hash, display_name, preferred_languages, approximate_location, created_at, updated_at`
+const userColumns = `id, email, phone, password_hash, display_name, preferred_languages, approximate_location, avatar_url, created_at, updated_at`
 
 // PostgresStore is the pgx-backed implementation of UserStore.
 //
@@ -108,6 +108,33 @@ func (s *PostgresStore) FindUserByID(ctx context.Context, id string) (*User, err
 	return user, nil
 }
 
+// UpdateAvatarURL stores the object key of the user's current avatar and returns
+// the stored row, with updated_at refreshed by the database.
+//
+// Passing an empty key clears the avatar. A malformed id and an id with no row
+// are both reported as ErrUserNotFound, for the same reason as FindUserByID.
+func (s *PostgresStore) UpdateAvatarURL(ctx context.Context, userID, avatarURL string) (*User, error) {
+	if !isUUID(userID) {
+		return nil, ErrUserNotFound
+	}
+
+	const query = `
+		UPDATE users
+		SET avatar_url = $2, updated_at = now()
+		WHERE id = $1
+		RETURNING ` + userColumns
+
+	updated, err := scanUser(s.pool.QueryRow(ctx, query, userID, nullIfEmpty(avatarURL)))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("identity: update avatar url: %w", err)
+	}
+
+	return updated, nil
+}
+
 // rowScanner is the subset of pgx.Row and pgx.Rows that scanUser needs.
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -120,6 +147,7 @@ func scanUser(row rowScanner) (*User, error) {
 		user              User
 		phone             *string
 		location          *string
+		avatarURL         *string
 		preferredLanguage []string
 	)
 
@@ -131,6 +159,7 @@ func scanUser(row rowScanner) (*User, error) {
 		&user.DisplayName,
 		&preferredLanguage,
 		&location,
+		&avatarURL,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -143,6 +172,9 @@ func scanUser(row rowScanner) (*User, error) {
 	}
 	if location != nil {
 		user.ApproximateLocation = *location
+	}
+	if avatarURL != nil {
+		user.AvatarURL = *avatarURL
 	}
 	user.PreferredLanguages = nonNilLanguages(preferredLanguage)
 

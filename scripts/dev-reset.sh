@@ -2,7 +2,7 @@
 #
 # Knot — DESTRUCTIVE reset of local development infrastructure.
 #
-# Stops PostgreSQL and Redis and DELETES their named volumes. Every local
+# Stops PostgreSQL, Redis, and MinIO and DELETES their named volumes. Every local
 # database and cache entry is lost. There is no undo.
 #
 # Usage:
@@ -30,7 +30,7 @@ Usage: scripts/dev-reset.sh [--yes]
   --yes, -y   Skip the confirmation prompt.
   --help, -h  Show this help and exit.
 
-Deletes the local PostgreSQL and Redis named volumes. All local data is lost.
+Deletes the local PostgreSQL, Redis, and MinIO named volumes. All local data is lost.
 EOF
 }
 
@@ -59,7 +59,7 @@ command -v docker >/dev/null 2>&1 ||
 [ -f "${COMPOSE_FILE}" ] || fail "Compose file not found: ${COMPOSE_FILE}"
 
 if [ "${assume_yes}" -ne 1 ]; then
-  printf 'This will DELETE all local Knot PostgreSQL and Redis data (named volumes).\n'
+  printf 'This will DELETE all local Knot PostgreSQL, Redis, and MinIO data (named volumes).\n'
   printf 'There is no undo. Type "yes" to continue: '
   if ! read -r reply; then
     fail "No input available. Re-run with --yes to confirm non-interactively."

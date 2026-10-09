@@ -251,6 +251,95 @@ func TestPostgresStoreFindUserByIDRejectsMalformedID(t *testing.T) {
 	}
 }
 
+func TestPostgresStoreUpdateAvatarURL(t *testing.T) {
+	store, _, prefix := integrationSetup(t)
+	ctx := context.Background()
+
+	created, err := store.CreateUser(ctx, newIntegrationUser(prefix, "avatar"))
+	if err != nil {
+		t.Fatalf("CreateUser() error = %v, want nil", err)
+	}
+	if created.AvatarURL != "" {
+		t.Errorf("avatar_url = %q, want empty for a new user", created.AvatarURL)
+	}
+
+	key := "avatars/" + created.ID + "/01234567-89ab-4def-8123-456789abcdef.png"
+
+	updated, err := store.UpdateAvatarURL(ctx, created.ID, key)
+	if err != nil {
+		t.Fatalf("UpdateAvatarURL() error = %v, want nil", err)
+	}
+	if updated.AvatarURL != key {
+		t.Errorf("avatar_url = %q, want %q", updated.AvatarURL, key)
+	}
+	// The column is refreshed by the database, so the two transactions must not
+	// produce a timestamp that moves backwards.
+	if updated.UpdatedAt.Before(created.UpdatedAt) {
+		t.Errorf("updated_at = %v, want it not to precede %v", updated.UpdatedAt, created.UpdatedAt)
+	}
+
+	// A later read sees the same value, so the column really is persisted rather
+	// than only echoed back by RETURNING.
+	reread, err := store.FindUserByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("FindUserByID() error = %v, want nil", err)
+	}
+	if reread.AvatarURL != key {
+		t.Errorf("re-read avatar_url = %q, want %q", reread.AvatarURL, key)
+	}
+
+	// Replacing it overwrites the single column rather than accumulating.
+	replacement := "avatars/" + created.ID + "/fedcba98-7654-4321-8fed-cba987654321.jpg"
+	replaced, err := store.UpdateAvatarURL(ctx, created.ID, replacement)
+	if err != nil {
+		t.Fatalf("second UpdateAvatarURL() error = %v, want nil", err)
+	}
+	if replaced.AvatarURL != replacement {
+		t.Errorf("avatar_url = %q, want %q", replaced.AvatarURL, replacement)
+	}
+}
+
+func TestPostgresStoreUpdateAvatarURLClearsWhenEmpty(t *testing.T) {
+	store, _, prefix := integrationSetup(t)
+	ctx := context.Background()
+
+	created, err := store.CreateUser(ctx, newIntegrationUser(prefix, "avatarclear"))
+	if err != nil {
+		t.Fatalf("CreateUser() error = %v, want nil", err)
+	}
+
+	if _, err := store.UpdateAvatarURL(ctx, created.ID, "avatars/"+created.ID+"/a.png"); err != nil {
+		t.Fatalf("UpdateAvatarURL() error = %v, want nil", err)
+	}
+
+	cleared, err := store.UpdateAvatarURL(ctx, created.ID, "")
+	if err != nil {
+		t.Fatalf("clearing UpdateAvatarURL() error = %v, want nil", err)
+	}
+	if cleared.AvatarURL != "" {
+		t.Errorf("avatar_url = %q, want empty after clearing", cleared.AvatarURL)
+	}
+}
+
+func TestPostgresStoreUpdateAvatarURLMissingUser(t *testing.T) {
+	store, _, _ := integrationSetup(t)
+
+	_, err := store.UpdateAvatarURL(context.Background(), "00000000-0000-4000-8000-000000000000", "avatars/x/y.png")
+	if !errors.Is(err, ErrUserNotFound) {
+		t.Errorf("UpdateAvatarURL() error = %v, want ErrUserNotFound", err)
+	}
+}
+
+func TestPostgresStoreUpdateAvatarURLRejectsMalformedID(t *testing.T) {
+	store, _, _ := integrationSetup(t)
+
+	for _, id := range []string{"", "not-a-uuid", "12345"} {
+		if _, err := store.UpdateAvatarURL(context.Background(), id, "avatars/x/y.png"); !errors.Is(err, ErrUserNotFound) {
+			t.Errorf("UpdateAvatarURL(%q) error = %v, want ErrUserNotFound", id, err)
+		}
+	}
+}
+
 func TestNewPostgresStoreRejectsNilPool(t *testing.T) {
 	if _, err := NewPostgresStore(nil); err == nil {
 		t.Error("NewPostgresStore(nil) error = nil, want an error")

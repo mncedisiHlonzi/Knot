@@ -17,6 +17,7 @@ Migrations live in `backend/go/migrations/` and are applied with
 | `0004`  | `conversations` | The `comments` and `bridges` tables, their indexes and constraints |
 | `0005`  | `rooted`  | The `rooted_signals` table, its indexes, and its duration-bucket constraint |
 | `0006`  | `discovery` | The `stories.approximate_location_lower` column, its backfill, and its index |
+| `0007`  | `user_avatar` | The `users.avatar_url` column |
 
 Applied versions are recorded in the `schema_migrations` table, which the runner creates
 on first use.
@@ -32,8 +33,9 @@ on first use.
 | `display_name`         | `text`                   | no       | —                  | 1-80 characters                                  |
 | `preferred_languages`  | `text[]`                 | no       | `'{}'`             | Language codes/tags. The application always writes an array, never `NULL` |
 | `approximate_location` | `text`                   | yes      | `NULL`             | Coarse location only; precise location is out of scope |
+| `avatar_url`           | `text`                   | yes      | `NULL`             | Object key of the avatar in the media bucket, **not** a public URL. See below |
 | `created_at`           | `timestamptz`            | no       | `now()`            |                                                  |
-| `updated_at`           | `timestamptz`            | no       | `now()`            | Set on insert. No trigger yet: updates are a later task |
+| `updated_at`           | `timestamptz`            | no       | `now()`            | Set on insert, and refreshed by the avatar update. No trigger yet: updates are a later task |
 
 ### Indexes and constraints
 
@@ -46,10 +48,24 @@ The uniqueness rule is enforced in the database, not only in application code: a
 duplicate insert surfaces to the service as `identity.ErrEmailTaken`, which the API
 reports as `409 email_taken`.
 
+### `avatar_url` holds a key, not a URL
+
+The column name is `avatar_url`, but the value is the **object key** inside the media
+bucket — for example `avatars/7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8/0f8b1c2d-….png`.
+
+It stores the key rather than deriving one from the user id because the object name ends
+in a random UUID: given only the public path there would be no way to find the object
+again. `NULL` means the user has never uploaded an avatar.
+
+The object store itself is never addressed by a client. The API translates the key into
+`/users/{id}/avatar?v=<object name>`, and only the backend reads the bytes back out
+(KNOT-ADR-028, KNOT-ADR-029). Replacing an avatar overwrites this one column; the previous
+object is deleted best-effort by the upload handler.
+
 ### Deliberate omissions
 
-- **No `updated_at` trigger.** Nothing updates a user yet; the column exists so the first
-  profile-editing task does not need a migration for it.
+- **No `updated_at` trigger.** The avatar update sets `updated_at = now()` itself; a
+trigger would be the right move once several columns need it, and is a later task.
 - **No soft deletes, no roles, no email-verification flags.** None of them are needed by
   the identity foundation, and each would be a decision to make on its own evidence.
 
