@@ -96,6 +96,28 @@ func (s *PostgresStore) GetComment(ctx context.Context, id string) (Comment, err
 	return comment, nil
 }
 
+// VersionAuthor returns the author of the version with the given id, or
+// ErrNotFound when no such version exists.
+//
+// A malformed id is treated as not-found, for the same reason as GetComment.
+func (s *PostgresStore) VersionAuthor(ctx context.Context, versionID string) (string, error) {
+	if !isUUID(versionID) {
+		return "", ErrNotFound
+	}
+
+	const query = `SELECT author_id FROM story_versions WHERE id = $1`
+
+	var authorID string
+	if err := s.pool.QueryRow(ctx, query, versionID).Scan(&authorID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", fmt.Errorf("conversations: version author: %w", err)
+	}
+
+	return authorID, nil
+}
+
 // ListComments returns one page of a version's comments, newest first, plus the
 // cursor that resumes after it (nil when this page is the last one).
 //

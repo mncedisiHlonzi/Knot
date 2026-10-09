@@ -321,6 +321,61 @@ func TestPostgresStoreUpdateAvatarURLClearsWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestPostgresStoreFindUsersByID(t *testing.T) {
+	store, _, prefix := integrationSetup(t)
+	ctx := context.Background()
+
+	first, err := store.CreateUser(ctx, newIntegrationUser(prefix, "batchone"))
+	if err != nil {
+		t.Fatalf("CreateUser() error = %v, want nil", err)
+	}
+	second, err := store.CreateUser(ctx, newIntegrationUser(prefix, "batchtwo"))
+	if err != nil {
+		t.Fatalf("CreateUser() error = %v, want nil", err)
+	}
+
+	// A duplicate id, a malformed id, and an id with no row must all be tolerated:
+	// a batch read resolves what it can and says nothing about the rest.
+	found, err := store.FindUsersByID(ctx, []string{
+		first.ID,
+		second.ID,
+		first.ID,
+		"not-a-uuid",
+		"00000000-0000-4000-8000-000000000000",
+	})
+	if err != nil {
+		t.Fatalf("FindUsersByID() error = %v, want nil", err)
+	}
+
+	byID := make(map[string]*User, len(found))
+	for _, user := range found {
+		byID[user.ID] = user
+	}
+	if len(byID) != 2 {
+		t.Fatalf("resolved %d users, want 2", len(byID))
+	}
+	if byID[first.ID].Email != first.Email {
+		t.Errorf("first email = %q, want %q", byID[first.ID].Email, first.Email)
+	}
+	if byID[second.ID].Email != second.Email {
+		t.Errorf("second email = %q, want %q", byID[second.ID].Email, second.Email)
+	}
+}
+
+func TestPostgresStoreFindUsersByIDEmptyInput(t *testing.T) {
+	store, _, _ := integrationSetup(t)
+
+	for _, ids := range [][]string{nil, {}, {"not-a-uuid"}} {
+		found, err := store.FindUsersByID(context.Background(), ids)
+		if err != nil {
+			t.Fatalf("FindUsersByID(%v) error = %v, want nil", ids, err)
+		}
+		if len(found) != 0 {
+			t.Errorf("FindUsersByID(%v) returned %d users, want 0", ids, len(found))
+		}
+	}
+}
+
 func TestPostgresStoreUpdateAvatarURLMissingUser(t *testing.T) {
 	store, _, _ := integrationSetup(t)
 

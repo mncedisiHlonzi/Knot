@@ -29,15 +29,19 @@ type fakeCommentStore struct {
 	listNext     *Cursor
 	listErr      error
 
+	versionAuthorResult string
+	versionAuthorErr    error
+
 	gotCreate    Comment
 	gotGetID     string
 	gotVersionID string
 	gotCursor    *Cursor
 	gotLimit     int
 
-	createCalls int
-	getCalls    int
-	listCalls   int
+	createCalls        int
+	getCalls           int
+	listCalls          int
+	versionAuthorCalls int
 }
 
 func (f *fakeCommentStore) CreateComment(_ context.Context, comment Comment) (Comment, error) {
@@ -70,6 +74,48 @@ func (f *fakeCommentStore) ListComments(_ context.Context, versionID string, cur
 	f.gotCursor = cursor
 	f.gotLimit = limit
 	return f.listResult, f.listNext, f.listErr
+}
+
+func (f *fakeCommentStore) VersionAuthor(_ context.Context, versionID string) (string, error) {
+	f.versionAuthorCalls++
+	f.gotVersionID = versionID
+	return f.versionAuthorResult, f.versionAuthorErr
+}
+
+// notificationCall is one notification the service asked its notifier to send.
+type notificationCall struct {
+	kind        string
+	recipientID string
+	actorID     string
+	entityID    string
+}
+
+// fakeNotifier records the notifications the service asked it to send and can be
+// made to fail, so the Tell My People hooks can be asserted without the
+// notifications package.
+type fakeNotifier struct {
+	calls []notificationCall
+	err   error
+}
+
+func (f *fakeNotifier) NotifyCommentCreated(_ context.Context, recipientID, actorID, commentID string) error {
+	f.calls = append(f.calls, notificationCall{
+		kind:        "comment.created",
+		recipientID: recipientID,
+		actorID:     actorID,
+		entityID:    commentID,
+	})
+	return f.err
+}
+
+func (f *fakeNotifier) NotifyBridgeCreated(_ context.Context, recipientID, actorID, bridgeID string) error {
+	f.calls = append(f.calls, notificationCall{
+		kind:        "bridge.created",
+		recipientID: recipientID,
+		actorID:     actorID,
+		entityID:    bridgeID,
+	})
+	return f.err
 }
 
 // fakeBridgeStore records the calls it received and returns canned results.
@@ -162,15 +208,25 @@ func (f *fakeBridgeStore) ListBridgesForStory(_ context.Context, storyID string)
 func newTestService(t *testing.T) (*Service, *fakeCommentStore, *fakeBridgeStore) {
 	t.Helper()
 
+	service, comments, bridges, _ := newTestServiceWithNotifier(t)
+	return service, comments, bridges
+}
+
+// newTestServiceWithNotifier returns a service over fresh fakes and the notifier
+// it was wired with, so a test can inspect the notifications the service sends.
+func newTestServiceWithNotifier(t *testing.T) (*Service, *fakeCommentStore, *fakeBridgeStore, *fakeNotifier) {
+	t.Helper()
+
 	comments := &fakeCommentStore{}
 	bridges := &fakeBridgeStore{}
+	notifier := &fakeNotifier{}
 
-	service, err := NewService(comments, bridges)
+	service, err := NewService(comments, bridges, notifier)
 	if err != nil {
 		t.Fatalf("NewService() error = %v, want nil", err)
 	}
 
-	return service, comments, bridges
+	return service, comments, bridges, notifier
 }
 
 // sourceComment is an English comment on versionID, the typical bridge source.
@@ -203,12 +259,15 @@ func validBridgeInput() CreateBridgeInput {
 	}
 }
 
-func TestNewServiceRejectsMissingStores(t *testing.T) {
-	if _, err := NewService(nil, &fakeBridgeStore{}); err == nil {
-		t.Error("NewService(nil, bridges) error = nil, want an error")
+func TestNewServiceRejectsMissingDependencies(t *testing.T) {
+	if _, err := NewService(nil, &fakeBridgeStore{}, &fakeNotifier{}); err == nil {
+		t.Error("NewService(nil comments) error = nil, want an error")
 	}
-	if _, err := NewService(&fakeCommentStore{}, nil); err == nil {
-		t.Error("NewService(comments, nil) error = nil, want an error")
+	if _, err := NewService(&fakeCommentStore{}, nil, &fakeNotifier{}); err == nil {
+		t.Error("NewService(nil bridges) error = nil, want an error")
+	}
+	if _, err := NewService(&fakeCommentStore{}, &fakeBridgeStore{}, nil); err == nil {
+		t.Error("NewService(nil notifier) error = nil, want an error")
 	}
 }
 

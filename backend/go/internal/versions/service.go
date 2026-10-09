@@ -43,6 +43,14 @@ func (s *Service) CreateAdaptation(ctx context.Context, in CreateAdaptationInput
 		return StoryVersion{}, fmt.Errorf("versions: create adaptation: %w", err)
 	}
 
+	// Tell the author of the adapted version that their version was retold, unless
+	// they adapted it themselves. This is a side effect: the notifier logs a
+	// failure and the error is ignored, so a notification problem never fails the
+	// adaptation (KNOT-ADR-038).
+	if parent.AuthorID != created.AuthorID {
+		_ = s.notifier.NotifyVersionCreated(ctx, parent.AuthorID, created.AuthorID, created.ID)
+	}
+
 	return created, nil
 }
 

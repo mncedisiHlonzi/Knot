@@ -43,13 +43,14 @@ type Router struct {
 	discovery      *DiscoveryHandler
 	avatar         *AvatarHandler
 	storyMedia     *StoryMediaHandler
+	notifications  *NotificationsHandler
 	authMiddleware *AuthMiddleware
 	version        string
 	logger         *slog.Logger
 }
 
 // NewRouter returns the root handler for the API.
-func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, avatarHandler *AvatarHandler, storyMediaHandler *StoryMediaHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
+func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, avatarHandler *AvatarHandler, storyMediaHandler *StoryMediaHandler, notificationsHandler *NotificationsHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
 	if auth == nil {
 		return nil, errNilHandler("auth")
 	}
@@ -74,6 +75,9 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 	if storyMediaHandler == nil {
 		return nil, errNilHandler("story media")
 	}
+	if notificationsHandler == nil {
+		return nil, errNilHandler("notifications")
+	}
 	if authMiddleware == nil {
 		return nil, errNilHandler("auth middleware")
 	}
@@ -89,6 +93,7 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 		discovery:      discoveryHandler,
 		avatar:         avatarHandler,
 		storyMedia:     storyMediaHandler,
+		notifications:  notificationsHandler,
 		authMiddleware: authMiddleware,
 		version:        version,
 		logger:         logger,
@@ -152,6 +157,18 @@ func (r *Router) Handler() http.Handler {
 	mux.HandleFunc("GET /stories/{id}/media", r.storyMedia.List)
 	mux.HandleFunc("DELETE /stories/{id}/media/{mid}", r.authMiddleware.Require(r.storyMedia.Delete))
 	mux.HandleFunc("GET /stories/{id}/media/{mid}/content", r.storyMedia.Content)
+
+	// Notifications: the authenticated user's own in-app inbox. Every route is
+	// protected, and every route is scoped to the caller's own notifications, so
+	// there is no way to read or mark another user's inbox (KNOT-ADR-039).
+	//	GET    /notifications                one page, newest first, cursor-paginated
+	//	GET    /notifications/unread_count   the bell's badge number
+	//	POST   /notifications/{id}/read      mark one read
+	//	POST   /notifications/read_all       mark every unread notification read
+	mux.HandleFunc("GET /notifications", r.authMiddleware.Require(r.notifications.List))
+	mux.HandleFunc("GET /notifications/unread_count", r.authMiddleware.Require(r.notifications.UnreadCount))
+	mux.HandleFunc("POST /notifications/read_all", r.authMiddleware.Require(r.notifications.MarkAllRead))
+	mux.HandleFunc("POST /notifications/{id}/read", r.authMiddleware.Require(r.notifications.MarkRead))
 
 	return withRequestID(withRequestLogging(r.logger, withRecover(r.logger, mux)))
 }

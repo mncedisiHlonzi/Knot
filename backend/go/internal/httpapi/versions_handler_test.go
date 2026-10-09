@@ -136,7 +136,7 @@ func newVersionsHandler(t *testing.T, store versions.VersionStore) http.Handler 
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	service, err := versions.NewService(store)
+	service, err := versions.NewService(store, &fakeNotifier{})
 	if err != nil {
 		t.Fatalf("versions.NewService() error = %v, want nil", err)
 	}
@@ -191,7 +191,7 @@ func newVersionsRouter(t *testing.T, logger *slog.Logger, service VersionsServic
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}
 
-	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, newTestAvatarHandler(t, logger), newTestStoryMediaHandler(t, logger), authMiddleware, "0.1.0", logger)
+	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, newTestAvatarHandler(t, logger), newTestStoryMediaHandler(t, logger), newTestNotificationsHandler(t, logger), authMiddleware, "0.1.0", logger)
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v, want nil", err)
 	}

@@ -77,6 +77,21 @@ func (s *fakeStore) FindUserByID(_ context.Context, id string) (*User, error) {
 	return user, nil
 }
 
+func (s *fakeStore) FindUsersByID(_ context.Context, ids []string) ([]*User, error) {
+	if s.findErr != nil {
+		return nil, s.findErr
+	}
+
+	found := make([]*User, 0, len(ids))
+	for _, id := range ids {
+		if user, ok := s.byID[id]; ok {
+			found = append(found, user)
+		}
+	}
+
+	return found, nil
+}
+
 func (s *fakeStore) UpdateAvatarURL(_ context.Context, userID, avatarURL string) (*User, error) {
 	if s.findErr != nil {
 		return nil, s.findErr
@@ -474,6 +489,68 @@ func TestUserByIDPropagatesStoreFailures(t *testing.T) {
 	}
 	if errors.Is(err, ErrUserNotFound) {
 		t.Errorf("UserByID() error = %v, want an internal error rather than not-found", err)
+	}
+}
+
+func TestUsersByIDs(t *testing.T) {
+	service := newTestService(t, newFakeStore())
+	first := registerUser(t, service)
+
+	second, err := service.Register(context.Background(), RegisterInput{
+		Email:       "grace@example.com",
+		Password:    "correct horse battery staple",
+		DisplayName: "Grace Hopper",
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v, want nil", err)
+	}
+
+	// A duplicate, a malformed id, and an id with no row are all tolerated: an
+	// inbox must still render when one of its actors has gone.
+	users, err := service.UsersByIDs(context.Background(), []string{
+		first.ID,
+		second.User.ID,
+		first.ID,
+		"not-a-uuid",
+		"00000000-0000-4000-8000-000000000000",
+	})
+	if err != nil {
+		t.Fatalf("UsersByIDs() error = %v, want nil", err)
+	}
+
+	if len(users) != 2 {
+		t.Fatalf("resolved %d users, want 2", len(users))
+	}
+	if users[first.ID] == nil || users[first.ID].Email != first.Email {
+		t.Errorf("first user = %+v, want the registered %q", users[first.ID], first.Email)
+	}
+	if users[second.User.ID] == nil || users[second.User.ID].DisplayName != "Grace Hopper" {
+		t.Errorf("second user = %+v, want the second registered account", users[second.User.ID])
+	}
+}
+
+func TestUsersByIDsEmptyInput(t *testing.T) {
+	service := newTestService(t, newFakeStore())
+
+	for _, ids := range [][]string{nil, {}, {"not-a-uuid"}} {
+		users, err := service.UsersByIDs(context.Background(), ids)
+		if err != nil {
+			t.Fatalf("UsersByIDs(%v) error = %v, want nil", ids, err)
+		}
+		if len(users) != 0 {
+			t.Errorf("UsersByIDs(%v) returned %d users, want 0", ids, len(users))
+		}
+	}
+}
+
+func TestUsersByIDsPropagatesStoreFailures(t *testing.T) {
+	store := newFakeStore()
+	store.findErr = errors.New("connection reset")
+	service := newTestService(t, store)
+
+	_, err := service.UsersByIDs(context.Background(), []string{"11111111-1111-4111-8111-111111111111"})
+	if err == nil {
+		t.Fatal("UsersByIDs() error = nil, want the store failure to propagate")
 	}
 }
 

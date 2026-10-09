@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -133,6 +134,61 @@ func (s *PostgresStore) UpdateAvatarURL(ctx context.Context, userID, avatarURL s
 	}
 
 	return updated, nil
+}
+
+// FindUsersByID returns the users with the given ids. Malformed ids and ids that
+// match no row are simply absent from the result, and the order is not
+// guaranteed.
+//
+// It exists so a page of notifications can resolve every distinct actor with one
+// query instead of one query per notification. Duplicates are removed here as
+// well as in the service so the parameter list can never grow past the caller's
+// distinct ids.
+func (s *PostgresStore) FindUsersByID(ctx context.Context, ids []string) ([]*User, error) {
+	unique := make([]string, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if !isUUID(id) {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return []*User{}, nil
+	}
+
+	placeholders := make([]string, len(unique))
+	args := make([]any, len(unique))
+	for i, id := range unique {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+
+	query := `SELECT ` + userColumns + ` FROM users WHERE id IN (` + strings.Join(placeholders, ", ") + `)`
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("identity: find users by id: %w", err)
+	}
+	defer rows.Close()
+
+	users := make([]*User, 0, len(unique))
+	for rows.Next() {
+		user, err := scanUser(rows)
+		if err != nil {
+			return nil, fmt.Errorf("identity: find users by id: %w", err)
+		}
+		users = append(users, user)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("identity: find users by id: %w", err)
+	}
+
+	return users, nil
 }
 
 // rowScanner is the subset of pgx.Row and pgx.Rows that scanUser needs.

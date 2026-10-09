@@ -2,16 +2,21 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { describeError } from '../../api/client';
+import { notificationsApi } from '../../api/notifications';
 import { FEED_PAGE_SIZE, Story, storiesApi } from '../../api/stories';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type FeedScreenProps = {
   /** The signed-in account's email, shown so the session is obvious. */
   readonly email: string;
+  /** The signed-in user's access token, needed to read the unread count. */
+  readonly token: string;
   /** Called when a story is tapped. */
   readonly onOpenStory: (id: string) => void;
   /** Called when the person wants to publish a story. */
   readonly onCreateStory: () => void;
+  /** Called when the person opens their notifications. */
+  readonly onOpenNotifications: () => void;
   /** Called when the person signs out. */
   readonly onSignOut: () => void;
 };
@@ -39,8 +44,10 @@ function formatDate(value: string): string {
  */
 export default function FeedScreen({
   email,
+  token,
   onOpenStory,
   onCreateStory,
+  onOpenNotifications,
   onSignOut,
 }: FeedScreenProps): React.ReactElement {
   const [stories, setStories] = useState<readonly Story[]>([]);
@@ -48,6 +55,7 @@ export default function FeedScreen({
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const loadFirstPage = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -67,6 +75,39 @@ export default function FeedScreen({
   useEffect(() => {
     void loadFirstPage();
   }, [loadFirstPage]);
+
+  /**
+   * Reads the bell's badge number.
+   *
+   * The count is supplementary: a failure leaves the badge as it was rather than
+   * showing an error over the feed, because the inbox itself still works.
+   */
+  const refreshUnreadCount = useCallback(async (): Promise<void> => {
+    try {
+      const { count } = await notificationsApi.getUnreadCount(token);
+      setUnreadCount(count);
+    } catch {
+      // Intentionally ignored: a badge is not worth an error state.
+    }
+  }, [token]);
+
+  // Reading the badge on mount also covers returning to the feed: leaving the tab
+  // or popping an overlay unmounts this screen, so coming back remounts it and
+  // runs this effect again.
+  useEffect(() => {
+    void refreshUnreadCount();
+  }, [refreshUnreadCount]);
+
+  /**
+   * Opens the inbox and re-reads the badge.
+   *
+   * The badge is refreshed before navigating so a tap always shows the current
+   * number even when the person comes straight back.
+   */
+  const handleOpenNotifications = useCallback((): void => {
+    onOpenNotifications();
+    void refreshUnreadCount();
+  }, [onOpenNotifications, refreshUnreadCount]);
 
   const loadMore = useCallback(async (): Promise<void> => {
     if (nextCursor === '' || loadingMore) {
@@ -96,7 +137,28 @@ export default function FeedScreen({
       contentContainerStyle={styles.content}
       ListHeaderComponent={
         <View>
-          <Text style={styles.title}>Knot</Text>
+          <View style={styles.titleRow}>
+            <Text style={styles.title}>Knot</Text>
+            <Pressable
+              style={styles.bellButton}
+              onPress={handleOpenNotifications}
+              accessibilityRole="button"
+              accessibilityLabel={
+                unreadCount === 0
+                  ? 'Notifications, none unread'
+                  : `Notifications, ${unreadCount} unread`
+              }
+            >
+              <Text style={styles.bellIcon}>🔔</Text>
+              {unreadCount > 0 ? (
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>
+                    {unreadCount > 99 ? '99+' : String(unreadCount)}
+                  </Text>
+                </View>
+              ) : null}
+            </Pressable>
+          </View>
           <Text style={styles.session}>Signed in as {email}</Text>
 
           <View style={styles.actions}>
@@ -149,6 +211,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.md,
     marginTop: spacing.lg,
+  },
+  badge: {
+    alignItems: 'center',
+    backgroundColor: colors.brand.magenta,
+    borderRadius: radius.pill,
+    justifyContent: 'center',
+    left: 26,
+    minWidth: 20,
+    paddingHorizontal: spacing.xs,
+    position: 'absolute',
+    top: -4,
+  },
+  badgeText: {
+    color: colors.text.primary,
+    fontSize: fontSizes.xs,
+    fontWeight: fontWeights.bold,
+  },
+  bellButton: {
+    padding: spacing.sm,
+  },
+  bellIcon: {
+    fontSize: fontSizes.lg,
   },
   buttonDisabled: {
     opacity: 0.5,
@@ -230,5 +314,10 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     fontSize: fontSizes.xl,
     fontWeight: fontWeights.bold,
+  },
+  titleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
   },
 });

@@ -191,6 +191,48 @@ func (s *Service) UserByID(ctx context.Context, id string) (*User, error) {
 	return user, nil
 }
 
+// UsersByIDs resolves a batch of user ids to accounts keyed by id.
+//
+// Ids that are malformed or that match no row are simply absent from the map
+// rather than being an error: an inbox must still render when one of its actors
+// has been deleted. An empty input yields an empty map. Duplicate ids are looked
+// up once.
+//
+// It exists so a page of notifications can be enriched with one query instead of
+// one query per notification.
+func (s *Service) UsersByIDs(ctx context.Context, ids []string) (map[string]*User, error) {
+	unique := make([]string, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if !isUUID(id) {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+
+	users := make(map[string]*User, len(unique))
+	if len(unique) == 0 {
+		return users, nil
+	}
+
+	found, err := s.store.FindUsersByID(ctx, unique)
+	if err != nil {
+		return nil, fmt.Errorf("identity: find users by id: %w", err)
+	}
+	for _, user := range found {
+		if user == nil {
+			continue
+		}
+		users[user.ID] = user
+	}
+
+	return users, nil
+}
+
 // SetAvatarURL records the object key of the user's current avatar and returns
 // the updated account.
 //

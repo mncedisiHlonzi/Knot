@@ -33,6 +33,7 @@ import (
 	"github.com/knot/backend/internal/discovery"
 	"github.com/knot/backend/internal/httpapi"
 	"github.com/knot/backend/internal/identity"
+	"github.com/knot/backend/internal/notifications"
 	"github.com/knot/backend/internal/rooted"
 	"github.com/knot/backend/internal/storage"
 	"github.com/knot/backend/internal/stories"
@@ -208,12 +209,31 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
+	// Notifications. The service is built before the content domains that call it,
+	// because each of them is handed this same value as its one-method Notifier
+	// hook: the notifications package is a leaf that never imports a content
+	// domain (KNOT-ADR-040).
+	notificationsStore, err := notifications.NewPostgresStore(pool)
+	if err != nil {
+		return err
+	}
+
+	notificationsService, err := notifications.NewService(notificationsStore, logger)
+	if err != nil {
+		return err
+	}
+
+	notificationsHandler, err := httpapi.NewNotificationsHandler(notificationsService, service, rootedService, logger)
+	if err != nil {
+		return err
+	}
+
 	versionsStore, err := versions.NewPostgresStore(pool)
 	if err != nil {
 		return err
 	}
 
-	versionsService, err := versions.NewService(versionsStore)
+	versionsService, err := versions.NewService(versionsStore, notificationsService)
 	if err != nil {
 		return err
 	}
@@ -230,7 +250,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	conversationsService, err := conversations.NewService(conversationsStore, conversationsStore)
+	conversationsService, err := conversations.NewService(conversationsStore, conversationsStore, notificationsService)
 	if err != nil {
 		return err
 	}
@@ -272,7 +292,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, avatarHandler, storyMediaHandler, authMiddleware, appinfo.Version, logger)
+	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, avatarHandler, storyMediaHandler, notificationsHandler, authMiddleware, appinfo.Version, logger)
 	if err != nil {
 		return err
 	}

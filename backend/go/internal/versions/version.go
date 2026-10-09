@@ -142,20 +142,37 @@ type VersionStore interface {
 	ListByStory(ctx context.Context, storyID string) ([]StoryVersion, error)
 }
 
-// Service holds the Tell My People business rules.
+// Notifier records that a user adapted content. It is satisfied by the
+// notifications service, but the versions package depends only on this one
+// method, so it never imports the notifications package (KNOT-ADR-040).
 //
-// It depends on the VersionStore abstraction and knows nothing about HTTP, JSON,
-// or SQL.
-type Service struct {
-	store VersionStore
+// A call is non-critical: an implementation records the notification and reports
+// a failure, and the caller ignores that failure rather than failing the
+// adaptation that triggered it (KNOT-ADR-038).
+type Notifier interface {
+	// NotifyVersionCreated records that actorID adapted the version identified by
+	// versionID, which was authored by recipientID.
+	NotifyVersionCreated(ctx context.Context, recipientID, actorID, versionID string) error
 }
 
-// NewService wires a store into the versions domain.
-func NewService(store VersionStore) (*Service, error) {
+// Service holds the Tell My People business rules.
+//
+// It depends on the VersionStore abstraction and a Notifier, and knows nothing
+// about HTTP, JSON, or SQL.
+type Service struct {
+	store    VersionStore
+	notifier Notifier
+}
+
+// NewService wires a store and a notifier into the versions domain.
+func NewService(store VersionStore, notifier Notifier) (*Service, error) {
 	if store == nil {
 		return nil, fmt.Errorf("versions: service requires a version store")
 	}
-	return &Service{store: store}, nil
+	if notifier == nil {
+		return nil, fmt.Errorf("versions: service requires a notifier")
+	}
+	return &Service{store: store, notifier: notifier}, nil
 }
 
 // isUUID reports whether s is a canonical 8-4-4-4-12 hexadecimal UUID string.

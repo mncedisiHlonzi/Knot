@@ -923,6 +923,103 @@ a 404: it is a valid place with an empty result, not a missing resource.
 **Errors:** `400 validation_error` (an unreadable `cursor`, or a `limit` that is not a
 positive integer), `500 internal_error`.
 
+## Notifications
+
+The signed-in user's **in-app inbox**: one row per time another person acted on their
+content. Every route below is protected, and every route is scoped to the caller by the
+token — there is no user id in any request, and no way to read or mark another person's
+inbox. Delivery is in-app only; there is no push channel (KNOT-ADR-039).
+
+Three events exist, and each one fires only when the recipient and the actor are different
+people:
+
+| `event_type`      | Fires when                                             | `entity_type` | `entity_id` names  |
+| ----------------- | ------------------------------------------------------ | ------------- | ------------------ |
+| `version.created` | someone adapts a version the recipient authored         | `version`     | the new version     |
+| `comment.created` | someone comments on a version the recipient authored    | `comment`     | the new comment     |
+| `bridge.created`  | someone bridges a comment the recipient authored        | `bridge`      | the new bridge      |
+
+Acting on your own content never notifies you, and the database enforces the same rule
+(KNOT-ADR-038).
+
+### The notification object
+
+```json
+{
+  "id": "7f1d6b1e-6a0d-4a1f-9a1f-2a5b0d9c4e10",
+  "event_type": "version.created",
+  "entity_type": "version",
+  "entity_id": "3d5c9f24-1b8e-4c7a-9f0b-6e2d8a1c4b77",
+  "read": false,
+  "created_at": "2026-10-09T12:00:00Z",
+  "actor": {
+    "id": "22222222-2222-4222-8222-222222222222",
+    "display_name": "Ada Lovelace",
+    "avatar_url": "/users/22222222-2222-4222-8222-222222222222/avatar?v=ada.png",
+    "author_rooted": { "place": "Cape Town", "duration_bucket": "lifelong" }
+  }
+}
+```
+
+`read` is derived from the stored `read_at`; the timestamp itself is not part of the
+contract, because the client only draws an unread marker. `actor` is `null` when the acting
+account can no longer be resolved, so a row never disappears just because its actor was
+deleted. `avatar_url` is a **path on this API** (`""` when the actor has no avatar), never a
+link to object storage, and `author_rooted` is the same
+[inline Rooted summary](#author_rooted-on-content-responses) that content responses carry.
+
+### GET /notifications
+
+Returns **200** with one page of the caller's notifications, newest first:
+
+```json
+{ "notifications": [ { "id": "..." } ], "next_cursor": "MjAyNi0xMC0wOVQxMjowMDowMFo..." }
+```
+
+| Query    | Required | Rules                                                       |
+| -------- | -------- | ----------------------------------------------------------- |
+| `cursor` | no       | A `next_cursor` from a previous page. Omit for the first page |
+| `limit`  | no       | 1-50. Defaults to 20; a larger value is clamped to 50         |
+
+`notifications` is always an array, never `null`, and `next_cursor` is `""` on the last page.
+Paging is keyset on `(created_at, id)`, exactly as the feed and a thread are. An empty inbox
+is **200** with `"notifications": []`.
+
+**Errors:** `400 validation_error` (an unreadable `cursor`, or a `limit` that is not a
+positive integer), `401 unauthorized`, `500 internal_error`.
+
+### GET /notifications/unread_count
+
+Returns **200** with `{ "count": 3 }`. It is a route of its own so the feed's bell can show a
+number without downloading a page of notifications.
+
+**Errors:** `401 unauthorized`, `500 internal_error`.
+
+### POST /notifications/{id}/read
+
+Marks one notification read. Returns **204** with no body — the caller asked for a state, not
+for a representation. Marking an already-read notification is not an error.
+
+A notification that does not exist **or that belongs to another user** is `404
+not_found`: the same answer for both, so the route cannot be used to probe whether an id
+exists.
+
+**Errors:** `401 unauthorized`, `404 not_found`, `500 internal_error`.
+
+### POST /notifications/read_all
+
+Marks every unread notification for the caller read. Returns **200** with
+`{ "updated": 3 }`, which is how many rows the write actually changed — so a client can tell
+"nothing was unread" from "the call did not land".
+
+**Errors:** `401 unauthorized`, `500 internal_error`.
+
+**Where notifications come from:** a notification is a **non-critical side effect** of the
+write that caused it. Adapting a version, commenting, or bridging stores the notification
+after the primary row is committed, and a failure to store it is logged and swallowed rather
+than failing the request — the adaptation or comment must not be lost because an inbox write
+failed (KNOT-ADR-038).
+
 ## Tokens
 
 Two HS256 JWTs are issued. Both are signed with `KNOT_JWT_SECRET`.

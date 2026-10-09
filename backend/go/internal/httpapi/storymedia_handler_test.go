@@ -373,6 +373,7 @@ func (e *storyMediaTestEnv) router(t *testing.T, subject string) http.Handler {
 		discoveryHandler,
 		newTestAvatarHandler(t, e.logger),
 		e.handler,
+		newTestNotificationsHandler(t, e.logger),
 		authMiddleware,
 		"0.1.0",
 		e.logger,

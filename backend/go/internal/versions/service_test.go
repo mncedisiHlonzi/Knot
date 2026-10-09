@@ -66,17 +66,47 @@ func (f *fakeStore) ListByStory(_ context.Context, storyID string) ([]StoryVersi
 	return f.listResult, f.listErr
 }
 
-// newTestService returns a service over a fresh fake store.
+// notificationCall is one notification the service asked its notifier to send.
+type notificationCall struct {
+	recipientID string
+	actorID     string
+	versionID   string
+}
+
+// fakeNotifier records the notifications the service asked it to send and can be
+// made to fail, so the Tell My People hook can be asserted without the
+// notifications package.
+type fakeNotifier struct {
+	calls []notificationCall
+	err   error
+}
+
+func (f *fakeNotifier) NotifyVersionCreated(_ context.Context, recipientID, actorID, versionID string) error {
+	f.calls = append(f.calls, notificationCall{recipientID: recipientID, actorID: actorID, versionID: versionID})
+	return f.err
+}
+
+// newTestService returns a service over a fresh fake store and notifier.
 func newTestService(t *testing.T) (*Service, *fakeStore) {
 	t.Helper()
 
+	service, store, _ := newTestServiceWithNotifier(t)
+	return service, store
+}
+
+// newTestServiceWithNotifier returns a service over a fresh fake store and
+// notifier, so a test can inspect the notifications the service sends.
+func newTestServiceWithNotifier(t *testing.T) (*Service, *fakeStore, *fakeNotifier) {
+	t.Helper()
+
 	store := &fakeStore{}
-	service, err := NewService(store)
+	notifier := &fakeNotifier{}
+	service, err := NewService(store, notifier)
 	if err != nil {
 		t.Fatalf("NewService() error = %v, want nil", err)
 	}
 
-	return service, store
+	return service, store, notifier
 }
 
 // validAdaptationInput is a minimal input that passes every rule, adapting the
@@ -106,9 +136,12 @@ func rootParent() StoryVersion {
 	}
 }
 
-func TestNewServiceRejectsMissingStore(t *testing.T) {
-	if _, err := NewService(nil); err == nil {
-		t.Error("NewService(nil) error = nil, want an error")
+func TestNewServiceRejectsMissingDependencies(t *testing.T) {
+	if _, err := NewService(nil, &fakeNotifier{}); err == nil {
+		t.Error("NewService(nil store) error = nil, want an error")
+	}
+	if _, err := NewService(&fakeStore{}, nil); err == nil {
+		t.Error("NewService(nil notifier) error = nil, want an error")
 	}
 }
 

@@ -1,7 +1,8 @@
 # Knot — Data Model
 
-**Status: MVP, subject to change.** Seven tables exist today: `users`, `stories`,
-`story_versions`, `comments`, `bridges`, `rooted_signals`, and `story_media`.
+**Status: MVP, subject to change.** Eight tables exist today: `users`, `stories`,
+`story_versions`, `comments`, `bridges`, `rooted_signals`, `story_media`, and
+`notifications`.
 
 Migrations live in `backend/go/migrations/` and are applied with
 `go run ./cmd/knot migrate up`. See the "Migrations" section of
@@ -20,6 +21,7 @@ Migrations live in `backend/go/migrations/` and are applied with
 | `0007`  | `user_avatar` | The `users.avatar_url` column |
 | `0008`  | `story_media` | The `story_media` table, its indexes and constraints |
 | `0009`  | `structured_place` | The `stories` and `rooted_signals` `latitude`/`longitude`/`place_country` columns |
+| `0010`  | `notifications` | The `notifications` table, its inbox index, and its unread partial index |
 
 Applied versions are recorded in the `schema_migrations` table, which the runner creates
 on first use.
@@ -437,3 +439,79 @@ than the older `stories.media_urls` array.
   `display_order` keeps the order stable whatever the count.
 - **No `updated_at`.** Media is immutable once uploaded; replacing it means deleting and
   re-uploading.
+
+## `notifications`
+
+A notification records that **another user acted on your content**: someone adapted a
+version you wrote, commented on it, or bridged one of your comments into another language.
+It is one row per event, addressed to one recipient, with the id of the thing the client
+should open. See KNOT-ADR-038 and KNOT-ADR-039.
+
+| Column        | Type          | Nullable | Default             | Notes                                                                  |
+| ------------- | ------------- | -------- | ------------------- | ---------------------------------------------------------------------- |
+| `id`          | `uuid`        | no       | `gen_random_uuid()` | Primary key                                                             |
+| `user_id`     | `uuid`        | no       | —                   | References `users(id)`; the **recipient** — whose content was acted on   |
+| `actor_id`    | `uuid`        | no       | —                   | References `users(id)`; the person who acted                            |
+| `event_type`  | `text`        | no       | —                   | What happened; a closed set, see below                                   |
+| `entity_type` | `text`        | no       | —                   | The kind of thing `entity_id` names; a closed set, see below              |
+| `entity_id`   | `uuid`        | no       | —                   | The id of the thing to open. **No foreign key** — see below              |
+| `read_at`     | `timestamptz` | yes      | `NULL`              | When the recipient read it; `NULL` means unread                          |
+| `created_at`  | `timestamptz` | no       | `now()`             | The inbox's primary sort key                                            |
+
+### Indexes and constraints
+
+| Name                                | Kind                         | Columns                                          | Purpose                                                             |
+| ----------------------------------- | ---------------------------- | ------------------------------------------------ | -------------------------------------------------------------------- |
+| `notifications_pkey`                | Primary key                  | `id`                                              | Row identity                                                          |
+| `notifications_user_created_idx`    | Btree index (descending)     | `(user_id, created_at DESC, id DESC)`             | Serves the inbox's `ORDER BY` and its keyset seek together            |
+| `notifications_user_unread_idx`     | Partial index (btree)        | `(user_id)` where `read_at IS NULL`               | Makes the unread count a cheap index-only scan over a small set        |
+| `notifications_user_id_fkey`        | Foreign key                  | `user_id` → `users(id)`                           | `ON DELETE CASCADE`: deleting an account removes its inbox             |
+| `notifications_actor_id_fkey`       | Foreign key                  | `actor_id` → `users(id)`                           | `ON DELETE CASCADE`: deleting an actor removes what they caused        |
+| `notifications_check`               | Check constraint             | `actor_id`, `user_id`                             | `actor_id <> user_id`: you are never notified about your own action    |
+| `notifications_event_type_check`    | Check constraint             | `event_type`                                      | The event set is closed in the database, not only in Go                |
+| `notifications_entity_type_check`   | Check constraint             | `entity_type`                                     | The entity set is closed in the database                               |
+
+The composite index mirrors `comments_version_id_created_at_idx` and
+`stories_created_at_id_idx`: it is descending on both columns and in the same order as the
+inbox's `WHERE (created_at, id) < ($2, $3) ORDER BY created_at DESC, id DESC` seek, so
+PostgreSQL seeks to the resume point instead of sorting the table.
+
+### The event and entity sets are closed
+
+`event_type` is one of `version.created`, `comment.created`, or `bridge.created`, and
+`entity_type` is one of `story`, `version`, `comment`, or `bridge`. Both sets are CHECK
+constraints *and* Go constants with a `Valid` method, so a value outside them is refused
+before it reaches the database.
+
+Each event maps to exactly one entity type (`version.created` → `version`,
+`comment.created` → `comment`, `bridge.created` → `bridge`), and the service enforces the
+mapping. A notification therefore always points at something a client can render, and
+"an adaptation" can never be filed against a comment.
+
+### `entity_id` has no foreign key
+
+Unlike every other reference in this schema, `entity_id` is **not** a foreign key. It
+points at one of three tables depending on `entity_type`, and PostgreSQL cannot express
+"references one of several tables" without a discriminator trigger or a nullable column
+per entity. A polymorphic pointer is the deliberate trade: the id is opaque to this table,
+and the entity types it can name are closed by a CHECK constraint instead.
+
+The consequence is that a notification can outlive the thing it points at when the entity
+row is deleted without the notification being deleted with it — the actor or recipient
+deletion cascades still remove the row. The client treats an unresolvable entity as "nothing
+to open" rather than an error.
+
+### `read_at` is nullable, and never moves
+
+The inbox needs "unread" as a first-class fact, and a `NULL` marks it without a sentinel
+timestamp or a second column. Marking a notification read is one `UPDATE ... SET read_at =
+COALESCE(read_at, now())`, so a second tap on an already-read row is not an error and does
+not change the timestamp it was read at.
+
+### Deliberate omissions
+
+- **No push delivery, no device tokens, and no delivery state.** Delivery is in-app only:
+the row is the whole feature, and the client polls its own inbox (KNOT-ADR-039).
+- **No `updated_at`.** A notification is a record of a past event; only `read_at` changes.
+- **No grouping or de-duplication.** Ten adaptations are ten rows, because each points at a
+different thing to open.

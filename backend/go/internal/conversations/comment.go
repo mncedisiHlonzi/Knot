@@ -138,6 +138,30 @@ type CommentStore interface {
 	// resumes after the page, or is nil when the page is the last one. It
 	// returns ErrNotFound when the version does not exist.
 	ListComments(ctx context.Context, versionID string, cursor *Cursor, limit int) ([]Comment, *Cursor, error)
+	// VersionAuthor returns the author of the version with the given id, or
+	// ErrNotFound when no such version exists.
+	//
+	// It exists so the service can tell the author of a version that someone
+	// commented on it without loading the whole version across a domain
+	// boundary (KNOT-ADR-040).
+	VersionAuthor(ctx context.Context, versionID string) (string, error)
+}
+
+// Notifier records that a user commented on, or bridged, content. It is
+// satisfied by the notifications service, but the conversations package depends
+// only on these methods, so it never imports the notifications package
+// (KNOT-ADR-040).
+//
+// Every call is non-critical: an implementation records the notification and
+// reports a failure, and the caller ignores that failure rather than failing the
+// comment or bridge that triggered it (KNOT-ADR-038).
+type Notifier interface {
+	// NotifyCommentCreated records that actorID commented (commentID) on a version
+	// authored by recipientID.
+	NotifyCommentCreated(ctx context.Context, recipientID, actorID, commentID string) error
+	// NotifyBridgeCreated records that actorID bridged a comment (bridgeID) authored
+	// by recipientID.
+	NotifyBridgeCreated(ctx context.Context, recipientID, actorID, bridgeID string) error
 }
 
 // isUUID reports whether s is a canonical 8-4-4-4-12 hexadecimal UUID string.

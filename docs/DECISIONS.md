@@ -845,3 +845,70 @@ The S3 implementation sets the SDK's `GetObjectInput.Range` field, so the object
 
 **Consequences:** The gesture code is small but hand-rolled, so pinch and swipe must be verified on a device (a simulator has no multi-touch). Panning does not clamp to image edges, which is acceptable for MVP and can be tightened later. The `PanResponder` negotiation between the pager, the image, and the dismiss handler is subtle; the claim rules are documented in the code so a future change does not silently break one of the three.
 
+
+## KNOT-ADR-038 — Notifications are written after the primary write, and never for your own action
+
+**Decision ID:** KNOT-ADR-038
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** KNOT-015 introduces the in-app notification: adapting a version, commenting on one, or bridging a comment should tell the affected author. Three questions had to be settled: who is notified, when the row is written relative to the write that caused it, and what happens when the notification write fails.
+
+**Decision:**
+- **One event set, three events:** `version.created`, `comment.created`, `bridge.created`. Each maps to exactly one entity type, so every notification points at something a client can open. The set is closed by a CHECK constraint and by Go constants.
+- **No self-notification.** A notification whose actor and recipient are the same user is refused in the service *and* by a `CHECK (actor_id <> user_id)` constraint. Acting on your own content is ordinary and is simply not news.
+- **The notification is a non-critical side effect.** It is written after the primary row is committed, and a failure is logged and ignored: the adaptation or comment must not be lost because an inbox write failed. The hook returns an error so a caller *could* care, and the callers deliberately do not.
+- **The recipient is resolved from the stored row, not the request.** The version's author (for a comment) and the source comment's author (for a bridge) are read inside the domain, so a client cannot aim a notification at someone else.
+
+**Alternatives Considered:**
+1. **Write the notification in the same transaction as the content** — rejected. It couples two bounded contexts in one transaction, and it makes a content write fail for a reason the user cannot act on.
+2. **Notify the story's author rather than the version's author** — rejected. The person whose words were retold is the version's author, and a story has many versions with different authors.
+3. **Allow a self-notification and filter it in the client** — rejected. It stores rows that can never legitimately be shown, and it leaves the rule in one place only (the client).
+4. **Notify on a background worker reading a queue** — rejected for MVP. It needs a queue, a worker, and a delivery state for a feature whose whole surface is a row the client polls.
+
+**Reason:** The affected author is the person who gains something from the event, and keeping the write off the critical path keeps the content write predictable. Refusing self-notifications at the schema level makes the rule impossible to bypass.
+
+**Consequences:** A failed notification write is silently lost — there is no retry, and the warning log is the only trace. Because the row is written after the content row, a crash between the two loses the notification but keeps the content, which is the correct order of priorities. The `CHECK` constraint means a caller that gets the recipient/actor pair backwards gets a database error rather than a bad row.
+
+## KNOT-ADR-039 — Notifications are in-app only; push is deferred
+
+**Decision ID:** KNOT-ADR-039
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** The natural next step for a notification feature is a push notification, and the brief for KNOT-015 scoped notifications as in-app. A push channel would need device tokens, OS permissions, a provider (APNs/FCM), a delivery state, and retry semantics — none of which the inbox needs.
+
+**Decision:** Delivery is **in-app only**. The mobile app reads its own inbox and the unread count from the API and shows a bell with a badge on the feed. There is no device-token table, no push provider, no delivery state, and no background worker. The endpoints are polled, not pushed.
+
+**Alternatives Considered:**
+1. **Firebase Cloud Messaging in this task** — rejected. It is a new external account, a new native dependency, a token lifecycle, and a delivery state, for a feature whose data model is already complete without it.
+2. **A long-poll or SSE stream** — rejected. It holds a connection per client to avoid a poll that costs one indexed query, and it adds a second way for the inbox to be read.
+3. **Send an email per event** — rejected. Email is a different product surface with its own deliverability, unsubscribe, and privacy questions.
+
+**Reason:** The inbox is the feature. Push changes *how a client learns* there is something to read, not what there is to read, so it can be added later without touching the schema — `read_at` and `created_at` are already everything a push payload would carry.
+
+**Consequences:** A person does not learn about a new notification until they open the app; the badge is read on mount, so returning to the feed refreshes it. Adding push later means a device-token table and a send step after the row is stored, not a redesign — the notification write already happens at the right moment (KNOT-ADR-038) and the row already carries the id the payload needs.
+
+## KNOT-ADR-040 — The notifications package is domain-agnostic, and content domains depend on a one-method hook
+
+**Decision ID:** KNOT-ADR-040
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** Three content domains produce notifications (`versions`, `conversations`) and one stores them. The obvious shape — have `versions` and `conversations` import `notifications` and call its service — creates a dependency from every content domain onto a package that knows about their content. The notifications service must also resolve "who should be told", which means reading a version's author from inside the conversations domain.
+
+**Decision:**
+- A notification is described by **primitive ids only**: recipient, actor, event, entity type, and entity id. The `notifications` package imports no content domain and has no idea what a story, version, comment, or bridge is.
+- Each producing domain declares **its own small interface** (`versions.Notifier` with one method, `conversations.Notifier` with two) and calls it. The concrete implementation is the notifications service, wired in `cmd/knot`. Neither domain imports the other's types or the notifications package's types.
+- The recipient is resolved **inside the producing domain**, through its own store: `conversations` gained `VersionAuthor(ctx, versionID)` rather than reaching into `versions` for a whole `StoryVersion`.
+- The HTTP layer enriches a page of notifications with the actors' names and avatars in **one batched lookup** (`identity.UsersByIDs`), the same shape as the existing Rooted batch enrichment.
+
+**Alternatives Considered:**
+1. **`versions` and `conversations` import `notifications` directly** — rejected. It points the dependency the wrong way: a leaf that stores rows would be named by the domains whose content it records, and every content package would compile the notification types.
+2. **An event bus or a domain-event publisher** — rejected for three events. It is indirection and an ordering question for a call that is one INSERT.
+3. **Have the notifications service read the content tables itself** to resolve recipients — rejected. It would make this package know stories from versions from comments, which is exactly the coupling the layering avoids.
+4. **Send one lookup per notification for actor details** — rejected. A page of 20 would be 20 queries; the batch read is one.
+
+**Reason:** A one-method interface declared by the caller is the smallest contract that keeps the dependency graph acyclic and each package ignorant of the others' types, and it matches the existing pattern for cross-domain reads (the Narrow interfaces in `httpapi/enrich.go`).
+
+**Consequences:** There is a small amount of duplicated shape — two `Notifier` interfaces, and a `VersionAuthor` read on the conversations store that exists only for this — but no package grows an API it does not need, and the notifications package can be tested with primitives and no fixtures from other domains. Adding a fourth event means adding a method to the interface of the domain that produces it and one hook call; nothing else changes.

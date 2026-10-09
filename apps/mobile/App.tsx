@@ -3,7 +3,9 @@ import { ActivityIndicator, BackHandler, SafeAreaView, StyleSheet, View } from '
 
 import type { AuthResponse, User } from './src/api/client';
 import type { Comment } from './src/api/conversations';
+import type { Notification } from './src/api/notifications';
 import type { Story } from './src/api/stories';
+import { versionsApi } from './src/api/versions';
 import { colors, spacing } from './src/theme';
 import TabBar from './src/components/TabBar';
 import type { TabName } from './src/components/TabBar';
@@ -21,6 +23,7 @@ import BridgeScreen from './src/screens/conversations/BridgeScreen';
 import CommentThreadScreen from './src/screens/conversations/CommentThreadScreen';
 import DiscoveryMapScreen from './src/screens/discovery/DiscoveryMapScreen';
 import PlaceStoriesScreen from './src/screens/discovery/PlaceStoriesScreen';
+import NotificationsScreen from './src/screens/notifications/NotificationsScreen';
 import ProfileScreen from './src/screens/profile/ProfileScreen';
 import RootedSetupScreen from './src/screens/profile/RootedSetupScreen';
 import AdaptStoryScreen from './src/screens/stories/AdaptStoryScreen';
@@ -51,6 +54,7 @@ type Overlay =
       readonly comment: Comment;
     }
   | { readonly name: 'rootedSetup' }
+  | { readonly name: 'notifications' }
   | { readonly name: 'placeStories'; readonly place: string };
 
 /** The two auth screens, shown before there is a session. Login is the default. */
@@ -208,14 +212,43 @@ export default function App(): React.ReactElement {
         return (
           <FeedScreen
             email={current.user.email}
+            token={current.accessToken}
             onOpenStory={(id) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId: id }))
             }
             onCreateStory={() => setTab('createStory')}
+            onOpenNotifications={() =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'notifications' }))
+            }
             onSignOut={handleSignOut}
           />
         );
     }
+  }
+
+  /**
+   * Opens what a notification points at.
+   *
+   * Only a version can be resolved on the client: `GET /versions/{id}` also names
+   * the story, so a tap lands on that story's detail screen. A comment or a bridge
+   * carries an id the API does not resolve to a version (there is no "get comment
+   * by id" route), so those notifications are marked read and open nothing rather
+   * than pretending to navigate (KNOT-ADR-039).
+   */
+  function handleOpenNotification(notification: Notification): void {
+    if (notification.entity_type !== 'version') {
+      return;
+    }
+
+    void (async () => {
+      try {
+        const { version } = await versionsApi.getVersion(notification.entity_id);
+        setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId: version.story_id }));
+      } catch {
+        // A version that can no longer be read (a deleted story, an offline
+        // device) simply does not open; the inbox stays where it is.
+      }
+    })();
   }
 
   /**
@@ -316,6 +349,14 @@ export default function App(): React.ReactElement {
             onOpenStory={(id) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId: id }))
             }
+            onBack={handleBack}
+          />
+        );
+      case 'notifications':
+        return (
+          <NotificationsScreen
+            token={current.accessToken}
+            onOpenEntity={handleOpenNotification}
             onBack={handleBack}
           />
         );

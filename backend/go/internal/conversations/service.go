@@ -10,22 +10,26 @@ import (
 
 // Service holds the conversation business rules.
 //
-// It depends on the CommentStore and BridgeStore abstractions and knows nothing
-// about HTTP, JSON, or SQL.
+// It depends on the CommentStore and BridgeStore abstractions and a Notifier,
+// and knows nothing about HTTP, JSON, or SQL.
 type Service struct {
 	comments CommentStore
 	bridges  BridgeStore
+	notifier Notifier
 }
 
-// NewService wires the two stores into the conversations domain.
-func NewService(comments CommentStore, bridges BridgeStore) (*Service, error) {
+// NewService wires the two stores and a notifier into the conversations domain.
+func NewService(comments CommentStore, bridges BridgeStore, notifier Notifier) (*Service, error) {
 	if comments == nil {
 		return nil, fmt.Errorf("conversations: service requires a comment store")
 	}
 	if bridges == nil {
 		return nil, fmt.Errorf("conversations: service requires a bridge store")
 	}
-	return &Service{comments: comments, bridges: bridges}, nil
+	if notifier == nil {
+		return nil, fmt.Errorf("conversations: service requires a notifier")
+	}
+	return &Service{comments: comments, bridges: bridges, notifier: notifier}, nil
 }
 
 // CreateComment validates the input, stores the comment, and returns it.
@@ -46,7 +50,26 @@ func (s *Service) CreateComment(ctx context.Context, in CreateCommentInput) (Com
 		return Comment{}, fmt.Errorf("conversations: create comment: %w", err)
 	}
 
+	s.notifyCommentCreated(ctx, created)
+
 	return created, nil
+}
+
+// notifyCommentCreated tells the author of a version that someone commented on
+// it, unless they wrote the comment themselves.
+//
+// A notification is a side effect. A lookup failure or a failed notification is
+// ignored here, because the comment has already been stored and must not be lost
+// (KNOT-ADR-038).
+func (s *Service) notifyCommentCreated(ctx context.Context, comment Comment) {
+	recipientID, err := s.comments.VersionAuthor(ctx, comment.VersionID)
+	if err != nil {
+		return
+	}
+	if recipientID == comment.AuthorID {
+		return
+	}
+	_ = s.notifier.NotifyCommentCreated(ctx, recipientID, comment.AuthorID, comment.ID)
 }
 
 // ListComments returns one page of a version's comments, newest first, plus the
@@ -163,6 +186,13 @@ func (s *Service) CreateBridge(ctx context.Context, in CreateBridgeInput) (Bridg
 			return Bridge{}, Comment{}, Comment{}, ErrNotFound
 		}
 		return Bridge{}, Comment{}, Comment{}, fmt.Errorf("conversations: create bridge: %w", err)
+	}
+
+	// Tell the author of the bridged comment that it crossed a language, unless
+	// they bridged it themselves. The bridge is already stored, so the
+	// notification is a non-critical side effect (KNOT-ADR-038).
+	if source.AuthorID != bridge.AuthorID {
+		_ = s.notifier.NotifyBridgeCreated(ctx, source.AuthorID, bridge.AuthorID, bridge.ID)
 	}
 
 	return bridge, source, createdTarget, nil

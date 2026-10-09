@@ -601,6 +601,10 @@ curl -s -X POST http://localhost:8080/auth/register \
 | `GET /discovery/places/{place}` | public  | `internal/httpapi/discovery_handler.go` |
 | `POST /users/me/avatar`        | `Bearer` | `internal/httpapi/avatar_handler.go` |
 | `GET /users/{id}/avatar`       | public   | `internal/httpapi/avatar_handler.go` |
+| `GET /notifications`           | `Bearer` | `internal/httpapi/notifications_handler.go` |
+| `GET /notifications/unread_count` | `Bearer` | `internal/httpapi/notifications_handler.go` |
+| `POST /notifications/{id}/read` | `Bearer` | `internal/httpapi/notifications_handler.go` |
+| `POST /notifications/read_all` | `Bearer` | `internal/httpapi/notifications_handler.go` |
 
 Routes are declared in one place, `NewRouter` in `internal/httpapi/router.go`, using
 Go 1.22 method-qualified `ServeMux` patterns. There is no router dependency.
@@ -710,6 +714,63 @@ WHERE is_primary = true AND is_public = true AND user_id = ANY($1)
 That is the single batch query behind the enrichment; `$1` is a `uuid[]`, so `user_id`'s
 index stays usable. The `author_rooted` projection carries only `place` and
 `duration_bucket`.
+
+### Notifications
+
+`GET /notifications`, `GET /notifications/unread_count`, `POST /notifications/{id}/read`,
+and `POST /notifications/read_all` are served by
+`internal/httpapi/notifications_handler.go`, backed by the `internal/notifications` domain
+package. Every route is protected and every route is scoped to the caller by the token, so
+there is no user id in any request and no way to reach another person's inbox.
+
+A notification records that **another user acted on your content**: someone adapted a
+version you wrote, commented on it, or bridged one of your comments. Three events exist and
+the set is closed by a CHECK constraint and by Go constants. The package is deliberately
+**domain-agnostic** — it imports no content domain and stores primitive ids — and each
+producing domain declares its own one-method hook instead, so the dependency graph stays
+acyclic (KNOT-ADR-040):
+
+```go
+// internal/versions
+type Notifier interface {
+    NotifyVersionCreated(ctx context.Context, recipientID, actorID, versionID string) error
+}
+```
+
+`versions.Service.CreateAdaptation` and `conversations.Service.CreateComment`/`CreateBridge`
+call their hook **after** the primary row is committed, compare recipient and actor first so
+your own action never notifies you, and ignore the returned error: a notification is a
+non-critical side effect, and an inbox write must not fail the adaptation or comment that
+caused it (KNOT-ADR-038). The recipient is resolved inside the producing domain —
+`conversations` gained `VersionAuthor(ctx, versionID)` for this rather than importing
+`versions` and loading a whole `StoryVersion`.
+
+The inbox is keyset-paginated on `(created_at, id)`, exactly as the feed and a thread are,
+and the query matches `notifications_user_created_idx`:
+
+```sql
+SELECT id, user_id, actor_id, event_type, entity_type, entity_id, read_at, created_at
+FROM notifications
+WHERE user_id = $1 AND (created_at, id) < ($2::timestamptz, $3::uuid)
+ORDER BY created_at DESC, id DESC
+LIMIT $4
+```
+
+Marking one read is a single `UPDATE ... SET read_at = COALESCE(read_at, now())`, so a
+second tap is not an error and does not move the timestamp; a row that does not exist — or
+that belongs to someone else — is `ErrNotFound`, the same answer for both, so the route
+cannot be used to probe for ids.
+
+A page of notifications is enriched with its actors in **one batched lookup**,
+`identity.UsersByIDs`, and with the same `authorRootedSummaries` helper the content handlers
+use, so twenty notifications cost two extra queries rather than twenty. Both enrichments are
+supplementary: a lookup failure is logged and the row carries `null` for the actor rather
+than failing the inbox. `avatar_url` on a resolved actor reuses `avatarPathFor`, the helper
+the avatar handler already had.
+
+Delivery is **in-app only** (KNOT-ADR-039): there is no device-token table, no push
+provider, and no delivery state. The mobile app reads its own inbox and the unread count,
+and shows a bell with a badge on the feed.
 
 ### Migrations
 

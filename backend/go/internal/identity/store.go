@@ -26,4 +26,14 @@ type UserStore interface {
 	// returns the stored row, including the refreshed updated_at. Passing ""
 	// clears the avatar. It returns ErrUserNotFound when no such user exists.
 	UpdateAvatarURL(ctx context.Context, userID, avatarURL string) (*User, error)
+
+	// FindUsersByID returns the users with the given ids. A malformed id and an id
+	// that matches no row are both simply absent from the result, and the order is
+	// not guaranteed; an empty or entirely malformed input yields an empty slice
+	// and a nil error.
+	//
+	// It exists so a page of authors can be resolved with one query rather than one
+	// query per author: the notifications inbox renders the actor of every
+	// notification in a page.
+	FindUsersByID(ctx context.Context, ids []string) ([]*User, error)
 }

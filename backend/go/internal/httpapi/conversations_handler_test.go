@@ -89,15 +89,19 @@ type memoryConversationsStore struct {
 	// versionMeta describes each seeded version enough to resolve a target
 	// version. seedComment registers its comment's version with testStoryID.
 	versionMeta map[string]memoryVersion
-	err         error
+	// versionAuthors is the author of each seeded version, so the conversations
+	// service can tell a version's author that someone commented on it.
+	versionAuthors map[string]string
+	err            error
 
 	createCommentCalls int
 }
 
 func newMemoryConversationsStore() *memoryConversationsStore {
 	return &memoryConversationsStore{
-		versions:    make(map[string]bool),
-		versionMeta: make(map[string]memoryVersion),
+		versions:       make(map[string]bool),
+		versionMeta:    make(map[string]memoryVersion),
+		versionAuthors: make(map[string]string),
 	}
 }
 
@@ -113,6 +117,22 @@ func (m *memoryConversationsStore) seedVersion(versionID, storyID, language stri
 func (m *memoryConversationsStore) seedComment(comment conversations.Comment) {
 	m.comments = append(m.comments, comment)
 	m.seedVersion(comment.VersionID, testStoryID, comment.Language)
+}
+
+// seedVersionAuthor records who authored a seeded version. A version with no
+// recorded author is not found by VersionAuthor, which mirrors a version that
+// does not exist.
+func (m *memoryConversationsStore) seedVersionAuthor(versionID, authorID string) {
+	m.versionAuthors[versionID] = authorID
+}
+
+// VersionAuthor returns the author of a seeded version, or ErrNotFound.
+func (m *memoryConversationsStore) VersionAuthor(_ context.Context, versionID string) (string, error) {
+	authorID, ok := m.versionAuthors[versionID]
+	if !ok {
+		return "", conversations.ErrNotFound
+	}
+	return authorID, nil
 }
 
 func (m *memoryConversationsStore) CreateComment(_ context.Context, comment conversations.Comment) (conversations.Comment, error) {
@@ -287,7 +307,7 @@ func newConversationsHandler(t *testing.T, store *memoryConversationsStore) http
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	service, err := conversations.NewService(store, store)
+	service, err := conversations.NewService(store, store, &fakeNotifier{})
 	if err != nil {
 		t.Fatalf("conversations.NewService() error = %v, want nil", err)
 	}
@@ -342,7 +362,7 @@ func newConversationsRouter(t *testing.T, logger *slog.Logger, service Conversat
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}
 
-	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, newTestAvatarHandler(t, logger), newTestStoryMediaHandler(t, logger), authMiddleware, "0.1.0", logger)
+	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, newTestAvatarHandler(t, logger), newTestStoryMediaHandler(t, logger), newTestNotificationsHandler(t, logger), authMiddleware, "0.1.0", logger)
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v, want nil", err)
 	}
