@@ -47,8 +47,12 @@ func NewDiscoveryHandler(service DiscoveryService, rooted RootedLookup, logger *
 // clusterResponse is the public projection of a place cluster. It is an explicit
 // type, not the domain PlaceCluster, so the wire format is a deliberate choice.
 type clusterResponse struct {
-	Place         string         `json:"place"`
-	StoryCount    int            `json:"story_count"`
+	Place        string   `json:"place"`
+	PlaceCountry *string  `json:"place_country"`
+	Latitude     *float64 `json:"latitude"`
+	Longitude    *float64 `json:"longitude"`
+	StoryCount   int      `json:"story_count"`
+	// PillarCounts is keyed by pillar; both pillars are always present.
 	PillarCounts  map[string]int `json:"pillar_counts"`
 	Languages     []string       `json:"languages"`
 	LatestStoryAt time.Time      `json:"latest_story_at"`
@@ -221,6 +225,9 @@ func newClusterResponse(cluster discovery.PlaceCluster) clusterResponse {
 
 	return clusterResponse{
 		Place:         cluster.Place,
+		PlaceCountry:  cluster.PlaceCountry,
+		Latitude:      cluster.Latitude,
+		Longitude:     cluster.Longitude,
 		StoryCount:    cluster.StoryCount,
 		PillarCounts:  pillarCounts,
 		Languages:     languages,

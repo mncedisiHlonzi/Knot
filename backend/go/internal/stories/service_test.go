@@ -150,6 +150,62 @@ func TestCreateStoryNormalisesLanguage(t *testing.T) {
 	}
 }
 
+// floatPtr returns a pointer to v, for the optional coordinate fields.
+func floatPtr(v float64) *float64 { return &v }
+
+func TestCreateStoryStoresCoordinates(t *testing.T) {
+	service, store := newTestService(t)
+
+	input := validInput()
+	input.ApproximateLocation = "Manguzi"
+	input.Latitude = floatPtr(-26.9998)
+	input.Longitude = floatPtr(32.7489)
+	input.PlaceCountry = " South Africa "
+
+	created, err := service.CreateStory(context.Background(), input)
+	if err != nil {
+		t.Fatalf("CreateStory() error = %v, want nil", err)
+	}
+
+	if store.gotCreate.Latitude == nil || *store.gotCreate.Latitude != -26.9998 {
+		t.Errorf("latitude = %v, want -26.9998", store.gotCreate.Latitude)
+	}
+	if store.gotCreate.Longitude == nil || *store.gotCreate.Longitude != 32.7489 {
+		t.Errorf("longitude = %v, want 32.7489", store.gotCreate.Longitude)
+	}
+	if created.PlaceCountry == nil || *created.PlaceCountry != "South Africa" {
+		t.Errorf("place country = %v, want the trimmed value", created.PlaceCountry)
+	}
+}
+
+func TestCreateStoryWithoutCoordinatesLeavesThemNil(t *testing.T) {
+	service, store := newTestService(t)
+
+	if _, err := service.CreateStory(context.Background(), validInput()); err != nil {
+		t.Fatalf("CreateStory() error = %v, want nil", err)
+	}
+	if store.gotCreate.Latitude != nil || store.gotCreate.Longitude != nil {
+		t.Errorf("coordinates = (%v, %v), want nil", store.gotCreate.Latitude, store.gotCreate.Longitude)
+	}
+	if store.gotCreate.PlaceCountry != nil {
+		t.Errorf("place country = %v, want nil", store.gotCreate.PlaceCountry)
+	}
+}
+
+func TestCreateStoryAcceptsBoundaryCoordinates(t *testing.T) {
+	for _, test := range []struct{ lat, lng float64 }{{-90, -180}, {90, 180}} {
+		service, _ := newTestService(t)
+
+		input := validInput()
+		input.Latitude = floatPtr(test.lat)
+		input.Longitude = floatPtr(test.lng)
+
+		if _, err := service.CreateStory(context.Background(), input); err != nil {
+			t.Errorf("CreateStory(lat=%v, lng=%v) error = %v, want nil", test.lat, test.lng, err)
+		}
+	}
+}
+
 func TestCreateStoryValidation(t *testing.T) {
 	longTitle := strings.Repeat("t", MaxTitleLen+1)
 	longBody := strings.Repeat("b", MaxBodyLen+1)
@@ -178,6 +234,41 @@ func TestCreateStoryValidation(t *testing.T) {
 			"too many media entries",
 			func(in *CreateStoryInput) { in.MediaURLs = make([]string, MaxMediaURLs+1) },
 			"media_urls",
+		},
+		{
+			"latitude without longitude",
+			func(in *CreateStoryInput) { in.Latitude = floatPtr(1.5) },
+			"latitude",
+		},
+		{
+			"longitude without latitude",
+			func(in *CreateStoryInput) { in.Longitude = floatPtr(1.5) },
+			"latitude",
+		},
+		{
+			"latitude below range",
+			func(in *CreateStoryInput) { in.Latitude = floatPtr(-90.1); in.Longitude = floatPtr(0) },
+			"latitude",
+		},
+		{
+			"latitude above range",
+			func(in *CreateStoryInput) { in.Latitude = floatPtr(90.1); in.Longitude = floatPtr(0) },
+			"latitude",
+		},
+		{
+			"longitude below range",
+			func(in *CreateStoryInput) { in.Latitude = floatPtr(0); in.Longitude = floatPtr(-180.1) },
+			"longitude",
+		},
+		{
+			"longitude above range",
+			func(in *CreateStoryInput) { in.Latitude = floatPtr(0); in.Longitude = floatPtr(180.1) },
+			"longitude",
+		},
+		{
+			"country too long",
+			func(in *CreateStoryInput) { in.PlaceCountry = strings.Repeat("c", MaxPlaceCountryLength+1) },
+			"place_country",
 		},
 	}
 

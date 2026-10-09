@@ -223,6 +223,11 @@ func TestSetSignalRejectsInvalidInput(t *testing.T) {
 		{name: "too long", input: SetSignalInput{Place: strings.Repeat("a", MaxPlaceLength+1), DurationBucket: DurationLifelong}, field: "place"},
 		{name: "invalid bucket", input: SetSignalInput{Place: "Cape Town", DurationBucket: "years"}, field: "duration_bucket"},
 		{name: "empty bucket", input: SetSignalInput{Place: "Cape Town", DurationBucket: ""}, field: "duration_bucket"},
+		{name: "latitude without longitude", input: SetSignalInput{Place: "Cape Town", DurationBucket: DurationLifelong, Latitude: floatPtr(1.5)}, field: "latitude"},
+		{name: "longitude without latitude", input: SetSignalInput{Place: "Cape Town", DurationBucket: DurationLifelong, Longitude: floatPtr(1.5)}, field: "latitude"},
+		{name: "latitude out of range", input: SetSignalInput{Place: "Cape Town", DurationBucket: DurationLifelong, Latitude: floatPtr(-91), Longitude: floatPtr(0)}, field: "latitude"},
+		{name: "longitude out of range", input: SetSignalInput{Place: "Cape Town", DurationBucket: DurationLifelong, Latitude: floatPtr(0), Longitude: floatPtr(200)}, field: "longitude"},
+		{name: "country too long", input: SetSignalInput{Place: "Cape Town", DurationBucket: DurationLifelong, PlaceCountry: strings.Repeat("c", MaxPlaceCountryLength+1)}, field: "place_country"},
 	}
 
 	for _, test := range tests {
@@ -247,6 +252,49 @@ func TestSetSignalRejectsInvalidInput(t *testing.T) {
 				t.Errorf("store received %d calls, want 0 — invalid input must not reach the store", store.setCalls)
 			}
 		})
+	}
+}
+
+// floatPtr returns a pointer to v, for the optional coordinate fields.
+func floatPtr(v float64) *float64 { return &v }
+
+func TestSetSignalStoresCoordinates(t *testing.T) {
+	store := newFakeStore()
+	store.seedUser(userOne)
+	service := newTestService(t, store)
+
+	stored, err := service.SetSignal(context.Background(), userOne, SetSignalInput{
+		Place:          "Manguzi",
+		Latitude:       floatPtr(-26.9998),
+		Longitude:      floatPtr(32.7489),
+		PlaceCountry:   " South Africa ",
+		DurationBucket: DurationLifelong,
+	})
+	if err != nil {
+		t.Fatalf("SetSignal() error = %v, want nil", err)
+	}
+
+	if store.gotSetInput.Latitude == nil || *store.gotSetInput.Latitude != -26.9998 {
+		t.Errorf("latitude = %v, want -26.9998", store.gotSetInput.Latitude)
+	}
+	if store.gotSetInput.Longitude == nil || *store.gotSetInput.Longitude != 32.7489 {
+		t.Errorf("longitude = %v, want 32.7489", store.gotSetInput.Longitude)
+	}
+	if stored.PlaceCountry == nil || *stored.PlaceCountry != "South Africa" {
+		t.Errorf("place country = %v, want the trimmed value", stored.PlaceCountry)
+	}
+}
+
+func TestSetSignalWithoutCoordinatesLeavesThemNil(t *testing.T) {
+	store := newFakeStore()
+	store.seedUser(userOne)
+	service := newTestService(t, store)
+
+	if _, err := service.SetSignal(context.Background(), userOne, validInput()); err != nil {
+		t.Fatalf("SetSignal() error = %v, want nil", err)
+	}
+	if store.gotSetInput.Latitude != nil || store.gotSetInput.Longitude != nil {
+		t.Errorf("coordinates = (%v, %v), want nil", store.gotSetInput.Latitude, store.gotSetInput.Longitude)
 	}
 }
 

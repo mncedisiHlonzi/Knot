@@ -129,6 +129,37 @@ func createStoryAt(t *testing.T, pool *pgxpool.Pool, authorID, place, pillar, la
 	return storyID
 }
 
+// createStoryWithCoords inserts a story with (or without, when latitude is nil)
+// structured place data, together with its root version.
+func createStoryWithCoords(t *testing.T, pool *pgxpool.Pool, authorID, place string, latitude, longitude *float64, country *string, at time.Time) string {
+	t.Helper()
+
+	var storyID string
+	err := pool.QueryRow(
+		context.Background(),
+		`WITH new_story AS (
+			INSERT INTO stories (
+				author_id, pillar, approximate_location, approximate_location_lower,
+				latitude, longitude, place_country,
+				media_urls, sensitive, root_version_id, created_at, updated_at
+			)
+			VALUES ($1, 'wonder', $2, lower(trim($2)), $3, $4, $5, '{}', false, gen_random_uuid(), $6, $6)
+			RETURNING id, root_version_id
+		)
+		INSERT INTO story_versions (
+			id, story_id, parent_version_id, author_id, language, title, body, created_at, updated_at
+		)
+		SELECT root_version_id, id, NULL, $1, 'en', 'A discovery story', 'Body', $6, $6 FROM new_story
+		RETURNING story_id`,
+		authorID, place, latitude, longitude, country, at,
+	).Scan(&storyID)
+	if err != nil {
+		t.Fatalf("createStoryWithCoords() error = %v, want nil", err)
+	}
+
+	return storyID
+}
+
 // runToken returns a per-run token used to give places unique names, so the
 // tests are unaffected by any other rows that happen to be in the database.
 func runToken() string {
@@ -191,6 +222,80 @@ func TestPostgresStoreListClustersAggregates(t *testing.T) {
 	wantLatest := base.Add(2 * time.Minute)
 	if !group[0].LatestStoryAt.Equal(wantLatest) {
 		t.Errorf("Cape Town latest_story_at = %v, want %v", group[0].LatestStoryAt, wantLatest)
+	}
+}
+
+func TestPostgresStoreListClustersGroupsByCoordinates(t *testing.T) {
+	store, pool, prefix := integrationSetup(t)
+	ctx := context.Background()
+	userID := createUser(t, pool, prefix, "coords")
+	token := runToken()
+
+	manguzi := "Manguzi " + token
+	kwangwanase := "Kwangwanase " + token
+	legacy := "Nowhere " + token
+
+	latitude, longitude := -26.9998, 32.7489
+	country := "South Africa"
+
+	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	// Two stories at the same coordinate but with different place names.
+	createStoryWithCoords(t, pool, userID, manguzi, &latitude, &longitude, &country, base)
+	createStoryWithCoords(t, pool, userID, kwangwanase, &latitude, &longitude, &country, base.Add(time.Minute))
+	// A story with no coordinate still clusters, by its place name.
+	createStoryWithCoords(t, pool, userID, legacy, nil, nil, nil, base.Add(2*time.Minute))
+
+	clusters, err := store.ListClusters(ctx, ClusterFilter{Limit: 100})
+	if err != nil {
+		t.Fatalf("ListClusters() error = %v, want nil", err)
+	}
+
+	group := ours(clusters, token)
+	if len(group) != 2 {
+		t.Fatalf("clusters for this run = %d, want 2: %+v", len(group), group)
+	}
+
+	// story_count descending: the coordinate cluster (2) leads.
+	coordinateCluster := group[0]
+	if coordinateCluster.Latitude == nil || *coordinateCluster.Latitude != latitude {
+		t.Errorf("latitude = %v, want %v", coordinateCluster.Latitude, latitude)
+	}
+	if coordinateCluster.Longitude == nil || *coordinateCluster.Longitude != longitude {
+		t.Errorf("longitude = %v, want %v", coordinateCluster.Longitude, longitude)
+	}
+	if coordinateCluster.PlaceCountry == nil || *coordinateCluster.PlaceCountry != country {
+		t.Errorf("place_country = %v, want %q", coordinateCluster.PlaceCountry, country)
+	}
+	if coordinateCluster.StoryCount != 2 {
+		t.Errorf("coordinate cluster story_count = %d, want 2", coordinateCluster.StoryCount)
+	}
+}
+
+func TestPostgresStoreListClustersLegacyRowsHaveNilCoordinates(t *testing.T) {
+	store, pool, prefix := integrationSetup(t)
+	ctx := context.Background()
+	userID := createUser(t, pool, prefix, "legacy")
+	token := runToken()
+
+	place := "Smallville " + token
+	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	createStoryAt(t, pool, userID, place, "wonder", "en", base)
+	createStoryAt(t, pool, userID, place, "wonder", "en", base.Add(time.Minute))
+
+	clusters, err := store.ListClusters(ctx, ClusterFilter{Limit: 100})
+	if err != nil {
+		t.Fatalf("ListClusters() error = %v, want nil", err)
+	}
+
+	group := ours(clusters, token)
+	if len(group) != 1 {
+		t.Fatalf("clusters for this run = %d, want 1: %+v", len(group), group)
+	}
+	if group[0].StoryCount != 2 {
+		t.Errorf("story_count = %d, want 2", group[0].StoryCount)
+	}
+	if group[0].Latitude != nil || group[0].Longitude != nil {
+		t.Errorf("coordinates = (%v, %v), want nil for a text-only place", group[0].Latitude, group[0].Longitude)
 	}
 }
 

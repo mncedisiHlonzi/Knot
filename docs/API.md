@@ -241,6 +241,9 @@ and the pillar it belongs to.
   "title": "The first rain",
   "body": "Grandmother said the first rain remembers every name.",
   "approximate_location": "Cape Town",
+  "latitude": -33.9249,
+  "longitude": 18.4241,
+  "place_country": "South Africa",
   "media_urls": ["https://example.com/rain.jpg"],
   "media": [
     {
@@ -265,6 +268,12 @@ and the pillar it belongs to.
 
 `media_urls` is always an array, never `null`. `approximate_location` is an empty string
 when it was not given.
+
+`latitude`, `longitude`, and `place_country` are the story's **structured place data**, or
+`null` when the author attached no place. The coordinate pair is `null` together or set
+together: a story either has a point the map can plot or it has none (KNOT-ADR-034). The
+Discovery Map plots `latitude`/`longitude` directly, so a small town appears even though it
+is not in the client's fallback lookup table.
 
 `media` is the story's attached files (see [Story media](#story-media)). On
 `GET /stories/{id}` it is the full list in `display_order`. On the feed (`GET /stories`) it
@@ -297,6 +306,9 @@ and `updated_at` are generated server-side.
   "title": "The first rain",
   "body": "Grandmother said the first rain remembers every name.",
   "approximate_location": "Cape Town",
+  "latitude": -33.9249,
+  "longitude": 18.4241,
+  "place_country": "South Africa",
   "media_urls": ["https://example.com/rain.jpg"],
   "sensitive": false
 }
@@ -309,6 +321,9 @@ and `updated_at` are generated server-side.
 | `title`                | yes      | 1-200 characters after trimming                              |
 | `body`                 | yes      | 1-10000 characters; stored verbatim, so formatting survives  |
 | `approximate_location` | no       | At most 100 characters after trimming                        |
+| `latitude`             | no       | Between -90 and 90. Must be sent with `longitude`             |
+| `longitude`            | no       | Between -180 and 180. Must be sent with `latitude`            |
+| `place_country`        | no       | At most 100 characters after trimming                        |
 | `media_urls`           | no       | At most 20 links, each at most 2048 characters, none blank    |
 | `sensitive`            | no       | Defaults to `false`                                          |
 
@@ -727,6 +742,9 @@ no vouching, no score, and no gating. See KNOT-ADR-016 in
   "id": "99999999-9999-4999-8999-999999999999",
   "user_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
   "place": "Cape Town",
+  "latitude": -33.9249,
+  "longitude": 18.4241,
+  "place_country": "South Africa",
   "duration_bucket": "lifelong",
   "is_public": true,
   "is_primary": true,
@@ -734,6 +752,9 @@ no vouching, no score, and no gating. See KNOT-ADR-016 in
   "updated_at": "2026-10-08T12:00:00Z"
 }
 ```
+
+`latitude`, `longitude`, and `place_country` are the signal's structured place data, or
+`null`; the coordinate pair goes together (KNOT-ADR-034). `place` is the display name.
 
 `duration_bucket` is one of `lifelong`, `many_years`, `several_years`, `a_few_years`, or
 `recently`. A person has exactly one **primary** signal, so `is_primary` is always `true`
@@ -748,12 +769,22 @@ Sets the authenticated user's primary Rooted signal and returns **200** with
 **Request**
 
 ```json
-{ "place": "Cape Town", "duration_bucket": "lifelong", "is_public": true }
+{
+  "place": "Cape Town",
+  "latitude": -33.9249,
+  "longitude": 18.4241,
+  "place_country": "South Africa",
+  "duration_bucket": "lifelong",
+  "is_public": true
+}
 ```
 
 | Field             | Required | Rules                                                                    |
 | ----------------- | -------- | ------------------------------------------------------------------------ |
 | `place`           | yes      | 1-80 characters after trimming; a single line (no line breaks or tabs)    |
+| `latitude`        | no       | Between -90 and 90. Must be sent with `longitude`                         |
+| `longitude`       | no       | Between -180 and 180. Must be sent with `latitude`                        |
+| `place_country`   | no       | At most 100 characters after trimming                                      |
 | `duration_bucket` | yes      | Exactly one of the five values above                                      |
 | `is_public`       | no       | Defaults to `true`; `false` hides the signal from public read             |
 
@@ -814,9 +845,11 @@ entry per place, with how many stories are there, which pillars they belong to, 
 languages they are told in, and when the newest one was published — and lists the stories at a
 single place, with the same keyset pagination the feed uses.
 
-Places are **free text**. The server stores no coordinates and never geocodes (KNOT-ADR-020): a
-place is normalised to `lower(trim(...))` for grouping, and the map client resolves a place
-name to a point on the device.
+A place is identified by its **structured coordinate** when a story has one — the point the
+author chose from the geocoding picker (KNOT-ADR-034, KNOT-ADR-035) — and by the normalised
+`lower(trim(...))` form of its name otherwise, for stories created before migration `0009`
+(KNOT-ADR-020). The map client plots the coordinate directly, so a small town appears even
+though it is not in the client's fallback lookup table.
 
 | Route                           | Auth   | Purpose                                    |
 | ------------------------------- | ------ | ------------------------------------------ |
@@ -827,7 +860,10 @@ name to a point on the device.
 
 ```json
 {
-  "place": "Cape Town",
+  "place": "Manguzi",
+  "place_country": "South Africa",
+  "latitude": -26.9998,
+  "longitude": 32.7489,
   "story_count": 42,
   "pillar_counts": { "wonder": 30, "heritage": 12 },
   "languages": ["af", "en", "xh"],
@@ -835,13 +871,17 @@ name to a point on the device.
 }
 ```
 
+`latitude`, `longitude`, and `place_country` are the cluster's structured place data, or `null`
+for a **legacy cluster** — one whose stories were created before migration `0009` and carry no
+coordinate. A cluster with a coordinate is keyed by that point, so two stories at the same
+place are grouped together whatever each named it; a legacy cluster is keyed by the normalised
+place name.
+
 `pillar_counts` always carries **both** supported pillars, so a place with only wonder stories
 still has `"heritage": 0`. `languages` is the distinct, sorted set of the stories' **root
-version** languages — always an array, never `null`. `place` is an author's original spelling;
-grouping is on the normalised lower case form, so "Cape Town" and "cape town" are one cluster.
-The cluster query groups by place and orders by `story_count` descending; a language *filter*
-matches any version of a story, while the aggregated `languages` list comes from root versions
-only (KNOT-ADR-020).
+version** languages — always an array, never `null`. `place` is an author's original spelling.
+The cluster query orders by `story_count` descending; a language *filter* matches any version of
+a story, while the aggregated `languages` list comes from root versions only (KNOT-ADR-020).
 
 ### GET /discovery/clusters
 

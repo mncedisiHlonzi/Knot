@@ -19,6 +19,7 @@ Migrations live in `backend/go/migrations/` and are applied with
 | `0006`  | `discovery` | The `stories.approximate_location_lower` column, its backfill, and its index |
 | `0007`  | `user_avatar` | The `users.avatar_url` column |
 | `0008`  | `story_media` | The `story_media` table, its indexes and constraints |
+| `0009`  | `structured_place` | The `stories` and `rooted_signals` `latitude`/`longitude`/`place_country` columns |
 
 Applied versions are recorded in the `schema_migrations` table, which the runner creates
 on first use.
@@ -82,6 +83,9 @@ Language Tree, Conversations, Bridges) references `stories.id`.
 | `pillar`               | `text`         | no       | —                   | `CHECK (pillar IN ('wonder', 'heritage'))`                   |
 | `root_version_id`      | `uuid`         | no       | —                   | References `story_versions(id)`. The story's root version; see [the root version invariant](#the-root-version-invariant) |
 | `approximate_location` | `text`         | yes      | `NULL`              | Coarse location only; precise location is out of scope        |
+| `latitude`             | `double precision` | yes | `NULL`           | Structured place coordinate, or `NULL`. Set together with `longitude` (migration `0009`, KNOT-ADR-034) |
+| `longitude`            | `double precision` | yes | `NULL`           | Structured place coordinate, or `NULL`. The pair is the cluster key in discovery |
+| `place_country`        | `text`         | yes      | `NULL`              | The country the geocoder reported, or `NULL`; at most 100 characters |
 | `approximate_location_lower` | `text`   | yes      | `NULL`              | Normalised `lower(trim(approximate_location))`, maintained on write and backfilled by `0006`; groups stories by place. No coordinates, no geocoding |
 | `media_urls`           | `text[]`       | no       | `'{}'`              | The application always writes an array, never `NULL`          |
 | `sensitive`            | `boolean`      | no       | `false`             | Marks a story that should not be surfaced without care        |
@@ -126,6 +130,26 @@ This is normalisation-for-grouping only: there are no coordinates, no spatial in
 geocoding. The mobile client resolves a place name to a point with a local lookup table, and a
 place it does not know is listed rather than plotted. See KNOT-ADR-020, and
 [`Discovery`](API.md#discovery) for the read endpoints.
+
+### Structured place data (migration `0009`)
+
+`latitude`, `longitude`, and `place_country` were added to `stories` (and to
+`rooted_signals`) in migration `0009`. They carry the point the mobile client's geocoding
+picker returned, so the Discovery Map plots a place exactly instead of resolving its name
+through a hand-maintained table of well-known cities (KNOT-ADR-034, KNOT-ADR-035).
+
+The three columns are nullable and additive:
+
+- `latitude` and `longitude` are **set together or not at all** — the service rejects a lone
+  one. `NULL`/`NULL` is a story with no place, or one created before this migration.
+- `place_country` is the country name the geocoder reported, or `NULL`.
+- `approximate_location` (the free text field) is **kept**: a new story still stores the
+  chosen place's name there for display, and `approximate_location_lower` still groups legacy
+  rows. Discovery prefers the coordinate when it is present and falls back to the normalised
+  name otherwise.
+
+There is deliberately **no** spatial index, no PostGIS, and no reverse geocoding. Discovery
+groups by the coordinate pair with a plain `GROUP BY`, which is enough at MVP scale.
 
 ### Deliberate omissions
 
@@ -303,6 +327,9 @@ no address), and simple (no vouching, no score, no gating). See KNOT-ADR-016.
 | `id`              | `uuid`        | no       | `gen_random_uuid()` | Primary key                                                         |
 | `user_id`         | `uuid`        | no       | —                   | References `users(id)`. The person the signal belongs to             |
 | `place`           | `text`        | no       | —                   | A city or region name, 1-80 characters; never a precise location      |
+| `latitude`        | `double precision` | yes | `NULL`            | Structured place coordinate, or `NULL`; set together with `longitude` (migration `0009`, KNOT-ADR-034) |
+| `longitude`       | `double precision` | yes | `NULL`            | Structured place coordinate, or `NULL`                                |
+| `place_country`   | `text`        | yes      | `NULL`              | The country the geocoder reported, or `NULL`; at most 100 characters   |
 | `duration_bucket` | `text`        | no       | —                   | How long the connection has been held; see the closed set below      |
 | `is_public`       | `boolean`     | no       | `true`              | `false` hides the signal from public read; the owner still sees it    |
 | `is_primary`      | `boolean`     | no       | `true`              | Marks the one active signal; exists for later multi-signal support    |

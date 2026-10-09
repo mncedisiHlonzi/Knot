@@ -103,6 +103,9 @@ const (
 	MinPlaceLength = 1
 	// MaxPlaceLength is the longest accepted place, after trimming.
 	MaxPlaceLength = 80
+	// MaxPlaceCountryLength bounds the optional country name the geocoder
+	// reported for a place.
+	MaxPlaceCountryLength = 100
 )
 
 // Signal is a user's declared connection to a place.
@@ -117,6 +120,13 @@ type Signal struct {
 	UserID string
 	// Place is the declared place, at city or region precision.
 	Place string
+	// Latitude and Longitude are the structured coordinate of the place, or nil.
+	// They are set together or not at all (KNOT-ADR-034), so Rooted can later be
+	// plotted on the map.
+	Latitude  *float64
+	Longitude *float64
+	// PlaceCountry is the country name the geocoder reported, or nil.
+	PlaceCountry *string
 	// DurationBucket is how long the connection has been held.
 	DurationBucket DurationBucket
 	// IsPublic is false when the owner has hidden the signal from public read.
@@ -135,6 +145,11 @@ type Signal struct {
 type SetSignalInput struct {
 	// Place is required and must be 1-MaxPlaceLength characters after trimming.
 	Place string
+	// Latitude, Longitude, and PlaceCountry are optional structured place data.
+	// Latitude and Longitude must be supplied together (KNOT-ADR-034).
+	Latitude     *float64
+	Longitude    *float64
+	PlaceCountry string
 	// DurationBucket is required and must be one of the five supported buckets.
 	DurationBucket DurationBucket
 	// IsPublic controls whether the signal is readable by anyone. Signals are

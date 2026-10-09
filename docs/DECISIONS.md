@@ -759,3 +759,89 @@ The S3 implementation sets the SDK's `GetObjectInput.Range` field, so the object
 
 **Consequences:** The `Storage` interface is five methods wide rather than four, and every implementation (the S3 store and the test doubles in `internal/storage` and `internal/httpapi`) must provide `GetRange`. A range that is syntactically valid but unsatisfiable for the object's size is never sent to storage: the handler clamps against the row's `size_bytes` and falls back to a full 200, so the object store is not asked for a range it would reject with a 416.
 
+## KNOT-ADR-034 — Structured place data replaces free-text location for map compatibility
+
+**Decision ID:** KNOT-ADR-034
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** A story's place was free text, and discovery grouped stories by a normalised copy of it (KNOT-ADR-020). The Discovery Map resolved each place name to a point with a hand-maintained, client-side table of ~66 well-known cities, so a small town or a rural place typed as free text never appeared on the map. The founder's on-device pass (KNOT-013) made the gap obvious: the map showed only the cities someone had already added to the table.
+
+**Decision:** Store place **structure**, not only text. Migration `0009` adds `latitude`, `longitude`, and `place_country` to `stories` and to `rooted_signals`:
+- The three columns are **nullable and additive**. A story with no place, and every row created before the migration, has `NULL`/`NULL`/`NULL`.
+- `latitude` and `longitude` are **set together or not at all**; the service rejects a lone one. Latitude is bounded to [-90, 90], longitude to [-180, 180], and NaN is rejected explicitly.
+- `approximate_location` (and Rooted's `place`) is **kept** for display and backward compatibility: a new story still writes the chosen place's name there, and the `approximate_location_lower` copy still groups legacy rows.
+- Discovery groups by the `(latitude, longitude)` pair when present, and falls back to `approximate_location_lower` when it is not, so old and new rows coexist.
+
+**Alternatives Considered:**
+1. **Enlarge the client-side lookup table** — rejected. It is unbounded manual work, and it never covers the small places the feature exists for.
+2. **Backfill coordinates for existing free-text rows** — rejected. It needs a geocoder on the backend (a credential the backend should not need) and would guess at places that may be ambiguous.
+3. **A PostGIS geography column and a spatial index** — rejected. The MVP groups and plots points; a plain `GROUP BY` over `double precision` is enough, and PostGIS is a deployment dependency with no MVP payoff.
+4. **Replace `approximate_location` outright** — rejected. It would break every existing row and the display name a story already carries.
+
+**Reason:** A coordinate is the smallest change that makes every place mappable, and making it additive means the transition needs no backfill and no destructive migration. Keeping the text field means the place a person typed is still what is shown, while the coordinate is what the map uses.
+
+**Consequences:** A place now has two representations during the transition — text and structure — and the API carries both. A story created before `0009` has no coordinate and still relies on the client lookup table until it is re-created; that table is therefore kept as a fallback rather than deleted. There is no spatial index, no reverse geocoding, and no prediction of a coordinate from a name.
+
+## KNOT-ADR-035 — Mapbox Geocoding API for location search
+
+**Decision ID:** KNOT-ADR-035
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** KNOT-ADR-034 needs a coordinate for a place, which means geocoding a typed name into a point and a country. The app already uses Mapbox for the Discovery Map (KNOT-ADR-026) with a public token in the gitignored `secrets.local.ts`.
+
+**Decision:** Use the **Mapbox Geocoding API** (`geocoding/v5/mapbox.places`) for place search, called **directly from the mobile client** with the existing public token (the founder adds the `mapbox.places` scope to it). No new provider and no new signup. The request asks for `types=place,locality,region` and `limit=5`, and the client maps each feature's `text`, `center`, and country context onto `{place, latitude, longitude, country}`. The **backend needs no Mapbox token**: it receives structured place data and never calls a geocoder.
+
+**Alternatives Considered:**
+1. **Geocode on the backend** — rejected. It makes the backend depend on a third-party credential and network call on the write path, and it duplicates a lookup the client can do in one request.
+2. **A different provider (Google, Nominatim, HERE)** — rejected. It is a new account, a new key, and a second mapping provider for a product that already uses Mapbox.
+3. **A bundled offline gazetteer** — rejected. It is the enlarged lookup table of KNOT-ADR-034 under a different name, with the same coverage problem.
+4. **Mapbox Search Box API** — rejected for MVP. It is a newer, session-billed surface; the classic Geocoding API is sufficient for a place-and-region picker.
+
+**Reason:** The same provider the map already uses, with the same token and no backend involvement, is the least new surface that solves the problem.
+
+**Consequences:** The public token needs the `mapbox.places` scope, and the free tier's request budget (100k/month) is now consumed by typing; the picker debounces (300 ms) and requires two characters, and caches results in memory for the session, which bounds the request rate. Geocoding is a network dependency of the picker only: if the geocoder is unreachable the picker shows "Could not search" and the form cannot gain a location, which is correct — a place without a coordinate would break the invariant from KNOT-ADR-034.
+
+## KNOT-ADR-036 — A location requires selecting a suggestion; free text alone is not accepted
+
+**Decision ID:** KNOT-ADR-036
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** KNOT-ADR-034 makes a coordinate the thing the map plots. The picker lets a person type freely, and typing without choosing a suggestion would leave text with no coordinate — exactly the state the feature exists to remove.
+
+**Decision:** A story's location must be a **selected suggestion**. The location picker is a controlled component: typing updates the text but clears any prior selection, and choosing a row sets both the text and the coordinate. On submit, the Create Story screen rejects a form whose location field has text but no selection with *"Please select a place from the suggestions."* The Rooted setup screen applies the same rule. A story with **no** location at all remains valid.
+
+**Alternatives Considered:**
+1. **Accept free text with null coordinates** — rejected. It reintroduces the exact gap KNOT-ADR-034 closes and would let a story claim a place the map cannot show.
+2. **Geocode free text on submit** — rejected. It hides a network call behind "Publish", and an ambiguous name has no single right point.
+3. **Silently drop unselected text** — rejected. It publishes a story the author believes is located when it is not.
+
+**Reason:** Requiring a selection is what guarantees the invariant — every located story has a coordinate — and it is checked on the client before a request is sent.
+
+**Consequences:** A person on a poor connection, or looking for a place the geocoder does not know, cannot attach a location; they can still publish without one. The backend does not *require* a coordinate (a story without a place is valid), so this is a client-side rule enforced where the text is entered; the server's own rule is only that the pair travels together.
+
+## KNOT-ADR-037 — Media viewer uses FlatList paging and Animated gestures, no new dependency
+
+**Decision ID:** KNOT-ADR-037
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** KNOT-013's full-screen viewer showed one item and closed; it could not swipe between a story's media, zoom an image, or scrub a video. The polish task needed a swipeable gallery with pinch-zoom and video controls, without adding a dependency (the app deliberately keeps a tiny native surface, KNOT-ADR-002).
+
+**Decision:** Build the gallery from React Native's built-ins:
+- **Swipe:** a horizontal `FlatList` with `pagingEnabled` and `getItemLayout`, so a swipe moves exactly one item and the list can open at the tapped index.
+- **Dismiss:** a `PanResponder` on the backdrop that follows a downward drag and closes past a threshold; it claims only vertical-dominant moves, so it does not steal the pager's horizontal swipe or an image's pinch.
+- **Pinch-zoom:** an `Animated` scale with a `PanResponder` that claims the gesture only for two touches (pinch) or a drag while already zoomed, and a double-tap to reset. Panning is clamped by scale, not by bounds — full edge-clamping is deferred.
+- **Video:** `react-native-video` with a custom overlay (play/pause, a tap-to-seek scrub bar, and a current/total readout) rather than the platform's built-in controls, so it matches the dark theme.
+
+**Alternatives Considered:**
+1. **`react-native-gesture-handler` + `react-native-reanimated`** — rejected. Two more native dependencies for one screen, against the project's stated preference (KNOT-ADR-002).
+2. **A third-party lightbox/gallery package** — rejected. It would bring its own theming, its own dependency tree, and styling the product has not designed yet.
+3. **The platform's built-in video controls** — rejected. They cannot be themed and look foreign on the dark canvas; a small custom overlay covers the required behaviour.
+
+**Reason:** The built-in APIs cover the required gestures, and keeping the dependency set unchanged is worth a hand-written responder.
+
+**Consequences:** The gesture code is small but hand-rolled, so pinch and swipe must be verified on a device (a simulator has no multi-touch). Panning does not clamp to image edges, which is acceptable for MVP and can be tightened later. The `PanResponder` negotiation between the pager, the image, and the dismiss handler is subtle; the claim rules are documented in the code so a future change does not silently break one of the three.
+

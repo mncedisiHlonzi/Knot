@@ -91,6 +91,9 @@ const (
 	maxLanguageLen = 8
 	// MaxLocationLength bounds the optional approximate location.
 	MaxLocationLength = 100
+	// MaxPlaceCountryLength bounds the optional country name the geocoder
+	// reported for a place. It is generous for a country name.
+	MaxPlaceCountryLength = 100
 	// MaxMediaURLs bounds how many media links one story may carry.
 	MaxMediaURLs = 20
 	// maxMediaURLLength bounds a single media link.
@@ -131,6 +134,15 @@ type Story struct {
 	Body string
 	// ApproximateLocation is an optional, deliberately coarse place name.
 	ApproximateLocation string
+	// Latitude and Longitude are the structured coordinate of the place, or nil
+	// when the author did not attach one. They are set together or not at all
+	// (KNOT-ADR-034): the pair is what the Discovery Map plots, so a lone
+	// latitude is meaningless.
+	Latitude  *float64
+	Longitude *float64
+	// PlaceCountry is the country name the geocoder reported for the place, or
+	// nil. It is a display hint, not a stable code.
+	PlaceCountry *string
 	// MediaURLs is the attached media, never nil once stored.
 	MediaURLs []string
 	// Sensitive marks a story that should not be surfaced without care.
@@ -152,6 +164,11 @@ type CreateStoryInput struct {
 	AuthorID string
 	// Pillar is required and must be one of the supported pillars.
 	Pillar Pillar
+	// Latitude, Longitude, and PlaceCountry are optional structured place data.
+	// Latitude and Longitude must be supplied together (KNOT-ADR-034).
+	Latitude     *float64
+	Longitude    *float64
+	PlaceCountry string
 	// Language is required and must be a 2-8 character tag.
 	Language string
 	// Title is required and must be 1-MaxTitleLen characters.

@@ -25,6 +25,17 @@ export const PLACE_PAGE_SIZE = 20;
  */
 export type PlaceCluster = {
   readonly place: string;
+  /**
+   * The country the geocoder reported, or null for a legacy cluster that predates
+   * structured place data.
+   */
+  readonly place_country: string | null;
+  /**
+   * The cluster's coordinate, or null for a legacy cluster. When present the map
+   * plots it directly instead of consulting the local lookup table (KNOT-ADR-034).
+   */
+  readonly latitude: number | null;
+  readonly longitude: number | null;
   readonly story_count: number;
   readonly pillar_counts: Readonly<Record<string, number>>;
   readonly languages: readonly string[];

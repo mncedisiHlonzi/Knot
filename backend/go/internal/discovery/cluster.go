@@ -13,12 +13,15 @@
 //	service.go        business rules (ListClusters, ListStoriesAtPlace)
 //	postgres_store.go the PostgreSQL implementation of the store contract
 //
-// Nothing in this package knows about HTTP, JSON, or SQL types. A place is free
-// text: discovery never geocodes and never stores a coordinate, and a place name
-// is matched on the normalised `approximate_location_lower` column the stories
-// write path maintains (KNOT-ADR-020). The package reuses the stories domain's
-// Story type and its opaque pagination cursor rather than defining parallel ones,
-// because a story at a place is an ordinary story read through a different query.
+// Nothing in this package knows about HTTP, JSON, or SQL types. A place carries
+// a structured coordinate when the author picked one from the geocoding search
+// (KNOT-ADR-034): a cluster is identified by that coordinate, and a legacy row
+// without one falls back to the normalised `approximate_location_lower` column
+// the stories write path maintains (KNOT-ADR-020). Discovery itself never
+// geocodes; it only groups what the stories write path stored. The package
+// reuses the stories domain's Story type and its opaque pagination cursor rather
+// than defining parallel ones, because a story at a place is an ordinary story
+// read through a different query.
 package discovery
 
 import (
@@ -94,9 +97,18 @@ type ClusterFilter struct {
 // place name, and the remaining fields summarise every story grouped under it.
 type PlaceCluster struct {
 	// Place is the place name as it was written by an author. Grouping is by the
-	// normalised lower case form, but the display value preserves the author's
-	// original casing.
+	// structured coordinate when present (KNOT-ADR-034), and by the normalised
+	// lower case form otherwise; the display value preserves the author's original
+	// casing.
 	Place string
+	// PlaceCountry is the country the geocoder reported for the place, or nil for
+	// a legacy cluster that predates structured place data.
+	PlaceCountry *string
+	// Latitude and Longitude are the cluster's coordinate, or nil for a legacy
+	// cluster. When present the pair is the cluster's identity: two stories with
+	// the same coordinate are one cluster, whatever each named the place.
+	Latitude  *float64
+	Longitude *float64
 	// StoryCount is how many stories are at this place.
 	StoryCount int
 	// PillarCounts is the story count per pillar. Both supported pillars are

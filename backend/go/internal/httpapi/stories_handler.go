@@ -68,6 +68,9 @@ type createStoryRequest struct {
 	Title               string         `json:"title"`
 	Body                string         `json:"body"`
 	ApproximateLocation string         `json:"approximate_location"`
+	Latitude            *float64       `json:"latitude"`
+	Longitude           *float64       `json:"longitude"`
+	PlaceCountry        string         `json:"place_country"`
 	MediaURLs           []string       `json:"media_urls"`
 	Sensitive           bool           `json:"sensitive"`
 }
@@ -88,10 +91,15 @@ type storyResponse struct {
 	Title               string         `json:"title"`
 	Body                string         `json:"body"`
 	ApproximateLocation string         `json:"approximate_location"`
-	MediaURLs           []string       `json:"media_urls"`
-	Sensitive           bool           `json:"sensitive"`
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
+	// Latitude, Longitude, and PlaceCountry are the structured place data. The
+	// coordinate pair is null together or set together (KNOT-ADR-034).
+	Latitude     *float64  `json:"latitude"`
+	Longitude    *float64  `json:"longitude"`
+	PlaceCountry *string   `json:"place_country"`
+	MediaURLs    []string  `json:"media_urls"`
+	Sensitive    bool      `json:"sensitive"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 	// AuthorRooted is the author's primary public Rooted signal, or null when they
 	// have none. It is a summary (place and duration only), attached at the HTTP
 	// layer; see KNOT-ADR-017.
@@ -136,6 +144,9 @@ func (h *StoriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	created, err := h.service.CreateStory(r.Context(), stories.CreateStoryInput{
 		AuthorID:            authorID,
+		Latitude:            body.Latitude,
+		Longitude:           body.Longitude,
+		PlaceCountry:        body.PlaceCountry,
 		Pillar:              body.Pillar,
 		Language:            body.Language,
 		Title:               body.Title,
@@ -257,19 +268,22 @@ func newStoryResponse(story stories.Story) storyResponse {
 	}
 
 	return storyResponse{
-		ID:            story.ID,
-		AuthorID:      story.AuthorID,
-		RootVersionID: story.RootVersionID,
-		// Emit [] rather than null until the enrichment fills it in.
-		Media:               []storyMediaResponse{},
+		ID:                  story.ID,
+		AuthorID:            story.AuthorID,
+		RootVersionID:       story.RootVersionID,
 		Pillar:              story.Pillar,
 		Language:            story.Language,
 		Title:               story.Title,
 		Body:                story.Body,
 		ApproximateLocation: story.ApproximateLocation,
+		Latitude:            story.Latitude,
+		Longitude:           story.Longitude,
+		PlaceCountry:        story.PlaceCountry,
 		MediaURLs:           media,
 		Sensitive:           story.Sensitive,
 		CreatedAt:           story.CreatedAt,
 		UpdatedAt:           story.UpdatedAt,
+		// Emit [] rather than null until the enrichment fills it in.
+		Media: []storyMediaResponse{},
 	}
 }

@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
-  Modal,
   Pressable,
   ScrollView,
   StyleProp,
@@ -17,6 +16,7 @@ import { describeError } from '../../api/client';
 import { Story, StoryMedia, storiesApi } from '../../api/stories';
 import { versionsApi } from '../../api/versions';
 import CameraCaptureBadge from '../../components/CameraCaptureBadge';
+import MediaGalleryModal from '../../components/MediaGalleryModal';
 import RootedBadge from '../../components/RootedBadge';
 import { API_BASE_URL } from '../../config/api';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
@@ -76,37 +76,6 @@ function MediaTile({
 
       {media.source === 'camera' ? <CameraCaptureBadge style={styles.tileBadge} /> : null}
     </View>
-  );
-}
-
-/** A simple full-screen viewer for one piece of media. */
-function MediaViewer({
-  media,
-  onClose,
-}: {
-  readonly media: StoryMedia | undefined;
-  readonly onClose: () => void;
-}): React.ReactElement {
-  const uri = media === undefined ? '' : resolveMediaUrl(media.url);
-
-  return (
-    <Modal visible={media !== undefined} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.viewerBackdrop}>
-        {media !== undefined && media.media_type === 'video' ? (
-          <Video source={{ uri }} style={styles.viewerMedia} controls resizeMode="contain" />
-        ) : null}
-        {media !== undefined && media.media_type === 'image' ? (
-          <Image style={styles.viewerMedia} source={{ uri }} resizeMode="contain" />
-        ) : null}
-        {media !== undefined && media.source === 'camera' ? (
-          <CameraCaptureBadge label="Captured" style={styles.viewerBadge} />
-        ) : null}
-
-        <Pressable style={styles.viewerClose} onPress={onClose} accessibilityRole="button">
-          <Text style={styles.viewerCloseText}>Close</Text>
-        </Pressable>
-      </View>
-    </Modal>
   );
 }
 
@@ -253,8 +222,10 @@ export default function StoryDetailScreen({
             <Text style={styles.secondaryButtonText}>See conversation</Text>
           </Pressable>
 
-          <MediaViewer
-            media={viewerIndex === undefined ? undefined : media[viewerIndex]}
+          <MediaGalleryModal
+            visible={viewerIndex !== undefined}
+            media={media}
+            initialIndex={viewerIndex ?? 0}
             onClose={() => setViewerIndex(undefined)}
           />
         </>
@@ -366,35 +337,6 @@ const styles = StyleSheet.create({
   tileOpenTarget: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 1,
-  },
-  viewerBackdrop: {
-    alignItems: 'center',
-    backgroundColor: colors.bg.primary,
-    flex: 1,
-    justifyContent: 'center',
-  },
-  viewerBadge: {
-    bottom: spacing['2xl'],
-    position: 'absolute',
-  },
-  viewerClose: {
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    bottom: spacing['2xl'],
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.md,
-    position: 'absolute',
-    right: spacing.xl,
-  },
-  viewerCloseText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
-  },
-  viewerMedia: {
-    height: '100%',
-    width: '100%',
   },
   primaryButton: {
     alignItems: 'center',

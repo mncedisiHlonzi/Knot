@@ -55,6 +55,14 @@ export type Story = {
   readonly title: string;
   readonly body: string;
   readonly approximate_location: string;
+  /**
+   * The structured place data, or null when the author attached no place. The
+   * coordinate pair is null together or set together; the Discovery Map plots it
+   * directly (KNOT-ADR-034).
+   */
+  readonly latitude?: number | null;
+  readonly longitude?: number | null;
+  readonly place_country?: string | null;
   readonly media_urls: readonly string[];
   readonly sensitive: boolean;
   readonly created_at: string;
@@ -79,6 +87,13 @@ export type CreateStoryPayload = {
   readonly title: string;
   readonly body: string;
   readonly approximate_location?: string;
+  /**
+   * Structured place data from the location picker. The coordinate pair must be
+   * supplied together or not at all (KNOT-ADR-034).
+   */
+  readonly latitude?: number;
+  readonly longitude?: number;
+  readonly place_country?: string;
   readonly media_urls?: readonly string[];
   readonly sensitive?: boolean;
 };

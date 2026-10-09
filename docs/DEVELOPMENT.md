@@ -284,7 +284,11 @@ they are easy to confuse:
   the gitignored local files `apps/mobile/src/config/secrets.local.ts` and
   `apps/mobile/android/app/src/main/res/values/mapbox.xml` (KNOT-ADR-027). See
   [Local secrets setup (after cloning)](#local-secrets-setup-after-cloning) below. If it is ever
-  abused, rotate it in the Mapbox console and update both local files.
+  abused, rotate it in the Mapbox console and update both local files. The token needs the
+  **`mapbox.places`** scope in addition to the default styles scope: the location picker calls
+  the Mapbox Geocoding API directly from the client to turn a typed place into a coordinate
+  (KNOT-ADR-035). Without that scope the picker shows "Could not search" and a story cannot gain
+  a location.
 
 - **Secret downloads token (`sk.…`)** — used **only by Gradle** to download the native Mapbox
   SDK from Mapbox's Maven repository. It is a credential and **must never be committed**. It

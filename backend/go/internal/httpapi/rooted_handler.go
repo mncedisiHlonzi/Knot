@@ -45,6 +45,9 @@ func NewRootedHandler(service RootedService, logger *slog.Logger) (*RootedHandle
 // explicitly hides it. Sending "is_public": false hides it.
 type setSignalRequest struct {
 	Place          string                `json:"place"`
+	Latitude       *float64              `json:"latitude"`
+	Longitude      *float64              `json:"longitude"`
+	PlaceCountry   string                `json:"place_country"`
 	DurationBucket rooted.DurationBucket `json:"duration_bucket"`
 	IsPublic       *bool                 `json:"is_public"`
 }
@@ -55,6 +58,9 @@ type signalResponse struct {
 	ID             string                `json:"id"`
 	UserID         string                `json:"user_id"`
 	Place          string                `json:"place"`
+	Latitude       *float64              `json:"latitude"`
+	Longitude      *float64              `json:"longitude"`
+	PlaceCountry   *string               `json:"place_country"`
 	DurationBucket rooted.DurationBucket `json:"duration_bucket"`
 	IsPublic       bool                  `json:"is_public"`
 	IsPrimary      bool                  `json:"is_primary"`
@@ -99,6 +105,9 @@ func (h *RootedHandler) SetSignal(w http.ResponseWriter, r *http.Request) {
 
 	signal, err := h.service.SetSignal(r.Context(), userID, rooted.SetSignalInput{
 		Place:          body.Place,
+		Latitude:       body.Latitude,
+		Longitude:      body.Longitude,
+		PlaceCountry:   body.PlaceCountry,
 		DurationBucket: body.DurationBucket,
 		IsPublic:       isPublic,
 	})
@@ -167,6 +176,9 @@ func (h *RootedHandler) writeServiceError(w http.ResponseWriter, r *http.Request
 // newSignalResponse projects a domain signal onto the wire format.
 func newSignalResponse(signal rooted.Signal) signalResponse {
 	return signalResponse{
+		Latitude:       signal.Latitude,
+		Longitude:      signal.Longitude,
+		PlaceCountry:   signal.PlaceCountry,
 		ID:             signal.ID,
 		UserID:         signal.UserID,
 		Place:          signal.Place,

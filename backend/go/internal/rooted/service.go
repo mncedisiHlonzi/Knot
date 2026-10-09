@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"unicode/utf8"
 )
@@ -176,12 +177,60 @@ func validateSetSignal(in SetSignalInput) (Signal, error) {
 		}
 	}
 
+	latitude, longitude, err := validateCoordinates(in.Latitude, in.Longitude)
+	if err != nil {
+		return Signal{}, err
+	}
+
+	country := strings.TrimSpace(in.PlaceCountry)
+	if utf8.RuneCountInString(country) > MaxPlaceCountryLength {
+		return Signal{}, &ValidationError{
+			Field:   "place_country",
+			Message: fmt.Sprintf("must be at most %d characters", MaxPlaceCountryLength),
+		}
+	}
+	var placeCountry *string
+	if country != "" {
+		placeCountry = &country
+	}
+
 	return Signal{
 		Place:          place,
+		Latitude:       latitude,
+		Longitude:      longitude,
+		PlaceCountry:   placeCountry,
 		DurationBucket: in.DurationBucket,
 		IsPublic:       in.IsPublic,
 		IsPrimary:      true,
 	}, nil
+}
+
+// validateCoordinates enforces that a coordinate is supplied as a pair, with each
+// component in range, and returns the values to store.
+//
+// It duplicates the stories domain's helper rather than sharing one: the two live
+// in different bounded contexts and the helper is a few lines of range checking
+// (KNOT-ADR-010). A lone latitude or longitude is rejected, and supplying neither
+// is valid and yields two nils.
+func validateCoordinates(latitude, longitude *float64) (*float64, *float64, error) {
+	if latitude == nil && longitude == nil {
+		return nil, nil, nil
+	}
+	if latitude == nil || longitude == nil {
+		return nil, nil, &ValidationError{
+			Field:   "latitude",
+			Message: "latitude and longitude must be provided together",
+		}
+	}
+
+	if math.IsNaN(*latitude) || *latitude < -90 || *latitude > 90 {
+		return nil, nil, &ValidationError{Field: "latitude", Message: "must be between -90 and 90"}
+	}
+	if math.IsNaN(*longitude) || *longitude < -180 || *longitude > 180 {
+		return nil, nil, &ValidationError{Field: "longitude", Message: "must be between -180 and 180"}
+	}
+
+	return latitude, longitude, nil
 }
 
 // uniqueUUIDs returns the distinct canonical UUIDs in the order they first appear,

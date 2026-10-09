@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"unicode/utf8"
 )
@@ -146,6 +147,23 @@ func validateCreateStory(in CreateStoryInput) (Story, error) {
 		}
 	}
 
+	latitude, longitude, err := validateCoordinates(in.Latitude, in.Longitude)
+	if err != nil {
+		return Story{}, err
+	}
+
+	country := strings.TrimSpace(in.PlaceCountry)
+	if utf8.RuneCountInString(country) > MaxPlaceCountryLength {
+		return Story{}, &ValidationError{
+			Field:   "place_country",
+			Message: fmt.Sprintf("must be at most %d characters", MaxPlaceCountryLength),
+		}
+	}
+	var placeCountry *string
+	if country != "" {
+		placeCountry = &country
+	}
+
 	media, err := validateMediaURLs(in.MediaURLs)
 	if err != nil {
 		return Story{}, err
@@ -158,9 +176,40 @@ func validateCreateStory(in CreateStoryInput) (Story, error) {
 		Title:               title,
 		Body:                in.Body,
 		ApproximateLocation: location,
+		Latitude:            latitude,
+		Longitude:           longitude,
+		PlaceCountry:        placeCountry,
 		MediaURLs:           media,
 		Sensitive:           in.Sensitive,
 	}, nil
+}
+
+// validateCoordinates enforces that a coordinate is supplied as a pair, with each
+// component in range, and returns the values to store.
+//
+// A story either has a place on the map or it does not, so a lone latitude or
+// longitude is a rejected request rather than a half-known place (KNOT-ADR-034).
+// Supplying neither is valid and yields two nils. NaN is rejected explicitly
+// because every comparison against NaN is false.
+func validateCoordinates(latitude, longitude *float64) (*float64, *float64, error) {
+	if latitude == nil && longitude == nil {
+		return nil, nil, nil
+	}
+	if latitude == nil || longitude == nil {
+		return nil, nil, &ValidationError{
+			Field:   "latitude",
+			Message: "latitude and longitude must be provided together",
+		}
+	}
+
+	if math.IsNaN(*latitude) || *latitude < -90 || *latitude > 90 {
+		return nil, nil, &ValidationError{Field: "latitude", Message: "must be between -90 and 90"}
+	}
+	if math.IsNaN(*longitude) || *longitude < -180 || *longitude > 180 {
+		return nil, nil, &ValidationError{Field: "longitude", Message: "must be between -180 and 180"}
+	}
+
+	return latitude, longitude, nil
 }
 
 // validateLanguage normalises a language tag to lower case and checks its

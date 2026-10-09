@@ -14,7 +14,7 @@ import (
 // with its root version. It matches the stories store's own list, so a story
 // returned from a place looks identical to one returned from the feed. The
 // aliases differ only in the joined version (rv rather than v).
-const storyColumns = `s.id, s.author_id, s.root_version_id, s.pillar, rv.language, rv.title, rv.body, s.approximate_location, s.media_urls, s.sensitive, s.created_at, s.updated_at`
+const storyColumns = `s.id, s.author_id, s.root_version_id, s.pillar, rv.language, rv.title, rv.body, s.approximate_location, s.latitude, s.longitude, s.place_country, s.media_urls, s.sensitive, s.created_at, s.updated_at`
 
 // storyFrom resolves each story's root version content. root_version_id is NOT
 // NULL and unique, so the join is always one row and never drops a story.
@@ -43,12 +43,26 @@ func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 	return &PostgresStore{pool: pool}, nil
 }
 
+// clusterKeyExpr is the expression a story is grouped by.
+//
+// A story with a structured coordinate is identified by that coordinate, so two
+// stories at the same point are one cluster whatever each named the place. A
+// story without one falls back to the normalised place name, which is how every
+// row created before migration 0009 still clusters (KNOT-ADR-034).
+const clusterKeyExpr = `CASE
+			WHEN s.latitude IS NOT NULL AND s.longitude IS NOT NULL
+				THEN 'geo:' || s.latitude::text || ',' || s.longitude::text
+			ELSE 'txt:' || COALESCE(s.approximate_location_lower, '')
+		END`
+
 // ListClusters aggregates stories by place.
 //
-// Grouping is by the normalised `approximate_location_lower`, so "Cape Town" and
-// "cape town" are one cluster; the displayed Place is a representative original
-// spelling from the group. Rows with no location are excluded, because a story
-// with no place cannot belong to a place cluster.
+// A place is identified by its structured coordinate when the story has one, and
+// by the normalised `approximate_location_lower` otherwise, so "Cape Town" and
+// "cape town" are one cluster and every story with the same coordinate is one
+// cluster regardless of spelling. The displayed Place is a representative
+// original spelling from the group. Rows with neither a coordinate nor a
+// location are excluded, because they cannot belong to a place cluster.
 //
 // The language counts come from each story's **root version** only. Aggregating
 // every version of every story would need a second, heavier join for a figure the
@@ -58,13 +72,16 @@ func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 // spoken even if it is not the place's dominant one. Both behaviours are recorded
 // in KNOT-ADR-020.
 //
-// Ordering is by story count descending, then by the normalised place ascending
-// so equal counts are ordered deterministically rather than arbitrarily.
+// Ordering is by story count descending, then by the cluster key ascending so
+// equal counts are ordered deterministically rather than arbitrarily.
 func (s *PostgresStore) ListClusters(ctx context.Context, filter ClusterFilter) ([]PlaceCluster, error) {
 	query := `
 		SELECT
-			s.approximate_location_lower AS place_lower,
+			` + clusterKeyExpr + ` AS cluster_key,
 			MIN(s.approximate_location) AS place,
+			MIN(s.place_country) AS place_country,
+			MIN(s.latitude) AS latitude,
+			MIN(s.longitude) AS longitude,
 			COUNT(*) AS story_count,
 			COUNT(*) FILTER (WHERE s.pillar = 'wonder') AS wonder_count,
 			COUNT(*) FILTER (WHERE s.pillar = 'heritage') AS heritage_count,
@@ -72,7 +89,8 @@ func (s *PostgresStore) ListClusters(ctx context.Context, filter ClusterFilter) 
 			MAX(s.created_at) AS latest_story_at
 		FROM stories s
 		JOIN story_versions rv ON rv.id = s.root_version_id
-		WHERE s.approximate_location_lower IS NOT NULL`
+		WHERE (s.approximate_location_lower IS NOT NULL
+			OR (s.latitude IS NOT NULL AND s.longitude IS NOT NULL))`
 
 	args := make([]any, 0, 3)
 
@@ -89,8 +107,8 @@ func (s *PostgresStore) ListClusters(ctx context.Context, filter ClusterFilter) 
 	}
 
 	query += `
-		GROUP BY s.approximate_location_lower
-		ORDER BY story_count DESC, s.approximate_location_lower ASC`
+		GROUP BY ` + clusterKeyExpr + `
+		ORDER BY story_count DESC, cluster_key ASC`
 
 	// The limit is always the final placeholder.
 	args = append(args, filter.Limit)
@@ -105,8 +123,11 @@ func (s *PostgresStore) ListClusters(ctx context.Context, filter ClusterFilter) 
 	clusters := make([]PlaceCluster, 0, filter.Limit)
 	for rows.Next() {
 		var (
-			placeLower    string
+			clusterKey    string
 			place         *string
+			placeCountry  *string
+			latitude      *float64
+			longitude     *float64
 			storyCount    int64
 			wonderCount   int64
 			heritageCount int64
@@ -114,18 +135,21 @@ func (s *PostgresStore) ListClusters(ctx context.Context, filter ClusterFilter) 
 			latest        time.Time
 		)
 
-		if err := rows.Scan(&placeLower, &place, &storyCount, &wonderCount, &heritageCount, &languages, &latest); err != nil {
+		if err := rows.Scan(&clusterKey, &place, &placeCountry, &latitude, &longitude, &storyCount, &wonderCount, &heritageCount, &languages, &latest); err != nil {
 			return nil, fmt.Errorf("discovery: list clusters: %w", err)
 		}
 
-		display := placeLower
+		display := clusterKey
 		if place != nil && *place != "" {
 			display = *place
 		}
 
 		clusters = append(clusters, PlaceCluster{
-			Place:      display,
-			StoryCount: int(storyCount),
+			Place:        display,
+			PlaceCountry: placeCountry,
+			Latitude:     latitude,
+			Longitude:    longitude,
+			StoryCount:   int(storyCount),
 			PillarCounts: map[stories.Pillar]int{
 				stories.PillarWonder:   int(wonderCount),
 				stories.PillarHeritage: int(heritageCount),
@@ -206,6 +230,7 @@ func scanStory(row rowScanner) (stories.Story, error) {
 		story    stories.Story
 		pillar   string
 		location *string
+		country  *string
 		media    []string
 	)
 
@@ -218,6 +243,9 @@ func scanStory(row rowScanner) (stories.Story, error) {
 		&story.Title,
 		&story.Body,
 		&location,
+		&story.Latitude,
+		&story.Longitude,
+		&country,
 		&media,
 		&story.Sensitive,
 		&story.CreatedAt,
@@ -231,6 +259,7 @@ func scanStory(row rowScanner) (stories.Story, error) {
 	if location != nil {
 		story.ApproximateLocation = *location
 	}
+	story.PlaceCountry = country
 	story.MediaURLs = nonNilStrings(media)
 
 	return story, nil

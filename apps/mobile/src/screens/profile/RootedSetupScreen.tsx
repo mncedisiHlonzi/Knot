@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 
 import { describeError } from '../../api/client';
 import { DURATION_BUCKETS, DurationBucket, rootedApi } from '../../api/rooted';
+import LocationPicker, { PickedPlace } from '../../components/LocationPicker';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type RootedSetupScreenProps = {
@@ -30,12 +31,19 @@ const DURATION_LABELS: Readonly<Record<DurationBucket, string>> = {
  * Returns the first client-side validation problem, or undefined when the form is
  * acceptable. The server validates again and remains the source of truth.
  */
-function validateForm(place: string, bucket: DurationBucket | null): string | undefined {
-  if (place.trim() === '') {
+function validateForm(
+  placeText: string,
+  bucket: DurationBucket | null,
+  selectedPlace: PickedPlace | null,
+): string | undefined {
+  if (placeText.trim() === '') {
     return 'A place is required.';
   }
-  if (place.trim().length > MAX_PLACE_LENGTH) {
+  if (placeText.trim().length > MAX_PLACE_LENGTH) {
     return `The place must be at most ${MAX_PLACE_LENGTH} characters.`;
+  }
+  if (selectedPlace === null) {
+    return 'Please select a place from the suggestions.';
   }
   if (bucket === null) {
     return 'Choose how long you have been rooted there.';
@@ -57,16 +65,17 @@ export default function RootedSetupScreen({
   onSaved,
   onCancel,
 }: RootedSetupScreenProps): React.ReactElement {
-  const [place, setPlace] = useState('');
+  const [placeText, setPlaceText] = useState('');
+  const [selectedPlace, setSelectedPlace] = useState<PickedPlace | null>(null);
   const [bucket, setBucket] = useState<DurationBucket | null>(null);
   const [isPublic, setIsPublic] = useState(true);
   const [error, setError] = useState<string | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(): Promise<void> {
-    const problem = validateForm(place, bucket);
-    if (problem !== undefined) {
-      setError(problem);
+    const problem = validateForm(placeText, bucket, selectedPlace);
+    if (problem !== undefined || selectedPlace === null) {
+      setError(problem ?? 'Please select a place from the suggestions.');
       return;
     }
 
@@ -75,9 +84,12 @@ export default function RootedSetupScreen({
 
     try {
       await rootedApi.setMySignal(token, {
-        place: place.trim(),
+        place: selectedPlace.place,
         duration_bucket: bucket as DurationBucket,
         is_public: isPublic,
+        latitude: selectedPlace.latitude,
+        longitude: selectedPlace.longitude,
+        ...(selectedPlace.country === null ? {} : { place_country: selectedPlace.country }),
       });
       onSaved();
     } catch (caught) {
@@ -99,13 +111,22 @@ export default function RootedSetupScreen({
       </Text>
 
       <Text style={styles.label}>Place</Text>
-      <TextInput
-        style={styles.input}
-        value={place}
-        onChangeText={setPlace}
-        maxLength={MAX_PLACE_LENGTH}
-        placeholder="Cape Town"
-        placeholderTextColor={colors.text.secondary}
+      <LocationPicker
+        text={placeText}
+        selected={selectedPlace}
+        onChangeText={(next) => {
+          setPlaceText(next);
+          setSelectedPlace(null);
+        }}
+        onSelect={(place) => {
+          setSelectedPlace(place);
+          setPlaceText(place.place);
+        }}
+        onClear={() => {
+          setPlaceText('');
+          setSelectedPlace(null);
+        }}
+        placeholder="Search for a city or region"
       />
 
       <Text style={styles.label}>How long have you been rooted there?</Text>

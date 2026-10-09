@@ -14,7 +14,7 @@ import (
 // (aliased v), which is why every read joins story_versions. It is a constant so
 // every query in this file stays consistent with scanStory, and its order is the
 // order scanStory reads.
-const storyColumns = `s.id, s.author_id, s.root_version_id, s.pillar, v.language, v.title, v.body, s.approximate_location, s.media_urls, s.sensitive, s.created_at, s.updated_at`
+const storyColumns = `s.id, s.author_id, s.root_version_id, s.pillar, v.language, v.title, v.body, s.approximate_location, s.latitude, s.longitude, s.place_country, s.media_urls, s.sensitive, s.created_at, s.updated_at`
 
 // storyFrom resolves each story's root version content. root_version_id is
 // NOT NULL and unique, so the join is always one row and never drops a story.
@@ -56,10 +56,11 @@ func (s *PostgresStore) CreateStory(ctx context.Context, story Story) (Story, er
 	const query = `
 		WITH new_story AS (
 			INSERT INTO stories (
-				author_id, pillar, approximate_location, approximate_location_lower, media_urls, sensitive, root_version_id
+				author_id, pillar, approximate_location, approximate_location_lower, media_urls, sensitive,
+				latitude, longitude, place_country, root_version_id
 			)
-			VALUES ($1, $2, $3, lower(trim($3)), $4, $5, gen_random_uuid())
-			RETURNING id, author_id, root_version_id, pillar, approximate_location, media_urls, sensitive, created_at, updated_at
+			VALUES ($1, $2, $3, lower(trim($3)), $4, $5, $9, $10, $11, gen_random_uuid())
+			RETURNING id, author_id, root_version_id, pillar, approximate_location, latitude, longitude, place_country, media_urls, sensitive, created_at, updated_at
 		), new_version AS (
 			INSERT INTO story_versions (
 				id, story_id, parent_version_id, author_id, language, title, body
@@ -69,7 +70,8 @@ func (s *PostgresStore) CreateStory(ctx context.Context, story Story) (Story, er
 		)
 		SELECT
 			s.id, s.author_id, s.root_version_id, s.pillar, v.language, v.title, v.body,
-			s.approximate_location, s.media_urls, s.sensitive, s.created_at, s.updated_at
+			s.approximate_location, s.latitude, s.longitude, s.place_country,
+			s.media_urls, s.sensitive, s.created_at, s.updated_at
 		FROM new_story s, new_version v`
 
 	row := s.pool.QueryRow(
@@ -83,6 +85,9 @@ func (s *PostgresStore) CreateStory(ctx context.Context, story Story) (Story, er
 		story.Language,
 		story.Title,
 		story.Body,
+		story.Latitude,
+		story.Longitude,
+		story.PlaceCountry,
 	)
 
 	created, err := scanStory(row)
@@ -183,6 +188,7 @@ func scanStory(row rowScanner) (Story, error) {
 		story    Story
 		pillar   string
 		location *string
+		country  *string
 		media    []string
 	)
 
@@ -195,6 +201,9 @@ func scanStory(row rowScanner) (Story, error) {
 		&story.Title,
 		&story.Body,
 		&location,
+		&story.Latitude,
+		&story.Longitude,
+		&country,
 		&media,
 		&story.Sensitive,
 		&story.CreatedAt,
@@ -208,6 +217,7 @@ func scanStory(row rowScanner) (Story, error) {
 	if location != nil {
 		story.ApproximateLocation = *location
 	}
+	story.PlaceCountry = country
 	story.MediaURLs = nonNilURLs(media)
 
 	return story, nil

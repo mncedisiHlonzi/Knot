@@ -40,6 +40,10 @@ export type RootedSignal = {
   readonly id: string;
   readonly user_id: string;
   readonly place: string;
+  /** Structured place data, or null when the owner attached no coordinate. */
+  readonly latitude: number | null;
+  readonly longitude: number | null;
+  readonly place_country: string | null;
   readonly duration_bucket: DurationBucket;
   readonly is_public: boolean;
   readonly is_primary: boolean;
@@ -50,6 +54,10 @@ export type RootedSignal = {
 /** The request body for POST /users/me/rooted. */
 export type SetSignalPayload = {
   readonly place: string;
+  /** Structured place data from the location picker; the pair goes together. */
+  readonly latitude?: number;
+  readonly longitude?: number;
+  readonly place_country?: string;
   readonly duration_bucket: DurationBucket;
   /** Omit to keep the default, which is public. */
   readonly is_public?: boolean;

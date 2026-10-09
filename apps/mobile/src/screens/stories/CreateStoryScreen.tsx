@@ -20,6 +20,7 @@ import {
   uploadStoryMedia,
 } from '../../api/stories';
 import CameraCaptureBadge from '../../components/CameraCaptureBadge';
+import LocationPicker, { PickedPlace } from '../../components/LocationPicker';
 import MediaPickerSheet, { PickedMedia } from '../../components/MediaPickerSheet';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
@@ -48,7 +49,8 @@ function validateForm(
   title: string,
   body: string,
   language: string,
-  location: string,
+  locationText: string,
+  selectedPlace: PickedPlace | null,
 ): string | undefined {
   if (title.trim() === '') {
     return 'A title is required.';
@@ -62,8 +64,14 @@ function validateForm(
   if (!LANGUAGE_PATTERN.test(language.trim())) {
     return 'The language must be 2 to 8 letters, such as en or tsonga.';
   }
-  if (location.trim().length > MAX_LOCATION_LENGTH) {
+  if (locationText.trim().length > MAX_LOCATION_LENGTH) {
     return `The place must be at most ${MAX_LOCATION_LENGTH} characters.`;
+  }
+  // A place must be chosen from the suggestions, so every located story has a
+  // coordinate the map can plot (KNOT-ADR-036). Typing without selecting is a
+  // validation failure, not a silent free-text place.
+  if (locationText.trim() !== '' && selectedPlace === null) {
+    return 'Please select a place from the suggestions.';
   }
   return undefined;
 }
@@ -83,7 +91,8 @@ export default function CreateStoryScreen({
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [language, setLanguage] = useState(DEFAULT_LANGUAGE);
-  const [location, setLocation] = useState('');
+  const [locationText, setLocationText] = useState('');
+  const [selectedPlace, setSelectedPlace] = useState<PickedPlace | null>(null);
   const [mediaUrl, setMediaUrl] = useState('');
   const [sensitive, setSensitive] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -103,7 +112,7 @@ export default function CreateStoryScreen({
   }
 
   async function handleSubmit(): Promise<void> {
-    const problem = validateForm(title, body, language, location);
+    const problem = validateForm(title, body, language, locationText, selectedPlace);
     if (problem !== undefined) {
       setError(problem);
       return;
@@ -117,7 +126,14 @@ export default function CreateStoryScreen({
       language: language.trim().toLowerCase(),
       title: title.trim(),
       body,
-      ...(location.trim() === '' ? {} : { approximate_location: location.trim() }),
+      ...(locationText.trim() === '' ? {} : { approximate_location: locationText.trim() }),
+      ...(selectedPlace === null
+        ? {}
+        : {
+            latitude: selectedPlace.latitude,
+            longitude: selectedPlace.longitude,
+            ...(selectedPlace.country === null ? {} : { place_country: selectedPlace.country }),
+          }),
       ...(mediaUrl.trim() === '' ? {} : { media_urls: [mediaUrl.trim()] }),
       sensitive,
     };
@@ -245,12 +261,23 @@ export default function CreateStoryScreen({
       />
 
       <Text style={styles.label}>Approximate place (optional)</Text>
-      <TextInput
-        style={styles.input}
-        value={location}
-        onChangeText={setLocation}
-        placeholder="Cape Town"
-        placeholderTextColor={colors.text.secondary}
+      <LocationPicker
+        text={locationText}
+        selected={selectedPlace}
+        onChangeText={(next) => {
+          setLocationText(next);
+          // Typing after a selection invalidates it until a new one is chosen.
+          setSelectedPlace(null);
+        }}
+        onSelect={(place) => {
+          setSelectedPlace(place);
+          setLocationText(place.place);
+        }}
+        onClear={() => {
+          setLocationText('');
+          setSelectedPlace(null);
+        }}
+        placeholder="Search for a place"
       />
 
       <Text style={styles.label}>One media link (optional)</Text>

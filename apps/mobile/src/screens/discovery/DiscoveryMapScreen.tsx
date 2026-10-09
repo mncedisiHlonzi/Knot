@@ -6,7 +6,7 @@ import { describeError } from '../../api/client';
 import { PlaceCluster, discoveryApi } from '../../api/discovery';
 import { Pillar } from '../../api/stories';
 import { KNOT_MAPBOX_TOKEN } from '../../config/dev';
-import { coordinatesForPlace } from '../../data/placeCoordinates';
+import { PlaceCoordinate, coordinatesForPlace } from '../../data/placeCoordinates';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type DiscoveryMapScreenProps = {
@@ -46,13 +46,30 @@ function storyLabel(count: number): string {
 }
 
 /**
+ * Resolves a cluster to a point the map can plot.
+ *
+ * A story that carries a structured coordinate plots at exactly that point, so
+ * every place a user picked from the geocoding search appears on the map
+ * (KNOT-ADR-034). A legacy cluster without a coordinate falls back to the local
+ * lookup table, so stories created before migration 0009 are not lost.
+ */
+function coordinateForCluster(cluster: PlaceCluster): PlaceCoordinate | undefined {
+  if (cluster.latitude !== null && cluster.longitude !== null) {
+    return { latitude: cluster.latitude, longitude: cluster.longitude };
+  }
+  return coordinatesForPlace(cluster.place);
+}
+
+/**
  * Discovery, as a map.
  *
  * The map is rendered natively with Mapbox (`@rnmapbox/maps`, KNOT-ADR-026). The
- * server groups stories by place but stores no coordinates, so this screen
- * resolves each place to a point with a local lookup table
- * (`src/data/placeCoordinates.ts`). A place that is not in the table is not
- * plotted; it is listed below the map instead, so nothing is hidden.
+ * server groups stories by place and stores the coordinate a story was given
+ * (from the geocoding picker, KNOT-ADR-034); this screen plots that coordinate
+ * directly. A cluster with no coordinate — a story created before structured
+ * place data existed — falls back to the local lookup table
+ * (`src/data/placeCoordinates.ts`), and a place in neither is listed below the
+ * map rather than hidden.
  *
  * Tapping a marker, or an entry in the list, opens that place's stories. There is
  * no user location and no permission prompt: the map is a way in to places, not a
@@ -84,7 +101,7 @@ export default function DiscoveryMapScreen({
     void load();
   }, [load]);
 
-  const plotted = clusters.filter((cluster) => coordinatesForPlace(cluster.place) !== undefined);
+  const plotted = clusters.filter((cluster) => coordinateForCluster(cluster) !== undefined);
 
   return (
     <View style={styles.container}>
@@ -126,7 +143,7 @@ export default function DiscoveryMapScreen({
       <MapView style={styles.map} styleURL={Mapbox.StyleURL.Dark}>
         <Camera defaultSettings={{ centerCoordinate: INITIAL_CENTER, zoomLevel: INITIAL_ZOOM }} />
         {plotted.map((cluster) => {
-          const coordinate = coordinatesForPlace(cluster.place);
+          const coordinate = coordinateForCluster(cluster);
           if (coordinate === undefined) {
             return null;
           }
@@ -163,7 +180,7 @@ export default function DiscoveryMapScreen({
             <Text style={styles.placeName}>{item.place}</Text>
             <Text style={styles.placeMeta}>
               {storyLabel(item.story_count)}
-              {coordinatesForPlace(item.place) === undefined ? ' · not on map' : ''}
+              {coordinateForCluster(item) === undefined ? ' · not on map' : ''}
             </Text>
           </Pressable>
         )}

@@ -291,6 +291,53 @@ func TestCreateStoryHappyPath(t *testing.T) {
 	}
 }
 
+func TestCreateStoryWithCoordinates(t *testing.T) {
+	store := &memoryStoryStore{}
+	handler := newStoriesHandler(t, store)
+
+	body := `{"pillar":"wonder","language":"en","title":"T","body":"B","approximate_location":"Manguzi","latitude":-26.9998,"longitude":32.7489,"place_country":"South Africa"}`
+	recorder := doStoryRequest(handler, http.MethodPost, "/stories", body, testAccessToken)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	var envelope storyEnvelope
+	decodeBody(t, recorder, &envelope)
+
+	if envelope.Story.Latitude == nil || *envelope.Story.Latitude != -26.9998 {
+		t.Errorf("latitude = %v, want -26.9998", envelope.Story.Latitude)
+	}
+	if envelope.Story.Longitude == nil || *envelope.Story.Longitude != 32.7489 {
+		t.Errorf("longitude = %v, want 32.7489", envelope.Story.Longitude)
+	}
+	if envelope.Story.PlaceCountry == nil || *envelope.Story.PlaceCountry != "South Africa" {
+		t.Errorf("place country = %v, want South Africa", envelope.Story.PlaceCountry)
+	}
+	if store.gotCreate.Latitude == nil || *store.gotCreate.Latitude != -26.9998 {
+		t.Errorf("store latitude = %v, want -26.9998", store.gotCreate.Latitude)
+	}
+}
+
+func TestCreateStoryWithoutCoordinatesIsNull(t *testing.T) {
+	handler := newStoriesHandler(t, &memoryStoryStore{})
+
+	recorder := doStoryRequest(handler, http.MethodPost, "/stories", validStoryBody(), testAccessToken)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusCreated)
+	}
+
+	var envelope storyEnvelope
+	decodeBody(t, recorder, &envelope)
+	if envelope.Story.Latitude != nil || envelope.Story.Longitude != nil || envelope.Story.PlaceCountry != nil {
+		t.Errorf("structured place = (%v, %v, %v), want nils", envelope.Story.Latitude, envelope.Story.Longitude, envelope.Story.PlaceCountry)
+	}
+	raw := recorder.Body.String()
+	if !strings.Contains(raw, `"latitude":null`) || !strings.Contains(raw, `"longitude":null`) || !strings.Contains(raw, `"place_country":null`) {
+		t.Errorf("body = %s, want explicit null coordinates", raw)
+	}
+}
+
 func TestCreateStoryRequiresAuthentication(t *testing.T) {
 	store := &memoryStoryStore{}
 	handler := newStoriesHandler(t, store)
@@ -354,6 +401,10 @@ func TestCreateStoryValidationIsBadRequest(t *testing.T) {
 		{name: "blank body", body: `{"pillar":"wonder","language":"en","title":"T","body":"  "}`},
 		{name: "unknown pillar", body: `{"pillar":"chaos","language":"en","title":"T","body":"B"}`},
 		{name: "bad language", body: `{"pillar":"wonder","language":"e","title":"T","body":"B"}`},
+		{name: "latitude without longitude", body: `{"pillar":"wonder","language":"en","title":"T","body":"B","latitude":-26.9}`},
+		{name: "longitude without latitude", body: `{"pillar":"wonder","language":"en","title":"T","body":"B","longitude":32.7}`},
+		{name: "latitude out of range", body: `{"pillar":"wonder","language":"en","title":"T","body":"B","latitude":91,"longitude":0}`},
+		{name: "longitude out of range", body: `{"pillar":"wonder","language":"en","title":"T","body":"B","latitude":0,"longitude":181}`},
 	}
 
 	for _, test := range tests {

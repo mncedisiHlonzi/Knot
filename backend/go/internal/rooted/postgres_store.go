@@ -22,7 +22,7 @@ const rootedUserFK = "rooted_signals_user_id_fkey"
 // signalColumns is the canonical SELECT/RETURNING column list. It is a constant so
 // every query in this file stays consistent with scanSignal, and its order is the
 // order scanSignal reads.
-const signalColumns = `id, user_id, place, duration_bucket, is_public, is_primary, created_at, updated_at`
+const signalColumns = `id, user_id, place, latitude, longitude, place_country, duration_bucket, is_public, is_primary, created_at, updated_at`
 
 // PostgresStore is the pgx-backed implementation of RootedStore.
 //
@@ -58,11 +58,14 @@ func (s *PostgresStore) SetPrimary(ctx context.Context, userID string, signal Si
 	}
 
 	const query = `
-		INSERT INTO rooted_signals (user_id, place, duration_bucket, is_public, is_primary)
-		VALUES ($1, $2, $3, $4, true)
+		INSERT INTO rooted_signals (user_id, place, latitude, longitude, place_country, duration_bucket, is_public, is_primary)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, true)
 		ON CONFLICT (user_id) WHERE is_primary = true
 		DO UPDATE SET
 			place = EXCLUDED.place,
+			latitude = EXCLUDED.latitude,
+			longitude = EXCLUDED.longitude,
+			place_country = EXCLUDED.place_country,
 			duration_bucket = EXCLUDED.duration_bucket,
 			is_public = EXCLUDED.is_public,
 			updated_at = now()
@@ -73,6 +76,9 @@ func (s *PostgresStore) SetPrimary(ctx context.Context, userID string, signal Si
 		query,
 		userID,
 		signal.Place,
+		signal.Latitude,
+		signal.Longitude,
+		signal.PlaceCountry,
 		string(signal.DurationBucket),
 		signal.IsPublic,
 	))
@@ -204,14 +210,18 @@ type rowScanner interface {
 // violation).
 func scanSignal(row rowScanner) (Signal, error) {
 	var (
-		signal Signal
-		bucket string
+		signal  Signal
+		bucket  string
+		country *string
 	)
 
 	err := row.Scan(
 		&signal.ID,
 		&signal.UserID,
 		&signal.Place,
+		&signal.Latitude,
+		&signal.Longitude,
+		&country,
 		&bucket,
 		&signal.IsPublic,
 		&signal.IsPrimary,
@@ -222,6 +232,7 @@ func scanSignal(row rowScanner) (Signal, error) {
 		return Signal{}, err
 	}
 
+	signal.PlaceCountry = country
 	signal.DurationBucket = DurationBucket(bucket)
 
 	return signal, nil
