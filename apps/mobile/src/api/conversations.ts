@@ -25,6 +25,15 @@ export type Comment = {
   readonly author_avatar_url?: string | null;
   readonly language: string;
   readonly body: string;
+  /**
+   * The comment this one replies to, or null for a top-level comment.
+   *
+   * Threading is one level deep: a reply to a reply names the same top-level
+   * comment its parent does, so a thread is always a top-level comment followed
+   * by its replies. A comment a bridge created never replies to anything, so a
+   * bridge target is always null here (KNOT-ADR-047).
+   */
+  readonly parent_comment_id: string | null;
   readonly created_at: string;
   readonly updated_at: string;
   /**
@@ -38,6 +47,12 @@ export type Comment = {
 export type CreateCommentPayload = {
   readonly body: string;
   readonly language: string;
+  /**
+   * The comment to reply to. Omit it, or send null, for a top-level comment.
+   * The server attaches a reply to a reply to that reply's top-level comment, so
+   * a client only ever needs to send the id of the comment the user tapped.
+   */
+  readonly parent_comment_id?: string | null;
 };
 
 /** The body returned by POST /versions/{id}/comments. */

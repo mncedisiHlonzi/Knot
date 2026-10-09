@@ -313,21 +313,23 @@ Nothing stops a non-UUID string from being passed as an id at compile time; the 
 
 **Decision ID:** KNOT-ADR-014
 **Date:** 2026-10-08
-**Status:** Accepted
+**Status:** Accepted. Superseded in part by KNOT-ADR-047: comment threading now exists as a
+separate, one-level-deep concept, and a bridge target is a top-level comment. Everything else
+in this decision still holds.
 
 **Context:** Conversations are per version and per language: a comment is written in one language and belongs to one story version. The core Knot loop needs a person reading a comment in one language to answer in another, so the product needed a way to connect a comment in language A to the same thought expressed in language B. The choice was between mutating the comment, holding translations inside it, or creating a second comment and a link.
 
-**Decision:** A bridge creates a **new comment** in the target language, on the story's version written in that language, and a `bridges` row that references both the source and the target comment. The source comment is never modified, and each comment remains an ordinary member of its own conversation — so a bridge **joins two conversations** rather than adding to one. The bridge is a **first-class object** with its own id, author, target language, optional adaptation note, and timestamp. **Comment threading (a `parent_comment_id`) is deliberately not part of the model**; replies happen only by bridging, and threading is deferred to a future task. Two constraints keep the graph well formed: `bridges_unique_pair` (a given source-target pair is bridged once) and `bridges_one_per_target_language` (a source can be bridged into any one language once). Creating the target comment and the bridge is one transaction.
+**Decision:** A bridge creates a **new comment** in the target language, on the story's version written in that language, and a `bridges` row that references both the source and the target comment. The source comment is never modified, and each comment remains an ordinary member of its own conversation — so a bridge **joins two conversations** rather than adding to one. The bridge is a **first-class object** with its own id, author, target language, optional adaptation note, and timestamp. **Comment threading (a `parent_comment_id`) is deliberately not part of the model**; replies happen only by bridging, and threading is deferred to a future task. (KNOT-ADR-047 later added it, one level deep, without changing this decision.) Two constraints keep the graph well formed: `bridges_unique_pair` (a given source-target pair is bridged once) and `bridges_one_per_target_language` (a source can be bridged into any one language once). Creating the target comment and the bridge is one transaction.
 
 **Alternatives Considered:**
 1. One comment carrying many translations — rejected. It makes a comment a container of languages rather than a thing written in one language, and it gives the same comment two authors, which the model cannot express cleanly.
 2. A comment that is edited in place to the new language — rejected outright. It destroys the original, which defeats the point: both conversations must survive so each language's readers keep their own thread.
 3. An automatic machine translation stored on the comment — rejected. Knot adapts by human hands (Knot Brain is deliberately last), and a machine translation is not an adaptation.
-4. A `parent_comment_id` for replies — rejected for now. Replies-by-bridging is the loop this task completes; a general reply tree is a larger design that should be decided on its own evidence.
+4. A `parent_comment_id` for replies — rejected for now. Replies-by-bridging is the loop this task completes; a general reply tree is a larger design that should be decided on its own evidence. (KNOT-ADR-047 later added a `parent_comment_id`, but with a one-level depth limit rather than the general tree this alternative described, and it kept the bridge as the cross-language reply.)
 
 **Reason:** Making the bridge a first-class object keeps each comment a simple, single-language, single-author row, and puts the relationship between two comments in one place where it can be queried, counted, and later given a workflow of its own (confirmation, removal). Writing the target comment on the story's target-language version means a bridge connects the English conversation to the French conversation that already exists because someone adapted the story into French — the two threads stay separate and readable in their own languages, joined by the bridge rather than merged. The two unique indexes make "one adaptation per language per source" and "no duplicate pairs" database facts, so a race cannot create two competing translations of the same comment into the same language.
 
-**Consequences:** Bridging writes two rows, and they are written in one transaction so a failure inserts neither. The story must already have a version in the target language — a comment cannot be bridged into a language the story is not told in, and such a request is rejected as a validation error — and when the story has several versions in that language the oldest is chosen, so the choice is deterministic rather than dependent on row order. A comment can appear in several bridges (as a source once per language, and as a target once), so code that walks bridges must handle both directions. Because threading is deferred, a conversation is a flat list and a reply is a bridge rather than a child; if general threading is later wanted it is an additive migration, not a rewrite. `bridges_one_per_target_language` is a product policy enforced by the schema — the same comment cannot be bridged into the same language twice — which is the default this task chose and can be relaxed later by dropping one index.
+**Consequences:** Bridging writes two rows, and they are written in one transaction so a failure inserts neither. The story must already have a version in the target language — a comment cannot be bridged into a language the story is not told in, and such a request is rejected as a validation error — and when the story has several versions in that language the oldest is chosen, so the choice is deterministic rather than dependent on row order. A comment can appear in several bridges (as a source once per language, and as a target once), so code that walks bridges must handle both directions. Because threading was deferred at the time, a conversation was a flat list and a reply was a bridge rather than a child; **KNOT-ADR-047 added the one-level-deep reply** as an additive migration, exactly as this decision anticipated, and left bridging as the cross-language mechanism it was designed to be. `bridges_one_per_target_language` is a product policy enforced by the schema — the same comment cannot be bridged into the same language twice — which is the default this task chose and can be relaxed later by dropping one index.
 
 ---
 
@@ -1075,3 +1077,167 @@ The S3 implementation sets the SDK's `GetObjectInput.Range` field, so the object
 **Reason:** A canonical code list is only as good as its coverage. ISO 639-3 is the standard built for that coverage, it is maintained by a registry rather than by us, and it is a superset of ISO 639-1's own coverage — so every value the old contract allowed has an exact counterpart to migrate to, which is what makes the rewrite a mapping rather than a guess.
 
 **Consequences:** The canonical list is ~2.2 MB across the two generated files, and a language code is now three characters everywhere, so anything holding a stored two-letter value must map it before sending it. The picker's search now returns several matches for a short query — `zul` also matches `Zulgo-Gemzek` — which is inherent to searching 7,927 names and is why the result list is capped. `stories` never had a `language` column (migration `0003` dropped it), so the migration covers four columns, not the five the task description named. Applying the migration is a **one-way value rewrite**: a database that has been through it and then through `down` holds a mix of two- and three-letter codes, because a stored code records no history. The `down` migration therefore reverses every three-letter code with a two-letter ancestor, including codes that were never two letters in the first place — the honest outcome for a rollback path that should rarely run. Finally, the mobile drift test is now the mechanism that keeps two 7,927-entry lists in step; without it they would diverge on the first edit.
+
+---
+
+## KNOT-ADR-047 — A comment reply is one level deep, attached to a top-level comment
+
+**Decision ID:** KNOT-ADR-047
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** `comments` had no `parent_comment_id`: a comment could only answer the
+version, and the only way to answer *a person* was to bridge into another language
+(KNOT-ADR-014), which writes into a different conversation. Two people talking in the
+same language about the same telling had no way to address each other, so every thread
+read as a list of independent remarks. Adding a parent raises three questions that a
+column alone does not answer: how deep threading goes, how a page of a threaded
+conversation is paginated, and who is notified when a reply is written.
+
+**Decision:**
+- `comments.parent_comment_id` is a nullable self-reference, `ON DELETE CASCADE`, with
+  a CHECK constraint refusing a self-parent. Migration `0012_comment_replies`.
+- **Threading is exactly one level deep.** `parent_comment_id` names a **top-level**
+  comment. When a reply is written against a reply, the service stores the *parent's*
+  parent instead, and the request still succeeds: the author's intent ("answer this
+  person") is preserved and the shape stays flat, rather than the request failing for a
+  structural reason the author cannot see.
+- **A bridge target is not a reply.** A bridge writes an ordinary top-level comment into
+  the target version's conversation, so it never carries a parent. Bridging is
+  cross-language and cross-conversation; replying is within one conversation.
+- **The parent must be on the same version**, and it must exist, or the request is a
+  `400 validation_error` with `field` = `parent_comment_id` — not a `404`. A comment the
+  author cannot see is a bad request, and the same answer covers a parent that was
+  deleted between the read and the write.
+- **Pagination counts top-level comments.** The page query adds `AND parent_comment_id IS
+  NULL`, so the existing `(created_at, id)` keyset cursor and
+  `comments_version_id_created_at_idx` are untouched. Each page's replies are then
+  fetched in one batched statement (`WHERE parent_comment_id = ANY($1::uuid[]) ORDER BY
+  created_at ASC, id ASC`, served by `comments_parent_comment_id_idx`) and assembled in
+  the service, so the wire format is a flat, renderable list: parent, its replies oldest
+  first, next parent, its replies.
+- **A reply's notification goes to the author of the comment replied to**, not to the
+  version's author. Replying to a reply notifies the author of the reply that was tapped.
+  The event stays `comment.created`; acting on your own content still notifies nobody.
+- The mobile thread indents a reply under its parent and its "Reply" action sends the
+  **top-level** comment's id, applying the same rule on the client so the two agree.
+
+**Alternatives Considered:**
+1. **Unlimited depth (`parent_comment_id` as written, rendered as a tree)** — rejected.
+   Each extra level costs indentation the phone does not have, and it needs recursive
+   rendering and a per-depth reply affordance for a conversation that is, in this
+   product, a handful of people answering a telling.
+2. **Refusing a reply to a reply with `400`** — rejected. It turns a product question
+   ("who are you answering?") into an error the author cannot act on, and the client would
+   have to pre-resolve the thread to avoid it.
+3. **Storing the tapped comment's id and rendering by walking parents** — rejected. The
+   stored shape would then disagree with the rendered shape, and every reader — the
+   thread, the notification, the mobile list — would have to reimplement the walk.
+4. **Interleaving replies into the flat, newest-first keyset stream** — rejected. A
+   reply sorts by its own `created_at`, so it can land on a page before the comment it
+   answers, and the cursor seek would need a composite key that includes the parent. The
+   page would then show an orphan that later acquires a parent.
+5. **A separate paginated endpoint for a thread's replies** — rejected for this task. It
+   makes the common case (open a conversation, read it) a request per thread, and the
+   replies of a page's parents are one batched query either way.
+6. **A `depth` column or a recursive CTE** — rejected. With a limit of one level there is
+   nothing to compute: the depth is `parent_comment_id IS NULL`.
+7. **Fetching each parent's replies per comment (`WHERE parent_comment_id = $1`), inside
+   the render loop** — rejected. It is N+1 queries for one page, where one `= ANY($1)`
+   statement answers for the whole page.
+
+**Reason:** A conversation needs a way to answer a person, and the smallest version of
+that is a parent pointer with a one-level ceiling. The ceiling is what keeps the feature
+from rewriting three subsystems: the keyset cursor stays a single-column-pair seek, the
+renderer stays a flat list, and the notification rule stays a single lookup. Enforcing it
+in the service rather than rejecting the request keeps the author's intent intact.
+
+**Consequences:** `limit` counts top-level comments, so a page can return more rows than
+`limit` — up to `limit` parents plus all of their replies — and the API documents the
+cursor as advancing by top-level comment rather than by row. A thread's replies are not
+independently pageable, so a top-level comment with thousands of replies would be
+returned in full; nothing caps a comment's reply count, which is accepted because the
+product has no such thread and a cap would be a rule the client could not enforce. The
+one-level rule is enforced in the write path, not by a constraint: the schema can state
+"a comment is not its own parent" (and does), but "the parent has no parent" needs a
+lookup, so a hand-written `UPDATE` could still create a two-deep chain that the reader
+would render as one indent. The parent's version is checked rather than implied by a
+composite foreign key, because `comments` has no `(id, version_id)` unique key and adding
+one for a check the service already performs was not worth the index. Finally, replies
+made the activity wall's union query unchanged, but they do mean a person can appear in a
+notification for a comment they never wrote the version of.
+
+---
+
+## KNOT-ADR-048 — The comment composer's language is a chip that lasts for the visit
+
+**Decision ID:** KNOT-ADR-048
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** KNOT-ADR-045 left the comment composer as the one language field that was a
+free-text code box, on the grounds that the picker's results list had nowhere to expand in
+a fixed-height composer bar. It was validated against the canonical list, so it could not
+store a bad code, but it offered no suggestions, it showed `eng` rather than "English",
+and it made the composer the only place in the app where a language is typed rather than
+chosen. After KNOT-ADR-046 the box would have to show a three-letter code the user is
+expected to know.
+
+**Decision:**
+- The composer shows the language as a **chip** reading `languageName(code)` when that
+  name is at most 12 characters, and the code itself otherwise. 1,630 of the 7,927
+  canonical names are longer than the chip, so the fallback is the common case rather
+  than an edge case.
+- Tapping the chip opens `LanguagePicker` in **`single`** mode inside a modal sheet
+  anchored to the bottom of the screen, which is what gives the results list the room the
+  composer bar could not.
+- The composer starts in the user's **first preferred language**. When the user has none,
+  it fetches the version (`GET /versions/{id}`) and uses the version's language, showing
+  `…` in the chip while the request is in flight and falling back to `eng` if it fails.
+  The fetch only runs on that path.
+- The choice **lasts for the composer session only**: it is not written to the user's
+  profile and not persisted across visits. Leaving the thread and returning starts from
+  the default again.
+- The rules live in `apps/mobile/src/screens/conversations/commentThread.ts`, outside the
+  screen, so they are unit-tested without rendering React Native.
+
+**Alternatives Considered:**
+1. **Keeping the free-text code box** — rejected. It is the one field that asks the user
+   to know an ISO code, and it shows the stored value instead of the language.
+2. **Expanding the picker inside the composer bar** — rejected for the reason ADR-045
+   gave: a results list needs vertical room the bar does not have.
+3. **A new screen for choosing the language** — rejected. It is a one-field choice that
+   would cost a navigation step and a stack frame, and the modal keeps the draft comment
+   visible behind it.
+4. **Persisting the choice to `preferred_languages`** — rejected. It would silently edit
+   the user's profile from a comment box, and the profile has its own screen with its own
+   rules.
+5. **Persisting the last-used composer language on the device** — rejected for this task.
+   It needs new storage and a rule for when it stops applying, for a value the user can
+   change in two taps.
+6. **Keeping the raw code field as a fallback** — rejected. Two ways to set one field
+   invites them to disagree, which is what ADR-045 and ADR-046 exist to prevent.
+7. **Blocking the composer until the version's language resolves** — rejected. The chip
+   shows `…` and the composer stays usable; the default is already valid, so a slow or
+   failed request never prevents writing a comment.
+8. **Truncating a long name with an ellipsis instead of showing the code** — rejected. A
+   truncated name is ambiguous between several languages; the code is exact and is what
+   the server stores.
+
+**Reason:** The composer should ask for a language the same way every other form does —
+by choosing from the canonical list — and a chip with a modal is the smallest control that
+fits a fixed-height bar. Defaulting to the user's own language is the right guess, and
+falling back to the version's language is the right second guess, because a comment is
+written in the language its author speaks.
+
+**Consequences:** The chip's width is bounded by a 12-character rule, so a language whose
+name is longer is shown as `AAA`; a user who does not recognise the code sees it in the
+picker's list where the name is full. The version fetch runs on the path where the user
+has no preferred language, so a user who has never set one sees `…` briefly, and a failed
+fetch leaves `eng` selected with no error — a silent fallback, chosen because a comment
+can still be written and the chip offers a correction. The choice is deliberately not
+remembered, so someone who comments in the same language repeatedly re-selects it every
+visit; that is the cost of not editing their profile, and it is the trade this decision
+takes. The picker's clear control leaves the composer with no language, which the
+composer reports as a validation error rather than silently restoring a default.
+

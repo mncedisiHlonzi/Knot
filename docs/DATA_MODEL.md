@@ -23,6 +23,7 @@ Migrations live in `backend/go/migrations/` and are applied with
 | `0009`  | `structured_place` | The `stories` and `rooted_signals` `latitude`/`longitude`/`place_country` columns |
 | `0010`  | `notifications` | The `notifications` table, its inbox index, and its unread partial index |
 | `0011`  | `iso_639_3` | Rewrites every stored language from a two-letter ISO 639-1 code to its three-letter ISO 639-3 counterpart |
+| `0012`  | `comment_replies` | The `comments.parent_comment_id` column, its index and foreign key, and the self-parent check constraint |
 
 Applied versions are recorded in the `schema_migrations` table, which the runner creates
 on first use.
@@ -257,19 +258,25 @@ the whole of the structure.
 
 ## `comments`
 
-A comment is one thing a person said about a story version. Comments are flat: there is no
-`parent_comment_id`, and a reply in another language is a **bridge**, not a child comment.
-See KNOT-ADR-014.
+A comment is one thing a person said about a story version. A comment can answer another
+comment on the same version, one level deep: `parent_comment_id` names a **top-level**
+comment, and a reply to a reply is stored against that reply's top-level comment. A thread
+is therefore always a top-level comment followed by its replies. See KNOT-ADR-047.
 
-| Column       | Type          | Nullable | Default             | Notes                                              |
-| ------------ | ------------- | -------- | ------------------- | -------------------------------------------------- |
-| `id`         | `uuid`        | no       | `gen_random_uuid()` | Primary key                                        |
-| `version_id` | `uuid`        | no       | —                   | References `story_versions(id)`; the version commented on |
-| `author_id`  | `uuid`        | no       | —                   | References `users(id)`; the commenter               |
-| `language`   | `text`        | no       | —                   | Three-letter ISO 639-3 code, lower case, from the canonical list (KNOT-ADR-046) |
-| `body`       | `text`        | no       | —                   | 1-5000 characters, stored verbatim                  |
-| `created_at` | `timestamptz` | no       | `now()`             | The thread's primary sort key                       |
-| `updated_at` | `timestamptz` | no       | `now()`             | Set on insert. No trigger yet: editing a comment is a later task |
+A reply in another language is still a **bridge**, not a child comment: a bridge writes an
+ordinary top-level comment into the target version's conversation, so the comment it
+creates never carries a parent. See KNOT-ADR-014.
+
+| Column              | Type          | Nullable | Default             | Notes                                              |
+| ------------------- | ------------- | -------- | ------------------- | -------------------------------------------------- |
+| `id`                | `uuid`        | no       | `gen_random_uuid()` | Primary key                                        |
+| `version_id`        | `uuid`        | no       | —                   | References `story_versions(id)`; the version commented on |
+| `author_id`         | `uuid`        | no       | —                   | References `users(id)`; the commenter               |
+| `language`          | `text`        | no       | —                   | Three-letter ISO 639-3 code, lower case, from the canonical list (KNOT-ADR-046) |
+| `body`              | `text`        | no       | —                   | 1-5000 characters, stored verbatim                  |
+| `parent_comment_id` | `uuid`        | yes      | `NULL`              | References `comments(id)`; the top-level comment replied to, or `NULL` for a top-level comment |
+| `created_at`        | `timestamptz` | no       | `now()`             | The thread's primary sort key                       |
+| `updated_at`        | `timestamptz` | no       | `now()`             | Set on insert. No trigger yet: editing a comment is a later task |
 
 ### Indexes and constraints
 
@@ -279,13 +286,29 @@ See KNOT-ADR-014.
 | `comments_version_id_created_at_idx` | Btree index (descending) | `(version_id, created_at DESC, id DESC)` | Serves the thread's `ORDER BY` and its keyset seek together  |
 | `comments_author_id_idx`             | Btree index              | `author_id`                              | "Comments by this person", and the cascade on user deletion  |
 | `comments_language_idx`              | Btree index              | `language`                               | Filtering by language                                        |
+| `comments_parent_comment_id_idx`     | Btree index              | `parent_comment_id`                      | The batched reply lookup for a whole page of parents, and the cascade below |
 | `comments_version_id_fkey`           | Foreign key              | `version_id` → `story_versions(id)`      | `ON DELETE CASCADE`: deleting a version removes its comments  |
 | `comments_author_id_fkey`            | Foreign key              | `author_id` → `users(id)`                | `ON DELETE CASCADE`: deleting an account removes its comments |
+| `comments_parent_comment_id_fkey`    | Foreign key              | `parent_comment_id` → `comments(id)`     | `ON DELETE CASCADE`: deleting a top-level comment removes its replies |
+| `comments_parent_comment_id_not_self` | Check constraint        | `parent_comment_id IS NULL OR parent_comment_id <> id` | A comment can never reply to itself |
 
 The composite index mirrors `stories_created_at_id_idx`: it is descending on both columns
 and in the same order as the thread's `WHERE (created_at, id) < ($2, $3) ORDER BY
 created_at DESC, id DESC` seek, so PostgreSQL seeks to the resume point instead of sorting
 the table.
+
+The thread's page query adds `AND parent_comment_id IS NULL`, so `limit` counts top-level
+comments and the keyset advance is never disturbed by a reply. The page's replies are then
+fetched in one statement, `WHERE parent_comment_id = ANY($1::uuid[]) ORDER BY created_at
+ASC, id ASC`, which `comments_parent_comment_id_idx` serves. Replies are ordered oldest
+first within their parent, so a thread's replies read in the order they were written even
+though the top-level comments are newest first.
+
+The depth limit is enforced when the comment is written, not by a constraint: there is no
+expression index or trigger that could express "the parent has no parent" without a
+lookup. The service resolves the parent, refuses one from another version, and rewrites a
+reply's parent to that parent's own parent. The self-parent check is the one part the
+schema can state, and it does — an `UPDATE` cannot slip past it.
 
 ## `bridges`
 
@@ -466,9 +489,16 @@ than the older `stories.media_urls` array.
 ## `notifications`
 
 A notification records that **another user acted on your content**: someone adapted a
-version you wrote, commented on it, or bridged one of your comments into another language.
-It is one row per event, addressed to one recipient, with the id of the thing the client
-should open. See KNOT-ADR-038 and KNOT-ADR-039.
+version you wrote, commented on it, replied to a comment you wrote, or bridged one of your
+comments into another language. It is one row per event, addressed to one recipient, with
+the id of the thing the client should open. See KNOT-ADR-038, KNOT-ADR-039, and
+KNOT-ADR-047.
+
+A `comment.created` row's recipient depends on what was written: for a top-level comment it
+is the **version's author**, and for a reply it is the **author of the comment that was
+replied to** — including when a reply answers a reply, where the recipient is the author of
+the reply that was tapped rather than the top-level comment's author. Only one notification
+is written per comment, so neither case can notify twice.
 
 | Column        | Type          | Nullable | Default             | Notes                                                                  |
 | ------------- | ------------- | -------- | ------------------- | ---------------------------------------------------------------------- |

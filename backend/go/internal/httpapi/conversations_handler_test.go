@@ -21,6 +21,7 @@ const (
 	testVersionID       = "44444444-4444-4444-8444-444444444444"
 	testFrenchVersionID = "44444444-4444-4444-8444-444444444445"
 	testSourceCommentID = "66666666-6666-4666-8666-666666666666"
+	testReplyCommentID  = "66666666-6666-4666-8666-666666666667"
 	testTargetCommentID = "88888888-8888-4888-8888-888888888888"
 	testBridgeID        = "77777777-7777-4777-8777-777777777777"
 )
@@ -184,7 +185,9 @@ func (m *memoryConversationsStore) ListComments(_ context.Context, versionID str
 
 	ordered := make([]conversations.Comment, 0)
 	for _, comment := range m.comments {
-		if comment.VersionID == versionID {
+		// Only top-level comments are paged; replies come from ListReplies, so a
+		// page of threads is never missing a parent.
+		if comment.VersionID == versionID && comment.ParentCommentID == nil {
 			ordered = append(ordered, comment)
 		}
 	}
@@ -211,6 +214,35 @@ func (m *memoryConversationsStore) ListComments(_ context.Context, versionID str
 	next := conversations.NewCursor(last.CreatedAt, last.ID)
 
 	return remaining[:limit], &next, nil
+}
+
+// ListReplies returns the replies to the given parents, oldest first within each
+// parent, mirroring the SQL store's ordering so the service assembles the same
+// thread either way.
+func (m *memoryConversationsStore) ListReplies(_ context.Context, parentIDs []string) ([]conversations.Comment, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	wanted := make(map[string]bool, len(parentIDs))
+	for _, id := range parentIDs {
+		wanted[id] = true
+	}
+
+	replies := make([]conversations.Comment, 0)
+	for _, comment := range m.comments {
+		if comment.ParentCommentID != nil && wanted[*comment.ParentCommentID] {
+			replies = append(replies, comment)
+		}
+	}
+	sort.SliceStable(replies, func(i, j int) bool {
+		if !replies[i].CreatedAt.Equal(replies[j].CreatedAt) {
+			return replies[i].CreatedAt.Before(replies[j].CreatedAt)
+		}
+		return replies[i].ID < replies[j].ID
+	})
+
+	return replies, nil
 }
 
 // beforeCommentCursor reports whether comment sorts strictly after cursor in the
@@ -608,6 +640,184 @@ func TestListCommentsEmptyThreadIsAnEmptyArray(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), `"comments":[]`) {
 		t.Errorf("body = %s, want it to contain an empty array", recorder.Body.String())
+	}
+}
+
+// replyCommentBody is a request body that replies to the comment with parentID.
+func replyCommentBody(parentID string) string {
+	return `{"body":"It does.","language":"eng","parent_comment_id":"` + parentID + `"}`
+}
+
+// commentParentID returns a pointer to id, for building a seeded reply.
+func commentParentID(id string) *string {
+	return &id
+}
+
+func TestCreateCommentReplyHappyPath(t *testing.T) {
+	store := newMemoryConversationsStore()
+	store.versions[testVersionID] = true
+	store.seedComment(englishComment())
+	handler := newConversationsHandler(t, store)
+
+	recorder := doStoryRequest(handler, http.MethodPost, "/versions/"+testVersionID+"/comments",
+		replyCommentBody(testSourceCommentID), testAccessToken)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	var body commentEnvelope
+	decodeBody(t, recorder, &body)
+
+	if body.Comment.ParentCommentID == nil {
+		t.Fatal("parent_comment_id = null, want the comment being replied to")
+	}
+	if *body.Comment.ParentCommentID != testSourceCommentID {
+		t.Errorf("parent_comment_id = %q, want %q", *body.Comment.ParentCommentID, testSourceCommentID)
+	}
+	if body.Comment.VersionID != testVersionID {
+		t.Errorf("version id = %q, want %q", body.Comment.VersionID, testVersionID)
+	}
+}
+
+func TestCreateCommentTopLevelHasANullParent(t *testing.T) {
+	store := newMemoryConversationsStore()
+	store.versions[testVersionID] = true
+	handler := newConversationsHandler(t, store)
+
+	recorder := doStoryRequest(handler, http.MethodPost, "/versions/"+testVersionID+"/comments",
+		validCommentBody(), testAccessToken)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	var body commentEnvelope
+	decodeBody(t, recorder, &body)
+
+	if body.Comment.ParentCommentID != nil {
+		t.Errorf("parent_comment_id = %q, want null for a top-level comment", *body.Comment.ParentCommentID)
+	}
+	// The field is always present, so a client can tell "top level" from
+	// "the server did not answer the question".
+	if !strings.Contains(recorder.Body.String(), `"parent_comment_id":null`) {
+		t.Errorf("body = %s, want an explicit null parent_comment_id", recorder.Body.String())
+	}
+}
+
+func TestCreateCommentReplyRejectsAnUnknownParent(t *testing.T) {
+	store := newMemoryConversationsStore()
+	store.versions[testVersionID] = true
+	handler := newConversationsHandler(t, store)
+
+	const missing = "99999999-9999-4999-8999-999999999999"
+	recorder := doStoryRequest(handler, http.MethodPost, "/versions/"+testVersionID+"/comments",
+		replyCommentBody(missing), testAccessToken)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if code := decodedErrorCode(t, recorder); code != codeValidation {
+		t.Errorf("error code = %q, want %q", code, codeValidation)
+	}
+	if store.createCommentCalls != 0 {
+		t.Errorf("store received %d create calls, want 0: an unknown parent is refused before anything is written",
+			store.createCommentCalls)
+	}
+}
+
+func TestCreateCommentReplyRejectsAParentOnAnotherVersion(t *testing.T) {
+	// A reply belongs to the conversation it is written in, so a parent from a
+	// different version is refused rather than silently re-pointed.
+	store := newMemoryConversationsStore()
+	store.versions[testVersionID] = true
+
+	elsewhere := englishComment()
+	elsewhere.ID = testTargetCommentID
+	elsewhere.VersionID = testFrenchVersionID
+	store.seedComment(elsewhere)
+	handler := newConversationsHandler(t, store)
+
+	recorder := doStoryRequest(handler, http.MethodPost, "/versions/"+testVersionID+"/comments",
+		replyCommentBody(testTargetCommentID), testAccessToken)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if code := decodedErrorCode(t, recorder); code != codeValidation {
+		t.Errorf("error code = %q, want %q", code, codeValidation)
+	}
+}
+
+func TestCreateCommentReplyToAReplyAttachesToTheTopLevel(t *testing.T) {
+	store := newMemoryConversationsStore()
+	store.versions[testVersionID] = true
+	store.seedComment(englishComment())
+
+	reply := englishComment()
+	reply.ID = testReplyCommentID
+	reply.ParentCommentID = commentParentID(testSourceCommentID)
+	store.seedComment(reply)
+	handler := newConversationsHandler(t, store)
+
+	recorder := doStoryRequest(handler, http.MethodPost, "/versions/"+testVersionID+"/comments",
+		replyCommentBody(testReplyCommentID), testAccessToken)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	var body commentEnvelope
+	decodeBody(t, recorder, &body)
+
+	if body.Comment.ParentCommentID == nil {
+		t.Fatal("parent_comment_id = null, want the thread's top-level comment")
+	}
+	if *body.Comment.ParentCommentID != testSourceCommentID {
+		t.Errorf("parent_comment_id = %q, want the top-level comment %q: threading is one level deep",
+			*body.Comment.ParentCommentID, testSourceCommentID)
+	}
+}
+
+func TestListCommentsServesRepliesUnderTheirParent(t *testing.T) {
+	store := newMemoryConversationsStore()
+	store.seedComment(englishComment())
+
+	reply := englishComment()
+	reply.ID = testReplyCommentID
+	reply.Body = "It does."
+	reply.ParentCommentID = commentParentID(testSourceCommentID)
+	reply.CreatedAt = testNow.Add(time.Minute)
+	reply.UpdatedAt = reply.CreatedAt
+	store.seedComment(reply)
+	handler := newConversationsHandler(t, store)
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/versions/"+testVersionID+"/comments", "", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body commentListResponse
+	decodeBody(t, recorder, &body)
+
+	if len(body.Comments) != 2 {
+		t.Fatalf("len(comments) = %d, want 2 (the parent and its reply)", len(body.Comments))
+	}
+	if body.Comments[0].ID != testSourceCommentID {
+		t.Errorf("comments[0].id = %q, want the parent %q first", body.Comments[0].ID, testSourceCommentID)
+	}
+	if body.Comments[0].ParentCommentID != nil {
+		t.Errorf("comments[0].parent_comment_id = %q, want null", *body.Comments[0].ParentCommentID)
+	}
+	if body.Comments[1].ID != testReplyCommentID {
+		t.Errorf("comments[1].id = %q, want the reply %q", body.Comments[1].ID, testReplyCommentID)
+	}
+	if body.Comments[1].ParentCommentID == nil {
+		t.Fatal("comments[1].parent_comment_id = null, want the parent it answers")
+	}
+	if *body.Comments[1].ParentCommentID != testSourceCommentID {
+		t.Errorf("comments[1].parent_comment_id = %q, want %q", *body.Comments[1].ParentCommentID, testSourceCommentID)
 	}
 }
 

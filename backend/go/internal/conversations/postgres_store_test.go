@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/knot/backend/internal/stories"
@@ -367,6 +368,161 @@ func TestPostgresStoreListCommentsUnknownVersionIsNotFound(t *testing.T) {
 		if !errors.Is(err, ErrNotFound) {
 			t.Errorf("ListComments(%q) error = %v, want ErrNotFound", id, err)
 		}
+	}
+}
+
+// insertComment stores a comment on versionID, optionally as a reply, and returns
+// the stored row.
+func insertComment(t *testing.T, env integrationEnv, versionID, body string, parentID *string) Comment {
+	t.Helper()
+
+	created, err := env.store.CreateComment(context.Background(), Comment{
+		VersionID:       versionID,
+		AuthorID:        env.author,
+		Language:        "eng",
+		Body:            body,
+		ParentCommentID: parentID,
+	})
+	if err != nil {
+		t.Fatalf("CreateComment(%q) error = %v, want nil", body, err)
+	}
+
+	return created
+}
+
+func TestPostgresStoreReplyRoundTripsParentCommentID(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	_, versionID := newIntegrationStory(t, env, "reply-round-trip")
+
+	parent := insertComment(t, env, versionID, "The first rain remembers every name.", nil)
+	if parent.ParentCommentID != nil {
+		t.Errorf("top-level parent = %q, want nil", *parent.ParentCommentID)
+	}
+
+	reply := insertComment(t, env, versionID, "It does.", &parent.ID)
+	if reply.ParentCommentID == nil {
+		t.Fatal("stored parent = nil, want the parent comment")
+	}
+	if *reply.ParentCommentID != parent.ID {
+		t.Errorf("stored parent = %q, want %q", *reply.ParentCommentID, parent.ID)
+	}
+
+	// A reply read on its own carries its parent too, so the client can place it
+	// without loading the thread.
+	fetched, err := env.store.GetComment(ctx, reply.ID)
+	if err != nil {
+		t.Fatalf("GetComment() error = %v, want nil", err)
+	}
+	if fetched.ParentCommentID == nil || *fetched.ParentCommentID != parent.ID {
+		t.Errorf("resolved parent = %v, want %q", fetched.ParentCommentID, parent.ID)
+	}
+}
+
+func TestPostgresStoreListCommentsServesThreadsFlat(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	_, versionID := newIntegrationStory(t, env, "thread-flat")
+
+	first := insertComment(t, env, versionID, "First", nil)
+	second := insertComment(t, env, versionID, "Second", nil)
+	firstReply := insertComment(t, env, versionID, "A reply to the first", &first.ID)
+	secondReply := insertComment(t, env, versionID, "A reply to the second", &second.ID)
+
+	// The page is parents only, newest first.
+	page, next, err := env.store.ListComments(ctx, versionID, nil, 10)
+	if err != nil {
+		t.Fatalf("ListComments() error = %v, want nil", err)
+	}
+	if next != nil {
+		t.Errorf("next = %+v, want nil on the last page", next)
+	}
+	if len(page) != 2 {
+		t.Fatalf("parents = %d, want 2: %+v", len(page), page)
+	}
+	if page[0].ID != second.ID || page[1].ID != first.ID {
+		t.Errorf("parents = %q, %q; want newest first: %q, %q", page[0].ID, page[1].ID, second.ID, first.ID)
+	}
+	for _, comment := range page {
+		if comment.ParentCommentID != nil {
+			t.Errorf("comment %q in the parent page has parent %q, want none", comment.ID, *comment.ParentCommentID)
+		}
+	}
+
+	// The whole page's replies arrive from one call, oldest first.
+	replies, err := env.store.ListReplies(ctx, []string{page[0].ID, page[1].ID})
+	if err != nil {
+		t.Fatalf("ListReplies() error = %v, want nil", err)
+	}
+	if len(replies) != 2 {
+		t.Fatalf("replies = %d, want 2: %+v", len(replies), replies)
+	}
+	if replies[0].ID != firstReply.ID || replies[1].ID != secondReply.ID {
+		t.Errorf("replies = %q, %q; want oldest first: %q, %q", replies[0].ID, replies[1].ID, firstReply.ID, secondReply.ID)
+	}
+	for _, comment := range replies {
+		if comment.ParentCommentID == nil {
+			t.Errorf("reply %q has no parent, want one", comment.ID)
+		}
+	}
+
+	// No parents means no query and an empty slice, never nil.
+	none, err := env.store.ListReplies(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListReplies(nil) error = %v, want nil", err)
+	}
+	if none == nil || len(none) != 0 {
+		t.Errorf("ListReplies(nil) = %v, want an empty slice", none)
+	}
+}
+
+func TestPostgresStoreCommentsRefuseASelfParent(t *testing.T) {
+	// The database is the only layer that can enforce this: postgres generates the
+	// id, so the service never holds a comment's own id while creating it, and a
+	// comment that names itself would make a thread unreachable.
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	_, versionID := newIntegrationStory(t, env, "self-parent")
+	comment := insertComment(t, env, versionID, "A comment.", nil)
+
+	_, err := env.pool.Exec(ctx, `UPDATE comments SET parent_comment_id = id WHERE id = $1`, comment.ID)
+	if err == nil {
+		t.Fatal("UPDATE to a self-parent error = nil, want the CHECK constraint to refuse it")
+	}
+
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != checkViolation {
+		t.Errorf("error = %v, want a check violation (%s)", err, checkViolation)
+	}
+
+	var parent *string
+	if err := env.pool.QueryRow(ctx, `SELECT parent_comment_id FROM comments WHERE id = $1`, comment.ID).Scan(&parent); err != nil {
+		t.Fatalf("read parent after the refused update: %v", err)
+	}
+	if parent != nil {
+		t.Errorf("parent = %q after the refused update, want nil", *parent)
+	}
+}
+
+func TestPostgresStoreCommentsRefuseAnUnknownParent(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	_, versionID := newIntegrationStory(t, env, "unknown-parent")
+
+	missing := "99999999-9999-4999-8999-999999999999"
+	_, err := env.store.CreateComment(ctx, Comment{
+		VersionID:       versionID,
+		AuthorID:        env.author,
+		Language:        "eng",
+		Body:            "Orphan reply.",
+		ParentCommentID: &missing,
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("CreateComment() error = %v, want ErrNotFound", err)
 	}
 }
 

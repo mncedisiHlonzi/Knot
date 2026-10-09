@@ -58,6 +58,11 @@ func NewConversationsHandler(service ConversationsService, authors AuthorLookup,
 type createCommentRequest struct {
 	Body     string `json:"body"`
 	Language string `json:"language"`
+	// ParentCommentID is optional: when present the comment is a reply to that
+	// comment, which must belong to the same version. A reply to a reply is stored
+	// against the top-level comment it belongs to, so depth is one level
+	// (KNOT-ADR-047).
+	ParentCommentID *string `json:"parent_comment_id"`
 }
 
 // createBridgeRequest is the POST /comments/{id}/bridges body.
@@ -72,13 +77,18 @@ type createBridgeRequest struct {
 
 // commentResponse is the public projection of a comment.
 type commentResponse struct {
-	ID        string    `json:"id"`
-	VersionID string    `json:"version_id"`
-	AuthorID  string    `json:"author_id"`
-	Language  string    `json:"language"`
-	Body      string    `json:"body"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string `json:"id"`
+	VersionID string `json:"version_id"`
+	AuthorID  string `json:"author_id"`
+	Language  string `json:"language"`
+	Body      string `json:"body"`
+	// ParentCommentID is the comment this one replies to, or null when it is a
+	// top-level comment. A client indents a comment whose parent is set; it never
+	// has to assemble the thread itself, because the list is already ordered for
+	// reading (KNOT-ADR-047).
+	ParentCommentID *string   `json:"parent_comment_id"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 	// AuthorDisplayName and AuthorAvatarURL are the author's inline attribution,
 	// filled by one batched lookup per response. AuthorAvatarURL is the backend
 	// path to fetch an avatar from, or null when the author has none, so a client
@@ -103,14 +113,17 @@ type commentEnvelope struct {
 // the comment's thread without a second lookup. It carries the same author
 // attribution as every other comment response (KNOT-ADR-041).
 type commentDetailResponse struct {
-	ID        string    `json:"id"`
-	VersionID string    `json:"version_id"`
-	StoryID   string    `json:"story_id"`
-	AuthorID  string    `json:"author_id"`
-	Language  string    `json:"language"`
-	Body      string    `json:"body"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string `json:"id"`
+	VersionID string `json:"version_id"`
+	StoryID   string `json:"story_id"`
+	AuthorID  string `json:"author_id"`
+	Language  string `json:"language"`
+	Body      string `json:"body"`
+	// ParentCommentID is the comment this one replies to, or null, exactly as on
+	// the thread and create projections.
+	ParentCommentID *string   `json:"parent_comment_id"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 	// AuthorDisplayName and AuthorAvatarURL are the author's inline attribution,
 	// filled by one batched lookup. AuthorAvatarURL is null when the author has no
 	// avatar (KNOT-ADR-041).
@@ -190,10 +203,11 @@ func (h *ConversationsHandler) CreateComment(w http.ResponseWriter, r *http.Requ
 	}
 
 	created, err := h.service.CreateComment(r.Context(), conversations.CreateCommentInput{
-		VersionID: r.PathValue("id"),
-		AuthorID:  authorID,
-		Language:  body.Language,
-		Body:      body.Body,
+		VersionID:       r.PathValue("id"),
+		AuthorID:        authorID,
+		Language:        body.Language,
+		Body:            body.Body,
+		ParentCommentID: body.ParentCommentID,
 	})
 	if err != nil {
 		h.writeServiceError(w, r, err, "version not found")
@@ -402,13 +416,14 @@ func (h *ConversationsHandler) writeServiceError(w http.ResponseWriter, r *http.
 // newCommentResponse projects a domain comment onto the wire format.
 func newCommentResponse(comment conversations.Comment) commentResponse {
 	return commentResponse{
-		ID:        comment.ID,
-		VersionID: comment.VersionID,
-		AuthorID:  comment.AuthorID,
-		Language:  comment.Language,
-		Body:      comment.Body,
-		CreatedAt: comment.CreatedAt,
-		UpdatedAt: comment.UpdatedAt,
+		ID:              comment.ID,
+		VersionID:       comment.VersionID,
+		AuthorID:        comment.AuthorID,
+		Language:        comment.Language,
+		Body:            comment.Body,
+		ParentCommentID: comment.ParentCommentID,
+		CreatedAt:       comment.CreatedAt,
+		UpdatedAt:       comment.UpdatedAt,
 	}
 }
 
@@ -417,14 +432,15 @@ func newCommentResponse(comment conversations.Comment) commentResponse {
 // projections do not.
 func newCommentDetailResponse(comment conversations.Comment) commentDetailResponse {
 	return commentDetailResponse{
-		ID:        comment.ID,
-		VersionID: comment.VersionID,
-		StoryID:   comment.StoryID,
-		AuthorID:  comment.AuthorID,
-		Language:  comment.Language,
-		Body:      comment.Body,
-		CreatedAt: comment.CreatedAt,
-		UpdatedAt: comment.UpdatedAt,
+		ID:              comment.ID,
+		VersionID:       comment.VersionID,
+		StoryID:         comment.StoryID,
+		AuthorID:        comment.AuthorID,
+		Language:        comment.Language,
+		Body:            comment.Body,
+		ParentCommentID: comment.ParentCommentID,
+		CreatedAt:       comment.CreatedAt,
+		UpdatedAt:       comment.UpdatedAt,
 	}
 }
 

@@ -323,10 +323,20 @@ A search over 7,927 names returns several matches for a short query — `zul` al
 `Zulgo-Gemzek` — which is why the picker caps the result list and why `findLanguage` and
 `languageName` go through a `Map` index rather than scanning.
 
-The comment composer on `CommentThreadScreen` is the one exception to the picker: it is a
-fixed-height bar, so it keeps a compact code field with a three-letter placeholder. It is
-still validated with `isLanguageCode`, so it cannot store a non-canonical code, but it offers
-no suggestions.
+The comment composer on `CommentThreadScreen` now uses the same picker. A fixed-height
+composer bar has no room for a results list, so the composer shows the language as a **chip**
+and tapping it opens `LanguagePicker` in `single` mode inside a modal sheet
+(KNOT-ADR-048). The chip reads `languageName(code)` when that name is at most 12 characters
+and the code itself otherwise — 1,630 of the 7,927 names are longer than the chip — which is
+`languageChipLabel` in `apps/mobile/src/screens/conversations/commentThread.ts`. That module
+holds the composer's pure rules (chip label, reply target, starting language) so they are
+tested without rendering React Native.
+
+The composer starts in the user's first preferred language. A user who has none has no
+preferred tag to send, so the composer fetches the version (`GET /versions/{id}`) and uses
+the version's language, showing `…` in the chip while the request is in flight and falling
+back to `eng` if it fails — `initialComposeLanguage` encodes the order. The choice is **not**
+persisted: it lasts for the visit, and the profile keeps its own screen (KNOT-ADR-048).
 
 ### Native dependencies (Mapbox, AsyncStorage)
 
@@ -764,19 +774,55 @@ Comment pagination reuses the feed's keyset pattern. The cursor is duplicated in
 query matches `comments_version_id_created_at_idx`:
 
 ```sql
-SELECT id, version_id, author_id, language, body, created_at, updated_at
+SELECT id, version_id, author_id, language, body, parent_comment_id, created_at, updated_at
 FROM comments
-WHERE version_id = $1 AND (created_at, id) < ($2::timestamptz, $3::uuid)
+WHERE version_id = $1 AND parent_comment_id IS NULL
+  AND (created_at, id) < ($2::timestamptz, $3::uuid)
 ORDER BY created_at DESC, id DESC
 LIMIT $4
 ```
+
+`AND parent_comment_id IS NULL` is what makes the cursor still work: replies sort by their
+own `created_at`, so interleaving them into the stream could place a reply on a page
+before the comment it answers. **`limit` therefore counts top-level comments**, and a page
+can return more rows than `limit`.
+
+The page's replies come from one batched statement in `PostgresStore.ListReplies`, keyed
+by the whole page (`comments_parent_comment_id_idx` serves it):
+
+```sql
+SELECT id, version_id, author_id, language, body, parent_comment_id, created_at, updated_at
+FROM comments
+WHERE parent_comment_id = ANY($1::uuid[])
+ORDER BY created_at ASC, id ASC
+```
+
+`Service.attachReplies` groups that result by parent and emits each top-level comment
+followed by its replies, so the wire format is a flat list a client renders in order and
+never re-sorts. Replies are oldest first within a parent, matching how a thread reads.
+
+Creating a **reply** passes `parent_comment_id`. `Service.CreateComment` resolves the
+parent before writing and rejects one that does not exist or belongs to another version
+with a `400 validation_error` on `parent_comment_id` — a `404` would say the version is
+missing, which it is not. Threading is one level deep (KNOT-ADR-047): when the named
+parent is itself a reply, the stored parent is rewritten to that reply's own parent, so a
+reply is always attached to a top-level comment. The comment being **addressed** is kept
+separately, because that is who gets the notification:
+
+- top-level comment → notify the **version's author**
+- reply → notify the **author of the comment replied to**
+
+The recipient is resolved before the depth rewrite for exactly that reason. Acting on your
+own comment still notifies nobody, and only one notification is written per comment.
 
 Creating a bridge resolves the target version first — the source comment's story, plus the
 version of that story written in `target_language` (the oldest, when several share it) —
 then writes a target comment and a bridge in one transaction: the target comment is
 inserted first, the bridge second, and a failure on either rolls both back. There is no
 circular foreign key here, so a plain `Begin`/`Commit` is enough — contrast the
-single-statement CTE the story plus its root version needs, above.
+single-statement CTE the story plus its root version needs, above. The target comment is
+inserted with **no parent**: a bridge connects two conversations rather than answering a
+comment, so a bridge target is always top-level.
 
 Bridging is open to any authenticated user. The bridger comes from the token, and the only
 structural checks are that the target language differs from the source comment's language

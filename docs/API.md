@@ -639,9 +639,14 @@ Returns **200** with `{ "version": { ... } }`.
 
 ## Conversations and Bridges
 
-A conversation is the flat list of comments on one story **version**, newest first.
+A conversation is the list of comments on one story **version**, newest thread first.
 Comments are how people talk about a telling; a **bridge** is how that talk crosses a
 language boundary.
+
+A comment can be a **reply** to another comment. Threading is exactly one level deep: a
+reply to a reply is stored against the same top-level comment its parent answers, so a
+conversation is always a top-level comment followed by its replies, and never nests
+further. See KNOT-ADR-047 in [`docs/DECISIONS.md`](DECISIONS.md).
 
 A bridge does not translate in place. It creates a **new comment** in the target
 language, on the **story's version written in that language**, and records a bridge that
@@ -650,9 +655,13 @@ and the bridge is a first-class object with its own id. A bridge therefore conne
 conversations rather than adding to one. See KNOT-ADR-014 in
 [`docs/DECISIONS.md`](DECISIONS.md).
 
+Because a bridge writes into a version's conversation, the comment it creates is a
+top-level comment in that conversation: it never carries a `parent_comment_id`, even
+when the comment it came from is a reply.
+
 | Route                          | Auth     | Purpose                                  |
 | ------------------------------ | -------- | ---------------------------------------- |
-| `POST /versions/{id}/comments` | `Bearer` | Comment on a version                      |
+| `POST /versions/{id}/comments` | `Bearer` | Comment on a version, or reply to one     |
 | `GET /versions/{id}/comments`  | public   | Read a version's comments, newest first    |
 | `GET /comments/{id}`           | public   | Resolve one comment, with its story        |
 | `POST /comments/{id}/bridges`  | `Bearer` | Bridge a comment into another language     |
@@ -670,10 +679,14 @@ conversations rather than adding to one. See KNOT-ADR-014 in
   "author_avatar_url": null,
   "language": "eng",
   "body": "The first rain remembers every name.",
+  "parent_comment_id": null,
   "created_at": "2026-10-08T18:26:37.134182+02:00",
   "updated_at": "2026-10-08T18:26:37.134182+02:00"
 }
 ```
+
+`parent_comment_id` is `null` for a top-level comment, and is always present, so a client
+can tell "top level" from "the server did not answer".
 
 ### The bridge object
 
@@ -700,18 +713,37 @@ pair `author_display_name` / `author_avatar_url` — see
 ### POST /versions/{id}/comments
 
 Comments on a version as the authenticated user and returns **201** with the stored
-comment, wrapped as `{ "comment": { ... } }`.
+comment, wrapped as `{ "comment": { ... } }`. With `parent_comment_id` it writes a
+**reply** instead.
 
 **Request**
 
 ```json
-{ "body": "The first rain remembers every name.", "language": "eng" }
+{
+  "body": "The first rain remembers every name.",
+  "language": "eng",
+  "parent_comment_id": "66666666-6666-4666-8666-666666666666"
+}
 ```
 
-| Field      | Required | Rules                            |
-| ---------- | -------- | -------------------------------- |
-| `body`     | yes      | 1-5000 characters; stored verbatim |
-| `language` | yes      | A canonical ISO 639-3 code, such as `eng`. See [Languages](#languages) |
+| Field               | Required | Rules                            |
+| ------------------- | -------- | -------------------------------- |
+| `body`              | yes      | 1-5000 characters; stored verbatim |
+| `language`          | yes      | A canonical ISO 639-3 code, such as `eng`. See [Languages](#languages) |
+| `parent_comment_id` | no       | The comment being replied to. Omit it, or send `null`, for a top-level comment |
+
+The parent must be a comment **on the same version**. Naming a comment from another
+version — or one that does not exist, or is not a UUID — is a `400 validation_error` with
+`field` = `parent_comment_id`, not a `404`: the reply would otherwise land in a
+conversation the author did not write in.
+
+**Replying to a reply attaches to the reply's top-level comment.** If `parent_comment_id`
+names a reply, the stored `parent_comment_id` is that reply's own parent, and the request
+still succeeds (**201**). A client therefore never needs to resolve the thread itself.
+
+The **notification** for a reply goes to the author of the comment that was replied to,
+not to the version's author. Replying to your own comment notifies nobody. The event is
+still `comment.created`.
 
 **There is no `author_id` field.** The commenter is taken from the access token.
 
@@ -724,7 +756,7 @@ comment, wrapped as `{ "comment": { ... } }`.
 Returns **200** with one page of the version's comments, newest first:
 
 ```json
-{ "comments": [ { "id": "...", "body": "..." } ], "next_cursor": "MjAyNi0xMC0wOFQxODo..." }
+{ "comments": [ { "id": "...", "body": "...", "parent_comment_id": null } ], "next_cursor": "MjAyNi0xMC0wOFQxODo..." }
 ```
 
 | Query    | Required | Rules                                                        |
@@ -735,6 +767,15 @@ Returns **200** with one page of the version's comments, newest first:
 `comments` is always an array, never `null`, and `next_cursor` is always present. Paging
 is keyset, exactly as for the feed: a page is a range of the sort order, so a comment
 posted between two requests neither shifts nor repeats a page.
+
+**Each reply follows the comment it answers**, so the array is a flat, renderable list:
+`[parent, its replies oldest first, next parent, its replies, ...]`. Replies are not
+independently pageable and never appear as items of their own, which is why the ordering
+survives the one-level depth limit.
+
+**`limit` counts top-level comments, not rows.** A page can therefore return more than
+`limit` items — up to `limit` top-level comments plus all of their replies. The cursor
+advances by top-level comment, so paging never splits a thread.
 
 **Errors:** `400 validation_error` (an unreadable `cursor`, or a `limit` that is not a
 positive integer), `404 not_found` (the version does not exist, or its id is not a UUID),
@@ -759,6 +800,7 @@ Returns **200** with:
     "author_avatar_url": null,
     "language": "eng",
     "body": "The first rain remembers every name.",
+    "parent_comment_id": null,
     "created_at": "2026-10-08T18:26:37.134182+02:00",
     "updated_at": "2026-10-08T18:26:37.134182+02:00"
   }
@@ -1151,8 +1193,13 @@ people:
 | `event_type`      | Fires when                                             | `entity_type` | `entity_id` names  |
 | ----------------- | ------------------------------------------------------ | ------------- | ------------------ |
 | `version.created` | someone adapts a version the recipient authored         | `version`     | the new version     |
-| `comment.created` | someone comments on a version the recipient authored    | `comment`     | the new comment     |
+| `comment.created` | someone comments on a version the recipient authored, **or replies to a comment the recipient authored** | `comment` | the new comment |
 | `bridge.created`  | someone bridges a comment the recipient authored        | `bridge`      | the new bridge      |
+
+For `comment.created`, the recipient is the **version's author** for a top-level comment and
+the **replied-to comment's author** for a reply (KNOT-ADR-047). A reply therefore notifies
+the person being answered even when a third person wrote the version, and the two cases
+never notify the same person twice: only one notification is written per comment.
 
 Acting on your own content never notifies you, and the database enforces the same rule
 (KNOT-ADR-038).

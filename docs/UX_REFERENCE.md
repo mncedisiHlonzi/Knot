@@ -93,10 +93,13 @@ bridge-count badge is deferred.
 **Concept.** The conversation under a telling, with an easy way to reply across a language
 boundary.
 
-**Current status.** **Shipped.** `CommentThreadScreen` — a flat, newest-first, cursor-paged
-list with a compose box, pull-to-refresh, and a "Bridge to another language" action on every
-comment — and `BridgeScreen`, which writes a new comment in a target language and joins it to
-the one it came from. Replies happen **only** by bridging; comment threading is deferred.
+**Current status.** **Shipped.** `CommentThreadScreen` — a newest-first, cursor-paged list
+with a compose box, pull-to-refresh, a "Reply" action and a "Bridge to another language"
+action on every comment — and `BridgeScreen`, which writes a new comment in a target language
+and joins it to the one it came from. A reply is indented under the comment it answers, and
+threading is one level deep: replying to a reply stays in the same thread. The composer's
+language is a chip that opens the language picker, defaults to the user's own language, and
+lasts for the visit.
 
 **MVP phase.** Phase 1.
 

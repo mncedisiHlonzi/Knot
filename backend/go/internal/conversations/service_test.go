@@ -29,18 +29,23 @@ type fakeCommentStore struct {
 	listNext     *Cursor
 	listErr      error
 
+	repliesResult []Comment
+	repliesErr    error
+
 	versionAuthorResult string
 	versionAuthorErr    error
 
-	gotCreate    Comment
-	gotGetID     string
-	gotVersionID string
-	gotCursor    *Cursor
-	gotLimit     int
+	gotCreate         Comment
+	gotGetID          string
+	gotVersionID      string
+	gotCursor         *Cursor
+	gotLimit          int
+	gotReplyParentIDs []string
 
 	createCalls        int
 	getCalls           int
 	listCalls          int
+	replyCalls         int
 	versionAuthorCalls int
 }
 
@@ -74,6 +79,12 @@ func (f *fakeCommentStore) ListComments(_ context.Context, versionID string, cur
 	f.gotCursor = cursor
 	f.gotLimit = limit
 	return f.listResult, f.listNext, f.listErr
+}
+
+func (f *fakeCommentStore) ListReplies(_ context.Context, parentIDs []string) ([]Comment, error) {
+	f.replyCalls++
+	f.gotReplyParentIDs = parentIDs
+	return f.repliesResult, f.repliesErr
 }
 
 func (f *fakeCommentStore) VersionAuthor(_ context.Context, versionID string) (string, error) {
@@ -990,6 +1001,236 @@ func TestListBridgesForStoryNotFound(t *testing.T) {
 	_, err := service.ListBridgesForStory(context.Background(), storyID)
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("errors.Is(err, ErrNotFound) = false, want true (err = %v)", err)
+	}
+}
+
+// --- replies (KNOT-ADR-047) ------------------------------------------------
+
+// parentPtr returns a pointer to id, for the optional parent field.
+func parentPtr(id string) *string { return &id }
+
+// validReplyInput is a comment by authorID that replies to parentID.
+func validReplyInput(parentID string) CreateCommentInput {
+	input := validCommentInput()
+	input.ParentCommentID = parentPtr(parentID)
+	return input
+}
+
+// requireFieldError asserts that err is a validation error naming field, which is
+// how every rejected field is reported.
+func requireFieldError(t *testing.T, err error, field string) {
+	t.Helper()
+
+	var validation *ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("errors.As(err, &ValidationError) = false, want true (err = %v)", err)
+	}
+	if validation.Field != field {
+		t.Errorf("field = %q, want %q", validation.Field, field)
+	}
+	if !errors.Is(err, ErrValidation) {
+		t.Errorf("errors.Is(err, ErrValidation) = false, want true (err = %v)", err)
+	}
+}
+
+func TestCreateCommentReplyStoresTheParent(t *testing.T) {
+	service, comments, _ := newTestService(t)
+	comments.getResult = sourceComment()
+
+	created, err := service.CreateComment(context.Background(), validReplyInput(sourceCommentID))
+	if err != nil {
+		t.Fatalf("CreateComment() error = %v, want nil", err)
+	}
+
+	if comments.getCalls != 1 || comments.gotGetID != sourceCommentID {
+		t.Errorf("parent lookups = %d (last id %q), want one lookup of %q", comments.getCalls, comments.gotGetID, sourceCommentID)
+	}
+	if comments.gotCreate.ParentCommentID == nil {
+		t.Fatal("stored parent = nil, want the parent comment")
+	}
+	if *comments.gotCreate.ParentCommentID != sourceCommentID {
+		t.Errorf("stored parent = %q, want %q", *comments.gotCreate.ParentCommentID, sourceCommentID)
+	}
+	if created.ID == "" {
+		t.Error("id is empty, want the stored id")
+	}
+}
+
+func TestCreateCommentWithoutAParentIsTopLevel(t *testing.T) {
+	service, comments, _ := newTestService(t)
+
+	if _, err := service.CreateComment(context.Background(), validCommentInput()); err != nil {
+		t.Fatalf("CreateComment() error = %v, want nil", err)
+	}
+
+	if comments.gotCreate.ParentCommentID != nil {
+		t.Errorf("stored parent = %q, want nil for a top-level comment", *comments.gotCreate.ParentCommentID)
+	}
+	if comments.getCalls != 0 {
+		t.Errorf("parent lookups = %d, want 0 — a top-level comment has no parent to check", comments.getCalls)
+	}
+}
+
+func TestCreateCommentReplyToAReplyAttachesToTheTopLevel(t *testing.T) {
+	service, comments, _ := newTestService(t)
+
+	// The comment being replied to is itself a reply, so the stored parent must be
+	// that reply's own parent: a thread is one level deep, never two.
+	reply := sourceComment()
+	reply.ParentCommentID = parentPtr(targetCommentID)
+	comments.getResult = reply
+
+	if _, err := service.CreateComment(context.Background(), validReplyInput(sourceCommentID)); err != nil {
+		t.Fatalf("CreateComment() error = %v, want nil", err)
+	}
+
+	if comments.gotCreate.ParentCommentID == nil {
+		t.Fatal("stored parent = nil, want the top-level comment")
+	}
+	if *comments.gotCreate.ParentCommentID != targetCommentID {
+		t.Errorf("stored parent = %q, want the top-level comment %q", *comments.gotCreate.ParentCommentID, targetCommentID)
+	}
+}
+
+func TestCreateCommentReplyRejectsAParentOnAnotherVersion(t *testing.T) {
+	service, comments, _ := newTestService(t)
+
+	parent := sourceComment()
+	parent.VersionID = otherVersionID
+	comments.getResult = parent
+
+	_, err := service.CreateComment(context.Background(), validReplyInput(sourceCommentID))
+	requireFieldError(t, err, "parent_comment_id")
+
+	if comments.createCalls != 0 {
+		t.Errorf("store received %d create calls, want 0 — a reply to another version must not be stored", comments.createCalls)
+	}
+}
+
+func TestCreateCommentReplyRejectsAnUnknownParent(t *testing.T) {
+	service, comments, _ := newTestService(t)
+	comments.getErr = ErrNotFound
+
+	_, err := service.CreateComment(context.Background(), validReplyInput(sourceCommentID))
+	requireFieldError(t, err, "parent_comment_id")
+
+	if comments.createCalls != 0 {
+		t.Errorf("store received %d create calls, want 0 — an unknown parent must not be stored", comments.createCalls)
+	}
+}
+
+func TestCreateCommentReplyToYourOwnCommentNotifiesNobody(t *testing.T) {
+	service, comments, _, notifier := newTestServiceWithNotifier(t)
+	comments.getResult = sourceComment() // authored by authorID, the commenter
+
+	if _, err := service.CreateComment(context.Background(), validReplyInput(sourceCommentID)); err != nil {
+		t.Fatalf("CreateComment() error = %v, want nil", err)
+	}
+
+	if len(notifier.calls) != 0 {
+		t.Errorf("notifications = %+v, want none — replying to yourself is not news", notifier.calls)
+	}
+}
+
+func TestCreateCommentReplyNotifiesTheParentAuthorNotTheVersionAuthor(t *testing.T) {
+	service, comments, _, notifier := newTestServiceWithNotifier(t)
+
+	parent := sourceComment()
+	parent.AuthorID = otherAuthorID
+	comments.getResult = parent
+	// The version's author is the commenter, so a version-targeted notification
+	// would be suppressed. Only the parent's author can be the recipient here.
+	comments.versionAuthorResult = authorID
+
+	if _, err := service.CreateComment(context.Background(), validReplyInput(sourceCommentID)); err != nil {
+		t.Fatalf("CreateComment() error = %v, want nil", err)
+	}
+
+	if len(notifier.calls) != 1 {
+		t.Fatalf("notifications = %d, want exactly 1", len(notifier.calls))
+	}
+	call := notifier.calls[0]
+	if call.recipientID != otherAuthorID {
+		t.Errorf("recipient = %q, want the parent's author %q", call.recipientID, otherAuthorID)
+	}
+	if call.actorID != authorID {
+		t.Errorf("actor = %q, want the commenter %q", call.actorID, authorID)
+	}
+	if call.kind != "comment.created" {
+		t.Errorf("kind = %q, want %q — a reply is not a new event type", call.kind, "comment.created")
+	}
+}
+
+func TestCreateCommentReplyToAReplyNotifiesTheAuthorRepliedTo(t *testing.T) {
+	service, comments, _, notifier := newTestServiceWithNotifier(t)
+
+	// The comment addressed is a reply by otherAuthorID; the stored parent becomes
+	// its parent, but the notification goes to whoever was replied to.
+	reply := sourceComment()
+	reply.AuthorID = otherAuthorID
+	reply.ParentCommentID = parentPtr(targetCommentID)
+	comments.getResult = reply
+	// The version's author is the commenter, so a version-targeted notification
+	// would be suppressed rather than delivered to the wrong person.
+	comments.versionAuthorResult = authorID
+
+	if _, err := service.CreateComment(context.Background(), validReplyInput(sourceCommentID)); err != nil {
+		t.Fatalf("CreateComment() error = %v, want nil", err)
+	}
+
+	if len(notifier.calls) != 1 {
+		t.Fatalf("notifications = %d, want exactly 1", len(notifier.calls))
+	}
+	if got := notifier.calls[0].recipientID; got != otherAuthorID {
+		t.Errorf("recipient = %q, want the author of the comment replied to %q", got, otherAuthorID)
+	}
+}
+
+func TestListCommentsReturnsEachParentWithItsReplies(t *testing.T) {
+	service, comments, _ := newTestService(t)
+
+	newest := Comment{ID: targetCommentID, VersionID: versionID, AuthorID: authorID, Language: "eng", Body: "newest"}
+	oldest := sourceComment()
+	comments.listResult = []Comment{newest, oldest}
+
+	firstReply := Comment{ID: "99999999-9999-4999-8999-999999999991", VersionID: versionID, AuthorID: authorID, Language: "eng", Body: "first reply", ParentCommentID: parentPtr(oldest.ID)}
+	secondReply := Comment{ID: "99999999-9999-4999-8999-999999999992", VersionID: versionID, AuthorID: authorID, Language: "eng", Body: "second reply", ParentCommentID: parentPtr(oldest.ID)}
+	// The store returns replies oldest first, and only for the page's parents.
+	comments.repliesResult = []Comment{firstReply, secondReply}
+
+	page, _, err := service.ListComments(context.Background(), versionID, "", DefaultListLimit)
+	if err != nil {
+		t.Fatalf("ListComments() error = %v, want nil", err)
+	}
+
+	want := []string{newest.ID, oldest.ID, firstReply.ID, secondReply.ID}
+	if len(page) != len(want) {
+		t.Fatalf("comments = %d, want %d: %+v", len(page), len(want), page)
+	}
+	for i, id := range want {
+		if page[i].ID != id {
+			t.Errorf("comment %d = %q, want %q (page = %+v)", i, page[i].ID, id, page)
+		}
+	}
+
+	if len(comments.gotReplyParentIDs) != 2 || comments.gotReplyParentIDs[0] != newest.ID || comments.gotReplyParentIDs[1] != oldest.ID {
+		t.Errorf("reply lookup parents = %v, want the page's parents in page order", comments.gotReplyParentIDs)
+	}
+}
+
+func TestListCommentsDoesNotAskForRepliesWhenThePageIsEmpty(t *testing.T) {
+	service, comments, _ := newTestService(t)
+	comments.listResult = []Comment{}
+
+	page, _, err := service.ListComments(context.Background(), versionID, "", DefaultListLimit)
+	if err != nil {
+		t.Fatalf("ListComments() error = %v, want nil", err)
+	}
+	if len(page) != 0 {
+		t.Errorf("comments = %d, want 0", len(page))
+	}
+	if comments.replyCalls != 0 {
+		t.Errorf("reply lookups = %d, want 0 — an empty page has no parents to hang replies on", comments.replyCalls)
 	}
 }
 

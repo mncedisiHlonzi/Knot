@@ -104,6 +104,12 @@ type Comment struct {
 	Language string
 	// Body is the comment itself, stored verbatim.
 	Body string
+	// ParentCommentID is the comment this one replies to, or nil for a top-level
+	// comment. Threading is one level deep: a reply to a reply is stored against
+	// the top-level comment it belongs to, so a parent is always a top-level
+	// comment (KNOT-ADR-047). A bridge's target comment is never a reply, so it
+	// has no parent either (KNOT-ADR-014).
+	ParentCommentID *string
 	// CreatedAt is the insertion time. It is the thread's primary sort key.
 	CreatedAt time.Time
 	// UpdatedAt is maintained by the database.
@@ -123,6 +129,11 @@ type CreateCommentInput struct {
 	Language string
 	// Body is required and must be 1-MaxBodyLen characters.
 	Body string
+	// ParentCommentID is the top-level comment this one replies to, or nil to
+	// write a top-level comment. It is optional. When set it must name a comment
+	// on the same version; naming a reply attaches to that reply's own parent, so
+	// the stored thread is never deeper than one level (KNOT-ADR-047).
+	ParentCommentID *string
 }
 
 // CommentStore is the persistence contract for comments. The service depends on
@@ -136,11 +147,22 @@ type CommentStore interface {
 	// returned comment also names the story its version belongs to (StoryID), so
 	// a caller can open the comment's thread without a second lookup.
 	GetComment(ctx context.Context, id string) (Comment, error)
-	// ListComments returns at most limit comments of one version, newest first,
-	// starting after cursor (nil starts at the newest). The returned cursor
-	// resumes after the page, or is nil when the page is the last one. It
-	// returns ErrNotFound when the version does not exist.
+	// ListComments returns at most limit top-level comments of one version,
+	// newest first, starting after cursor (nil starts at the newest). The
+	// returned cursor resumes after the page, or is nil when the page is the last
+	// one. It returns ErrNotFound when the version does not exist.
+	//
+	// A reply is not a top-level comment and is not returned here: the caller
+	// asks for a page of parents and then calls ListReplies for that page, so a
+	// page of a thread is never missing the comments it hangs off (KNOT-ADR-047).
 	ListComments(ctx context.Context, versionID string, cursor *Cursor, limit int) ([]Comment, *Cursor, error)
+	// ListReplies returns every reply to the given parent comments, oldest first
+	// within each parent, ready to sit under its parent in a thread. It returns an
+	// empty slice, never nil, when there are none.
+	//
+	// It takes a page's worth of parents rather than one id, so assembling a page
+	// of a thread costs two queries rather than one per comment.
+	ListReplies(ctx context.Context, parentIDs []string) ([]Comment, error)
 	// VersionAuthor returns the author of the version with the given id, or
 	// ErrNotFound when no such version exists.
 	//

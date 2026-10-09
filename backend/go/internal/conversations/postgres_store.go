@@ -12,11 +12,14 @@ import (
 
 // PostgreSQL SQLSTATEs the store classifies. A unique violation is how the
 // bridge constraints refuse a duplicate; a foreign key violation is how an
-// unknown version or comment is recognised.
+// unknown version or comment is recognised; a check violation is how the schema
+// refuses a row that contradicts itself, such as a comment parenting itself.
 const (
 	uniqueViolation      = "23505"
 	foreignKeyViolation  = "23503"
+	checkViolation       = "23514"
 	commentsVersionFK    = "comments_version_id_fkey"
+	commentsParentFK     = "comments_parent_comment_id_fkey"
 	bridgesSourceFK      = "bridges_source_comment_id_fkey"
 	bridgesLanguageIndex = "bridges_one_per_target_language"
 )
@@ -25,7 +28,7 @@ const (
 // lists. They are constants so every query stays consistent with the scanners,
 // and their order is the order the scanners read.
 const (
-	commentColumns = `id, version_id, author_id, language, body, created_at, updated_at`
+	commentColumns = `id, version_id, author_id, language, body, parent_comment_id, created_at, updated_at`
 	bridgeColumns  = `id, source_comment_id, target_comment_id, author_id, target_language, adaptation_note, created_at`
 )
 
@@ -56,16 +59,18 @@ func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 // and timestamps PostgreSQL generated.
 //
 // A comment on a version that does not exist is reported as ErrNotFound rather
-// than as a raw driver error, so the handler can answer 404.
+// than as a raw driver error, so the handler can answer 404. The same is true of a
+// parent that has vanished between the service's lookup and this insert — a race
+// with a delete that the product does not offer yet.
 func (s *PostgresStore) CreateComment(ctx context.Context, comment Comment) (Comment, error) {
 	const query = `
-		INSERT INTO comments (version_id, author_id, language, body)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO comments (version_id, author_id, language, body, parent_comment_id)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING ` + commentColumns
 
-	created, err := scanComment(s.pool.QueryRow(ctx, query, comment.VersionID, comment.AuthorID, comment.Language, comment.Body))
+	created, err := scanComment(s.pool.QueryRow(ctx, query, comment.VersionID, comment.AuthorID, comment.Language, comment.Body, comment.ParentCommentID))
 	if err != nil {
-		if isForeignKeyViolation(err, commentsVersionFK) {
+		if isForeignKeyViolation(err, commentsVersionFK) || isForeignKeyViolation(err, commentsParentFK) {
 			return Comment{}, ErrNotFound
 		}
 		return Comment{}, fmt.Errorf("conversations: create comment: %w", err)
@@ -89,7 +94,7 @@ func (s *PostgresStore) GetComment(ctx context.Context, id string) (Comment, err
 	}
 
 	const query = `
-		SELECT c.id, c.version_id, c.author_id, c.language, c.body, c.created_at, c.updated_at, v.story_id
+		SELECT c.id, c.version_id, c.author_id, c.language, c.body, c.parent_comment_id, c.created_at, c.updated_at, v.story_id
 		FROM comments c
 		JOIN story_versions v ON v.id = c.version_id
 		WHERE c.id = $1`
@@ -127,14 +132,19 @@ func (s *PostgresStore) VersionAuthor(ctx context.Context, versionID string) (st
 	return authorID, nil
 }
 
-// ListComments returns one page of a version's comments, newest first, plus the
-// cursor that resumes after it (nil when this page is the last one).
+// ListComments returns one page of a version's top-level comments, newest first,
+// plus the cursor that resumes after it (nil when this page is the last one).
 //
-// Pagination is keyset, matching `comments_version_id_created_at_idx`
-// (version_id, created_at DESC, id DESC): the next page is everything strictly
-// "before" the last row of this page in that order. It returns ErrNotFound when
-// the version does not exist, so the caller can tell "no such version" from "a
-// version with no comments".
+// Replies are not returned here: they are fetched per page by ListReplies, so a
+// page is a page of threads rather than a slice of a flat stream that could cut a
+// reply off from its parent. Pagination therefore counts top-level comments, and
+// the cursor still seeks on the version's own index
+// `comments_version_id_created_at_idx` (version_id, created_at DESC, id DESC) — the
+// next page is everything strictly "before" the last parent of this page in that
+// order (KNOT-ADR-047).
+//
+// It returns ErrNotFound when the version does not exist, so the caller can tell
+// "no such version" from "a version with no comments".
 func (s *PostgresStore) ListComments(ctx context.Context, versionID string, cursor *Cursor, limit int) ([]Comment, *Cursor, error) {
 	if !isUUID(versionID) {
 		return nil, nil, ErrNotFound
@@ -152,7 +162,7 @@ func (s *PostgresStore) ListComments(ctx context.Context, versionID string, curs
 		return nil, nil, ErrNotFound
 	}
 
-	query := `SELECT ` + commentColumns + ` FROM comments WHERE version_id = $1`
+	query := `SELECT ` + commentColumns + ` FROM comments WHERE version_id = $1 AND parent_comment_id IS NULL`
 	args := []any{versionID}
 
 	if cursor != nil {
@@ -192,6 +202,44 @@ func (s *PostgresStore) ListComments(ctx context.Context, versionID string, curs
 	next := NewCursor(last.CreatedAt, last.ID)
 
 	return page[:limit], &next, nil
+}
+
+// ListReplies returns every reply to the given parent comments, oldest first
+// within each parent, and an empty slice when there are none.
+//
+// It takes a whole page's parents, so assembling a page of a thread is one extra
+// query whatever the number of comments on it. The ids come from rows this store
+// just read, so they are canonical UUID text and the cast to uuid[] cannot fail.
+func (s *PostgresStore) ListReplies(ctx context.Context, parentIDs []string) ([]Comment, error) {
+	if len(parentIDs) == 0 {
+		return []Comment{}, nil
+	}
+
+	const query = `
+		SELECT ` + commentColumns + `
+		FROM comments
+		WHERE parent_comment_id = ANY($1::uuid[])
+		ORDER BY created_at ASC, id ASC`
+
+	rows, err := s.pool.Query(ctx, query, parentIDs)
+	if err != nil {
+		return nil, fmt.Errorf("conversations: list replies: %w", err)
+	}
+	defer rows.Close()
+
+	replies := make([]Comment, 0)
+	for rows.Next() {
+		comment, err := scanComment(rows)
+		if err != nil {
+			return nil, fmt.Errorf("conversations: list replies: %w", err)
+		}
+		replies = append(replies, comment)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("conversations: list replies: %w", err)
+	}
+
+	return replies, nil
 }
 
 // FindTargetVersion returns the id of the version of the source comment's story
@@ -246,6 +294,10 @@ func (s *PostgresStore) CreateBridge(ctx context.Context, target Comment, source
 		VALUES ($1, $2, $3, $4)
 		RETURNING ` + commentColumns
 
+	// A bridge's target comment is deliberately left with no parent: it is a peer
+	// in another language, not a reply to the source comment. Bridges are flat
+	// siblings in the thread (KNOT-ADR-014, KNOT-ADR-047), so it must stay out of
+	// the reply queries, which select on parent_comment_id IS NOT NULL.
 	createdTarget, err := scanComment(tx.QueryRow(ctx, insertComment, target.VersionID, target.AuthorID, target.Language, target.Body))
 	if err != nil {
 		if isForeignKeyViolation(err, commentsVersionFK) {
@@ -406,6 +458,7 @@ func scanComment(row rowScanner) (Comment, error) {
 		&comment.AuthorID,
 		&comment.Language,
 		&comment.Body,
+		&comment.ParentCommentID,
 		&comment.CreatedAt,
 		&comment.UpdatedAt,
 	)
@@ -428,6 +481,7 @@ func scanCommentWithStory(row rowScanner) (Comment, error) {
 		&comment.AuthorID,
 		&comment.Language,
 		&comment.Body,
+		&comment.ParentCommentID,
 		&comment.CreatedAt,
 		&comment.UpdatedAt,
 		&comment.StoryID,
