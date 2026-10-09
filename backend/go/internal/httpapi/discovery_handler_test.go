@@ -202,7 +202,7 @@ func TestDiscoveryClustersAppliesFiltersAndClampsLimit(t *testing.T) {
 	store := &memoryDiscoveryStore{}
 	handler := newDiscoveryRouter(t, store)
 
-	recorder := doRequest(handler, http.MethodGet, "/discovery/clusters?pillar=heritage&language=FR&limit=999", "")
+	recorder := doRequest(handler, http.MethodGet, "/discovery/clusters?pillar=heritage&language=fr&limit=999", "")
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
@@ -211,7 +211,7 @@ func TestDiscoveryClustersAppliesFiltersAndClampsLimit(t *testing.T) {
 		t.Errorf("pillar = %q, want %q", store.gotFilter.Pillar, stories.PillarHeritage)
 	}
 	if store.gotFilter.Language != "fr" {
-		t.Errorf("language = %q, want %q (normalised)", store.gotFilter.Language, "fr")
+		t.Errorf("language = %q, want %q", store.gotFilter.Language, "fr")
 	}
 	if store.gotFilter.Limit != discovery.MaxClusterLimit {
 		t.Errorf("limit = %d, want %d (clamped)", store.gotFilter.Limit, discovery.MaxClusterLimit)
@@ -224,7 +224,8 @@ func TestDiscoveryClustersRejectsBadFilters(t *testing.T) {
 		path string
 	}{
 		{"unknown pillar", "/discovery/clusters?pillar=news"},
-		{"bad language", "/discovery/clusters?language=fr1"},
+		{"unknown language code", "/discovery/clusters?language=fr1"},
+		{"language in upper case", "/discovery/clusters?language=FR"},
 		{"non-integer limit", "/discovery/clusters?limit=many"},
 		{"zero limit", "/discovery/clusters?limit=0"},
 	}

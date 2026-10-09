@@ -49,6 +49,49 @@ not "is the database healthy".
 
 `time` is RFC3339 in UTC.
 
+## GET /languages
+
+Every language the API accepts, for a client to offer in a picker. Public: no token
+is needed, because a picker is needed before anyone has registered.
+
+**200**
+
+```json
+{
+  "languages": [
+    { "code": "en", "name": "English" },
+    { "code": "zu", "name": "Zulu" }
+  ]
+}
+```
+
+`languages` is always an array, never `null`, sorted alphabetically by `name`. The
+response is the whole list: it is a compile-time constant of 103 entries, small
+enough not to paginate. `code` is an ISO 639-1 code, two lower-case letters.
+
+**Every language field below accepts exactly these codes, matched exactly.** See
+[Languages](#languages).
+
+## Languages
+
+A user, story, version, comment, or bridge names its language with an
+**ISO 639-1 code**: two lower-case ASCII letters, such as `en` or `zu`.
+`GET /languages` is the authoritative list, and it is duplicated on the device so
+the picker cannot offer a value the server rejects (KNOT-ADR-045).
+
+Three rules follow from that, and apply to `language`, `preferred_languages`, and
+`target_language` alike:
+
+- The code must be in the list. `English`, `eng`, `nso`, `zz`, and `en-ZA` are all
+  rejected with `400 validation_error`.
+- **Case matters.** `EN` is rejected; a client sends `en`. The server does not
+  case-fold, so one language has one stored spelling.
+- Surrounding whitespace is trimmed, and an empty entry in `preferred_languages` is
+  dropped rather than rejected.
+
+The list deliberately excludes three-letter codes that have no ISO 639-1 code —
+notably Northern Sotho's `nso` — and region variants such as `pt-BR`.
+
 ## POST /auth/register
 
 Creates an account and returns a token pair.
@@ -71,7 +114,7 @@ Creates an account and returns a token pair.
 | `email`                | yes      | Valid address, at most 254 characters, stored lower-cased        |
 | `password`             | yes      | At least 8 characters, at most 1024 bytes                        |
 | `display_name`         | yes      | 1-80 characters after trimming                                   |
-| `preferred_languages`  | no       | At most 20 entries, each at most 35 characters; blanks dropped   |
+| `preferred_languages`  | no       | An array of at most 20 ISO 639-1 codes; blanks dropped. See [Languages](#languages) |
 | `approximate_location` | no       | At most 120 characters                                           |
 | `phone`                | no       | At most 32 characters                                            |
 
@@ -325,7 +368,7 @@ and `updated_at` are generated server-side.
 | Field                  | Required | Rules                                                        |
 | ---------------------- | -------- | ------------------------------------------------------------ |
 | `pillar`               | yes      | Exactly `wonder` or `heritage`                               |
-| `language`             | yes      | 2-8 letters; stored lower-cased                              |
+| `language`             | yes      | A canonical ISO 639-1 code, such as `en` or `zu`. See [Languages](#languages) |
 | `title`                | yes      | 1-200 characters after trimming                              |
 | `body`                 | yes      | 1-10000 characters; stored verbatim, so formatting survives  |
 | `approximate_location` | no       | At most 100 characters after trimming                        |
@@ -542,7 +585,7 @@ echo of the request.
 | Field               | Required | Rules                                                    |
 | ------------------- | -------- | -------------------------------------------------------- |
 | `parent_version_id` | yes      | UUID. Must belong to the story named in the path          |
-| `language`          | yes      | 2-8 letters; stored lower-cased                           |
+| `language`          | yes      | A canonical ISO 639-1 code, such as `fr` or `zu`. See [Languages](#languages) |
 | `title`             | yes      | 1-200 characters after trimming                           |
 | `body`              | yes      | 1-10000 characters; stored verbatim                        |
 | `adaptation_note`   | no       | At most 1000 characters after trimming                     |
@@ -657,7 +700,7 @@ comment, wrapped as `{ "comment": { ... } }`.
 | Field      | Required | Rules                            |
 | ---------- | -------- | -------------------------------- |
 | `body`     | yes      | 1-5000 characters; stored verbatim |
-| `language` | yes      | 2-8 letters; stored lower-cased   |
+| `language` | yes      | A canonical ISO 639-1 code, such as `en`. See [Languages](#languages) |
 
 **There is no `author_id` field.** The commenter is taken from the access token.
 
@@ -744,7 +787,7 @@ comments, so a client does not have to fetch them:
 
 | Field             | Required | Rules                                                                         |
 | ----------------- | -------- | ----------------------------------------------------------------------------- |
-| `target_language` | yes      | 2-8 letters; stored lower-cased; must differ from the source comment's language |
+| `target_language` | yes      | A canonical ISO 639-1 code, such as `fr`; must differ from the source comment's language. See [Languages](#languages) |
 | `body`            | yes      | The target comment's body, 1-5000 characters                                   |
 | `adaptation_note` | no       | At most 1000 characters after trimming                                          |
 
@@ -1051,7 +1094,7 @@ Returns **200** with `{ "clusters": [ ... ] }`, ordered by `story_count` descend
 | Query      | Required | Rules                                                           |
 | ---------- | -------- | --------------------------------------------------------------- |
 | `pillar`   | no       | `wonder` or `heritage`; keeps only places with a story under it  |
-| `language` | no       | 2-8 letters; keeps only places with a version in that language   |
+| `language` | no       | A canonical ISO 639-1 code; keeps only places with a version in that language |
 | `limit`    | no       | 1-500. Defaults to 100; a larger value is clamped to 500         |
 
 `clusters` is always an array, never `null`.

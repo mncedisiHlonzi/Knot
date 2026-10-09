@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/knot/backend/internal/language"
 )
 
 // CreateAdaptation validates the input, checks that the parent version belongs
@@ -173,27 +175,18 @@ func validateCreateAdaptation(in CreateAdaptationInput) (StoryVersion, error) {
 	}, nil
 }
 
-// validateLanguage normalises a language tag to lower case and checks its
-// length. Only ASCII letters are accepted: the 2-8 character bound in the
-// product spec describes a simple tag, not a full BCP 47 production.
+// validateLanguage requires a canonical ISO 639-1 code and returns it unchanged.
+//
+// The code must match exactly: "en" is accepted, while "EN", "eng", and
+// "English" are rejected, so a version's language is always a known code
+// (KNOT-ADR-045).
 func validateLanguage(raw string) (string, error) {
-	language := strings.ToLower(strings.TrimSpace(raw))
-
-	if utf8.RuneCountInString(language) < minLanguageLen || utf8.RuneCountInString(language) > maxLanguageLen {
+	code := strings.TrimSpace(raw)
+	if !language.IsValid(code) {
 		return "", &ValidationError{
 			Field:   "language",
-			Message: fmt.Sprintf("must be between %d and %d characters", minLanguageLen, maxLanguageLen),
+			Message: "must be a valid ISO 639-1 language code, such as en or zu",
 		}
 	}
-
-	for i := 0; i < len(language); i++ {
-		if language[i] < 'a' || language[i] > 'z' {
-			return "", &ValidationError{
-				Field:   "language",
-				Message: "must contain only letters",
-			}
-		}
-	}
-
-	return language, nil
+	return code, nil
 }

@@ -10,6 +10,8 @@ import {
 
 import { describeError } from '../../api/client';
 import { CreateAdaptationPayload, StoryVersion, versionsApi } from '../../api/versions';
+import LanguagePicker from '../../components/LanguagePicker';
+import { isLanguageCode, languageName } from '../../data/languages';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type AdaptStoryScreenProps = {
@@ -30,7 +32,9 @@ type AdaptStoryScreenProps = {
 /** Field limits, mirroring the server's rules so the user is told early. */
 const MAX_TITLE_LENGTH = 200;
 const MAX_NOTE_LENGTH = 1000;
-const LANGUAGE_PATTERN = /^[A-Za-z]{2,8}$/;
+
+/** The language the form starts with when the caller offers nothing usable. */
+const DEFAULT_LANGUAGE = 'en';
 
 /**
  * Returns the first client-side validation problem, or undefined when the form is
@@ -51,8 +55,8 @@ function validateForm(
   if (body.trim() === '') {
     return 'The story itself is required.';
   }
-  if (!LANGUAGE_PATTERN.test(language.trim())) {
-    return 'The language must be 2 to 8 letters, such as fr or zu.';
+  if (!isLanguageCode(language)) {
+    return 'Choose the language you are telling this version in.';
   }
   if (note.trim().length > MAX_NOTE_LENGTH) {
     return `The note must be at most ${MAX_NOTE_LENGTH} characters.`;
@@ -80,9 +84,13 @@ export default function AdaptStoryScreen({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | undefined>(undefined);
 
-  const [language, setLanguage] = useState(
-    defaultLanguage.trim() === '' ? 'en' : defaultLanguage.trim(),
-  );
+  // The caller's suggestion is only used when it is a canonical code, so an
+  // older or unexpected tag cannot prefill the form with something the server
+  // would reject.
+  const [language, setLanguage] = useState(() => {
+    const suggested = defaultLanguage.trim();
+    return isLanguageCode(suggested) ? suggested : DEFAULT_LANGUAGE;
+  });
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [note, setNote] = useState('');
@@ -122,7 +130,7 @@ export default function AdaptStoryScreen({
 
     const payload: CreateAdaptationPayload = {
       parent_version_id: parentVersionId,
-      language: language.trim().toLowerCase(),
+      language: language,
       title: title.trim(),
       body,
       ...(note.trim() === '' ? {} : { adaptation_note: note.trim() }),
@@ -156,18 +164,16 @@ export default function AdaptStoryScreen({
       {!loading && parent !== undefined ? (
         <>
           <Text style={styles.parentSummary}>
-            Adapting the {parent.language} version: {parent.title}
+            Adapting the {languageName(parent.language)} version: {parent.title}
           </Text>
 
           <Text style={styles.label}>Language</Text>
-          <TextInput
-            style={styles.input}
-            value={language}
-            onChangeText={setLanguage}
-            autoCapitalize="none"
-            autoCorrect={false}
-            placeholder="fr"
-            placeholderTextColor={colors.text.secondary}
+          <LanguagePicker
+            mode="single"
+            selected={language}
+            onSelect={(chosen) => setLanguage(chosen.code)}
+            onClear={() => setLanguage('')}
+            placeholder="Search, e.g. French or fr"
           />
 
           <Text style={styles.label}>Title</Text>

@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"unicode/utf8"
 
+	"github.com/knot/backend/internal/language"
 	"github.com/knot/backend/internal/stories"
 )
 
@@ -28,10 +28,10 @@ func NewService(store DiscoveryStore) (*Service, error) {
 // ListClusters returns one entry per place, ordered by story count descending.
 //
 // The filter is validated and normalised before it reaches the store: the pillar
-// must be one of the supported pillars, the language must be a simple tag, and
-// the limit must be within the package's bounds. A cluster list is always
-// returned, never nil, so the HTTP layer never has to map nil onto an empty
-// array.
+// must be one of the supported pillars, the language must be a canonical ISO
+// 639-1 code, and the limit must be within the package's bounds. A cluster list
+// is always returned, never nil, so the HTTP layer never has to map nil onto an
+// empty array.
 func (s *Service) ListClusters(ctx context.Context, filter ClusterFilter) ([]PlaceCluster, error) {
 	normalized, err := validateClusterFilter(filter)
 	if err != nil {
@@ -118,9 +118,12 @@ func validateClusterFilter(filter ClusterFilter) (ClusterFilter, error) {
 		}
 	}
 
-	language := strings.ToLower(strings.TrimSpace(filter.Language))
-	if language != "" && !isLanguageTag(language) {
-		return ClusterFilter{}, &ValidationError{Field: "language", Message: "must be 2 to 8 letters"}
+	// An empty language means "do not filter by language"; a non-empty one must be
+	// a canonical ISO 639-1 code, matched exactly, so discovery accepts exactly the
+	// codes a story can be authored in (KNOT-ADR-045).
+	code := strings.TrimSpace(filter.Language)
+	if code != "" && !language.IsValid(code) {
+		return ClusterFilter{}, &ValidationError{Field: "language", Message: "must be a valid ISO 639-1 language code, such as en or zu"}
 	}
 
 	if filter.Limit < 1 || filter.Limit > MaxClusterLimit {
@@ -130,20 +133,5 @@ func validateClusterFilter(filter ClusterFilter) (ClusterFilter, error) {
 		}
 	}
 
-	return ClusterFilter{Pillar: filter.Pillar, Language: language, Limit: filter.Limit}, nil
-}
-
-// isLanguageTag reports whether s is a 2-8 letter ASCII language tag. It mirrors
-// the stories domain's own rule so a language accepted on a story is accepted
-// when filtering discovery by it.
-func isLanguageTag(s string) bool {
-	if utf8.RuneCountInString(s) < 2 || utf8.RuneCountInString(s) > 8 {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < 'a' || s[i] > 'z' {
-			return false
-		}
-	}
-	return true
+	return ClusterFilter{Pillar: filter.Pillar, Language: code, Limit: filter.Limit}, nil
 }

@@ -262,12 +262,47 @@ card is labelled by kind (Story / Adaptation / Comment / Bridge) and opens the e
 names — a story activity opens the story, a comment opens its thread, and a bridge resolves
 its source comment through `GET /comments/{id}` first.
 
-The same screen serves the owner: `isOwnProfile` adds the avatar upload and sign-out
-controls, so tapping your own author line opens your wall. `AuthorLine`'s `onPress` is how
-the app reaches it — a nested `Pressable` handles the author tap without firing the parent
-card's (KNOT-ADR-043). The tab-bar `ProfileScreen` stays the owner's dedicated screen (it
-also exposes the Rooted shortcut); `App.tsx` pushes a `userProfile` overlay for every author
-tap.
+The same screen serves the owner: `isOwnProfile` adds the avatar upload, the Set Rooted
+shortcut, and sign-out, so tapping your own author line opens your wall. `AuthorLine`'s
+`onPress` is how the app reaches it — a nested `Pressable` handles the author tap without
+firing the parent card's (KNOT-ADR-043).
+
+**It is also the Profile tab** (KNOT-ADR-044): `App.tsx` renders it for `case 'profile'` with
+`isOwnProfile` and `showBackButton={false}`, because a tab is a destination rather than a
+pushed screen, and pushes a `userProfile` overlay for every author tap. The former
+`ProfileScreen` (the Rooted-centric view) is deleted, so there is one definition of "profile".
+The wall shows the current Rooted badge and a Set Rooted action, but not the list of Rooted
+signals the old screen had; that list is not reachable in the app today.
+
+### Languages (`src/data/languages.ts`, `LanguagePicker`)
+
+A language is an ISO 639-1 code, and the canonical list of them is the single source of truth
+for what the API accepts (KNOT-ADR-045). It exists twice, deliberately:
+
+- `backend/go/internal/language/languages.go` — 103 entries, sorted by name, served publicly
+  by `GET /languages`. Every domain validates with `language.IsValid(code)`.
+- `apps/mobile/src/data/languages.ts` — the same 103 entries, for the picker.
+
+**The two lists must stay identical.** `src/data/__tests__/languages.test.ts` reads the Go
+source and fails when they drift, so a change to one without the other is a red test rather
+than a subtle production bug. That check skips itself when only the mobile folder is checked
+out (a mobile-only CI job still runs the rest of the suite).
+
+Adding a language is therefore a two-file change, in this order: add the entry to the Go list
+(keeping it sorted by name), add the same entry to the TypeScript list, run both test suites.
+Do not add a region variant (`pt-BR`) or a three-letter code with no ISO 639-1 code: the
+contract is exactly the two-letter set, which is why Northern Sotho's `nso` is not offered.
+
+`apps/mobile/src/components/LanguagePicker.tsx` is the one way a form asks for a language. It
+takes `mode: 'single' | 'multiple'` and searches the list **in memory** — no request, and no
+free text that could become a stored value. Use it rather than a `TextInput`: Register uses
+`multiple`, and Create Story, Adapt Story, and Bridge use `single`. Display a stored code with
+`languageName(code)`, which falls back to the raw code for a value the list does not know; do
+not render `"zu"` where a person expects "Zulu".
+
+The comment composer on `CommentThreadScreen` is the one exception: it is a fixed-height bar,
+so it keeps a compact code field. It is still validated with `isLanguageCode`, so it cannot
+store a non-canonical code, but it offers no suggestions.
 
 ### Native dependencies (Mapbox, AsyncStorage)
 
@@ -836,6 +871,38 @@ with no activity — and decodes the same opaque `(created_at, id)` cursor the f
 handler attaches the owner's Rooted summary with the shared `authorRootedSummaries` helper
 and projects the avatar with `avatarPathFor`, exactly as the content handlers do. The route
 is public and does not collide with `GET /users/{id}/rooted` or `GET /users/{id}/avatar`.
+
+### Languages (the canonical list)
+
+`backend/go/internal/language` is the canonical ISO 639-1 list and the only place a language
+code is defined (KNOT-ADR-045). It is a compile-time constant — no table, no cache, and a
+lookup that cannot fail:
+
+```go
+if !language.IsValid(code) {
+    return "", &ValidationError{Field: "language", Message: "must be a valid ISO 639-1 language code, such as en or zu"}
+}
+```
+
+Validation **matches exactly**, so callers must not lower-case first: `en` is accepted, and
+`EN`, `eng`, and `English` are rejected. That is what keeps one language to one stored
+spelling. `strings` trimming still happens, and a blank entry in `preferred_languages` is
+dropped rather than rejected.
+
+Every domain that holds a language delegates to it — `stories`, `versions`, `conversations`,
+`identity`, and the discovery cluster filter — so the old per-package "2-8 letters" rules and
+their `minLanguageLen`/`isLanguageTag` helpers are gone. There is no `CHECK` constraint: a
+language list in PostgreSQL would need a migration per language added and would live in two
+places.
+
+`GET /languages` is served by `handleLanguages` in `internal/httpapi/router.go` — a `Router`
+method like `handleHealth`, not a handler type, so `NewRouter`'s signature is unchanged. It
+is public, needs no service, and returns `{"languages": [{"code", "name"}, ...]}` built from
+`language.All()`, which returns a copy so a caller cannot mutate the list.
+
+**The list is duplicated in `apps/mobile/src/data/languages.ts` and the two must stay
+identical**; a mobile test reads this file and fails on drift. Adding a language is a
+two-file change — see [Languages](#languages-src-datalanguagests-languagepicker) above.
 
 ### Migrations
 

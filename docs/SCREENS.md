@@ -54,8 +54,8 @@ destinations map onto what exists today:
 | **Map** | Explore stories and languages by place. | Discovery Map (Phase 2; not built). |
 | **Create** (centre) | Publish a story. | `CreateStoryScreen` (shipped, reached from the feed rather than a tab). |
 | **Messages** | Conversations. | `CommentThreadScreen` and `BridgeScreen` (shipped, but per-version threads reached from a story — not a global inbox). |
-| **Profile** | A person's cultural identity. | Cultural Profile (planned; not built). |
+| **Profile** | A person's cultural identity. | The activity wall (`UserProfileScreen`) on the Profile tab, showing who a person is and everything they have authored (KNOT-015c, KNOT-015d). The wider Cultural Profile — languages and places as a page of their own — is still planned. |
 
-Three of the five destinations have a shipped screen behind them; two (Map, Profile) do not
+Four of the five destinations have a shipped screen behind them; one (Map) does not
 yet exist. The tab bar itself is deliberately deferred until the destinations do — the
 reasoning is in [`docs/NAVIGATION.md`](NAVIGATION.md).

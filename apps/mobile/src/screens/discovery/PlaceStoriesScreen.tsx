@@ -12,6 +12,7 @@ import {
 import { describeError } from '../../api/client';
 import { PLACE_PAGE_SIZE, discoveryApi } from '../../api/discovery';
 import { Story } from '../../api/stories';
+import { languageName } from '../../data/languages';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type PlaceStoriesScreenProps = {
@@ -136,7 +137,7 @@ export default function PlaceStoriesScreen({
         <Pressable style={styles.card} onPress={() => onOpenStory(item.id)}>
           <Text style={styles.cardTitle}>{item.title}</Text>
           <Text style={styles.cardMeta}>
-            {item.pillar} · {item.language} · {formatDate(item.created_at)}
+            {item.pillar} · {languageName(item.language)} · {formatDate(item.created_at)}
             {item.sensitive ? ' · sensitive' : ''}
           </Text>
         </Pressable>

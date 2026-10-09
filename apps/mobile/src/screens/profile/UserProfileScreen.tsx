@@ -17,6 +17,7 @@ import { uploadAvatar } from '../../api/users';
 import MediaPickerSheet, { PickedMedia } from '../../components/MediaPickerSheet';
 import RootedBadge from '../../components/RootedBadge';
 import { API_BASE_URL } from '../../config/api';
+import { languageName } from '../../data/languages';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
 import { getInitials } from '../../utils/initials';
 import { formatRelativeTime } from '../../utils/time';
@@ -34,10 +35,24 @@ type UserProfileScreenProps = {
   readonly onOpenComment: (storyId: string, versionId: string) => void;
   /** Called with the updated user after a successful avatar upload. */
   readonly onUserUpdated: (user: User) => void;
+  /** Called when the owner wants to set or replace their Rooted signal. */
+  readonly onSetRooted: () => void;
   /** Called when the owner chooses to sign out. */
   readonly onSignOut: () => void;
-  /** Called when the person returns to the previous screen. */
-  readonly onBack: () => void;
+  /**
+   * Called when the person returns to the previous screen.
+   *
+   * Omit it, along with `showBackButton`, when this screen is a tab root: there is
+   * nothing above the tab bar to go back to.
+   */
+  readonly onBack?: () => void;
+  /**
+   * Whether to show the "← Back" link. Defaults to true.
+   *
+   * The link is only rendered when `onBack` is given, so the Profile tab, which
+   * is a destination rather than a pushed screen, shows no way back.
+   */
+  readonly showBackButton?: boolean;
 };
 
 /** The label a wall card shows for each activity kind. */
@@ -58,7 +73,7 @@ function activityHeadline(activity: Activity): string {
     case 'comment':
       return activity.payload.body_preview;
     case 'bridge':
-      return `Bridged into ${activity.payload.target_language}`;
+      return `Bridged into ${languageName(activity.payload.target_language)}`;
     default:
       return '';
   }
@@ -68,9 +83,9 @@ function activityHeadline(activity: Activity): string {
 function activityMeta(activity: Activity): string {
   switch (activity.kind) {
     case 'story':
-      return `${activity.payload.pillar} · ${activity.payload.language}`;
+      return `${activity.payload.pillar} · ${languageName(activity.payload.language)}`;
     case 'version':
-      return `Adapted into ${activity.payload.language}`;
+      return `Adapted into ${languageName(activity.payload.language)}`;
     case 'comment':
       return 'On a version';
     case 'bridge':
@@ -85,8 +100,14 @@ function activityMeta(activity: Activity): string {
  * stories, adaptations, comments, and bridges — newest first.
  *
  * It is the public variant of the profile: it reads `GET /users/{id}/profile`,
- * which needs no token, and the owner's variant adds only the avatar upload and
- * sign-out controls. A non-owner sees exactly the same wall without them.
+ * which needs no token, and the owner's variant adds only the avatar upload,
+ * Set Rooted, and sign-out controls. A non-owner sees exactly the same wall
+ * without them.
+ *
+ * The same screen is both the Profile tab (KNOT-ADR-044) and a pushed overlay:
+ * the Profile tab renders it without a back link, because a tab is a destination
+ * rather than something to return from. One screen means the owner's own wall and
+ * the wall everyone else sees can never drift apart.
  */
 export default function UserProfileScreen({
   userId,
@@ -95,8 +116,10 @@ export default function UserProfileScreen({
   onOpenStory,
   onOpenComment,
   onUserUpdated,
+  onSetRooted,
   onSignOut,
   onBack,
+  showBackButton = true,
 }: UserProfileScreenProps): React.ReactElement {
   const [profile, setProfile] = useState<ProfileUser | undefined>(undefined);
   const [activities, setActivities] = useState<readonly Activity[]>([]);
@@ -241,9 +264,11 @@ export default function UserProfileScreen({
       }
       ListHeaderComponent={
         <View>
-          <Pressable style={styles.link} onPress={onBack}>
-            <Text style={styles.linkText}>← Back</Text>
-          </Pressable>
+          {showBackButton && onBack !== undefined ? (
+            <Pressable style={styles.link} onPress={onBack}>
+              <Text style={styles.linkText}>← Back</Text>
+            </Pressable>
+          ) : null}
 
           {loading ? <ActivityIndicator style={styles.spinner} /> : null}
           {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
@@ -288,6 +313,9 @@ export default function UserProfileScreen({
                     <Text style={styles.primaryButtonText}>
                       {uploadingAvatar ? 'Uploading…' : 'Edit avatar'}
                     </Text>
+                  </Pressable>
+                  <Pressable style={styles.secondaryButton} onPress={onSetRooted}>
+                    <Text style={styles.secondaryButtonText}>Set Rooted</Text>
                   </Pressable>
                   <Pressable style={styles.secondaryButton} onPress={onSignOut}>
                     <Text style={styles.secondaryButtonText}>Sign out</Text>

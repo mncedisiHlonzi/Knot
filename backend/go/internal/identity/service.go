@@ -7,6 +7,8 @@ import (
 	"net/mail"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/knot/backend/internal/language"
 )
 
 // Validation limits. They are intentionally modest: this is an MVP for real
@@ -23,7 +25,6 @@ const (
 	maxPhoneLength    = 32
 	maxLocationLength = 120
 	maxLanguages      = 20
-	maxLanguageLength = 35
 )
 
 // RegisterInput is the input to Register. It mirrors the registration request
@@ -351,25 +352,26 @@ func validateDisplayName(raw string) (string, error) {
 	return name, nil
 }
 
-// validateLanguages trims the entries, drops blanks, and bounds the result.
+// validateLanguages trims the entries, drops blanks, and requires every remaining
+// entry to be a canonical ISO 639-1 code.
 func validateLanguages(raw []string) ([]string, error) {
 	if len(raw) > maxLanguages {
 		return nil, &ValidationError{Field: "preferred_languages", Message: fmt.Sprintf("must contain at most %d entries", maxLanguages)}
 	}
 
-	languages := make([]string, 0, len(raw))
+	valid := make([]string, 0, len(raw))
 	for _, entry := range raw {
 		trimmed := strings.TrimSpace(entry)
 		if trimmed == "" {
 			continue
 		}
-		if utf8.RuneCountInString(trimmed) > maxLanguageLength {
-			return nil, &ValidationError{Field: "preferred_languages", Message: fmt.Sprintf("entries must be at most %d characters", maxLanguageLength)}
+		if !language.IsValid(trimmed) {
+			return nil, &ValidationError{Field: "preferred_languages", Message: "entries must be valid ISO 639-1 language codes, such as en or zu"}
 		}
-		languages = append(languages, trimmed)
+		valid = append(valid, trimmed)
 	}
 
-	return languages, nil
+	return valid, nil
 }
 
 // validateOptional trims an optional field and bounds its length.

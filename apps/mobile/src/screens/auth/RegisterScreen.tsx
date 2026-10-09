@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { api, AuthResponse, describeError } from '../../api/client';
+import LanguagePicker from '../../components/LanguagePicker';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type RegisterScreenProps = {
@@ -16,19 +17,6 @@ const MIN_PASSWORD_LENGTH = 8;
 const MAX_DISPLAY_NAME_LENGTH = 80;
 const MAX_LOCATION_LENGTH = 120;
 const MAX_PHONE_LENGTH = 32;
-
-/**
- * Splits the comma-separated language input into trimmed, non-empty entries.
- *
- * A full multi-select is a later task; for now the server still receives a proper
- * array rather than a raw string.
- */
-function parseLanguages(value: string): string[] {
-  return value
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry !== '');
-}
 
 /**
  * Returns the first client-side validation problem, or undefined when the form is
@@ -63,7 +51,7 @@ export default function RegisterScreen({
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [languages, setLanguages] = useState('');
+  const [languages, setLanguages] = useState<readonly string[]>([]);
   const [location, setLocation] = useState('');
   const [phone, setPhone] = useState('');
   const [error, setError] = useState<string | undefined>(undefined);
@@ -80,7 +68,7 @@ export default function RegisterScreen({
     setSubmitting(true);
 
     try {
-      const preferredLanguages = parseLanguages(languages);
+      const preferredLanguages = languages;
       const result = await api.register({
         email: email.trim(),
         password,
@@ -132,14 +120,12 @@ export default function RegisterScreen({
         placeholderTextColor={colors.text.secondary}
       />
 
-      <Text style={styles.label}>Languages you speak (comma separated)</Text>
-      <TextInput
-        style={styles.input}
-        value={languages}
-        onChangeText={setLanguages}
-        autoCapitalize="none"
-        placeholder="en, zu, fr"
-        placeholderTextColor={colors.text.secondary}
+      <Text style={styles.label}>Languages you speak</Text>
+      <LanguagePicker
+        mode="multiple"
+        selected={languages}
+        onChange={setLanguages}
+        placeholder="Search, e.g. Zulu or zu"
       />
 
       <Text style={styles.label}>Approximate location (optional)</Text>

@@ -20,8 +20,10 @@ import {
   uploadStoryMedia,
 } from '../../api/stories';
 import CameraCaptureBadge from '../../components/CameraCaptureBadge';
+import LanguagePicker from '../../components/LanguagePicker';
 import LocationPicker, { PickedPlace } from '../../components/LocationPicker';
 import MediaPickerSheet, { PickedMedia } from '../../components/MediaPickerSheet';
+import { isLanguageCode } from '../../data/languages';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type CreateStoryScreenProps = {
@@ -33,13 +35,12 @@ type CreateStoryScreenProps = {
   readonly onCancel: () => void;
 };
 
-/** The language tag the form starts with. */
+/** The language the form starts with. */
 const DEFAULT_LANGUAGE = 'en';
 
 /** Field limits, mirroring the server's rules so the user is told early. */
 const MAX_TITLE_LENGTH = 200;
 const MAX_LOCATION_LENGTH = 100;
-const LANGUAGE_PATTERN = /^[A-Za-z]{2,8}$/;
 
 /**
  * Returns the first client-side validation problem, or undefined when the form is
@@ -61,8 +62,8 @@ function validateForm(
   if (body.trim() === '') {
     return 'The story itself is required.';
   }
-  if (!LANGUAGE_PATTERN.test(language.trim())) {
-    return 'The language must be 2 to 8 letters, such as en or tsonga.';
+  if (!isLanguageCode(language)) {
+    return 'Choose the language you are telling this story in.';
   }
   if (locationText.trim().length > MAX_LOCATION_LENGTH) {
     return `The place must be at most ${MAX_LOCATION_LENGTH} characters.`;
@@ -123,7 +124,7 @@ export default function CreateStoryScreen({
 
     const payload: CreateStoryPayload = {
       pillar,
-      language: language.trim().toLowerCase(),
+      language: language,
       title: title.trim(),
       body,
       ...(locationText.trim() === '' ? {} : { approximate_location: locationText.trim() }),
@@ -250,14 +251,12 @@ export default function CreateStoryScreen({
       />
 
       <Text style={styles.label}>Language</Text>
-      <TextInput
-        style={styles.input}
-        value={language}
-        onChangeText={setLanguage}
-        autoCapitalize="none"
-        autoCorrect={false}
-        placeholder="en"
-        placeholderTextColor={colors.text.secondary}
+      <LanguagePicker
+        mode="single"
+        selected={language}
+        onSelect={(chosen) => setLanguage(chosen.code)}
+        onClear={() => setLanguage('')}
+        placeholder="Search, e.g. Zulu or zu"
       />
 
       <Text style={styles.label}>Approximate place (optional)</Text>

@@ -24,7 +24,6 @@ import CommentThreadScreen from './src/screens/conversations/CommentThreadScreen
 import DiscoveryMapScreen from './src/screens/discovery/DiscoveryMapScreen';
 import PlaceStoriesScreen from './src/screens/discovery/PlaceStoriesScreen';
 import NotificationsScreen from './src/screens/notifications/NotificationsScreen';
-import ProfileScreen from './src/screens/profile/ProfileScreen';
 import RootedSetupScreen from './src/screens/profile/RootedSetupScreen';
 import UserProfileScreen from './src/screens/profile/UserProfileScreen';
 import AdaptStoryScreen from './src/screens/stories/AdaptStoryScreen';
@@ -199,14 +198,25 @@ export default function App(): React.ReactElement {
           />
         );
       case 'profile':
+        // The Profile tab is the signed-in user's own wall, the same screen the
+        // feed opens when an author is tapped. It is rendered without a back link,
+        // because a tab is a destination rather than a pushed screen
+        // (KNOT-ADR-044).
         return (
-          <ProfileScreen
+          <UserProfileScreen
             userId={current.user.id}
             token={current.accessToken}
-            currentUser={current.user}
+            isOwnProfile
+            showBackButton={false}
+            onOpenStory={(id) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId: id }))
+            }
+            onOpenComment={(storyId, versionId) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'comments', storyId, versionId }))
+            }
             onSetRooted={() => setOverlays((stack) => pushOverlay(stack, { name: 'rootedSetup' }))}
             onUserUpdated={handleUserUpdated}
-            onBack={() => setTab('feed')}
+            onSignOut={handleSignOut}
           />
         );
       case 'feed':
@@ -424,6 +434,7 @@ export default function App(): React.ReactElement {
               setOverlays((stack) => pushOverlay(stack, { name: 'comments', storyId, versionId }))
             }
             onUserUpdated={handleUserUpdated}
+            onSetRooted={() => setOverlays((stack) => pushOverlay(stack, { name: 'rootedSetup' }))}
             onSignOut={handleSignOut}
             onBack={handleBack}
           />

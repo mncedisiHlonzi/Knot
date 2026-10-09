@@ -13,6 +13,7 @@ import {
 import { describeError } from '../../api/client';
 import { Comment, THREAD_PAGE_SIZE, conversationsApi } from '../../api/conversations';
 import AuthorLine from '../../components/AuthorLine';
+import { isLanguageCode, languageName } from '../../data/languages';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
 
 type CommentThreadScreenProps = {
@@ -32,7 +33,9 @@ type CommentThreadScreenProps = {
 
 /** Field limits, mirroring the server's rules so the user is told early. */
 const MAX_BODY_LENGTH = 5000;
-const LANGUAGE_PATTERN = /^[A-Za-z]{2,8}$/;
+
+/** The language the comment box falls back to when the caller suggests nothing usable. */
+const DEFAULT_COMPOSE_LANGUAGE = 'en';
 
 /**
  * Returns the first client-side validation problem, or undefined when the form is
@@ -45,8 +48,8 @@ function validateForm(body: string, language: string): string | undefined {
   if (body.length > MAX_BODY_LENGTH) {
     return `The comment must be at most ${MAX_BODY_LENGTH} characters.`;
   }
-  if (!LANGUAGE_PATTERN.test(language.trim())) {
-    return 'The language must be 2 to 8 letters, such as en or fr.';
+  if (!isLanguageCode(language)) {
+    return 'Use a language code from the list, such as en or zu.';
   }
   return undefined;
 }
@@ -78,7 +81,7 @@ export default function CommentThreadScreen({
   const [body, setBody] = useState('');
   const [composeLanguage, setComposeLanguage] = useState(() => {
     const preferred = (language ?? '').trim();
-    return preferred === '' ? 'en' : preferred;
+    return isLanguageCode(preferred) ? preferred : DEFAULT_COMPOSE_LANGUAGE;
   });
   const [composeError, setComposeError] = useState<string | undefined>(undefined);
   const [posting, setPosting] = useState(false);
@@ -153,7 +156,7 @@ export default function CommentThreadScreen({
     try {
       await conversationsApi.createComment(versionId, token, {
         body,
-        language: composeLanguage.trim().toLowerCase(),
+        language: composeLanguage,
       });
       setBody('');
       await refresh();
@@ -187,7 +190,7 @@ export default function CommentThreadScreen({
         renderItem={({ item }) => (
           <View style={styles.card}>
             <View style={styles.cardMeta}>
-              <Text style={styles.badge}>{item.language}</Text>
+              <Text style={styles.badge}>{languageName(item.language)}</Text>
               <AuthorLine
                 displayName={item.author_display_name}
                 avatarUrl={item.author_avatar_url}
@@ -243,6 +246,7 @@ export default function CommentThreadScreen({
             autoCorrect={false}
             placeholder="en"
             placeholderTextColor={colors.text.secondary}
+            accessibilityLabel="Comment language code"
           />
           <Pressable
             style={[styles.postButton, posting ? styles.disabled : null]}

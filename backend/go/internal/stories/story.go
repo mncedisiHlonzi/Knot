@@ -85,10 +85,6 @@ const (
 	MaxTitleLen = 200
 	// MaxBodyLen is the longest accepted body.
 	MaxBodyLen = 10000
-	// minLanguageLen is the shortest accepted language tag.
-	minLanguageLen = 2
-	// maxLanguageLen is the longest accepted language tag.
-	maxLanguageLen = 8
 	// MaxLocationLength bounds the optional approximate location.
 	MaxLocationLength = 100
 	// MaxPlaceCountryLength bounds the optional country name the geocoder

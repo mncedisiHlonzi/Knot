@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { describeError } from '../../api/client';
 import { StoryVersion, versionDepths, versionsApi } from '../../api/versions';
 import AuthorLine from '../../components/AuthorLine';
+import { languageName } from '../../data/languages';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type LanguageTreeScreenProps = {
@@ -80,7 +81,7 @@ export default function LanguageTreeScreen({
         >
           <Text style={styles.rowTitle}>{version.title}</Text>
           <View style={styles.rowMeta}>
-            <Text style={styles.badge}>{version.language}</Text>
+            <Text style={styles.badge}>{languageName(version.language)}</Text>
             {version.parent_version_id === null ? <Text style={styles.rootTag}>root</Text> : null}
           </View>
           <View style={styles.rowAuthor}>

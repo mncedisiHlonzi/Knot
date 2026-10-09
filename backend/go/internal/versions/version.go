@@ -70,10 +70,6 @@ const (
 	MaxBodyLen = 10000
 	// MaxAdaptationNoteLength bounds the optional note an adapter leaves.
 	MaxAdaptationNoteLength = 1000
-	// minLanguageLen is the shortest accepted language tag.
-	minLanguageLen = 2
-	// maxLanguageLen is the longest accepted language tag.
-	maxLanguageLen = 8
 )
 
 // StoryVersion is one written version of a story.

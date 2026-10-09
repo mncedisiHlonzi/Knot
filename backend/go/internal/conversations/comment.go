@@ -76,10 +76,6 @@ const (
 	MaxBodyLen = 5000
 	// MaxAdaptationNoteLength bounds the optional note a bridge carries.
 	MaxAdaptationNoteLength = 1000
-	// minLanguageLen is the shortest accepted language tag.
-	minLanguageLen = 2
-	// maxLanguageLen is the longest accepted language tag.
-	maxLanguageLen = 8
 )
 
 // Thread page sizes. The service enforces them so the domain, not just the HTTP

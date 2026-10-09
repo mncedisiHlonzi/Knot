@@ -4,6 +4,8 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 import { describeError } from '../../api/client';
 import { Comment, CreateBridgePayload, conversationsApi } from '../../api/conversations';
 import AuthorLine from '../../components/AuthorLine';
+import LanguagePicker from '../../components/LanguagePicker';
+import { isLanguageCode, languageName } from '../../data/languages';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
 
 type BridgeScreenProps = {
@@ -30,18 +32,21 @@ type BridgeScreenProps = {
 /** Field limits, mirroring the server's rules so the user is told early. */
 const MAX_BODY_LENGTH = 5000;
 const MAX_NOTE_LENGTH = 1000;
-const LANGUAGE_PATTERN = /^[A-Za-z]{2,8}$/;
 
 /**
  * The first preferred language that differs from the source comment's language,
  * or "" when none does.
+ *
+ * A preference is only used when it is a canonical code, so an older or
+ * unexpected tag cannot prefill the form with something the server would reject
+ * (KNOT-ADR-045).
  */
 function defaultTargetLanguage(sourceLanguage: string, preferred: readonly string[]): string {
-  const candidate = preferred.find((tag) => {
-    const trimmed = tag.trim().toLowerCase();
-    return trimmed !== '' && trimmed !== sourceLanguage;
-  });
-  return candidate === undefined ? '' : candidate.trim().toLowerCase();
+  const candidate = preferred
+    .map((tag) => tag.trim())
+    .find((tag) => isLanguageCode(tag) && tag !== sourceLanguage);
+
+  return candidate ?? '';
 }
 
 /**
@@ -54,10 +59,10 @@ function validateForm(
   sourceLanguage: string,
   note: string,
 ): string | undefined {
-  if (!LANGUAGE_PATTERN.test(targetLanguage.trim())) {
-    return 'The target language must be 2 to 8 letters, such as fr or zu.';
+  if (!isLanguageCode(targetLanguage)) {
+    return 'Choose the language you are bridging into.';
   }
-  if (targetLanguage.trim().toLowerCase() === sourceLanguage) {
+  if (targetLanguage === sourceLanguage) {
     return 'The target language must differ from the comment you are bridging.';
   }
   if (body.trim() === '') {
@@ -106,7 +111,7 @@ export default function BridgeScreen({
     setSubmitting(true);
 
     const payload: CreateBridgePayload = {
-      target_language: targetLanguage.trim().toLowerCase(),
+      target_language: targetLanguage,
       body,
       ...(note.trim() === '' ? {} : { adaptation_note: note.trim() }),
     };
@@ -136,7 +141,7 @@ export default function BridgeScreen({
 
       <Text style={styles.label}>You are bridging</Text>
       <View style={styles.sourceMetaRow}>
-        <Text style={styles.sourceLanguage}>{sourceComment.language}</Text>
+        <Text style={styles.sourceLanguage}>{languageName(sourceComment.language)}</Text>
         <AuthorLine
           displayName={sourceComment.author_display_name}
           avatarUrl={sourceComment.author_avatar_url}
@@ -149,14 +154,12 @@ export default function BridgeScreen({
       <Text style={styles.sourceBody}>{sourceComment.body}</Text>
 
       <Text style={styles.label}>Target language</Text>
-      <TextInput
-        style={styles.input}
-        value={targetLanguage}
-        onChangeText={setTargetLanguage}
-        autoCapitalize="none"
-        autoCorrect={false}
-        placeholder="fr"
-        placeholderTextColor={colors.text.secondary}
+      <LanguagePicker
+        mode="single"
+        selected={targetLanguage}
+        onSelect={(chosen) => setTargetLanguage(chosen.code)}
+        onClear={() => setTargetLanguage('')}
+        placeholder="Search, e.g. French or fr"
       />
 
       <Text style={styles.label}>Your comment</Text>

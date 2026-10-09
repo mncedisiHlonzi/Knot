@@ -19,6 +19,7 @@ import AuthorLine from '../../components/AuthorLine';
 import CameraCaptureBadge from '../../components/CameraCaptureBadge';
 import MediaGalleryModal from '../../components/MediaGalleryModal';
 import { API_BASE_URL } from '../../config/api';
+import { languageName } from '../../data/languages';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
 
 /** Resolves a relative media path returned by the API against the base URL. */
@@ -172,7 +173,7 @@ export default function StoryDetailScreen({
             />
           </View>
           <Text style={styles.meta}>
-            {story.pillar} · {story.language}
+            {story.pillar} · {languageName(story.language)}
             {story.sensitive ? ' · sensitive' : ''}
           </Text>
           {story.approximate_location !== '' ? (

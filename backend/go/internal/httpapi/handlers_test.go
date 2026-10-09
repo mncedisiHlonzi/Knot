@@ -175,6 +175,73 @@ func TestHealth(t *testing.T) {
 	}
 }
 
+func TestLanguagesServesTheCanonicalList(t *testing.T) {
+	handler := newTestHandler(t, &fakeAuthService{})
+
+	// The route is deliberately public, so no Authorization header is sent: a
+	// client needs the list to render a picker before anyone has registered.
+	recorder := doRequest(handler, http.MethodGet, "/languages", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if contentType := recorder.Header().Get("Content-Type"); !strings.HasPrefix(contentType, "application/json") {
+		t.Errorf("content type = %q, want application/json", contentType)
+	}
+
+	var body languagesResponse
+	decodeBody(t, recorder, &body)
+
+	if len(body.Languages) < 80 {
+		t.Fatalf("len(languages) = %d, want at least 80", len(body.Languages))
+	}
+
+	// The list is the contract every language field is validated against, so the
+	// shape is checked here too: two lower-case letters, a name, no duplicates.
+	seen := make(map[string]string, len(body.Languages))
+	previous := ""
+	for _, item := range body.Languages {
+		if len(item.Code) != 2 {
+			t.Errorf("code %q is not two characters", item.Code)
+		}
+		if item.Code != strings.ToLower(item.Code) {
+			t.Errorf("code %q is not lower case", item.Code)
+		}
+		if item.Name == "" {
+			t.Errorf("code %q has an empty name", item.Code)
+		}
+		if _, duplicate := seen[item.Code]; duplicate {
+			t.Errorf("code %q appears more than once", item.Code)
+		}
+		seen[item.Code] = item.Name
+
+		if previous != "" && item.Name <= previous {
+			t.Errorf("names are not sorted: %q came after %q", item.Name, previous)
+		}
+		previous = item.Name
+	}
+
+	// Spot-check the names a client shows for codes the product promises.
+	want := map[string]string{
+		"en": "English",
+		"zu": "Zulu",
+		"af": "Afrikaans",
+		"xh": "Xhosa",
+		"fr": "French",
+		"pt": "Portuguese",
+	}
+	for code, name := range want {
+		if seen[code] != name {
+			t.Errorf("languages[%q] = %q, want %q", code, seen[code], name)
+		}
+	}
+
+	// nso is deliberately absent: it has no ISO 639-1 code.
+	if _, offered := seen["nso"]; offered {
+		t.Error("nso is offered, want it absent: it has no ISO 639-1 code")
+	}
+}
+
 func TestRegisterHappyPath(t *testing.T) {
 	service := &fakeAuthService{registerResult: sampleResult()}
 	handler := newTestHandler(t, service)

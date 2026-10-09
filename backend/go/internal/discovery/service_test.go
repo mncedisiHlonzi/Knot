@@ -85,15 +85,20 @@ func TestListClustersPassesFilterThrough(t *testing.T) {
 	}
 }
 
-func TestListClustersNormalisesLanguage(t *testing.T) {
+func TestListClustersTrimsLanguageButRequiresACanonicalCode(t *testing.T) {
 	store := &fakeStore{}
 	service := newTestService(t, store)
 
-	if _, err := service.ListClusters(context.Background(), ClusterFilter{Language: " EN ", Limit: 10}); err != nil {
+	if _, err := service.ListClusters(context.Background(), ClusterFilter{Language: " en ", Limit: 10}); err != nil {
 		t.Fatalf("ListClusters() error = %v, want nil", err)
 	}
 	if store.gotFilter.Language != "en" {
-		t.Errorf("language = %q, want %q (trimmed and lower-cased)", store.gotFilter.Language, "en")
+		t.Errorf("language = %q, want %q (trimmed)", store.gotFilter.Language, "en")
+	}
+
+	// The filter is matched exactly, like every other language field.
+	if _, err := service.ListClusters(context.Background(), ClusterFilter{Language: "EN", Limit: 10}); err == nil {
+		t.Fatal("ListClusters() error = nil, want a rejection for the non-canonical \"EN\"")
 	}
 }
 
@@ -104,7 +109,8 @@ func TestListClustersRejectsBadFilters(t *testing.T) {
 		field  string
 	}{
 		{"unknown pillar", ClusterFilter{Pillar: "news", Limit: 10}, "pillar"},
-		{"bad language", ClusterFilter{Language: "fr1", Limit: 10}, "language"},
+		{"unknown language code", ClusterFilter{Language: "fr1", Limit: 10}, "language"},
+		{"language in upper case", ClusterFilter{Language: "FR", Limit: 10}, "language"},
 		{"zero limit", ClusterFilter{Limit: 0}, "limit"},
 		{"limit above max", ClusterFilter{Limit: MaxClusterLimit + 1}, "limit"},
 	}

@@ -294,7 +294,7 @@ func TestCreateCommentTrimsLanguageAndPreservesBody(t *testing.T) {
 	service, comments, _ := newTestService(t)
 
 	input := validCommentInput()
-	input.Language = " EN "
+	input.Language = " en "
 	input.Body = "  indented body  "
 
 	if _, err := service.CreateComment(context.Background(), input); err != nil {
@@ -321,8 +321,9 @@ func TestCreateCommentValidation(t *testing.T) {
 		{"author is not a uuid", func(in *CreateCommentInput) { in.AuthorID = "not-a-uuid" }, "author_id"},
 		{"empty body", func(in *CreateCommentInput) { in.Body = "   " }, "body"},
 		{"body too long", func(in *CreateCommentInput) { in.Body = longBody }, "body"},
-		{"language too short", func(in *CreateCommentInput) { in.Language = "e" }, "language"},
-		{"language too long", func(in *CreateCommentInput) { in.Language = "englishish" }, "language"},
+		{"unknown language code", func(in *CreateCommentInput) { in.Language = "e" }, "language"},
+		{"language given as a word", func(in *CreateCommentInput) { in.Language = "english" }, "language"},
+		{"language in upper case", func(in *CreateCommentInput) { in.Language = "EN" }, "language"},
 		{"language with digits", func(in *CreateCommentInput) { in.Language = "en2" }, "language"},
 	}
 
@@ -592,7 +593,7 @@ func TestCreateBridgeNormalisesFields(t *testing.T) {
 	bridges.findTargetResult = otherVersionID
 
 	input := validBridgeInput()
-	input.TargetLanguage = " FR "
+	input.TargetLanguage = " fr "
 	input.Body = "  indented  "
 	input.AdaptationNote = "  a note  "
 
@@ -627,8 +628,9 @@ func TestCreateBridgeValidation(t *testing.T) {
 		{"author is not a uuid", func(in *CreateBridgeInput) { in.AuthorID = "not-a-uuid" }, "author_id"},
 		{"empty body", func(in *CreateBridgeInput) { in.Body = "   " }, "body"},
 		{"body too long", func(in *CreateBridgeInput) { in.Body = longBody }, "body"},
-		{"target language too short", func(in *CreateBridgeInput) { in.TargetLanguage = "f" }, "target_language"},
-		{"target language too long", func(in *CreateBridgeInput) { in.TargetLanguage = "englishish" }, "target_language"},
+		{"unknown target language code", func(in *CreateBridgeInput) { in.TargetLanguage = "f" }, "target_language"},
+		{"target language given as a word", func(in *CreateBridgeInput) { in.TargetLanguage = "english" }, "target_language"},
+		{"target language in upper case", func(in *CreateBridgeInput) { in.TargetLanguage = "FR" }, "target_language"},
 		{"target language with digits", func(in *CreateBridgeInput) { in.TargetLanguage = "fr2" }, "target_language"},
 		{"adaptation note too long", func(in *CreateBridgeInput) { in.AdaptationNote = longNote }, "adaptation_note"},
 	}

@@ -986,3 +986,59 @@ The S3 implementation sets the SDK's `GetObjectInput.Range` field, so the object
 **Reason:** Attribution already flows through one component; adding one optional callback keeps the tap behavior in one place, and the responder system already resolves the nested-tap case without global state or event plumbing.
 
 **Consequences:** The nested-tap behavior must be verified on a device (Android especially), because the responder system's behavior in a `FlatList` cell is not exercised by the unit tests. Screens that show an `AuthorLine` but cannot navigate to a profile simply omit `onPress`, and the line renders unchanged.
+
+---
+
+## KNOT-ADR-044 — The Profile tab and an author's wall are the same screen
+
+**Decision ID:** KNOT-ADR-044
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** Two screens claimed the word "profile". The Profile tab rendered `ProfileScreen`, a Rooted-centric view: the signed-in user's avatar, display name, email, and their Rooted signals. Tapping an author anywhere else opened `UserProfileScreen`, the activity wall introduced with KNOT-ADR-042. They disagreed about what a profile is, and on device the founder saw the Profile tab showing a wall-less screen while an author tap showed the new wall.
+
+**Decision:**
+- `UserProfileScreen` is the only profile screen. The Profile tab renders it for the signed-in user, and the `userProfile` overlay renders it for anyone else.
+- `showBackButton` (default `true`) hides the "← Back" link on the tab, and `onBack` is optional: a tab is a destination, not something to return from. The link renders only when both are satisfied.
+- The owner controls — Edit avatar, Set Rooted, Sign out — all live on that one screen and render only when `isOwnProfile` is true.
+- `ProfileScreen.tsx` is deleted.
+
+**Alternatives Considered:**
+1. **Add the wall to `ProfileScreen` and keep both screens** — rejected. Two screens rendering one concept is the drift this decision removes; every future change would have to be made twice, and the two would diverge again.
+2. **Keep `ProfileScreen` for the tab, the wall only for overlay taps** — rejected. This is the status quo the founder rejected on device.
+3. **Delete `UserProfileScreen` and use the Rooted screen everywhere** — rejected. It removes the wall, which is the feature.
+4. **Show the back link on the tab as well, pointing at the feed** — rejected. A back affordance on a bottom-tab root tells the user something untrue about the navigation model.
+
+**Reason:** One screen, one definition of "profile". The tab and the pushed overlay then differ only in chrome, so a change to the wall lands in both by construction rather than by discipline.
+
+**Consequences:** The Profile tab now issues the same `GET /users/{id}/profile` request as any other wall instead of `GET /users/me/rooted`. A consequence to be aware of: the old screen listed every Rooted signal, private ones included, and the wall shows only the current Rooted badge plus the Set Rooted action, so **that list is no longer reachable in the app**. Restoring it means adding it to the wall, not reviving a second screen. `rootedApi.getMySignals` and `rootedApi.getUserSignals` in the mobile client are now unused but are kept, because they bind endpoints that still exist.
+
+---
+
+## KNOT-ADR-045 — A language is a canonical ISO 639-1 code, listed once per tier and matched exactly
+
+**Decision ID:** KNOT-ADR-045
+**Date:** 2026-10-09
+**Status:** Accepted
+
+**Context:** Every domain that stores a language — `users.preferred_languages`, `stories`/`story_versions.language`, `comments.language`, `bridges.target_language`, and the discovery cluster filter — validated with its own hand-written rule: trim, lower-case, then require 2-8 ASCII letters. That accepted `english`, `tsonga`, and `EN` as three spellings of what a person meant, so the same language could be stored several ways and grouping by language would silently split. The mobile app asked users to type a code into a text field, in one case comma-separated.
+
+**Decision:**
+- `backend/go/internal/language` is the single source of truth: 103 `{code, name}` entries, sorted by name, exposed as a compile-time constant rather than a database table.
+- Every language field is validated with `language.IsValid(code)`, which matches **exactly**. `en` is accepted; `EN`, `Eng`, `eng`, `English`, `e`, `nso`, `zz`, and `en-ZA` are rejected with `400 validation_error`. Whitespace is still trimmed, and a blank entry in `preferred_languages` is still dropped.
+- `GET /languages` serves the list publicly, so a client can offer a picker before anyone has registered. It is a `Router` method, like `handleHealth`, rather than a new handler type, which keeps `NewRouter`'s signature unchanged.
+- `apps/mobile/src/data/languages.ts` mirrors the list, and `LanguagePicker` is a searchable in-memory picker over it, in `single` and `multiple` modes. It replaces the free-text language fields on Register, Create Story, Adapt Story, and Bridge.
+- Language display goes through `languageName(code)`, so a wall or a comment card shows "Zulu" rather than "zu", falling back to the raw code for a value the list does not know.
+- Region variants (`pt-BR`) and three-letter codes with no ISO 639-1 code are out of scope, so **Northern Sotho's `nso` is not offered**.
+
+**Alternatives Considered:**
+1. **A `languages` database table** — rejected. The list changes rarely, and a compile-time constant is a lookup that cannot fail or need seeding, migrating, or an extra round trip.
+2. **Normalise case and accept `EN`** — rejected. It re-introduces the second spelling the decision exists to remove, and it makes "did the client send what I expect" unanswerable.
+3. **A BCP 47 library** — rejected. It would be a new dependency on both tiers for a rule the product does not need: Knot stores a language, not a locale.
+4. **Validate against a list fetched from the server on each app launch** — rejected. It makes every form depend on a second request and on connectivity, for data that ships with the binary.
+5. **A `CHECK` constraint in PostgreSQL** — rejected as the primary mechanism. It would need a migration per language added and would put the list in two places; the service layer is where every other field rule already lives.
+6. **Force the picker into the comment composer** — rejected. The composer is a fixed-height bar and the picker's results list has nowhere to expand there, so the composer keeps a compact code field.
+
+**Reason:** Consistency at the boundary is cheaper than reconciliation afterwards. A language is an identifier, not free text, and the only way to guarantee that one language has one spelling is to accept exactly the codes that exist.
+
+**Consequences:** Adding a language is a two-file change (Go and TypeScript) plus a deploy, and the mobile test suite reads the Go source to fail when the two lists drift, skipping that check when only the mobile folder is present. Two lists rather than one is a real duplication cost, accepted because the app must work offline and the server cannot be the app's only source of truth. The comment composer's code field is still validated against the canonical list, so it cannot store a non-canonical code, but it offers no suggestions — a disclosed inconsistency with the other four forms. Finally, tightening validation is not retroactive: rows written under the old rule keep their values, and any such value simply no longer validates if it is sent back.

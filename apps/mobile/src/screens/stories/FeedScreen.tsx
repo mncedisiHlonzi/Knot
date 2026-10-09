@@ -5,6 +5,7 @@ import { describeError } from '../../api/client';
 import { notificationsApi } from '../../api/notifications';
 import { FEED_PAGE_SIZE, Story, storiesApi } from '../../api/stories';
 import AuthorLine from '../../components/AuthorLine';
+import { languageName } from '../../data/languages';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type FeedScreenProps = {
@@ -191,7 +192,7 @@ export default function FeedScreen({
               </View>
             ) : null}
             <Text style={styles.cardMeta}>
-              {item.pillar} · {item.language}
+              {item.pillar} · {languageName(item.language)}
               {item.sensitive ? ' · sensitive' : ''}
             </Text>
             {item.approximate_location !== '' ? (

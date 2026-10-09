@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/knot/backend/internal/language"
 )
 
 // errNilHandler reports a missing dependency at construction time, which is a
@@ -111,6 +113,7 @@ func (r *Router) Handler() http.Handler {
 
 	// Method-qualified patterns are stdlib ServeMux features as of Go 1.22.
 	mux.HandleFunc("GET /health", r.handleHealth)
+	mux.HandleFunc("GET /languages", r.handleLanguages)
 	mux.HandleFunc("POST /auth/register", r.auth.Register)
 	mux.HandleFunc("POST /auth/login", r.auth.Login)
 
@@ -192,4 +195,32 @@ func (r *Router) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		Version: r.version,
 		Time:    time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+// languageResponse is one entry of GET /languages.
+type languageResponse struct {
+	Code string `json:"code"`
+	Name string `json:"name"`
+}
+
+// languagesResponse is the GET /languages body. Languages is always an array,
+// never null.
+type languagesResponse struct {
+	Languages []languageResponse `json:"languages"`
+}
+
+// handleLanguages serves GET /languages: the canonical ISO 639-1 list the API
+// accepts for every language field (KNOT-ADR-045).
+//
+// It needs no service: the list is a compile-time constant. The route is public,
+// because a client needs the list to offer a picker before anyone has registered.
+func (r *Router) handleLanguages(w http.ResponseWriter, _ *http.Request) {
+	all := language.All()
+
+	items := make([]languageResponse, 0, len(all))
+	for _, item := range all {
+		items = append(items, languageResponse{Code: item.Code, Name: item.Name})
+	}
+
+	writeJSON(w, http.StatusOK, languagesResponse{Languages: items})
 }

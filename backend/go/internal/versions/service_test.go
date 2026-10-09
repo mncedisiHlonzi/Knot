@@ -176,7 +176,7 @@ func TestCreateAdaptationNormalisesFields(t *testing.T) {
 	store.getResult = rootParent()
 
 	input := validAdaptationInput()
-	input.Language = " FR "
+	input.Language = " fr "
 	input.Title = "  La première pluie  "
 	input.Body = "  indented body  "
 	input.AdaptationNote = "  a note  "
@@ -217,8 +217,9 @@ func TestCreateAdaptationValidation(t *testing.T) {
 		{"title too long", func(in *CreateAdaptationInput) { in.Title = longTitle }, "title"},
 		{"empty body", func(in *CreateAdaptationInput) { in.Body = "\n\t " }, "body"},
 		{"body too long", func(in *CreateAdaptationInput) { in.Body = longBody }, "body"},
-		{"language too short", func(in *CreateAdaptationInput) { in.Language = "f" }, "language"},
-		{"language too long", func(in *CreateAdaptationInput) { in.Language = "englishish" }, "language"},
+		{"unknown language code", func(in *CreateAdaptationInput) { in.Language = "f" }, "language"},
+		{"language given as a word", func(in *CreateAdaptationInput) { in.Language = "english" }, "language"},
+		{"language in upper case", func(in *CreateAdaptationInput) { in.Language = "FR" }, "language"},
 		{"language with digits", func(in *CreateAdaptationInput) { in.Language = "fr2" }, "language"},
 		{"adaptation note too long", func(in *CreateAdaptationInput) { in.AdaptationNote = longNote }, "adaptation_note"},
 	}
@@ -315,7 +316,7 @@ func TestCreateAdaptationAcceptsBoundaryLengths(t *testing.T) {
 	input.Title = strings.Repeat("t", MaxTitleLen)
 	input.Body = strings.Repeat("b", MaxBodyLen)
 	input.AdaptationNote = strings.Repeat("n", MaxAdaptationNoteLength)
-	input.Language = "english"
+	input.Language = "fr"
 
 	if _, err := service.CreateAdaptation(context.Background(), input); err != nil {
 		t.Fatalf("CreateAdaptation() error = %v, want nil at the documented limits", err)

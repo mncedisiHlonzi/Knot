@@ -135,11 +135,12 @@ func TestCreateStoryTrimsTitleButNotBody(t *testing.T) {
 	}
 }
 
-func TestCreateStoryNormalisesLanguage(t *testing.T) {
+func TestCreateStoryTrimsLanguageButRequiresACanonicalCode(t *testing.T) {
 	service, store := newTestService(t)
 
+	// Surrounding whitespace is trimmed...
 	input := validInput()
-	input.Language = " EN "
+	input.Language = " en "
 
 	if _, err := service.CreateStory(context.Background(), input); err != nil {
 		t.Fatalf("CreateStory() error = %v, want nil", err)
@@ -147,6 +148,14 @@ func TestCreateStoryNormalisesLanguage(t *testing.T) {
 
 	if store.gotCreate.Language != "en" {
 		t.Errorf("language = %q, want %q", store.gotCreate.Language, "en")
+	}
+
+	// ...but the code is not case-folded: a story's language is a canonical
+	// ISO 639-1 code, so "EN" is a mistake rather than something to guess at.
+	input.Language = "EN"
+
+	if _, err := service.CreateStory(context.Background(), input); err == nil {
+		t.Fatal("CreateStory() error = nil, want a rejection for the non-canonical \"EN\"")
 	}
 }
 
@@ -224,8 +233,9 @@ func TestCreateStoryValidation(t *testing.T) {
 		{"title too long", func(in *CreateStoryInput) { in.Title = longTitle }, "title"},
 		{"empty body", func(in *CreateStoryInput) { in.Body = "\n\t " }, "body"},
 		{"body too long", func(in *CreateStoryInput) { in.Body = longBody }, "body"},
-		{"language too short", func(in *CreateStoryInput) { in.Language = "e" }, "language"},
-		{"language too long", func(in *CreateStoryInput) { in.Language = "englishish" }, "language"},
+		{"unknown language code", func(in *CreateStoryInput) { in.Language = "e" }, "language"},
+		{"language given as a word", func(in *CreateStoryInput) { in.Language = "english" }, "language"},
+		{"language in upper case", func(in *CreateStoryInput) { in.Language = "EN" }, "language"},
 		{"language with digits", func(in *CreateStoryInput) { in.Language = "en2" }, "language"},
 		{"language with a subtag", func(in *CreateStoryInput) { in.Language = "en-ZA" }, "language"},
 		{"location too long", func(in *CreateStoryInput) { in.ApproximateLocation = longLocation }, "approximate_location"},
@@ -308,7 +318,7 @@ func TestCreateStoryAcceptsBoundaryLengths(t *testing.T) {
 	input := validInput()
 	input.Title = strings.Repeat("t", MaxTitleLen)
 	input.Body = strings.Repeat("b", MaxBodyLen)
-	input.Language = "english"
+	input.Language = "en"
 	input.ApproximateLocation = strings.Repeat("l", MaxLocationLength)
 	input.MediaURLs = []string{"https://example.test/a.jpg"}
 

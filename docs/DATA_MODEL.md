@@ -35,7 +35,7 @@ on first use.
 | `phone`                | `text`                   | yes      | `NULL`             | Optional contact number                          |
 | `password_hash`        | `text`                   | no       | —                  | argon2id PHC string. Never returned by the API   |
 | `display_name`         | `text`                   | no       | —                  | 1-80 characters                                  |
-| `preferred_languages`  | `text[]`                 | no       | `'{}'`             | Language codes/tags. The application always writes an array, never `NULL` |
+| `preferred_languages`  | `text[]`                 | no       | `'{}'`             | ISO 639-1 codes, at most 20. The application always writes an array, never `NULL`, and rejects any code outside the canonical list (KNOT-ADR-045) |
 | `approximate_location` | `text`                   | yes      | `NULL`             | Coarse location only; precise location is out of scope |
 | `avatar_url`           | `text`                   | yes      | `NULL`             | Object key of the avatar in the media bucket, **not** a public URL. See below |
 | `created_at`           | `timestamptz`            | no       | `now()`            |                                                  |
@@ -178,7 +178,7 @@ KNOT-ADR-012.
 | `story_id`           | `uuid`        | no       | —                   | References `stories(id)`; the story this version belongs to            |
 | `parent_version_id`  | `uuid`        | yes      | `NULL`              | References `story_versions(id)`. The version this one adapts. `NULL` marks a story's root version |
 | `author_id`          | `uuid`        | no       | —                   | References `users(id)`. The person who wrote this version; for a root version, the story's original author |
-| `language`           | `text`        | no       | —                   | 2-8 letters, stored lower-cased                                       |
+| `language`           | `text`        | no       | —                   | Two-letter ISO 639-1 code, lower case, from the canonical list (KNOT-ADR-045) |
 | `title`              | `text`        | no       | —                   | 1-200 characters                                                      |
 | `body`               | `text`        | no       | —                   | The version itself, 1-10000 characters, stored verbatim                |
 | `adaptation_note`    | `text`        | yes      | `NULL`              | The adapter's optional note, up to 1000 characters                     |
@@ -243,7 +243,7 @@ See KNOT-ADR-014.
 | `id`         | `uuid`        | no       | `gen_random_uuid()` | Primary key                                        |
 | `version_id` | `uuid`        | no       | —                   | References `story_versions(id)`; the version commented on |
 | `author_id`  | `uuid`        | no       | —                   | References `users(id)`; the commenter               |
-| `language`   | `text`        | no       | —                   | 2-8 letters, stored lower-cased                     |
+| `language`   | `text`        | no       | —                   | Two-letter ISO 639-1 code, lower case, from the canonical list (KNOT-ADR-045) |
 | `body`       | `text`        | no       | —                   | 1-5000 characters, stored verbatim                  |
 | `created_at` | `timestamptz` | no       | `now()`             | The thread's primary sort key                       |
 | `updated_at` | `timestamptz` | no       | `now()`             | Set on insert. No trigger yet: editing a comment is a later task |
@@ -280,7 +280,7 @@ and KNOT-ADR-015.
 | `source_comment_id` | `uuid`        | no       | —                   | References `comments(id)`; the comment bridged from                  |
 | `target_comment_id` | `uuid`        | no       | —                   | References `comments(id)`; the new comment in the target language     |
 | `author_id`         | `uuid`        | no       | —                   | References `users(id)`; the bridger, and the target comment's author  |
-| `target_language`   | `text`        | no       | —                   | 2-8 letters, stored lower-cased                                      |
+| `target_language`   | `text`        | no       | —                   | Two-letter ISO 639-1 code, lower case, from the canonical list (KNOT-ADR-045) |
 | `adaptation_note`   | `text`        | yes      | `NULL`              | The bridger's optional note, up to 1000 characters                    |
 | `created_at`        | `timestamptz` | no       | `now()`             |                                                                      |
 
