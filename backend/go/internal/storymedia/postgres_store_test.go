@@ -2,9 +2,11 @@ package storymedia
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -235,5 +237,85 @@ func TestPostgresStoreDeleteMedia(t *testing.T) {
 	}
 	if err := env.store.DeleteMedia(ctx, created.ID); err != ErrNotFound {
 		t.Errorf("DeleteMedia(again) error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestPostgresStoreCreateMediaEnforcesTheCap(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	for i := 0; i < MaxMediaPerStory; i++ {
+		if _, err := env.store.CreateMedia(ctx, newIntegrationMedia(env, fmt.Sprintf("cap-%d", i), -1)); err != nil {
+			t.Fatalf("CreateMedia(%d) error = %v, want nil", i, err)
+		}
+	}
+
+	if count, err := env.store.CountMedia(ctx, env.story); err != nil || count != MaxMediaPerStory {
+		t.Fatalf("CountMedia() = (%d, %v), want (%d, nil)", count, err, MaxMediaPerStory)
+	}
+
+	if _, err := env.store.CreateMedia(ctx, newIntegrationMedia(env, "cap-overflow", -1)); !errors.Is(err, ErrMediaLimit) {
+		t.Fatalf("CreateMedia(over the cap) error = %v, want ErrMediaLimit", err)
+	}
+
+	// The refused insert rolled back, so the story still holds exactly the cap.
+	if count, err := env.store.CountMedia(ctx, env.story); err != nil || count != MaxMediaPerStory {
+		t.Fatalf("CountMedia(after refusal) = (%d, %v), want (%d, nil)", count, err, MaxMediaPerStory)
+	}
+}
+
+// TestPostgresStoreCreateMediaCapIsRaceSafe fires two concurrent inserts at the
+// last free slot. The lock on the story row serialises them, so exactly one wins
+// and the count never exceeds the cap (KNOT-ADR-054).
+func TestPostgresStoreCreateMediaCapIsRaceSafe(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	// Fill to one below the cap, so two racers contend for the final slot.
+	for i := 0; i < MaxMediaPerStory-1; i++ {
+		if _, err := env.store.CreateMedia(ctx, newIntegrationMedia(env, fmt.Sprintf("race-%d", i), -1)); err != nil {
+			t.Fatalf("CreateMedia(%d) error = %v, want nil", i, err)
+		}
+	}
+
+	const racers = 2
+	results := make([]error, racers)
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func(slot int) {
+			defer wg.Done()
+			<-start
+			_, err := env.store.CreateMedia(ctx, newIntegrationMedia(env, fmt.Sprintf("racer-%d", slot), -1))
+			results[slot] = err
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
+
+	succeeded := 0
+	for slot, err := range results {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, ErrMediaLimit):
+			// The loser is refused; that is exactly what the lock is for.
+		default:
+			t.Errorf("racer %d error = %v, want nil or ErrMediaLimit", slot, err)
+		}
+	}
+	if succeeded != 1 {
+		t.Errorf("succeeded = %d, want exactly 1", succeeded)
+	}
+
+	count, err := env.store.CountMedia(ctx, env.story)
+	if err != nil {
+		t.Fatalf("CountMedia() error = %v, want nil", err)
+	}
+	if count != MaxMediaPerStory {
+		t.Errorf("CountMedia() = %d, want %d (the cap must never be exceeded)", count, MaxMediaPerStory)
 	}
 }

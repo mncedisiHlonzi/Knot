@@ -285,6 +285,8 @@ func (h *StoryMediaHandler) writeServiceError(w http.ResponseWriter, r *http.Req
 	var validation *storymedia.ValidationError
 
 	switch {
+	case errors.Is(err, storymedia.ErrMediaLimit):
+		writeError(w, http.StatusBadRequest, codeValidation, storymedia.MediaLimitMessage)
 	case errors.As(err, &validation):
 		writeError(w, http.StatusBadRequest, codeValidation, fmt.Sprintf("%s %s", validation.Field, validation.Message))
 	case errors.Is(err, storymedia.ErrForbidden):

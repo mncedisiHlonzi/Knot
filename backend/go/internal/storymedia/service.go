@@ -32,6 +32,18 @@ func (s *Service) CreateMedia(ctx context.Context, in CreateMediaInput) (StoryMe
 		return StoryMedia{}, ErrForbidden
 	}
 
+	// Early cap check: refuse before uploading bytes the store would reject, so a
+	// full story never costs the user an upload. The store re-checks the count
+	// under the story row lock when it inserts, which is what makes the cap
+	// race-safe (KNOT-ADR-054).
+	count, err := s.store.CountMedia(ctx, in.StoryID)
+	if err != nil {
+		return StoryMedia{}, fmt.Errorf("storymedia: count media: %w", err)
+	}
+	if count >= MaxMediaPerStory {
+		return StoryMedia{}, ErrMediaLimit
+	}
+
 	key, err := newMediaKey(in.StoryID, extension)
 	if err != nil {
 		return StoryMedia{}, err

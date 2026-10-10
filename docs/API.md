@@ -487,16 +487,23 @@ any other authenticated user is `403 forbidden`.
 | Videos     | MP4 or MOV, at most **100 MiB**                                               |
 | Type       | Decided by inspecting the bytes, not by the `Content-Type` you declare        |
 | Body       | Must be `multipart/form-data` carrying a `file` field                         |
+| Count      | At most **10** items per story, images and videos together (KNOT-ADR-054)     |
 
 `display_order` is assigned by the server: each upload appends after the story's current
 last item, so the order matches the upload order.
 
+**The 10-item cap.** A story may hold at most ten media items, images and videos counted
+together. An attempt to attach an eleventh returns **400 `validation_error`** with the
+message `a story may have at most 10 media items`, and nothing is stored. The cap is
+enforced inside the insert, under a lock on the story row, so two uploads arriving at once
+cannot both take the last slot (KNOT-ADR-054). Deleting an item frees a slot immediately.
+
 **201** — `{ "media": { ... } }`, the stored item.
 
 **Errors:** `400 invalid_request` (not multipart, or no `file` field), `400 validation_error`
-(a bad `source`), `401 unauthorized`, `403 forbidden` (not the story's author),
-`404 not_found` (the story does not exist), `413 request_too_large`, `415
-unsupported_media_type`, `500 internal_error`.
+(a bad `source`, or the story already holds 10 items), `401 unauthorized`, `403 forbidden`
+(not the story's author), `404 not_found` (the story does not exist), `413
+request_too_large`, `415 unsupported_media_type`, `500 internal_error`.
 
 ### GET /stories/{id}/media
 

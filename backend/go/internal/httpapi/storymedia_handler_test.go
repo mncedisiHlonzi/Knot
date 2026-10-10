@@ -230,6 +230,19 @@ func (m *memoryMediaStore) StoryAuthor(_ context.Context, storyID string) (strin
 	return author, nil
 }
 
+func (m *memoryMediaStore) CountMedia(_ context.Context, storyID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	count := 0
+	for _, id := range m.order {
+		if m.media[id].StoryID == storyID {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // memoryObjects is an in-memory storymedia.Storage.
 type memoryObjects struct {
 	mu      sync.Mutex
@@ -502,6 +515,38 @@ func TestStoryMediaCreateHappyPath(t *testing.T) {
 		t.Errorf("url = %q, want a relative path", envelope.Media.URL)
 	}
 
+}
+
+// TestStoryMediaCreateEnforcesTheCap fills a story to the cap and proves the next
+// upload is refused with a 400 validation_error carrying the exact message
+// (KNOT-ADR-054).
+func TestStoryMediaCreateEnforcesTheCap(t *testing.T) {
+	env := newStoryMediaTestEnv(t)
+	router := env.router(t, testMediaAuthorID)
+
+	for i := 0; i < storymedia.MaxMediaPerStory; i++ {
+		env.uploadMedia(t, router, pngImage(t), string(storymedia.MediaSourceGallery))
+	}
+
+	body, contentType := mediaUpload(t, pngImage(t), string(storymedia.MediaSourceGallery), nil)
+	recorder := postMedia(router, testMediaStoryID, body, contentType, testAccessToken)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if code := decodedErrorCode(t, recorder); code != codeValidation {
+		t.Errorf("error code = %q, want %q", code, codeValidation)
+	}
+
+	var errorBody struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	decodeBody(t, recorder, &errorBody)
+	if errorBody.Error.Message != storymedia.MediaLimitMessage {
+		t.Errorf("error message = %q, want %q", errorBody.Error.Message, storymedia.MediaLimitMessage)
+	}
 }
 
 func TestStoryMediaCreateRequiresAuthentication(t *testing.T) {

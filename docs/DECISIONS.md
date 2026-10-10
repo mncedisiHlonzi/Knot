@@ -1569,3 +1569,71 @@ handler could create one; the block is at the HTTP layer by design, and the smok
 the handler. If engagement data shows the gap matters, the change is small and reversible:
 re-point the comment toggle at `toggle` and re-render the bar.
 
+---
+
+## KNOT-ADR-054 — A story holds at most 10 media items, enforced in the insert
+
+**Decision ID:** KNOT-ADR-054
+**Date:** 2026-10-10
+**Status:** Accepted
+
+**Context:** KNOT-013 let a story carry any number of images and videos, bounded per item (10
+MiB image, 100 MiB video) but not in total. A photo essay and a video dump then look the same to
+a reader, and an unbounded strip pushes the story's words off the screen. The founder asked for
+a hard cap of ten items, and a hard cap has to hold when two uploads arrive together, not only
+when a person taps one at a time.
+
+**Decision:**
+- A story holds at most **10 media items**, images and videos counted together.
+  `storymedia.MaxMediaPerStory` is the single source of truth; the client mirrors it as
+  `MAX_MEDIA_PER_STORY`.
+- The cap is enforced **inside the insert transaction** in `PostgresStore.CreateMedia`: the
+  transaction locks the parent story row (`SELECT id FROM stories WHERE id = $1 FOR UPDATE`),
+  counts `story_media`, and refuses a write at the cap. The lock is on the story row — one
+  stable row, and the entity whose media is being counted — not on `story_media` rows, so it
+  serialises every media writer for that story without locking the rows being counted.
+- The refusal is `ErrMediaLimit`, which the handler maps to **400 `validation_error`** carrying
+  the exact text `a story may have at most 10 media items` (`storymedia.MediaLimitMessage`).
+- The service checks the same count **before** it uploads the bytes, so a full story never costs
+  the user an upload; that check is an optimisation, not the guarantee. The store's locked
+  re-check is authoritative, and a race that loses it discards the just-uploaded object.
+- There is **no migration and no database constraint**: a CHECK cannot count rows, and the cap is
+  a product rule rather than a data shape.
+- **Deleting is unaffected.** Removing an item frees a slot immediately; there is no minimum and
+  no cap on deletions.
+- **Mobile** shows an `N / 10` counter, disables **+ Add media** at the cap, and passes the free
+  slots to the picker as `maxSelection`. The picker's `selectionLimit` is a hint — the screen
+  truncates a larger selection to the free slots and shows `MEDIA_LIMIT_MESSAGE` — and the server
+  remains the final authority.
+
+**Alternatives Considered:**
+1. **A database CHECK or trigger** — rejected. A CHECK cannot count rows, and a trigger would put
+   a product rule in the schema and fire on every write for a rule the product may change.
+2. **Counting in the service only, without a lock** — rejected. Two concurrent uploads could both
+   read nine and both insert, leaving eleven; the cap would be advisory.
+3. **Locking `story_media` rows** — rejected. There is no stable row to lock before the insert,
+   and locking the rows being counted is a wider lock than the parent story row.
+4. **A per-story counter column** — rejected. It is a second source of truth to keep in step on
+   every insert and delete, for a number a grouped `count(*)` already answers under a lock.
+5. **Enforcing only on the client** — rejected. A cap only the app applies is not a cap; another
+   client, or a retry, would exceed it.
+6. **`serializable` isolation instead of an explicit lock** — rejected. It pushes retry handling
+   into the request path for the same serialisation, where one `FOR UPDATE` on a known row is
+   simpler and cheaper.
+7. **Counting photos and videos separately (10 of each)** — rejected. The cap is about how much a
+   story shows at once, and a mixed story is the common case.
+
+**Reason:** Ten is enough to tell a story with pictures and small enough that the strip stays a
+strip rather than a gallery. Taking the lock on the story row is the smallest way to make the
+number true under concurrency, and keeping the rule in code rather than the schema keeps it
+changeable without a migration.
+
+**Consequences:** An eleventh upload is a `400` rather than a silent drop, so a client learns the
+limit instead of seeing an item vanish. Two concurrent uploads for the last slot serialise on the
+story row, so a burst of uploads for one story is slower than for different stories — accepted,
+because it is the property that makes the cap true; the lock is held for one insert, so the
+window is small. The object upload happens before the transaction, so a losing race discards an
+uploaded object (best-effort, and already the behaviour of any failed insert). The client's cap
+can drift from the server's if the constant changes in one place, so a unit test asserts the
+message agrees with `MaxMediaPerStory` and the API documents the number.
+

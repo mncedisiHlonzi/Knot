@@ -149,6 +149,16 @@ curl -i -H 'Range: bytes=0-99' \
   http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content
 ```
 
+**A story holds at most 10 media items** (KNOT-ADR-054, `storymedia.MaxMediaPerStory`). The cap
+is enforced in the insert transaction, which locks the `stories` row and then counts
+`story_media`, so two uploads arriving together cannot both take the last slot; an eleventh
+upload is a `400 validation_error` carrying `storymedia.MediaLimitMessage`. There is no
+database constraint — a CHECK cannot count rows. The mobile `CreateStoryScreen` mirrors the same
+number through `src/utils/mediaLimit.ts` (`MAX_MEDIA_PER_STORY`), shows an `N / 10` counter,
+disables **+ Add media** at the cap, and passes the free slots to `MediaPickerSheet` as
+`maxSelection` (`selectionLimit` of 0 means "unlimited" in `react-native-image-picker`, so the
+sheet refuses to launch at 0 rather than allowing an unbounded pick).
+
 Deleting a media row does **not** remove the object from the bucket in the console view
 until the `DELETE` endpoint is called; a row and its object are removed together by
 `DELETE /stories/{id}/media/{mid}`.

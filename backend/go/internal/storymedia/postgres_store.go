@@ -36,11 +36,28 @@ func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 
 // CreateMedia inserts a media row and returns the stored row.
 //
+// It runs in one transaction that first locks the story row and counts the
+// story's media, so a story can never exceed MaxMediaPerStory even when two
+// uploads arrive at once (KNOT-ADR-054). A count at the cap returns ErrMediaLimit
+// and the transaction rolls back without writing.
+//
 // A DisplayOrder below zero on the incoming value asks the store to append the
 // item after the story's current last one, computed in the same statement so two
 // uploads cannot both read the same maximum. A non-negative value is honoured as
 // given.
 func (s *PostgresStore) CreateMedia(ctx context.Context, media StoryMedia) (StoryMedia, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return StoryMedia{}, fmt.Errorf("storymedia: begin create media: %w", err)
+	}
+	// A rollback after a successful commit is a no-op, so this covers every early
+	// return.
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if err := checkMediaCap(ctx, tx, media.StoryID); err != nil {
+		return StoryMedia{}, err
+	}
+
 	const query = `
 		INSERT INTO story_media (
 			story_id, uploader_id, storage_key, media_type, mime_type, source,
@@ -59,7 +76,7 @@ func (s *PostgresStore) CreateMedia(ctx context.Context, media StoryMedia) (Stor
 		)
 		RETURNING ` + mediaColumns
 
-	row := s.pool.QueryRow(
+	row := tx.QueryRow(
 		ctx,
 		query,
 		media.StoryID,
@@ -80,7 +97,59 @@ func (s *PostgresStore) CreateMedia(ctx context.Context, media StoryMedia) (Stor
 		return StoryMedia{}, fmt.Errorf("storymedia: create media: %w", err)
 	}
 
+	if err := tx.Commit(ctx); err != nil {
+		return StoryMedia{}, fmt.Errorf("storymedia: commit create media: %w", err)
+	}
+
 	return created, nil
+}
+
+// checkMediaCap locks a story row and refuses the insert when the story already
+// holds MaxMediaPerStory items.
+//
+// The lock is on stories.id — one stable row, and the entity whose media is being
+// counted — not on story_media rows. It serialises every media writer for that
+// story, so two concurrent uploads cannot both observe a count below the cap and
+// both insert. The lock is released when the transaction commits or rolls back
+// (KNOT-ADR-054).
+func checkMediaCap(ctx context.Context, tx pgx.Tx, storyID string) error {
+	var locked string
+	if err := tx.QueryRow(ctx, `SELECT id FROM stories WHERE id = $1 FOR UPDATE`, storyID).Scan(&locked); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrStoryNotFound
+		}
+		return fmt.Errorf("storymedia: lock story: %w", err)
+	}
+
+	var count int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM story_media WHERE story_id = $1`, storyID).Scan(&count); err != nil {
+		return fmt.Errorf("storymedia: count media: %w", err)
+	}
+	if count >= MaxMediaPerStory {
+		return ErrMediaLimit
+	}
+
+	return nil
+}
+
+// CountMedia returns how many media items a story currently has.
+//
+// A malformed story id names no rows, so it counts zero rather than erroring.
+func (s *PostgresStore) CountMedia(ctx context.Context, storyID string) (int, error) {
+	if !isUUID(storyID) {
+		return 0, nil
+	}
+
+	var count int
+	if err := s.pool.QueryRow(
+		ctx,
+		`SELECT COUNT(*) FROM story_media WHERE story_id = $1`,
+		storyID,
+	).Scan(&count); err != nil {
+		return 0, fmt.Errorf("storymedia: count media: %w", err)
+	}
+
+	return count, nil
 }
 
 // ListMedia returns every media item of a story in display order. The id

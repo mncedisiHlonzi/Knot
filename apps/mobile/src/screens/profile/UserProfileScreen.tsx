@@ -329,8 +329,12 @@ export default function UserProfileScreen({
                 visible={pickerVisible}
                 allowVideo={false}
                 onClose={() => setPickerVisible(false)}
-                onPicked={(media) => {
-                  void handleAvatarPicked(media);
+                onPicked={(picked) => {
+                  // An avatar is a single image, so only the first is used.
+                  const first = picked[0];
+                  if (first !== undefined) {
+                    void handleAvatarPicked(first);
+                  }
                 }}
                 onError={setAvatarError}
               />

@@ -482,8 +482,11 @@ than the older `stories.media_urls` array.
 
 - **No thumbnails, transcoding, or moderation.** Each is a separate feature with its own
   task; the row stores the original as uploaded.
-- **No hard cap on media count per story** in the database. The client aims for 10, and
-  `display_order` keeps the order stable whatever the count.
+- **No hard cap on media count per story in the database.** A story holds at most **10** items,
+  images and videos together, but the cap is enforced in the `POST /stories/{id}/media` insert
+  transaction — which locks the `stories` row and counts `story_media` before it writes — rather
+  than by a constraint, because a CHECK cannot count rows (KNOT-ADR-054). `display_order` keeps
+  the order stable whatever the count.
 - **No `updated_at`.** Media is immutable once uploaded; replacing it means deleting and
   re-uploading.
 

@@ -53,6 +53,10 @@ var (
 	// this package also carries a *ValidationError naming the offending field, so
 	// errors.Is(err, ErrValidation) and errors.As(err, &validation) are both true.
 	ErrValidation = errors.New("storymedia: invalid input")
+	// ErrMediaLimit is returned when a story already holds MaxMediaPerStory items
+	// and another would exceed the cap. The handler maps it to a 400
+	// validation_error carrying MediaLimitMessage (KNOT-ADR-054).
+	ErrMediaLimit = errors.New("storymedia: story media limit reached")
 )
 
 // ValidationError describes a rejected field on a request. Handlers expose the
@@ -127,6 +131,19 @@ const (
 	// whole multipart request body.
 	MaxVideoBytes = 100 << 20
 )
+
+// MaxMediaPerStory is the hard cap on how many media items one story may hold
+// (KNOT-ADR-054).
+//
+// It is enforced in code rather than by a database constraint, because a CHECK
+// cannot count rows: the insert transaction locks the story row and counts its
+// media before it writes.
+const MaxMediaPerStory = 10
+
+// MediaLimitMessage is the exact client-facing text returned when the cap is
+// reached. It is spelled once so the handler, the tests, and the docs cannot
+// drift; a test asserts it agrees with MaxMediaPerStory.
+const MediaLimitMessage = "a story may have at most 10 media items"
 
 // mediaTypeNamespace is the bucket prefix reserved for story media. Every object
 // in it is namespaced by the story id, so a key can always be traced back to
@@ -238,8 +255,15 @@ type CreateMediaInput struct {
 // depends on this interface rather than on pgx, so the business rules can be
 // tested without a database.
 type StoryMediaStore interface {
-	// CreateMedia inserts a media row and returns the stored row.
+	// CreateMedia inserts a media row and returns the stored row. It refuses a row
+	// that would take the story past MaxMediaPerStory, re-checked under a lock on
+	// the story row so the cap holds against concurrent uploads (KNOT-ADR-054).
 	CreateMedia(ctx context.Context, media StoryMedia) (StoryMedia, error)
+	// CountMedia returns how many media items a story currently has. The service
+	// calls it as an early check, so an upload that would be refused never leaves
+	// the device; the store re-checks the same count under the story row lock
+	// inside CreateMedia, which is the authoritative check (KNOT-ADR-054).
+	CountMedia(ctx context.Context, storyID string) (int, error)
 	// ListMedia returns every media item of a story in display order.
 	ListMedia(ctx context.Context, storyID string) ([]StoryMedia, error)
 	// FirstMedia returns each story's first item, keyed by story id, for the

@@ -37,6 +37,11 @@ type fakeStore struct {
 	getErr    error
 	deleteErr error
 	authorErr error
+	countErr  error
+
+	// countOverride, when set, is what CountMedia reports regardless of the map, so
+	// a test can place a story at or over the cap without inserting rows.
+	countOverride *int
 
 	gotCreate StoryMedia
 }
@@ -130,6 +135,23 @@ func (s *fakeStore) StoryAuthor(_ context.Context, id string) (string, error) {
 		return "", ErrStoryNotFound
 	}
 	return author, nil
+}
+
+func (s *fakeStore) CountMedia(_ context.Context, storyID string) (int, error) {
+	if s.countErr != nil {
+		return 0, s.countErr
+	}
+	if s.countOverride != nil {
+		return *s.countOverride, nil
+	}
+
+	count := 0
+	for _, id := range s.order {
+		if s.media[id].StoryID == storyID {
+			count++
+		}
+	}
+	return count, nil
 }
 
 // fakeObjects is an in-memory Storage.
@@ -290,6 +312,58 @@ func TestCreateMediaAppendsInOrder(t *testing.T) {
 
 	if first.DisplayOrder != 0 || second.DisplayOrder != 1 {
 		t.Errorf("display orders = %d, %d, want 0 then 1", first.DisplayOrder, second.DisplayOrder)
+	}
+}
+
+// TestCreateMediaEnforcesTheStoryMediaCap pins the early cap check: a story below
+// the cap accepts an upload, and one at or over the cap is refused with
+// ErrMediaLimit before any bytes are stored (KNOT-ADR-054).
+func TestCreateMediaEnforcesTheStoryMediaCap(t *testing.T) {
+	tests := []struct {
+		name    string
+		count   int
+		wantErr bool
+	}{
+		{name: "below the cap", count: MaxMediaPerStory - 1, wantErr: false},
+		{name: "at the cap", count: MaxMediaPerStory, wantErr: true},
+		{name: "above the cap", count: MaxMediaPerStory + 5, wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := newFakeStore()
+			count := test.count
+			store.countOverride = &count
+			objects := newFakeObjects()
+			service, _ := newTestService(t, store, objects)
+
+			_, err := service.CreateMedia(context.Background(), validInput())
+
+			if test.wantErr {
+				if !errors.Is(err, ErrMediaLimit) {
+					t.Fatalf("CreateMedia() error = %v, want ErrMediaLimit", err)
+				}
+				// The upload is refused before the object is written, so a full story
+				// never leaves an orphan behind.
+				if len(objects.objects) != 0 {
+					t.Errorf("objects stored = %d, want 0 when the cap is reached", len(objects.objects))
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("CreateMedia() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// TestMediaLimitMessageMatchesTheCap keeps the text the handler returns in step
+// with the number the service and store enforce.
+func TestMediaLimitMessageMatchesTheCap(t *testing.T) {
+	want := fmt.Sprintf("a story may have at most %d media items", MaxMediaPerStory)
+	if MediaLimitMessage != want {
+		t.Errorf("MediaLimitMessage = %q, want %q", MediaLimitMessage, want)
 	}
 }
 

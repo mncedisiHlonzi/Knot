@@ -24,6 +24,12 @@ import LanguagePicker from '../../components/LanguagePicker';
 import LocationPicker, { PickedPlace } from '../../components/LocationPicker';
 import MediaPickerSheet, { PickedMedia } from '../../components/MediaPickerSheet';
 import { isLanguageCode } from '../../data/languages';
+import {
+  MEDIA_LIMIT_MESSAGE,
+  canAddMedia,
+  mediaCountLabel,
+  remainingMediaSlots,
+} from '../../utils/mediaLimit';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type CreateStoryScreenProps = {
@@ -100,16 +106,43 @@ export default function CreateStoryScreen({
   const [submitting, setSubmitting] = useState(false);
   const [media, setMedia] = useState<readonly PickedMedia[]>([]);
   const [pickerVisible, setPickerVisible] = useState(false);
+  // The inline notice shown when a pick is cut down to the free slots.
+  const [mediaNotice, setMediaNotice] = useState<string | undefined>(undefined);
   // Set once the story has been created. If a media upload then fails, the story
   // already exists, so a retry reuses it rather than publishing a duplicate.
   const [createdStory, setCreatedStory] = useState<Story | undefined>(undefined);
 
-  function addMedia(picked: PickedMedia): void {
-    setMedia((current) => [...current, picked]);
+  /** The story is full: another item would exceed the server's cap (KNOT-ADR-054). */
+  const atMediaCap = !canAddMedia(media.length);
+
+  /**
+   * Adds every picked item that still fits, and tells the reader when a pick was
+   * cut down.
+   *
+   * The cap is re-checked here because the picker's selection limit is only a
+   * hint: a library that ignores it can still return more than the free slots, so
+   * the client truncates and the server remains the final authority (KNOT-ADR-054).
+   */
+  function addMedia(picked: readonly PickedMedia[]): void {
+    if (picked.length === 0) {
+      return;
+    }
+
+    const free = remainingMediaSlots(media.length);
+    if (picked.length > free) {
+      setMedia([...media, ...picked.slice(0, free)]);
+      setMediaNotice(MEDIA_LIMIT_MESSAGE);
+      return;
+    }
+
+    setMedia([...media, ...picked]);
+    setMediaNotice(undefined);
   }
 
   function removeMedia(index: number): void {
     setMedia((current) => current.filter((_, i) => i !== index));
+    // Removing frees a slot, so a previous cap notice no longer applies.
+    setMediaNotice(undefined);
   }
 
   async function handleSubmit(): Promise<void> {
@@ -184,10 +217,12 @@ export default function CreateStoryScreen({
         contentContainerStyle={styles.thumbnailsContent}
       >
         <Pressable
-          style={styles.addMedia}
+          style={[styles.addMedia, atMediaCap ? styles.buttonDisabled : null]}
           onPress={() => setPickerVisible(true)}
+          disabled={atMediaCap}
           accessibilityRole="button"
           accessibilityLabel="Add media"
+          accessibilityState={{ disabled: atMediaCap }}
         >
           <Text style={styles.addMediaText}>+ Add media</Text>
         </Pressable>
@@ -213,6 +248,8 @@ export default function CreateStoryScreen({
           </View>
         ))}
       </ScrollView>
+      <Text style={styles.mediaCount}>{mediaCountLabel(media.length)}</Text>
+      {mediaNotice !== undefined ? <Text style={styles.mediaNotice}>{mediaNotice}</Text> : null}
 
       <Text style={styles.label}>Pillar</Text>
       <View style={styles.pillars}>
@@ -314,6 +351,7 @@ export default function CreateStoryScreen({
         onClose={() => setPickerVisible(false)}
         onPicked={addMedia}
         onError={setError}
+        maxSelection={remainingMediaSlots(media.length)}
       />
     </ScrollView>
   );
@@ -395,6 +433,18 @@ const styles = StyleSheet.create({
   linkText: {
     color: colors.text.brand,
     fontSize: fontSizes.base,
+  },
+  // The "N / 10" counter under the strip, and the notice when a pick was cut
+  // down to the free slots (KNOT-ADR-054).
+  mediaCount: {
+    color: colors.text.secondary,
+    fontSize: fontSizes.sm,
+    marginTop: spacing.xs,
+  },
+  mediaNotice: {
+    color: colors.state.error,
+    fontSize: fontSizes.sm,
+    marginTop: spacing.xs,
   },
   multiline: {
     minHeight: 160,

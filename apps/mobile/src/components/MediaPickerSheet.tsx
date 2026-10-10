@@ -3,6 +3,7 @@ import { Modal, Pressable, StyleSheet, Text } from 'react-native';
 import { ImagePickerResponse, launchCamera, launchImageLibrary } from 'react-native-image-picker';
 
 import type { MediaSource } from '../api/stories';
+import { MEDIA_LIMIT_MESSAGE } from '../utils/mediaLimit';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../theme';
 
 /** The kind of file a picker produced. */
@@ -27,7 +28,11 @@ export type PickedMedia = {
 type MediaPickerSheetProps = {
   readonly visible: boolean;
   readonly onClose: () => void;
-  readonly onPicked: (media: PickedMedia) => void;
+  /**
+   * Reports every file that was chosen or captured. The camera yields one; a
+   * gallery pick can yield several.
+   */
+  readonly onPicked: (media: readonly PickedMedia[]) => void;
   /** Reports a picker failure (permission denied, capture failed) to the caller. */
   readonly onError?: (message: string) => void;
   /**
@@ -35,6 +40,12 @@ type MediaPickerSheetProps = {
    * false because an avatar is an image only.
    */
   readonly allowVideo?: boolean;
+  /**
+   * The most files the gallery may return in one pick, so a caller fills only its
+   * free slots. The camera always yields one. Defaults to 1, the single-file
+   * flows such as an avatar (KNOT-ADR-054).
+   */
+  readonly maxSelection?: number;
 };
 
 /**
@@ -51,8 +62,15 @@ export default function MediaPickerSheet({
   onPicked,
   onError,
   allowVideo = true,
+  maxSelection = 1,
 }: MediaPickerSheetProps): React.ReactElement {
-  /** Turns a picker response into a PickedMedia, or reports why it could not. */
+  /**
+   * Turns a picker response into the picked media, or reports why it could not.
+   *
+   * A gallery pick can return several assets; every one that has a uri is
+   * reported in a single call, so the caller applies its cap to the whole
+   * selection at once rather than item by item.
+   */
   const handleResponse = useCallback(
     (response: ImagePickerResponse, kind: PickedMediaType, source: MediaSource): void => {
       if (response.didCancel) {
@@ -63,21 +81,26 @@ export default function MediaPickerSheet({
         return;
       }
 
-      const asset = response.assets?.[0];
-      if (asset === undefined || asset.uri === undefined) {
-        return;
+      const picked: PickedMedia[] = [];
+      for (const asset of response.assets ?? []) {
+        if (asset.uri === undefined) {
+          continue;
+        }
+        picked.push({
+          uri: asset.uri,
+          type: kind,
+          mimeType: asset.type ?? (kind === 'video' ? 'video/mp4' : 'image/jpeg'),
+          size: asset.fileSize ?? 0,
+          ...(asset.width === undefined ? {} : { width: asset.width }),
+          ...(asset.height === undefined ? {} : { height: asset.height }),
+          ...(asset.duration === undefined ? {} : { duration: asset.duration }),
+          source,
+        });
       }
 
-      onPicked({
-        uri: asset.uri,
-        type: kind,
-        mimeType: asset.type ?? (kind === 'video' ? 'video/mp4' : 'image/jpeg'),
-        size: asset.fileSize ?? 0,
-        ...(asset.width === undefined ? {} : { width: asset.width }),
-        ...(asset.height === undefined ? {} : { height: asset.height }),
-        ...(asset.duration === undefined ? {} : { duration: asset.duration }),
-        source,
-      });
+      if (picked.length > 0) {
+        onPicked(picked);
+      }
     },
     [onError, onPicked],
   );
@@ -105,20 +128,32 @@ export default function MediaPickerSheet({
     [handleResponse, onClose, reportFailure],
   );
 
-  /** Launches the photo library for a photo or a video. */
+  /**
+   * Launches the photo library for one or more photos or videos.
+   *
+   * `selectionLimit` caps how many the library may return. The library treats 0
+   * as "unlimited", so a caller with no free slots is refused rather than allowed
+   * to pick without bound (KNOT-ADR-054).
+   */
   const runLibrary = useCallback(
     (kind: PickedMediaType, source: MediaSource): void => {
+      if (maxSelection < 1) {
+        onError?.(MEDIA_LIMIT_MESSAGE);
+        onClose();
+        return;
+      }
+
       void launchImageLibrary({
         mediaType: kind === 'video' ? 'video' : 'photo',
         quality: 0.8,
         videoQuality: 'high',
-        selectionLimit: 1,
+        selectionLimit: maxSelection,
       })
         .then((response) => handleResponse(response, kind, source))
         .catch(reportFailure)
         .finally(onClose);
     },
-    [handleResponse, onClose, reportFailure],
+    [handleResponse, maxSelection, onClose, onError, reportFailure],
   );
 
   return (
