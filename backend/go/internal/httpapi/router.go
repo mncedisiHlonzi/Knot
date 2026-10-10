@@ -146,6 +146,8 @@ func (r *Router) Handler() http.Handler {
 	// Reactions: the four perspective signals, per entity kind. Toggling requires
 	// an access token; listing is public. The path names the entity kind, so each
 	// toggle resolves its target through that domain's own service (KNOT-ADR-050).
+	// Comments are read-only here: POST /comments/{id}/reactions answers 400
+	// (KNOT-ADR-053), while its GET stays available for auditing existing rows.
 	mux.HandleFunc("POST /stories/{id}/reactions", r.authMiddleware.Require(r.reactions.ToggleStory))
 	mux.HandleFunc("GET /stories/{id}/reactions", r.reactions.ListStory)
 	mux.HandleFunc("POST /versions/{id}/reactions", r.authMiddleware.Require(r.reactions.ToggleVersion))

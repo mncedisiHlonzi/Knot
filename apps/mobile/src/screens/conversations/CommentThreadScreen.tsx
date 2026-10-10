@@ -21,8 +21,6 @@ import {
 import { versionsApi } from '../../api/versions';
 import AuthorLine from '../../components/AuthorLine';
 import LanguagePicker from '../../components/LanguagePicker';
-import ReactionBar from '../../components/ReactionBar';
-import { EMPTY_REACTION_COUNTS } from '../../api/reactions';
 import { isLanguageCode, languageName } from '../../data/languages';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
 import {
@@ -351,23 +349,6 @@ export default function CommentThreadScreen({
                 />
               </View>
               <Text style={styles.body}>{item.body}</Text>
-              {/* Reactions are top-level only: a reply has no bar (KNOT-ADR-052). */}
-              <ReactionBar
-                entityType="comment"
-                entityId={item.id}
-                counts={item.reactions ?? EMPTY_REACTION_COUNTS}
-                myReactions={item.my_reactions ?? []}
-                token={token}
-                onChange={(counts, mine) =>
-                  setComments((previous) =>
-                    previous.map((comment) =>
-                      comment.id === item.id
-                        ? { ...comment, reactions: counts, my_reactions: mine }
-                        : comment,
-                    ),
-                  )
-                }
-              />
               {linkLabel !== null ? (
                 <Pressable
                   style={styles.repliesLink}

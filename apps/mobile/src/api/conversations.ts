@@ -42,14 +42,6 @@ export type Comment = {
    * server attaches it to the comment list and create responses.
    */
   readonly author_rooted?: AuthorRooted | null;
-  /**
-   * The counts of each perspective signal on the comment (KNOT-ADR-051). A reply
-   * carries the field too, but the client renders no bar for a reply: reactions
-   * are top-level only (KNOT-ADR-052).
-   */
-  readonly reactions?: ReactionCounts;
-  /** The signals the signed-in reader holds, as reaction-type strings. */
-  readonly my_reactions?: readonly string[];
 };
 
 /** The request body for POST /versions/{id}/comments. */

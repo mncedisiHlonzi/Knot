@@ -226,7 +226,7 @@ func TestPostgresStoreSummariesAggregatePerTypeAndBatchAcrossEntities(t *testing
 		{UserID: env.userID, EntityType: EntityStory, EntityID: itEntityA, ReactionType: AddsSomethingNew},
 		{UserID: env.userID, EntityType: EntityStory, EntityID: itEntityB, ReactionType: NeedsASource},
 		// A reaction of a different entity type must not leak into the summary.
-		{UserID: env.userID, EntityType: EntityComment, EntityID: itEntityA, ReactionType: NeedsASource},
+		{UserID: env.userID, EntityType: EntityVersion, EntityID: itEntityA, ReactionType: NeedsASource},
 	} {
 		if _, err := env.store.Toggle(ctx, reaction); err != nil {
 			t.Fatalf("Toggle(%+v) error = %v, want nil", reaction, err)

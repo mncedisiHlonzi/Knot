@@ -383,12 +383,18 @@ never fans out into a query per row. The public content reads are wrapped in
 yields `[]`: the routes stay public (KNOT-ADR-051). `notifications` gained a nullable
 `reaction_type` column so an inbox row can name the signal.
 
+**Comments are read-only for reactions.** `POST /comments/{id}/reactions` answers **400**
+`validation_error` ("reactions are not supported on comments") and writes nothing, because the
+comment thread already carries a replies link, Reply, and Bridge and a bar overloaded it
+(KNOT-ADR-053). `GET /comments/{id}/reactions` still answers, and comment responses still carry
+`reactions` and `my_reactions`, so the existing rows stay readable and auditable; the mobile
+`Comment` type simply no longer declares those fields because nothing renders them.
+
 **Mobile.** `src/api/reactions.ts` wraps the eight routes and owns the emoji and labels;
 `src/components/ReactionBar.tsx` renders the four chips, toggles optimistically, reverts on
 error, and invites a signed-out reader to sign in. It is applied to the story detail (below the
-body), each version row in the language tree (compact: emoji and count only), and each
-**top-level** comment in the thread (below the body, above the Replies link and the
-Reply/Bridge row). Replies have no bar. The inbox renders `reaction.created` as
+body) and each version row in the language tree (compact: emoji and count only). It is **not**
+applied to comments (KNOT-ADR-053) or to replies. The inbox renders `reaction.created` as
 "{actor} ✅ Rings true on your comment." and opens the target — a story, version, comment, or
 bridge — through the existing tap-through routing.
 

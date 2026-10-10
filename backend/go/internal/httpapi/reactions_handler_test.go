@@ -286,25 +286,41 @@ func TestToggleReactionUnknownEntityIsNotFound(t *testing.T) {
 	}
 }
 
-func TestToggleReactionOnReplyIsRejected(t *testing.T) {
+func TestToggleCommentReactionIsRejected(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	service := &fakeReactionsService{}
 	parent := testReactionEntityID
-	conversationsService := &fakeConversationsService{getCommentResult: conversations.Comment{
-		ID:              testReactionCommentID,
-		AuthorID:        testReactionAuthorID,
-		ParentCommentID: &parent,
-	}}
 
-	handler := newTestReactionsHandler(t, logger, service, nil, nil, conversationsService, nil)
-
-	recorder := doReactionRequest(handler.ToggleComment, http.MethodPost, "/comments/x/reactions", testReactionCommentID, testReactionUserID, `{"reaction_type":"rings_true"}`)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	tests := []struct {
+		name    string
+		comment conversations.Comment
+	}{
+		{name: "top-level comment", comment: conversations.Comment{ID: testReactionCommentID, AuthorID: testReactionAuthorID}},
+		{name: "reply", comment: conversations.Comment{ID: testReactionCommentID, AuthorID: testReactionAuthorID, ParentCommentID: &parent}},
 	}
-	if service.toggleCalls != 0 {
-		t.Errorf("toggle calls = %d, want 0: a reply cannot be reacted to", service.toggleCalls)
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			service := &fakeReactionsService{}
+			conversationsService := &fakeConversationsService{getCommentResult: test.comment}
+			handler := newTestReactionsHandler(t, logger, service, nil, nil, conversationsService, nil)
+
+			recorder := doReactionRequest(handler.ToggleComment, http.MethodPost, "/comments/x/reactions", testReactionCommentID, testReactionUserID, `{"reaction_type":"rings_true"}`)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+			}
+			if code := decodedErrorCode(t, recorder); code != codeValidation {
+				t.Errorf("error code = %q, want %q", code, codeValidation)
+			}
+			if !strings.Contains(recorder.Body.String(), "reactions are not supported on comments") {
+				t.Errorf("body = %s, want the unsupported-on-comments message", recorder.Body.String())
+			}
+			// The rejection is unconditional: no signal is written and the entity is
+			// never even resolved.
+			if service.toggleCalls != 0 {
+				t.Errorf("toggle calls = %d, want 0: comments cannot be reacted to", service.toggleCalls)
+			}
+		})
 	}
 }
 
@@ -316,26 +332,6 @@ func TestToggleReactionUnauthenticatedIsUnauthorized(t *testing.T) {
 
 	if recorder.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
-	}
-}
-
-func TestToggleCommentReactionUsesCommentEntity(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	service := &fakeReactionsService{active: true}
-	conversationsService := &fakeConversationsService{getCommentResult: conversations.Comment{
-		ID:       testReactionCommentID,
-		AuthorID: testReactionAuthorID,
-	}}
-
-	handler := newTestReactionsHandler(t, logger, service, nil, nil, conversationsService, nil)
-
-	recorder := doReactionRequest(handler.ToggleComment, http.MethodPost, "/comments/x/reactions", testReactionCommentID, testReactionUserID, `{"reaction_type":"needs_a_source"}`)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
-	}
-	if service.gotToggle.EntityType != reactions.EntityComment {
-		t.Errorf("entity type = %q, want comment", service.gotToggle.EntityType)
 	}
 }
 

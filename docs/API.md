@@ -1292,10 +1292,10 @@ failed (KNOT-ADR-038).
 
 ## Reactions
 
-The four **perspective signals** a reader can leave on a story, a version, a comment, or a
-bridge (KNOT-ADR-050). They are not likes: the four do not compete, a reader may hold any
-combination of them on the same entity, and none of them cancels another. Nothing sorts or
-ranks content by them.
+The four **perspective signals** a reader can leave on a story, a version, or a bridge
+(KNOT-ADR-050; comments are read-only, KNOT-ADR-053). They are not likes: the four do not
+compete, a reader may hold any combination of them on the same entity, and none of them cancels
+another. Nothing sorts or ranks content by them.
 
 | `reaction_type`        | Meaning                     | Emoji |
 | ---------------------- | --------------------------- | ----- |
@@ -1330,12 +1330,17 @@ Returns **200** with the entity's updated counts:
 
 - `POST /stories/{id}/reactions`
 - `POST /versions/{id}/reactions`
-- `POST /comments/{id}/reactions`
 - `POST /bridges/{id}/reactions`
 
-Errors: **400** `validation_error` for an unknown `reaction_type`, or for a reaction on a
-**reply** (reactions are top-level only, KNOT-ADR-052); **401** `unauthorized`; **404**
-`not_found` when the entity does not exist.
+**Not supported on comments.** `POST /comments/{id}/reactions` always answers **400**
+`validation_error` with `"reactions are not supported on comments"`, and writes nothing
+(KNOT-ADR-053). The route stays registered so the answer is an explicit 400 rather than a 404,
+which tells a client the operation is not supported instead of that the route does not exist. A
+comment's existing reaction rows are kept — it is not a migration — and the GET below still
+returns them.
+
+Errors: **400** `validation_error` for an unknown `reaction_type`, or for any comment (see
+above); **401** `unauthorized`; **404** `not_found` when the entity does not exist.
 
 ### GET /{entity}/{id}/reactions
 
@@ -1359,6 +1364,10 @@ Returns **200** with every reaction on the entity, newest first, each reactor re
 - `GET /versions/{id}/reactions`
 - `GET /comments/{id}/reactions`
 - `GET /bridges/{id}/reactions`
+
+`GET /comments/{id}/reactions` remains available even though a comment reaction can no longer
+be created: it is a read-only view of the rows that already exist, which is useful for an audit
+and harmless to serve (KNOT-ADR-053).
 
 ## Tokens
 

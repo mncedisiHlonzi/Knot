@@ -1496,3 +1496,76 @@ rather than a schema constraint. The comment toggle's guard means a reaction on 
 `400` rather than a silent no-op, so a client that tries it learns why instead of seeing a count
 that never appears.
 
+---
+
+## KNOT-ADR-053 — Reactions are not supported on comments
+
+**Decision ID:** KNOT-ADR-053
+**Date:** 2026-10-10
+**Status:** Accepted. Supersedes KNOT-ADR-052 (which allowed reactions on top-level comments).
+
+**Context:** KNOT-015f shipped the four perspective reactions on stories, versions, comments,
+and bridges. On device the founder found the comment thread overloaded: a comment already
+carries a language badge, an author line with a relative time, a replies link, a Reply action,
+and a Bridge action, and four more chips made the thread hard to scan and pushed the
+conversation itself down the screen. Reactions exist to be a light signal on a piece of content;
+on a thread that is already dense they are heavy. Stories, versions, and bridges do not carry
+those extra actions, so the bar reads well there.
+
+**Decision:**
+- The mobile comment thread renders **no reaction bar** — not on a top-level comment and not on
+  a reply.
+- `POST /comments/{id}/reactions` answers **400 `validation_error`** with
+  `"reactions are not supported on comments"`, and writes nothing. The rejection happens in the
+  handler, before the entity is resolved and before the reactions service is called, so no code
+  path can create a comment reaction.
+- The route stays **registered** rather than removed: an explicit 400 tells a client the
+  operation is unsupported, where a 404 would say the route does not exist.
+- `GET /comments/{id}/reactions` **stays functional**. It is read-only, it does no harm, and it
+  keeps the existing rows auditable.
+- **No migration and no deletion.** Comment reaction rows that already exist are kept as
+  harmless data; the table is unchanged, and the reactions service remains generic (it still
+  accepts a comment entity type — the product policy lives at the HTTP layer, where the entity
+  kind is known).
+- Comment responses still carry `reactions` and `my_reactions` (KNOT-ADR-051): the fields stay
+  in the API for other clients, and the mobile `Comment` type drops them only because nothing
+  renders them.
+- **No `reaction.created` notification** can be produced for a comment any more:
+  `NotifyReactionCreated` is called only from the shared toggle, which the comment route no
+  longer reaches.
+- Reactions continue unchanged on **stories, versions, and bridges**.
+
+**Alternatives Considered:**
+1. **Keeping the bar on top-level comments only (KNOT-ADR-052)** — rejected. It is what on-device
+   review found too heavy, and the thread already signals at the comment level through Reply and
+   Bridge.
+2. **A smaller or collapsed reaction control on comments** — rejected for this task. It is UI
+   polish (KNOT-020); the product decision is that the thread does not carry reactions, and a
+   smaller control still adds a fourth affordance to a dense row.
+3. **Removing the toggle route entirely (a 404 for comments)** — rejected. A missing route and an
+   unsupported operation are different answers, and a client that tries should be told which one
+   it hit.
+4. **Also blocking `GET /comments/{id}/reactions`** — rejected. The read is harmless, and it keeps
+   the rows that already exist reachable for an audit.
+5. **Deleting the existing comment reactions in a migration** — rejected. It is irreversible data
+   loss for a product-policy change, and the rows cost nothing to keep.
+6. **Blocking comments in the reactions service as well as the handler** — rejected. The service
+   is a generic store of signals keyed by entity type; the policy about which entities a product
+   surface supports belongs where the entity kind is chosen. Making the domain reject one entity
+   type would spread product policy into the layer that deliberately has none.
+
+**Reason:** The comment thread is the app's densest surface and it already carries its own
+actions, so a reaction bar there costs more legibility than the signal is worth. Refusing the
+write at the API keeps stored state aligned with what the product renders, while keeping the read
+and the existing rows preserves the history.
+
+**Consequences:** A reader cannot signal a perspective on a single comment; they can reply,
+bridge, or react to the version the comment sits on. Existing comment reactions remain in the
+database and remain readable through `GET /comments/{id}/reactions` and the `reactions` field on
+comment responses, so the two disagree for a comment whose rows predate this decision — a
+disclosed inconsistency, reversed by removing the block rather than by a migration. The
+reactions domain still accepts a comment entity type, so a future writer that bypasses the
+handler could create one; the block is at the HTTP layer by design, and the smoke test covers
+the handler. If engagement data shows the gap matters, the change is small and reversible:
+re-point the comment toggle at `toggle` and re-render the bar.
+

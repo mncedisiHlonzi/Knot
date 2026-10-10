@@ -38,11 +38,6 @@ type ReactionsNotifier interface {
 // needs a polymorphic existence check (KNOT-ADR-050).
 type authorResolver func(ctx context.Context, id string) (string, error)
 
-// errReactionOnReply refuses a reaction on a reply. Reactions are a top-level
-// signal: a reply is answered in its own thread, and the thread as a whole is
-// covered by the reactions on its top-level comments (KNOT-ADR-052).
-var errReactionOnReply = errors.New("httpapi: reactions are not supported on replies")
-
 // ReactionsHandler serves the per-entity reaction endpoints.
 //
 // There is one toggle and one list route per entity kind rather than a single
@@ -134,8 +129,15 @@ func (h *ReactionsHandler) ToggleVersion(w http.ResponseWriter, r *http.Request)
 }
 
 // ToggleComment handles POST /comments/{id}/reactions.
+//
+// Reactions are not supported on comments (KNOT-ADR-053): the comment thread
+// already carries a replies link, Reply, and Bridge, and four more chips overload
+// it. The route stays registered so the answer is an explicit 400 rather than a
+// 404, which tells a client the operation is not supported instead of that the
+// route does not exist. The rejection happens before anything is written, and a
+// comment's existing reaction rows are left untouched.
 func (h *ReactionsHandler) ToggleComment(w http.ResponseWriter, r *http.Request) {
-	h.toggle(w, r, reactions.EntityComment, h.commentAuthor)
+	writeError(w, http.StatusBadRequest, codeValidation, "reactions are not supported on comments")
 }
 
 // ToggleBridge handles POST /bridges/{id}/reactions.
@@ -246,8 +248,8 @@ func (h *ReactionsHandler) list(w http.ResponseWriter, r *http.Request, entityTy
 	writeJSON(w, http.StatusOK, reactionListResponse{Reactions: out})
 }
 
-// storyAuthor, versionAuthor, commentAuthor, and bridgeAuthor resolve an entity's
-// author through that entity's own service.
+// storyAuthor, versionAuthor, and bridgeAuthor resolve an entity's author through
+// that entity's own service.
 func (h *ReactionsHandler) storyAuthor(ctx context.Context, id string) (string, error) {
 	story, err := h.stories.GetStory(ctx, id)
 	if err != nil {
@@ -264,17 +266,6 @@ func (h *ReactionsHandler) versionAuthor(ctx context.Context, id string) (string
 	return version.AuthorID, nil
 }
 
-func (h *ReactionsHandler) commentAuthor(ctx context.Context, id string) (string, error) {
-	comment, err := h.conversations.GetComment(ctx, id)
-	if err != nil {
-		return "", err
-	}
-	if comment.ParentCommentID != nil {
-		return "", errReactionOnReply
-	}
-	return comment.AuthorID, nil
-}
-
 func (h *ReactionsHandler) bridgeAuthor(ctx context.Context, id string) (string, error) {
 	bridge, err := h.conversations.GetBridge(ctx, id)
 	if err != nil {
@@ -283,12 +274,10 @@ func (h *ReactionsHandler) bridgeAuthor(ctx context.Context, id string) (string,
 	return bridge.AuthorID, nil
 }
 
-// writeResolveError maps a failed entity resolution onto a status: a reply is a
-// 400, a missing entity is a type-named 404, and anything else is a 500.
+// writeResolveError maps a failed entity resolution onto a status: a missing
+// entity is a type-named 404, and anything else is a 500.
 func (h *ReactionsHandler) writeResolveError(w http.ResponseWriter, r *http.Request, err error, entityType reactions.EntityType) {
 	switch {
-	case errors.Is(err, errReactionOnReply):
-		writeError(w, http.StatusBadRequest, codeValidation, "replies cannot be reacted to; react to the thread instead")
 	case isDomainNotFound(err):
 		writeError(w, http.StatusNotFound, codeNotFound, notFoundMessage(entityType))
 	default:
