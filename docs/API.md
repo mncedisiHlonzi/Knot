@@ -1376,6 +1376,206 @@ Returns **200** with every reaction on the entity, newest first, each reactor re
 be created: it is a read-only view of the rows that already exist, which is useful for an audit
 and harmless to serve (KNOT-ADR-053).
 
+## Curious Inquiries
+
+A question someone asks about a place, and the public answers to it.
+
+Three rules shape every response in this section (KNOT-ADR-055):
+
+- **everything is public and attributed.** There is no anonymous inquiry and no anonymous
+  answer, so an inquiry always names its asker and an answer always names its answerer.
+- **an inquiry stays open forever.** There is no accepted answer, no closing, and no ranking,
+  because knowledge of a place is plural and an early answer is not the final word.
+- **nothing is editable or deletable.** There is no update or delete route in this section.
+
+Naming a place is what makes an inquiry more than a post: it routes the question to the first
+few people Rooted in that place (KNOT-ADR-056). Leaving the place out is allowed; the question
+is still public, it is simply not announced to anyone.
+
+| Method | Path                      | Auth      |
+| ------ | ------------------------- | --------- |
+| POST   | `/inquiries`              | Protected |
+| GET    | `/inquiries`              | Public (optional auth) |
+| GET    | `/inquiries/{id}`         | Public (optional auth) |
+| POST   | `/inquiries/{id}/answers` | Protected |
+| GET    | `/inquiries/{id}/answers` | Public (optional auth) |
+| GET    | `/answers/{id}`           | Public (optional auth) |
+
+The two public reads use optional authentication: a request carrying a valid access token also
+receives the caller's own reaction highlights, and a request with no token (or a bad one) is
+served anonymously rather than refused (KNOT-ADR-051).
+
+### The inquiry object
+
+```json
+{
+  "id": "d3f1c8a2-5b64-4e19-9f0a-7c2b8e4d1a35",
+  "author_id": "22222222-2222-4222-8222-222222222222",
+  "title": "Why do the cattle come home at the same hour?",
+  "body": "Every evening, without anyone calling them.",
+  "language": "eng",
+  "place": "Manguzi",
+  "place_country": "South Africa",
+  "latitude": -26.9998,
+  "longitude": 32.7489,
+  "answer_count": 3,
+  "created_at": "2026-10-10T09:00:00Z",
+  "updated_at": "2026-10-10T09:00:00Z",
+  "author_display_name": "Ada Lovelace",
+  "author_avatar_url": "/users/22222222-2222-4222-8222-222222222222/avatar?v=ada.png",
+  "author_rooted": { "place": "Manguzi", "duration_bucket": "lifelong" },
+  "reactions": {
+    "rings_true": 2,
+    "know_it_differently": 0,
+    "adds_something_new": 1,
+    "needs_a_source": 0
+  },
+  "my_reactions": ["rings_true"]
+}
+```
+
+- `place` is null when the question names no place, and `place_country`, `latitude`, and
+  `longitude` are null together when the location picker was not used (KNOT-ADR-034).
+- `answer_count` is maintained by the server inside the same transaction that inserts an
+  answer, so it is never stale for a committed answer.
+- `author_rooted` and the attribution fields follow every other content response
+  (KNOT-ADR-017, KNOT-ADR-041). `my_reactions` is `[]` for an anonymous reader.
+- `reactions` is present because an inquiry is content someone authored and others weigh in on;
+  `adds_something_new` and `needs_a_source` are how someone comments on a question without
+  answering it (KNOT-ADR-057).
+
+### The answer object
+
+```json
+{
+  "id": "8b2a4f31-6c07-4a5d-b1e9-3f8c2d7a6b40",
+  "inquiry_id": "d3f1c8a2-5b64-4e19-9f0a-7c2b8e4d1a35",
+  "author_id": "55555555-5555-4555-8555-555555555555",
+  "language": "eng",
+  "body": "They follow the river, and the river has a tide.",
+  "created_at": "2026-10-10T11:30:00Z",
+  "updated_at": "2026-10-10T11:30:00Z",
+  "author_display_name": "Grace Hopper",
+  "author_avatar_url": null,
+  "author_rooted": null
+}
+```
+
+An answer carries **no** `reactions`: an answer is a reply, and replies carry no reactions at
+MVP (KNOT-ADR-052). It is the one difference from the inquiry object's shape.
+
+### POST /inquiries
+
+Asks a question. **Protected.** Returns **201**.
+
+The asker is taken from the access token, never the body — there is no `author_id` field and no
+anonymity flag, so a client cannot ask as somebody else.
+
+```json
+{
+  "title": "Why do the cattle come home at the same hour?",
+  "body": "Every evening, without anyone calling them.",
+  "language": "eng",
+  "place": "Manguzi",
+  "latitude": -26.9998,
+  "longitude": 32.7489,
+  "place_country": "South Africa"
+}
+```
+
+| Field | Required | Rule |
+| --- | --- | --- |
+| `title` | Yes | 1–200 characters after trimming |
+| `body` | Yes | 1–5,000 characters after trimming |
+| `language` | Yes | A valid ISO 639-3 code (KNOT-ADR-046) |
+| `place` | No | 1–100 characters after trimming, on one line with no tabs |
+| `latitude` / `longitude` | No | Supplied together or not at all; −90..90 and −180..180 |
+| `place_country` | No | At most 100 characters after trimming |
+
+A bad field is **400** `validation_error`, rendered as `"<field> <message>"`.
+
+**Routing.** When `place` is present, the question is announced to the first 5 users whose
+primary **public** Rooted signal is for that place, earliest declarer first
+(`inquiry.nearby`). The asker is never notified of their own question. Routing happens after
+the inquiry is committed and never fails the request: a Rooted lookup that is unavailable, or a
+notification that cannot be written, is logged and swallowed. A place-less inquiry is stored and
+routed nowhere.
+
+### GET /inquiries
+
+One page of open inquiries, **newest first**. **Public.**
+
+| Query | Default | Notes |
+| --- | --- | --- |
+| `place` | absent | Exact match on the stored spelling. Absent means every place, including questions that name none. |
+| `limit` | 20 | Clamped to 50. Not a positive integer is a 400. |
+| `cursor` | absent | The `next_cursor` from the previous page. |
+
+```json
+{ "inquiries": [ /* inquiry objects */ ], "next_cursor": "MjAyNi0xMC0xMFQwOTowMDowMFo|d3f1c8a2-…" }
+```
+
+`next_cursor` is `""` on the last page.
+
+### GET /inquiries/{id}
+
+One inquiry. **Public.** An unknown id is **404** `not_found`.
+
+### POST /inquiries/{id}/answers
+
+Answers a question. **Protected.** Returns **201**.
+
+```json
+{ "body": "They follow the river.", "language": "eng" }
+```
+
+`body` is 1–5,000 characters after trimming and `language` must be a valid ISO 639-3 code.
+
+The answerer is taken from the access token. The answer is committed with the inquiry's
+`answer_count` increment in one transaction, under a row lock on the inquiry, so two answers
+arriving at once cannot write the same count. The asker is then notified with
+`inquiry.answered`; answering your own question never notifies you (KNOT-ADR-038).
+
+An unknown inquiry is **404**; an unknown author is **404**.
+
+### GET /inquiries/{id}/answers
+
+One page of a question's answers, **oldest first**, so the thread reads as a conversation.
+**Public.** `limit` defaults to 50 and is clamped to 100; `cursor` behaves as above.
+
+An unknown inquiry is **404** rather than an empty thread, so a client can tell "no such
+question" from "nobody has answered yet".
+
+```json
+{ "answers": [ /* answer objects */ ], "next_cursor": "" }
+```
+
+### GET /answers/{id}
+
+One answer. **Public.** The top-level path matches how a single comment (`GET /comments/{id}`)
+and a single bridge (`GET /bridges/{id}`) are already fetched. An unknown id is **404**.
+
+### Reactions on an inquiry
+
+`POST /inquiries/{id}/reactions` and `GET /inquiries/{id}/reactions` follow the per-entity
+reaction routes exactly (`POST /{entity}/{id}/reactions`), with a body of
+`{"reaction_type": "rings_true"}`. Reactions are **not** supported on answers.
+
+### Notification events
+
+Two events are added to the inbox by this feature. Both name an inquiry, so a tap opens the
+question in either case.
+
+| Event | Recipient | Fires when |
+| --- | --- | --- |
+| `inquiry.answered` | The asker | Someone else answers their question |
+| `inquiry.nearby` | A user Rooted in the named place | Someone asks a question about that place |
+
+`inquiry.nearby` is the only event a recipient can receive about content they have no part in:
+it fires because of where they are from, not because of anything they authored. At most 5
+recipients are notified per inquiry; everyone else reaches the question through the public list
+(KNOT-ADR-056).
+
 ## Tokens
 
 Two HS256 JWTs are issued. Both are signed with `KNOT_JWT_SECRET`.

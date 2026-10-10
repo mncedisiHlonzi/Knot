@@ -1,11 +1,12 @@
 // Package profile implements the Knot profile wall: one user's public activity
-// stream, merged from the four things a person can author — stories, versions
-// (adaptations), comments, and bridges — into one chronological, cursor-paginated
-// page.
+// stream, merged from the six things a person can author — stories, versions
+// (adaptations), comments, bridges, inquiries, and answers to inquiries — into one
+// chronological, cursor-paginated page.
 //
-// It is a read model over four domains rather than a domain of its own: it stores
-// nothing and writes nothing. It imports identity only to resolve the wall's
-// owner, and it never exposes private state — the wall is public (KNOT-ADR-042).
+// It is a read model over the content domains rather than a domain of its own: it
+// stores nothing and writes nothing. It imports identity only to resolve the
+// wall's owner, and it never exposes private state — the wall is public
+// (KNOT-ADR-042).
 //
 // Nothing in this package knows about HTTP, JSON wire framing, or SQL types. Ids
 // are plain strings holding canonical UUID text (KNOT-ADR-010).
@@ -73,10 +74,10 @@ const (
 )
 
 // Kind is the type of one activity on a wall. The set is closed: the store only
-// produces these four values.
+// produces these six values.
 type Kind string
 
-// The four activity kinds.
+// The six activity kinds.
 const (
 	// KindStory is a story the user published (its root version).
 	KindStory Kind = "story"
@@ -86,21 +87,29 @@ const (
 	KindComment Kind = "comment"
 	// KindBridge is a bridge the user made from another person's comment.
 	KindBridge Kind = "bridge"
+	// KindInquiry is a question the user asked about a place (KNOT-ADR-057).
+	KindInquiry Kind = "inquiry"
+	// KindInquiryAnswer is an answer the user gave to someone else's question
+	// (KNOT-ADR-057).
+	KindInquiryAnswer Kind = "inquiry_answer"
 )
 
 // Payload is the kind-specific detail of an activity. Only the fields that belong
 // to the activity's Kind are populated; the JSON tags carry `omitempty` so the
 // wire form is exactly the subset a client needs for that kind:
 //
-//	story    { title, pillar, language }
-//	version  { story_id, story_title, language }
-//	comment  { version_id, story_id, body_preview }
-//	bridge   { source_comment_id, version_id, target_language }
+//	story          { title, pillar, language }
+//	version        { story_id, story_title, language }
+//	comment        { version_id, story_id, body_preview }
+//	bridge         { source_comment_id, version_id, target_language }
+//	inquiry        { title, place }
+//	inquiry_answer { inquiry_id, inquiry_title, body_preview }
 //
 // The payload is context, not authorship: everything in it is already public on
 // the entity it names (KNOT-ADR-042).
 type Payload struct {
-	// Title is the story's title. Set for KindStory.
+	// Title is the story's title, or the inquiry's title. Set for KindStory and
+	// KindInquiry.
 	Title string `json:"title,omitempty"`
 	// Pillar is the story's pillar (wonder or heritage). Set for KindStory.
 	Pillar string `json:"pillar,omitempty"`
@@ -118,14 +127,27 @@ type Payload struct {
 	// VersionID is the version the activity points at. Set for KindComment (the
 	// commented version) and KindBridge (the source comment's version).
 	VersionID string `json:"version_id,omitempty"`
-	// BodyPreview is the first MaxBodyPreviewChars characters of a comment. Set for
-	// KindComment.
+	// BodyPreview is the first MaxBodyPreviewChars characters of a comment or an
+	// answer. Set for KindComment and KindInquiryAnswer.
 	BodyPreview string `json:"body_preview,omitempty"`
 
 	// SourceCommentID is the comment a bridge was made from. Set for KindBridge.
 	SourceCommentID string `json:"source_comment_id,omitempty"`
 	// TargetLanguage is the language a bridge was made into. Set for KindBridge.
 	TargetLanguage string `json:"target_language,omitempty"`
+
+	// Place is the place an inquiry is about, at the precision the asker gave. Set
+	// for KindInquiry, and empty for an inquiry that names no place.
+	//
+	// A JSON null from the database (a place-less inquiry) unmarshals to the empty
+	// string, which `omitempty` then drops: an inquiry with no place carries no
+	// place field at all, rather than an explicit null.
+	Place string `json:"place,omitempty"`
+	// InquiryID is the inquiry an answer belongs to. Set for KindInquiryAnswer.
+	InquiryID string `json:"inquiry_id,omitempty"`
+	// InquiryTitle is the title of the inquiry an answer belongs to, so an answer
+	// card can name the question it answers. Set for KindInquiryAnswer.
+	InquiryTitle string `json:"inquiry_title,omitempty"`
 }
 
 // Activity is one entry on a profile wall: what the user did, when, and the
@@ -133,7 +155,8 @@ type Payload struct {
 type Activity struct {
 	// Kind is what the user did.
 	Kind Kind
-	// ID is the id of the thing itself — a story, version, comment, or bridge.
+	// ID is the id of the thing itself — a story, version, comment, bridge,
+	// inquiry, or inquiry answer.
 	ID string
 	// CreatedAt is when it was authored. It is the wall's primary sort key.
 	CreatedAt time.Time

@@ -1637,3 +1637,205 @@ uploaded object (best-effort, and already the behaviour of any failed insert). T
 can drift from the server's if the constant changes in one place, so a unit test asserts the
 message agrees with `MaxMediaPerStory` and the API documents the number.
 
+
+## KNOT-ADR-055 — An inquiry is public, attributed, and permanently open
+
+**Decision ID:** KNOT-ADR-055
+**Date:** 2026-10-10
+**Status:** Accepted
+
+**Context:** KNOT-016 introduces Curious Inquiries: a question about a place, answered by the
+people who know it. Three properties had to be chosen before anything else, because every
+screen and endpoint depends on them: who may see a question, who is named as having asked it,
+and when a question is finished.
+
+The obvious answers were each wrong for this product. Private questions would be a help desk and
+would empty the public feed. Anonymous questions would make a place's knowledge unusable, because
+the value of an answer here is inseparable from who is answering and where they are from. An
+accepted answer — a checkmark, a ranking, a "solved" state — would make the first answer the
+final word, and a place's knowledge is plural: an elder, a child, and a visitor can each be right
+in different ways.
+
+**Decision:**
+- **Every inquiry and every answer is public.** There is no visibility flag, no draft, and no
+  private mode. `GET /inquiries` is a public read.
+- **Every inquiry and every answer is attributed.** `author_id` is NOT NULL on both tables, the
+  asker and answerer are taken from the access token rather than the body, and every response
+  carries the author's display name, avatar, and inline Rooted summary. There is no anonymity
+  flag to add later without a schema change, which is deliberate: adding anonymity is a product
+  decision, not a client option.
+- **An inquiry is never closed.** There is no accepted answer, no solved state, no ranking, no
+  editing, no deletion, and no closing operation. `answer_count` is the only state a question
+  carries, and it only grows.
+- **The neutral ordering is chronological.** The inquiry list is newest first so a new question is
+  findable; an answer thread is oldest first so it reads as a conversation.
+- **Unbounded answers.** There is no cap on answers per inquiry. A cap would be a ranking in
+  disguise.
+
+**Consequences:**
+- A question cannot be retracted or corrected, and an answer cannot be withdrawn. That is the
+  cost of attribution as a first-class property, and it is accepted at MVP; an edit or delete
+  would need its own decision about what the record means.
+- Because nothing closes, the list grows without a natural pruning signal. Reach is handled by
+  routing and by the place filter, not by closing (KNOT-ADR-056).
+- A reader cannot tell a well-answered question from an unanswered one except by
+  `answer_count`, and no client may present one answer as authoritative. The absence of an
+  accepted-answer mechanic is a guarantee, not a gap to fill in the UI.
+
+---
+
+## KNOT-ADR-056 — A new inquiry routes to the first five Rooted users of its place
+
+**Decision ID:** KNOT-ADR-056
+**Date:** 2026-10-10
+**Status:** Accepted
+
+**Context:** An inquiry is only useful if the people who could answer it ever see it. A purely
+passive list would leave a question about a small place unanswered because nobody from that place
+happened to open the app, and the question that most needs answering is exactly the one about a
+place with few readers.
+
+Knot already holds the signal that solves this: a Rooted signal is a user's self-declared
+connection to a place, and it is the trust layer the whole product is built on. A question about
+a place can therefore be addressed to the people who are from there, without inventing a new
+subscription model.
+
+The alternative — broadcast to everyone — is worse than useless. It would turn every new question
+into a notification event for the whole user base, which is a spam vector and would make the
+inbox untrustworthy for the events that genuinely are about a user's own content.
+
+**Decision:**
+- When an inquiry names a place, it is routed to the **first 5 users** whose **primary** and
+  **public** Rooted signal is for that place, earliest declarer first. The list is read with a
+  new store method, `RootedUserIDsByPlace(ctx, place, limit)`, exposed through the Rooted service
+  because Rooted owns `rooted_signals`.
+- The recipients receive `inquiry.nearby`, which names the inquiry. At most `NearbyRecipientLimit`
+  (5) notifications are written per inquiry, one per recipient.
+- **Only public signals route.** A hidden signal is one its owner chose not to be findable by;
+  routing an unknown person's question to them would breach that choice. Non-primary signals do
+  not route either, because a person's active place is their primary one.
+- **The asker is never notified of their own question**, even when they are themselves Rooted in
+  the place they asked about — which is ordinary, since you ask about places you know. The
+  `notifications` domain would refuse the row anyway (KNOT-ADR-038).
+- **Everyone else reaches the question through the public list**, optionally filtered by place.
+  Full broadcast is deferred, not rejected: if engagement data shows the first five are not
+  enough, the change is a larger limit or a second fan-out step, not a schema change.
+- **Routing is not transactional with the ask.** The inquiry is committed first and the
+  notifications are written afterwards, and a routing failure is logged and swallowed. A Rooted
+  lookup that is unavailable, or an inbox that cannot be written, must never turn a stored
+  question into a failed request — the same rule every other notification already follows.
+- The place match is **exact** on the stored spelling, which is why an inquiry's place obeys the
+  same no-tabs, single-line rule a Rooted signal's place does. A `rooted_signals_place_idx` index
+  is added in migration 0014, because every read until now was by user.
+
+**Consequences:**
+- A user can receive a notification about content they have no part in. It is the only such
+  event, and the inbox sentence says so plainly ("asked a question about your place") rather than
+  claiming the content is theirs.
+- Changing your primary Rooted signal silently changes which future questions you are told about.
+  That is intended: Rooted is a self-declared current connection, not a subscription.
+- The first five are chosen by declaration time, which is stable and explainable, but it means an
+  early declarer receives every question about a busy place. If that becomes the pattern, the
+  recipient rule — not the query — is what changes.
+- A place spelled differently from the Rooted signal ("Manguzi" vs "Manguzi, KZN") does not route.
+  The structured coordinate is stored but not used for matching at MVP; a proximity-based match is
+  a future decision.
+
+---
+
+## KNOT-ADR-057 — Inquiries and answers are wall content; only inquiries carry reactions
+
+**Decision ID:** KNOT-ADR-057
+**Date:** 2026-10-10
+**Status:** Accepted
+
+**Context:** KNOT-016 adds two new things a person can author — a question and an answer — and
+both are public acts attributed to their author. The profile wall (KNOT-ADR-042) is defined as
+"one user's public activity, merged from the things a person can author", so leaving inquiries out
+would make the wall lie about what its owner has done. Adding them was therefore not a choice.
+
+Reactions were a choice. KNOT-ADR-050 defines the four perspective signals, and
+KNOT-ADR-052/053 established that they are deliberately not supported on replies: a reply is
+already an answer to the content above it, and four more chips overload a dense thread.
+
+**Decision:**
+- The wall gains two kinds, `inquiry` and `inquiry_answer`, as two additional `UNION ALL`
+  branches against `inquiries` and `inquiry_answers`. `inquiry` carries `{title, place}` and
+  `inquiry_answer` carries `{inquiry_id, inquiry_title, body_preview}`; the answer's preview is
+  `left(body, 200)`, the same bound a comment preview uses, so a full body never travels through
+  the wall.
+- **No exclusion is needed** in either branch: asking a question and answering one are different
+  acts by different people, and an answer always belongs to someone else's inquiry, so the two
+  branches can never describe the same row.
+- **An inquiry carries reactions.** It is content someone authored, and two of the four signals —
+  `adds_something_new` and `needs_a_source` — are exactly how someone weighs in on a question
+  without answering it. The `reactions` table already keys on `(entity_type, entity_id)`, so the
+  only change is widening its closed entity-kind CHECK to admit `'inquiry'`.
+- **An answer does not carry reactions.** An answer is a reply, and replies carry no reactions at
+  MVP (KNOT-ADR-052). `'inquiry_answer'` is deliberately **not** added to the reactions entity set,
+  so a reaction on an answer cannot be written even by a mistake in a caller — the domain refuses
+  it as well as the database. This is the same position the comment routes took more firmly in
+  KNOT-ADR-053.
+- The inquiry's reactions and the reader's own signals travel on the enquiry responses and are
+  enriched by the same two batched queries per page the other content handlers use
+  (KNOT-ADR-051).
+
+**Consequences:**
+- The wall's `Kind` set and payload contract grow from four to six. A client that switches on
+  `kind` must handle both new values; an unknown kind is ignored rather than rendered.
+- A question and its answer appear on two different people's walls, which is correct: they are two
+  acts. Neither wall double-counts the other's act.
+- Reactions on inquiries and reactions on answers now differ, so the product has three positions:
+  content carries reactions (stories, versions, bridges, inquiries), replies do not (comments,
+  answers), and one case is blocked outright at the HTTP layer (comments, KNOT-ADR-053). That is
+  more nuanced than ideal, and it is documented rather than hidden.
+- Storing an inquiry's reactions needs no new table, so this decision costs no migration beyond
+  the CHECK widening.
+
+---
+
+## KNOT-ADR-058 — Inquiries is a fifth tab, and Ask lives inside it
+
+**Decision ID:** KNOT-ADR-058
+**Date:** 2026-10-10
+**Status:** Accepted
+
+**Context:** Curious Inquiries needed a home in a navigation model that has exactly four tabs
+(Home, Map, Create, Profile) and a hand-rolled overlay stack, with no navigation library
+(KNOT-ADR-019, KNOT-ADR-025).
+
+Two placements were considered. The first was to keep four tabs and put "Ask a question" beside
+"Create a story" under the Create tab, as a compose chooser. The second was to add a fifth tab for
+inquiries, with asking reached from inside it.
+
+The compose-chooser option is cheaper — no new tab, no new tab-bar layout — but it misfiles the
+feature. Create exists to *produce a story*: it is a long form with a pillar, media, and a place,
+and it is the only tab whose screen is a form rather than a destination. A question is not a
+story and asking is not composing. Burying it there would also hide the questions themselves,
+which are a place to browse, not a form to fill in.
+
+**Decision:**
+- **Inquiries is a fifth tab**, placed between Create and Profile. The tab bar is a plain row of
+  five buttons; no library is added and the layout needs no rework.
+- **The tab lists open questions** and is a destination, not a form. It carries an optional place
+  filter, so "questions about Manguzi" is reachable without leaving the tab.
+- **Ask Inquiry is reached from the Inquiries tab**, not from Create. Create stays a story
+  composer: `CreateStoryScreen` and both of its entry points are untouched by this feature.
+- **Asking and opening a question are overlays**, pushed over the tab bar like every other
+  secondary screen, so the bar is only ever rendered for a primary destination.
+- After a question is created, the ask screen **replaces itself** with the new question's detail
+  (`replaceOverlay`), so the person sees what the server stored rather than a form that has been
+  emptied — the same pattern adapting a story uses.
+
+**Consequences:**
+- Five tabs on a phone is the practical limit without labels colliding, so a sixth destination
+  would need a different navigation shape (a "more" sheet, or a header menu) rather than another
+  tab. Naming that limit now is the point of writing it down.
+- The bottom bar is now asymmetric with the app's four-verb language ("wonder, ask, answer,
+  bridge"): three tabs are story-shaped (Home, Create) and place-shaped (Map). That is acceptable —
+  the tab bar is a map of screens, not of vocabulary.
+- Because Ask is not on the Create tab, a user who thinks of creating as the way to contribute will
+  not discover asking there. Discovery relies on the tab's own label and on the empty-state copy
+  ("No questions yet. Ask the first one.").
+- The tab is rendered for a signed-out user too, where asking is refused by the server. The list
+  itself is public, so browsing questions does not require an account.

@@ -336,3 +336,120 @@ func TestNewPostgresStoreRejectsNilPool(t *testing.T) {
 		t.Error("NewPostgresStore(nil) error = nil, want an error")
 	}
 }
+
+// TestPostgresStoreRootedUserIDsByPlaceReturnsEarliestFirst proves the routing
+// read: the first Rooted users of a place, earliest declarer first, capped at the
+// limit.
+func TestPostgresStoreRootedUserIDsByPlaceReturnsEarliestFirst(t *testing.T) {
+	store, pool, prefix := integrationSetup(t)
+	ctx := context.Background()
+
+	first := createUser(t, pool, prefix, "first")
+	second := createUser(t, pool, prefix, "second")
+	third := createUser(t, pool, prefix, "third")
+	other := createUser(t, pool, prefix, "other")
+
+	// A place unique to this run. A local development database is not empty — it
+	// holds real accounts with real rooted signals — so a test that asserted on a
+	// well-known place name would be reading someone else's data.
+	place := prefix + "Manguzi"
+
+	for _, userID := range []string{first, second, third} {
+		if _, err := store.SetPrimary(ctx, userID, publicSignal(place)); err != nil {
+			t.Fatalf("SetPrimary(%s) error = %v, want nil", userID, err)
+		}
+		// The order is by created_at, and now() has microsecond resolution; a small
+		// pause keeps the three inserts strictly ordered without depending on it.
+		time.Sleep(2 * time.Millisecond)
+	}
+	if _, err := store.SetPrimary(ctx, other, publicSignal(place+" Elsewhere")); err != nil {
+		t.Fatalf("SetPrimary(other) error = %v, want nil", err)
+	}
+
+	ids, err := store.RootedUserIDsByPlace(ctx, place, 10)
+	if err != nil {
+		t.Fatalf("RootedUserIDsByPlace() error = %v, want nil", err)
+	}
+	if len(ids) != 3 {
+		t.Fatalf("ids = %v, want the three users rooted in %q", ids, place)
+	}
+	if ids[0] != first || ids[1] != second || ids[2] != third {
+		t.Errorf("ids = %v, want [%s %s %s] (earliest declarer first)", ids, first, second, third)
+	}
+	for _, id := range ids {
+		if id == other {
+			t.Error("a user rooted elsewhere was returned")
+		}
+	}
+
+	limited, err := store.RootedUserIDsByPlace(ctx, place, 2)
+	if err != nil {
+		t.Fatalf("RootedUserIDsByPlace(limit 2) error = %v, want nil", err)
+	}
+	if len(limited) != 2 || limited[0] != first || limited[1] != second {
+		t.Errorf("limited ids = %v, want the first two: [%s %s]", limited, first, second)
+	}
+}
+
+// A hidden signal is one its owner chose not to be findable by, so it must never
+// route someone else's question to them.
+func TestPostgresStoreRootedUserIDsByPlaceExcludesHiddenAndNonPrimary(t *testing.T) {
+	store, pool, prefix := integrationSetup(t)
+	ctx := context.Background()
+
+	visible := createUser(t, pool, prefix, "visible")
+	hidden := createUser(t, pool, prefix, "hidden")
+
+	// A place unique to this run, so ambient signals cannot appear in the result.
+	place := prefix + "Hidden"
+
+	if _, err := store.SetPrimary(ctx, visible, publicSignal(place)); err != nil {
+		t.Fatalf("SetPrimary(visible) error = %v, want nil", err)
+	}
+	hiddenSignal := publicSignal(place)
+	hiddenSignal.IsPublic = false
+	if _, err := store.SetPrimary(ctx, hidden, hiddenSignal); err != nil {
+		t.Fatalf("SetPrimary(hidden) error = %v, want nil", err)
+	}
+
+	ids, err := store.RootedUserIDsByPlace(ctx, place, 10)
+	if err != nil {
+		t.Fatalf("RootedUserIDsByPlace() error = %v, want nil", err)
+	}
+	if len(ids) != 1 || ids[0] != visible {
+		t.Errorf("ids = %v, want only the visible signal's owner %s", ids, visible)
+	}
+}
+
+func TestPostgresStoreRootedUserIDsByPlaceUnknownPlaceIsEmpty(t *testing.T) {
+	store, _, prefix := integrationSetup(t)
+
+	ids, err := store.RootedUserIDsByPlace(context.Background(), prefix+"Nowhere At All", 10)
+	if err != nil {
+		t.Fatalf("RootedUserIDsByPlace() error = %v, want nil", err)
+	}
+	if len(ids) != 0 {
+		t.Errorf("ids = %v, want empty", ids)
+	}
+}
+
+func TestPostgresStoreRootedUserIDsByPlaceEmptyPlaceOrBadLimit(t *testing.T) {
+	store, _, prefix := integrationSetup(t)
+	ctx := context.Background()
+
+	empty, err := store.RootedUserIDsByPlace(ctx, "", 10)
+	if err != nil {
+		t.Fatalf("RootedUserIDsByPlace(\"\") error = %v, want nil", err)
+	}
+	if len(empty) != 0 {
+		t.Errorf("ids = %v, want empty for a blank place", empty)
+	}
+
+	zero, err := store.RootedUserIDsByPlace(ctx, prefix+"Manguzi", 0)
+	if err != nil {
+		t.Fatalf("RootedUserIDsByPlace(limit 0) error = %v, want nil", err)
+	}
+	if len(zero) != 0 {
+		t.Errorf("ids = %v, want empty for a non-positive limit", zero)
+	}
+}

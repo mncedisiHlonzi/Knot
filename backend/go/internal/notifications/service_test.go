@@ -517,6 +517,67 @@ func TestNotifyBridgeCreated(t *testing.T) {
 	}
 }
 
+func TestNotifyInquiryAnswered(t *testing.T) {
+	service, store, _ := newTestService(t)
+
+	if err := service.NotifyInquiryAnswered(context.Background(), testUserID, testActorID, testEntityID); err != nil {
+		t.Fatalf("NotifyInquiryAnswered() error = %v, want nil", err)
+	}
+
+	if store.gotCreate.EventType != EventInquiryAnswered {
+		t.Errorf("event type = %q, want %q", store.gotCreate.EventType, EventInquiryAnswered)
+	}
+	// The notification points at the inquiry, not at the answer: the inbox opens
+	// the question, where the new answer is visible in its thread.
+	if store.gotCreate.EntityType != EntityInquiry {
+		t.Errorf("entity type = %q, want %q", store.gotCreate.EntityType, EntityInquiry)
+	}
+	if store.gotCreate.UserID != testUserID || store.gotCreate.ActorID != testActorID {
+		t.Errorf("recipient/actor = %q/%q, want %q/%q", store.gotCreate.UserID, store.gotCreate.ActorID, testUserID, testActorID)
+	}
+	// No reaction type travels with this event.
+	if store.gotCreate.ReactionType != "" {
+		t.Errorf("reaction type = %q, want empty", store.gotCreate.ReactionType)
+	}
+}
+
+func TestNotifyInquiryNearby(t *testing.T) {
+	service, store, _ := newTestService(t)
+
+	if err := service.NotifyInquiryNearby(context.Background(), testUserID, testActorID, testEntityID); err != nil {
+		t.Fatalf("NotifyInquiryNearby() error = %v, want nil", err)
+	}
+
+	if store.gotCreate.EventType != EventInquiryNearby {
+		t.Errorf("event type = %q, want %q", store.gotCreate.EventType, EventInquiryNearby)
+	}
+	if store.gotCreate.EntityType != EntityInquiry {
+		t.Errorf("entity type = %q, want %q", store.gotCreate.EntityType, EntityInquiry)
+	}
+	// The recipient here is a person rooted in the place, who authored none of the
+	// content: the actor is the asker.
+	if store.gotCreate.UserID != testUserID || store.gotCreate.ActorID != testActorID {
+		t.Errorf("recipient/actor = %q/%q, want %q/%q", store.gotCreate.UserID, store.gotCreate.ActorID, testUserID, testActorID)
+	}
+}
+
+// Asking about a place you are yourself rooted in must not notify you, exactly as
+// commenting on your own version must not.
+func TestNotifyInquiryNearbySelfIsNotStored(t *testing.T) {
+	service, store, logger := newTestService(t)
+
+	err := service.NotifyInquiryNearby(context.Background(), testUserID, testUserID, testEntityID)
+	if !errors.Is(err, ErrSelfNotification) {
+		t.Fatalf("NotifyInquiryNearby() error = %v, want ErrSelfNotification", err)
+	}
+	if store.createCalls != 0 {
+		t.Errorf("store create calls = %d, want 0", store.createCalls)
+	}
+	if len(logger.warnings) != 0 {
+		t.Errorf("warnings = %v, want none", logger.warnings)
+	}
+}
+
 func TestNotifySelfIsNotLogged(t *testing.T) {
 	service, store, logger := newTestService(t)
 

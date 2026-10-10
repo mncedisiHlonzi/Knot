@@ -48,13 +48,14 @@ type Router struct {
 	notifications  *NotificationsHandler
 	profile        *ProfileHandler
 	reactions      *ReactionsHandler
+	inquiries      *InquiriesHandler
 	authMiddleware *AuthMiddleware
 	version        string
 	logger         *slog.Logger
 }
 
 // NewRouter returns the root handler for the API.
-func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, avatarHandler *AvatarHandler, storyMediaHandler *StoryMediaHandler, notificationsHandler *NotificationsHandler, profileHandler *ProfileHandler, reactionsHandler *ReactionsHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
+func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, avatarHandler *AvatarHandler, storyMediaHandler *StoryMediaHandler, notificationsHandler *NotificationsHandler, profileHandler *ProfileHandler, reactionsHandler *ReactionsHandler, inquiriesHandler *InquiriesHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
 	if auth == nil {
 		return nil, errNilHandler("auth")
 	}
@@ -88,6 +89,9 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 	if reactionsHandler == nil {
 		return nil, errNilHandler("reactions")
 	}
+	if inquiriesHandler == nil {
+		return nil, errNilHandler("inquiries")
+	}
 	if authMiddleware == nil {
 		return nil, errNilHandler("auth middleware")
 	}
@@ -106,6 +110,7 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 		notifications:  notificationsHandler,
 		profile:        profileHandler,
 		reactions:      reactionsHandler,
+		inquiries:      inquiriesHandler,
 		authMiddleware: authMiddleware,
 		version:        version,
 		logger:         logger,
@@ -156,6 +161,26 @@ func (r *Router) Handler() http.Handler {
 	mux.HandleFunc("GET /comments/{id}/reactions", r.reactions.ListComment)
 	mux.HandleFunc("POST /bridges/{id}/reactions", r.authMiddleware.Require(r.reactions.ToggleBridge))
 	mux.HandleFunc("GET /bridges/{id}/reactions", r.reactions.ListBridge)
+	mux.HandleFunc("POST /inquiries/{id}/reactions", r.authMiddleware.Require(r.reactions.ToggleInquiry))
+	mux.HandleFunc("GET /inquiries/{id}/reactions", r.reactions.ListInquiry)
+
+	// Curious Inquiries: a question about a place, and the public answers to it.
+	// Asking and answering require an access token; reading is open, and the two
+	// reads use optional auth so a signed-in reader's own reaction highlights travel
+	// with the question (KNOT-ADR-051). Every inquiry and every answer is public and
+	// attributed: there is no anonymous variant (KNOT-ADR-055).
+	//
+	// "GET /answers/{id}" is a top-level path rather than "/inquiries/answers/{id}"
+	// because the latter would overlap "/inquiries/{id}/answers" at
+	// /inquiries/answers/answers, which Go's ServeMux refuses as a conflict. The
+	// top-level shape also matches how a single comment and a single bridge are
+	// already fetched.
+	mux.HandleFunc("POST /inquiries", r.authMiddleware.Require(r.inquiries.Create))
+	mux.HandleFunc("GET /inquiries", r.authMiddleware.Optional(r.inquiries.List))
+	mux.HandleFunc("GET /inquiries/{id}", r.authMiddleware.Optional(r.inquiries.Get))
+	mux.HandleFunc("POST /inquiries/{id}/answers", r.authMiddleware.Require(r.inquiries.CreateAnswer))
+	mux.HandleFunc("GET /inquiries/{id}/answers", r.authMiddleware.Optional(r.inquiries.ListAnswers))
+	mux.HandleFunc("GET /answers/{id}", r.authMiddleware.Optional(r.inquiries.GetAnswer))
 
 	// Rooted: a user's self-declared connection to a place. Writing a signal and
 	// reading your own signals require an access token; reading another user's

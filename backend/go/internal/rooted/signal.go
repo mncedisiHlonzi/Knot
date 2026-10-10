@@ -178,6 +178,15 @@ type RootedStore interface {
 	// signal is absent from the map.
 	BatchPrimaryPublic(ctx context.Context, userIDs []string) (map[string]Signal, error)
 
+	// RootedUserIDsByPlace returns the ids of at most limit users whose primary
+	// public signal is for place, earliest declarer first.
+	//
+	// This is the reverse of BatchPrimaryPublic: that read starts from known users
+	// and asks for their place, whereas this one starts from a place and asks who
+	// is there. It is how Curious Inquiries finds the first people to ask
+	// (KNOT-ADR-056). An unknown or empty place yields an empty slice, not an error.
+	RootedUserIDsByPlace(ctx context.Context, place string, limit int) ([]string, error)
+
 	// UserExists reports whether a user row exists. It is how the public-read path
 	// tells "no such user" from "a user with no signals".
 	UserExists(ctx context.Context, userID string) (bool, error)

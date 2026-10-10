@@ -33,6 +33,7 @@ import (
 	"github.com/knot/backend/internal/discovery"
 	"github.com/knot/backend/internal/httpapi"
 	"github.com/knot/backend/internal/identity"
+	"github.com/knot/backend/internal/inquiries"
 	"github.com/knot/backend/internal/notifications"
 	"github.com/knot/backend/internal/profile"
 	"github.com/knot/backend/internal/reactions"
@@ -280,10 +281,29 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
+	// Curious Inquiries. Asking a question routes it to the first Rooted users of
+	// the place it names, so the service is handed the rooted service as its
+	// routing lookup — the same value the content handlers use for enrichment —
+	// and the notifications service as its two-method Notifier hook (KNOT-ADR-056).
+	inquiriesStore, err := inquiries.NewPostgresStore(pool)
+	if err != nil {
+		return err
+	}
+
+	inquiriesService, err := inquiries.NewService(inquiriesStore, rootedService, notificationsService, logger)
+	if err != nil {
+		return err
+	}
+
+	inquiriesHandler, err := httpapi.NewInquiriesHandler(inquiriesService, service, rootedService, reactionsService, logger)
+	if err != nil {
+		return err
+	}
+
 	// The reactions handler owns the eight per-entity reaction routes. It uses the
 	// three content services only to resolve an entity's author and confirm it
 	// exists, and the notifications service to fire reaction.created (KNOT-ADR-050).
-	reactionsHandler, err := httpapi.NewReactionsHandler(reactionsService, storiesService, versionsService, conversationsService, notificationsService, logger)
+	reactionsHandler, err := httpapi.NewReactionsHandler(reactionsService, storiesService, versionsService, conversationsService, inquiriesService, notificationsService, logger)
 	if err != nil {
 		return err
 	}
@@ -338,7 +358,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, avatarHandler, storyMediaHandler, notificationsHandler, profileHandler, reactionsHandler, authMiddleware, appinfo.Version, logger)
+	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, avatarHandler, storyMediaHandler, notificationsHandler, profileHandler, reactionsHandler, inquiriesHandler, authMiddleware, appinfo.Version, logger)
 	if err != nil {
 		return err
 	}

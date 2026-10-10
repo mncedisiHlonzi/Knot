@@ -13,7 +13,7 @@
 import { request } from './client';
 
 /** The kinds of content a reaction can target. */
-export type ReactionEntityType = 'story' | 'version' | 'comment' | 'bridge';
+export type ReactionEntityType = 'story' | 'version' | 'comment' | 'bridge' | 'inquiry';
 
 /** The four perspective signals. The set is closed: the server's schema refuses anything else. */
 export type ReactionType =
@@ -97,6 +97,7 @@ const ENTITY_PATH: Readonly<Record<ReactionEntityType, string>> = {
   version: 'versions',
   comment: 'comments',
   bridge: 'bridges',
+  inquiry: 'inquiries',
 };
 
 /** The reaction endpoints. */

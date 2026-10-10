@@ -85,12 +85,19 @@ const (
 	// entity is whatever was reacted to, so it is the one event with no fixed
 	// target entity.
 	EventReactionCreated EventType = "reaction.created"
+	// EventInquiryAnswered fires when someone answers an inquiry the recipient
+	// asked (KNOT-ADR-056).
+	EventInquiryAnswered EventType = "inquiry.answered"
+	// EventInquiryNearby fires when someone asks a question about a place the
+	// recipient is Rooted in (KNOT-ADR-056).
+	EventInquiryNearby EventType = "inquiry.nearby"
 )
 
 // Valid reports whether e is one of the supported events.
 func (e EventType) Valid() bool {
 	switch e {
-	case EventVersionCreated, EventCommentCreated, EventBridgeCreated, EventReactionCreated:
+	case EventVersionCreated, EventCommentCreated, EventBridgeCreated, EventReactionCreated,
+		EventInquiryAnswered, EventInquiryNearby:
 		return true
 	default:
 		return false
@@ -111,12 +118,14 @@ const (
 	EntityComment EntityType = "comment"
 	// EntityBridge is a bridge.
 	EntityBridge EntityType = "bridge"
+	// EntityInquiry is a question someone asked about a place (KNOT-ADR-056).
+	EntityInquiry EntityType = "inquiry"
 )
 
 // Valid reports whether t is one of the supported entity types.
 func (t EntityType) Valid() bool {
 	switch t {
-	case EntityStory, EntityVersion, EntityComment, EntityBridge:
+	case EntityStory, EntityVersion, EntityComment, EntityBridge, EntityInquiry:
 		return true
 	default:
 		return false
@@ -137,6 +146,8 @@ func (e EventType) EntityType() (EntityType, bool) {
 		return EntityComment, true
 	case EventBridgeCreated:
 		return EntityBridge, true
+	case EventInquiryAnswered, EventInquiryNearby:
+		return EntityInquiry, true
 	default:
 		return "", false
 	}
@@ -144,8 +155,9 @@ func (e EventType) EntityType() (EntityType, bool) {
 
 // acceptsEntityType reports whether entityType is a valid target for the event.
 //
-// The three content events each name one fixed entity kind; `reaction.created`
-// accepts any of the four, because it points at whatever was reacted to.
+// The content events each name one fixed entity kind; `reaction.created` accepts
+// any of the entity kinds, because it points at whatever was reacted to; and both
+// inquiry events name the inquiry itself, so that a tap opens the question.
 func (e EventType) acceptsEntityType(entityType EntityType) bool {
 	switch e {
 	case EventVersionCreated:
@@ -154,6 +166,8 @@ func (e EventType) acceptsEntityType(entityType EntityType) bool {
 		return entityType == EntityComment
 	case EventBridgeCreated:
 		return entityType == EntityBridge
+	case EventInquiryAnswered, EventInquiryNearby:
+		return entityType == EntityInquiry
 	case EventReactionCreated:
 		return entityType.Valid()
 	default:

@@ -3,8 +3,10 @@ package rooted
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeStore is an in-memory RootedStore used to test the service without a
@@ -16,19 +18,23 @@ type fakeStore struct {
 	// users is the set of user ids that exist.
 	users map[string]bool
 
-	setErr    error
-	listErr   error
-	publicErr error
-	batchErr  error
-	existsErr error
+	setErr     error
+	listErr    error
+	publicErr  error
+	batchErr   error
+	existsErr  error
+	routingErr error
 
-	seq         int
-	setCalls    int
-	listCalls   int
-	publicCalls int
-	batchCalls  int
-	gotSetInput Signal
-	gotBatchIDs []string
+	seq             int
+	setCalls        int
+	listCalls       int
+	publicCalls     int
+	batchCalls      int
+	routingCalls    int
+	gotSetInput     Signal
+	gotBatchIDs     []string
+	gotRoutingPlace string
+	gotRoutingLimit int
 }
 
 func newFakeStore() *fakeStore {
@@ -109,6 +115,50 @@ func (s *fakeStore) BatchPrimaryPublic(_ context.Context, userIDs []string) (map
 			}
 		}
 	}
+	return out, nil
+}
+
+// RootedUserIDsByPlace returns the seeded users whose primary public signal is
+// for place, earliest first, capped at limit. It mirrors the SQL query's
+// semantics, including the primary-and-public-only filter.
+func (s *fakeStore) RootedUserIDsByPlace(_ context.Context, place string, limit int) ([]string, error) {
+	s.routingCalls++
+	s.gotRoutingPlace = place
+	s.gotRoutingLimit = limit
+	if s.routingErr != nil {
+		return nil, s.routingErr
+	}
+
+	type rooted struct {
+		userID    string
+		createdAt time.Time
+	}
+	matches := make([]rooted, 0)
+
+	for userID, signals := range s.signals {
+		for _, signal := range signals {
+			if signal.IsPrimary && signal.IsPublic && signal.Place == place {
+				matches = append(matches, rooted{userID: userID, createdAt: signal.CreatedAt})
+			}
+		}
+	}
+
+	// Deterministic order: the SQL query orders by (created_at ASC, id ASC).
+	sort.Slice(matches, func(i, j int) bool {
+		if !matches[i].createdAt.Equal(matches[j].createdAt) {
+			return matches[i].createdAt.Before(matches[j].createdAt)
+		}
+		return matches[i].userID < matches[j].userID
+	})
+
+	out := make([]string, 0, limit)
+	for _, match := range matches {
+		if len(out) == limit {
+			break
+		}
+		out = append(out, match.userID)
+	}
+
 	return out, nil
 }
 
@@ -551,5 +601,146 @@ func TestBatchGetPrimaryPublicSignalsPropagatesStoreErrors(t *testing.T) {
 
 	if _, err := service.BatchGetPrimaryPublicSignals(context.Background(), []string{userOne}); err == nil {
 		t.Error("BatchGetPrimaryPublicSignals() error = nil, want the store error")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The place routing lookup (Curious Inquiries)
+// ---------------------------------------------------------------------------
+
+func TestRootedUserIDsByPlaceReturnsEarliestDeclarers(t *testing.T) {
+	store := newFakeStore()
+	service := newTestService(t, store)
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	older := Signal{UserID: userOne, Place: "Manguzi", DurationBucket: DurationLifelong, IsPublic: true, IsPrimary: true, CreatedAt: base}
+	newer := Signal{UserID: userTwo, Place: "Manguzi", DurationBucket: DurationLifelong, IsPublic: true, IsPrimary: true, CreatedAt: base.Add(time.Hour)}
+	store.seed(newer)
+	store.seed(older)
+
+	ids, err := service.RootedUserIDsByPlace(context.Background(), "Manguzi", 5)
+	if err != nil {
+		t.Fatalf("RootedUserIDsByPlace() error = %v, want nil", err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("ids = %v, want both rooted users", ids)
+	}
+	// "The first Rooted users of this place" is read literally: the earliest
+	// declarer comes first.
+	if ids[0] != userOne || ids[1] != userTwo {
+		t.Errorf("ids = %v, want [%s %s]", ids, userOne, userTwo)
+	}
+}
+
+func TestRootedUserIDsByPlaceTrimsThePlace(t *testing.T) {
+	store := newFakeStore()
+	service := newTestService(t, store)
+	store.seed(Signal{UserID: userOne, Place: "Manguzi", DurationBucket: DurationLifelong, IsPublic: true, IsPrimary: true, CreatedAt: time.Now().UTC()})
+
+	ids, err := service.RootedUserIDsByPlace(context.Background(), "  Manguzi  ", 5)
+	if err != nil {
+		t.Fatalf("RootedUserIDsByPlace() error = %v, want nil", err)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("ids = %v, want the one rooted user", ids)
+	}
+	if store.gotRoutingPlace != "Manguzi" {
+		t.Errorf("store place = %q, want the trimmed Manguzi", store.gotRoutingPlace)
+	}
+}
+
+func TestRootedUserIDsByPlaceSkipsTheStoreForBlankPlaceOrBadLimit(t *testing.T) {
+	cases := []struct {
+		name  string
+		place string
+		limit int
+	}{
+		{name: "blank place", place: "   ", limit: 5},
+		{name: "empty place", place: "", limit: 5},
+		{name: "zero limit", place: "Manguzi", limit: 0},
+		{name: "negative limit", place: "Manguzi", limit: -1},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := newFakeStore()
+			service := newTestService(t, store)
+
+			ids, err := service.RootedUserIDsByPlace(context.Background(), testCase.place, testCase.limit)
+			if err != nil {
+				t.Fatalf("RootedUserIDsByPlace() error = %v, want nil", err)
+			}
+			if len(ids) != 0 {
+				t.Errorf("ids = %v, want empty", ids)
+			}
+			if ids == nil {
+				t.Error("ids = nil, want an empty slice so a caller can range over it")
+			}
+			if store.routingCalls != 0 {
+				t.Errorf("store routing calls = %d, want 0 (nothing to route, nothing to bound)", store.routingCalls)
+			}
+		})
+	}
+}
+
+func TestRootedUserIDsByPlaceHonoursTheLimit(t *testing.T) {
+	store := newFakeStore()
+	service := newTestService(t, store)
+
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	ids := []string{
+		"11111111-1111-4111-8111-111111111111",
+		"22222222-2222-4222-8222-222222222222",
+		"33333333-3333-4333-8333-333333333333",
+	}
+	for i, id := range ids {
+		store.seed(Signal{UserID: id, Place: "Manguzi", DurationBucket: DurationLifelong, IsPublic: true, IsPrimary: true, CreatedAt: base.Add(time.Duration(i) * time.Minute)})
+	}
+
+	got, err := service.RootedUserIDsByPlace(context.Background(), "Manguzi", 2)
+	if err != nil {
+		t.Fatalf("RootedUserIDsByPlace() error = %v, want nil", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("ids = %v, want 2", got)
+	}
+	if store.gotRoutingLimit != 2 {
+		t.Errorf("store limit = %d, want 2", store.gotRoutingLimit)
+	}
+}
+
+func TestRootedUserIDsByPlaceUnknownPlaceIsEmpty(t *testing.T) {
+	store := newFakeStore()
+	service := newTestService(t, store)
+
+	ids, err := service.RootedUserIDsByPlace(context.Background(), "Nowhere", 5)
+	if err != nil {
+		t.Fatalf("RootedUserIDsByPlace() error = %v, want nil", err)
+	}
+	if len(ids) != 0 {
+		t.Errorf("ids = %v, want empty for a place nobody is rooted in", ids)
+	}
+}
+
+func TestRootedUserIDsByPlacePropagatesStoreErrors(t *testing.T) {
+	store := newFakeStore()
+	store.routingErr = errors.New("boom")
+	service := newTestService(t, store)
+
+	if _, err := service.RootedUserIDsByPlace(context.Background(), "Manguzi", 5); err == nil {
+		t.Error("RootedUserIDsByPlace() error = nil, want the store error")
+	}
+}
+
+func TestRootedUserIDsByPlaceEmptyStoreResultIsNeverNil(t *testing.T) {
+	store := newFakeStore()
+	service := newTestService(t, store)
+
+	ids, err := service.RootedUserIDsByPlace(context.Background(), "Manguzi", 5)
+	if err != nil {
+		t.Fatalf("RootedUserIDsByPlace() error = %v, want nil", err)
+	}
+	if ids == nil {
+		t.Error("ids = nil, want an empty slice")
 	}
 }

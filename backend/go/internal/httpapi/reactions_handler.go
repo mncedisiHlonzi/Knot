@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/knot/backend/internal/conversations"
+	"github.com/knot/backend/internal/inquiries"
 	"github.com/knot/backend/internal/reactions"
 	"github.com/knot/backend/internal/stories"
 	"github.com/knot/backend/internal/versions"
@@ -49,6 +50,7 @@ type ReactionsHandler struct {
 	stories       StoriesService
 	versions      VersionsService
 	conversations ConversationsService
+	inquiries     InquiriesService
 	notifier      ReactionsNotifier
 	logger        *slog.Logger
 }
@@ -56,7 +58,7 @@ type ReactionsHandler struct {
 // NewReactionsHandler returns a handler. Each content service is used only to
 // resolve an entity's author and confirm it exists; the notifier fires the
 // reaction.created event.
-func NewReactionsHandler(reactionsService ReactionsService, storiesService StoriesService, versionsService VersionsService, conversationsService ConversationsService, notifier ReactionsNotifier, logger *slog.Logger) (*ReactionsHandler, error) {
+func NewReactionsHandler(reactionsService ReactionsService, storiesService StoriesService, versionsService VersionsService, conversationsService ConversationsService, inquiriesService InquiriesService, notifier ReactionsNotifier, logger *slog.Logger) (*ReactionsHandler, error) {
 	if reactionsService == nil {
 		return nil, fmt.Errorf("httpapi: reactions handler requires a reactions service")
 	}
@@ -69,6 +71,9 @@ func NewReactionsHandler(reactionsService ReactionsService, storiesService Stori
 	if conversationsService == nil {
 		return nil, fmt.Errorf("httpapi: reactions handler requires a conversations service")
 	}
+	if inquiriesService == nil {
+		return nil, fmt.Errorf("httpapi: reactions handler requires an inquiries service")
+	}
 	if notifier == nil {
 		return nil, fmt.Errorf("httpapi: reactions handler requires a notifier")
 	}
@@ -80,6 +85,7 @@ func NewReactionsHandler(reactionsService ReactionsService, storiesService Stori
 		stories:       storiesService,
 		versions:      versionsService,
 		conversations: conversationsService,
+		inquiries:     inquiriesService,
 		notifier:      notifier,
 		logger:        logger,
 	}, nil
@@ -145,6 +151,15 @@ func (h *ReactionsHandler) ToggleBridge(w http.ResponseWriter, r *http.Request) 
 	h.toggle(w, r, reactions.EntityBridge, h.bridgeAuthor)
 }
 
+// ToggleInquiry handles POST /inquiries/{id}/reactions.
+//
+// An inquiry carries reactions because it is content someone authored and others
+// want to weigh in on without answering — "adds something new", "needs a source"
+// (KNOT-ADR-057). Its answers do not: an answer is a reply (KNOT-ADR-052).
+func (h *ReactionsHandler) ToggleInquiry(w http.ResponseWriter, r *http.Request) {
+	h.toggle(w, r, reactions.EntityInquiry, h.inquiryAuthor)
+}
+
 // ListStory handles GET /stories/{id}/reactions.
 func (h *ReactionsHandler) ListStory(w http.ResponseWriter, r *http.Request) {
 	h.list(w, r, reactions.EntityStory)
@@ -163,6 +178,11 @@ func (h *ReactionsHandler) ListComment(w http.ResponseWriter, r *http.Request) {
 // ListBridge handles GET /bridges/{id}/reactions.
 func (h *ReactionsHandler) ListBridge(w http.ResponseWriter, r *http.Request) {
 	h.list(w, r, reactions.EntityBridge)
+}
+
+// ListInquiry handles GET /inquiries/{id}/reactions.
+func (h *ReactionsHandler) ListInquiry(w http.ResponseWriter, r *http.Request) {
+	h.list(w, r, reactions.EntityInquiry)
 }
 
 // toggle is the shared body of the four toggle routes.
@@ -274,6 +294,14 @@ func (h *ReactionsHandler) bridgeAuthor(ctx context.Context, id string) (string,
 	return bridge.AuthorID, nil
 }
 
+func (h *ReactionsHandler) inquiryAuthor(ctx context.Context, id string) (string, error) {
+	inquiry, err := h.inquiries.GetInquiry(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	return inquiry.AuthorID, nil
+}
+
 // writeResolveError maps a failed entity resolution onto a status: a missing
 // entity is a type-named 404, and anything else is a 500.
 func (h *ReactionsHandler) writeResolveError(w http.ResponseWriter, r *http.Request, err error, entityType reactions.EntityType) {
@@ -315,7 +343,8 @@ func (h *ReactionsHandler) writeServiceError(w http.ResponseWriter, r *http.Requ
 func isDomainNotFound(err error) bool {
 	return errors.Is(err, stories.ErrNotFound) ||
 		errors.Is(err, versions.ErrNotFound) ||
-		errors.Is(err, conversations.ErrNotFound)
+		errors.Is(err, conversations.ErrNotFound) ||
+		errors.Is(err, inquiries.ErrNotFound)
 }
 
 // notFoundMessage names what was not found for each entity kind.
@@ -329,6 +358,8 @@ func notFoundMessage(entityType reactions.EntityType) string {
 		return "comment not found"
 	case reactions.EntityBridge:
 		return "bridge not found"
+	case reactions.EntityInquiry:
+		return "inquiry not found"
 	default:
 		return "not found"
 	}

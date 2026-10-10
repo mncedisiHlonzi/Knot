@@ -3,14 +3,15 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { colors, fontSizes, fontWeights, spacing } from '../theme';
 
-/** The four primary destinations of the app. */
-export type TabName = 'feed' | 'discoveryMap' | 'createStory' | 'profile';
+/** The five primary destinations of the app. */
+export type TabName = 'feed' | 'discoveryMap' | 'createStory' | 'inquiries' | 'profile';
 
 /** The tabs, in the order they appear left to right. */
 const TABS: readonly { readonly name: TabName; readonly label: string }[] = [
   { name: 'feed', label: 'Home' },
   { name: 'discoveryMap', label: 'Map' },
   { name: 'createStory', label: 'Create' },
+  { name: 'inquiries', label: 'Inquiries' },
   { name: 'profile', label: 'Profile' },
 ];
 
@@ -22,12 +23,16 @@ type TabBarProps = {
 };
 
 /**
- * The hand-rolled bottom tab bar: four destinations, no library.
+ * The hand-rolled bottom tab bar: five destinations, no library.
  *
  * It is a plain row of buttons over the active screen. Non-tab screens (a story,
- * a place, the composer's overlays) are pushed over the bar rather than shown
- * inside it, so the bar is only ever rendered for a primary destination. Using no
- * navigation dependency is deliberate; see KNOT-ADR-019.
+ * a question, a place, the composer's overlays) are pushed over the bar rather
+ * than shown inside it, so the bar is only ever rendered for a primary
+ * destination. Using no navigation dependency is deliberate; see KNOT-ADR-019.
+ *
+ * Inquiries joined as the fourth tab between Create and Profile (KNOT-ADR-058): it
+ * is a destination in its own right — finding and asking questions — rather than
+ * something reached from Create, which stays a story composer.
  */
 export default function TabBar({ activeTab, onSelect }: TabBarProps): React.ReactElement {
   return (

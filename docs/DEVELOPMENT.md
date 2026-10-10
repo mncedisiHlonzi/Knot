@@ -786,6 +786,13 @@ curl -s -X POST http://localhost:8080/auth/register \
 | `GET /notifications/unread_count` | `Bearer` | `internal/httpapi/notifications_handler.go` |
 | `POST /notifications/{id}/read` | `Bearer` | `internal/httpapi/notifications_handler.go` |
 | `POST /notifications/read_all` | `Bearer` | `internal/httpapi/notifications_handler.go` |
+| `POST /inquiries` | `Bearer` | `internal/httpapi/inquiries_handler.go` |
+| `GET /inquiries` | public (optional auth) | `internal/httpapi/inquiries_handler.go` |
+| `GET /inquiries/{id}` | public (optional auth) | `internal/httpapi/inquiries_handler.go` |
+| `POST /inquiries/{id}/answers` | `Bearer` | `internal/httpapi/inquiries_handler.go` |
+| `GET /inquiries/{id}/answers` | public (optional auth) | `internal/httpapi/inquiries_handler.go` |
+| `GET /answers/{id}` | public (optional auth) | `internal/httpapi/inquiries_handler.go` |
+| `POST`/`GET /inquiries/{id}/reactions` | Bearer / public | `internal/httpapi/reactions_handler.go` |
 
 Routes are declared in one place, `NewRouter` in `internal/httpapi/router.go`, using
 Go 1.22 method-qualified `ServeMux` patterns. There is no router dependency.
@@ -951,11 +958,13 @@ package. Every route is protected and every route is scoped to the caller by the
 there is no user id in any request and no way to reach another person's inbox.
 
 A notification records that **another user acted on your content**: someone adapted a
-version you wrote, commented on it, or bridged one of your comments. Three events exist and
-the set is closed by a CHECK constraint and by Go constants. The package is deliberately
-**domain-agnostic** — it imports no content domain and stores primitive ids — and each
-producing domain declares its own one-method hook instead, so the dependency graph stays
-acyclic (KNOT-ADR-040):
+version you wrote, commented on it, or bridged one of your comments. Two further events go
+beyond that shape — `reaction.created` names whichever entity was reacted to, and
+`inquiry.nearby` reaches a recipient who authored nothing, because they are Rooted in the
+place a question names. Six events exist in total and the set is closed by a CHECK constraint
+and by Go constants. The package is deliberately **domain-agnostic** — it imports no content
+domain and stores primitive ids — and each producing domain declares its own narrow hook
+instead, so the dependency graph stays acyclic (KNOT-ADR-040):
 
 ```go
 // internal/versions
@@ -1073,6 +1082,52 @@ runs `up`, asserts every mapping, runs `up` again to prove idempotency, runs `do
 asserts the best-effort reversal. It all happens inside a transaction that is always rolled
 back, so the test leaves the database untouched. It skips when `KNOT_POSTGRES_DSN` is unset or
 the tables are missing.
+
+### Curious Inquiries
+
+`POST /inquiries`, `GET /inquiries`, `GET /inquiries/{id}`, `POST /inquiries/{id}/answers`,
+`GET /inquiries/{id}/answers`, and `GET /answers/{id}` are served by
+`internal/httpapi/inquiries_handler.go`, backed by the `internal/inquiries` domain
+(`inquiry.go`, `cursor.go`, `service.go`, `postgres_store.go`).
+
+Two mechanical points are worth knowing before changing them:
+
+- **`GET /answers/{id}` is a top-level path, not `/inquiries/answers/{id}`.** The latter would
+  overlap `/inquiries/{id}/answers` at `/inquiries/answers/answers`, and Go's `ServeMux` refuses
+  conflicting patterns at registration — it panics rather than picking one. `TestInquiryRoutesAreRegistered`
+  builds the real router, so a future pattern change that collides fails in the test suite rather
+  than at start-up. The top-level shape also matches `GET /comments/{id}` and `GET /bridges/{id}`.
+- **Routing is a lookup on Rooted, not a query in this package.** `internal/inquiries` depends on
+  a one-method `RootedRouting` interface (`RootedUserIDsByPlace`), which `rooted.Service`
+  satisfies. Rooted owns `rooted_signals`, so the SQL lives in
+  `internal/rooted/postgres_store.go` beside the other signal reads, and the inquiry domain stays
+  free of another domain's schema (KNOT-ADR-056).
+
+The announce-after-commit shape is the one every content domain uses: `CreateInquiry` commits the
+row and then tells the place's Rooted users, logging and swallowing any failure, and
+`CreateAnswer` commits the answer and its `answer_count` increment in one transaction before
+notifying the asker (KNOT-ADR-038).
+
+### Migration `0014`: inquiries, and two widened CHECKs
+
+`migrations/0014_inquiries.{up,down}.sql` adds `inquiries` and `inquiry_answers`, three indexes
+on the first and two on the second, `rooted_signals_place_idx`, and widens the notifications
+`event_type` and `entity_type` CHECKs plus the reactions `entity_type` CHECK.
+
+Three properties matter:
+
+- **Everything is idempotent.** Tables and indexes use `IF NOT EXISTS`; each CHECK is dropped by
+  name first and re-added behind a `pg_constraint` guard, so the file can be re-applied by hand.
+  Verified by applying it twice to the local database.
+- **The CHECKs must be widened in the same migration that starts writing the new values.** The
+  event and entity sets are closed by those constraints, so a migration that added an event
+  without widening its CHECK would fail at the first write rather than at migration time.
+- **`down` deletes rows the narrowed CHECK could not hold** (`entity_type = 'inquiry'`, and the
+  two inquiry events) before re-adding the narrower constraints. That makes the rollback total
+  rather than a partial failure, and the affected rows can only exist if this migration ran.
+
+`rooted_signals_place_idx` is added because every earlier Rooted read was by user; finding "the
+users Rooted in this place" is the first read keyed by place.
 
 ### Migrations
 

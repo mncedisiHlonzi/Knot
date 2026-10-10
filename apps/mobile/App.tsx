@@ -23,6 +23,9 @@ import BridgeScreen from './src/screens/conversations/BridgeScreen';
 import CommentThreadScreen from './src/screens/conversations/CommentThreadScreen';
 import DiscoveryMapScreen from './src/screens/discovery/DiscoveryMapScreen';
 import PlaceStoriesScreen from './src/screens/discovery/PlaceStoriesScreen';
+import AskInquiryScreen from './src/screens/inquiries/AskInquiryScreen';
+import InquiryDetailScreen from './src/screens/inquiries/InquiryDetailScreen';
+import InquiryListScreen from './src/screens/inquiries/InquiryListScreen';
 import NotificationsScreen from './src/screens/notifications/NotificationsScreen';
 import RootedSetupScreen from './src/screens/profile/RootedSetupScreen';
 import UserProfileScreen from './src/screens/profile/UserProfileScreen';
@@ -35,8 +38,8 @@ import StoryDetailScreen from './src/screens/stories/StoryDetailScreen';
 /**
  * A non-tab screen, pushed over the tab bar.
  *
- * The four primary destinations are tabs (see `TabName`); every other screen is
- * an overlay on top of whichever tab is active. Overlays form a stack (see
+ * The primary destinations are tabs (see `TabName`); every other screen is an
+ * overlay on top of whichever tab is active. Overlays form a stack (see
  * `overlayStack.ts`): each carries the ids it needs both to render and to open
  * the next screen, so back is always "pop the stack" rather than a hard-coded
  * target. Each variant's payload is compile-time checked, which a loose
@@ -56,6 +59,8 @@ type Overlay =
   | { readonly name: 'rootedSetup' }
   | { readonly name: 'notifications' }
   | { readonly name: 'placeStories'; readonly place: string }
+  | { readonly name: 'inquiry'; readonly inquiryId: string }
+  | { readonly name: 'askInquiry' }
   | { readonly name: 'userProfile'; readonly userId: string };
 
 /** The two auth screens, shown before there is a session. Login is the default. */
@@ -72,10 +77,10 @@ function preferredLanguage(user: User): string {
 /**
  * Root component for the Knot mobile app.
  *
- * The app has three pieces of navigation state: an active tab (Home, Map,
- * Create, Profile), a stack of overlay screens pushed over it, and — before there
- * is a session — which auth screen is showing. The tab bar is rendered only when
- * the overlay stack is empty, so a secondary screen covers the whole surface
+ * The app has three pieces of navigation state: an active tab (Home, Map, Create,
+ * Inquiries, Profile), a stack of overlay screens pushed over it, and — before
+ * there is a session — which auth screen is showing. The tab bar is rendered only
+ * when the overlay stack is empty, so a secondary screen covers the whole surface
  * until it is popped. This is a hand-rolled state machine, not a navigation
  * library; see KNOT-ADR-019 and KNOT-ADR-025.
  *
@@ -197,6 +202,21 @@ export default function App(): React.ReactElement {
             onCancel={() => setTab('feed')}
           />
         );
+      case 'inquiries':
+        // The Inquiries tab is a destination, not a pushed screen: it lists the
+        // open questions and is where asking starts. Asking and opening a question
+        // are overlays, so the tab bar disappears while either is showing
+        // (KNOT-ADR-058).
+        return (
+          <InquiryListScreen
+            token={current.accessToken}
+            onOpenInquiry={(inquiryId) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'inquiry', inquiryId }))
+            }
+            onAsk={() => setOverlays((stack) => pushOverlay(stack, { name: 'askInquiry' }))}
+            onOpenUserProfile={openUserProfile}
+          />
+        );
       case 'profile':
         // The Profile tab is the signed-in user's own wall, the same screen the
         // feed opens when an author is tapped. It is rendered without a back link,
@@ -213,6 +233,9 @@ export default function App(): React.ReactElement {
             }
             onOpenComment={(storyId, versionId) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'comments', storyId, versionId }))
+            }
+            onOpenInquiry={(inquiryId) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'inquiry', inquiryId }))
             }
             onSetRooted={() => setOverlays((stack) => pushOverlay(stack, { name: 'rootedSetup' }))}
             onUserUpdated={handleUserUpdated}
@@ -248,9 +271,12 @@ export default function App(): React.ReactElement {
    *   comment.created  GET /comments/{id}                 -> the comment's thread
    *   bridge.created   GET /bridges/{id}, then the source -> the source's thread
    *                    comment with GET /comments/{id}
+   *   inquiry.*        the inquiry itself                    -> the inquiry detail
    *
    * `GET /comments/{id}` names both the version and the story, so a resolved
-   * comment opens CommentThreadScreen with no further lookup. The read marker is
+   * comment opens CommentThreadScreen with no further lookup. Both inquiry events
+   * point at the inquiry rather than at the answer, so a tap opens the question,
+   * where the new answer is visible in its thread (KNOT-ADR-056). The read marker is
    * written by the inbox before this runs, so this method only navigates.
    * Content that can no longer be read (deleted, offline) simply does not open;
    * the inbox stays where it is.
@@ -284,12 +310,21 @@ export default function App(): React.ReactElement {
             openCommentThread(comment.version_id, comment.story_id);
             return;
           }
+          case 'inquiry': {
+            // Both inquiry.answered and inquiry.nearby name the inquiry, so a tap
+            // opens the question with no conditional on the event type.
+            setOverlays((stack) =>
+              pushOverlay(stack, { name: 'inquiry', inquiryId: notification.entity_id }),
+            );
+            return;
+          }
           default:
             // A notification the inbox does not produce today has nowhere to go.
             return;
         }
       } catch {
-        // A version, comment, or bridge that can no longer be read does not open.
+        // A version, comment, bridge, or inquiry that can no longer be read does
+        // not open.
       }
     })();
   }
@@ -422,6 +457,27 @@ export default function App(): React.ReactElement {
             onBack={handleBack}
           />
         );
+      case 'inquiry':
+        return (
+          <InquiryDetailScreen
+            inquiryId={overlay.inquiryId}
+            token={current.accessToken}
+            preferredLanguages={current.user.preferred_languages}
+            onOpenUserProfile={openUserProfile}
+            onBack={handleBack}
+          />
+        );
+      case 'askInquiry':
+        return (
+          <AskInquiryScreen
+            token={current.accessToken}
+            defaultLanguage={preferredLanguage(current.user)}
+            onAsked={(inquiryId) =>
+              setOverlays((stack) => replaceOverlay(stack, { name: 'inquiry', inquiryId }))
+            }
+            onCancel={handleBack}
+          />
+        );
       case 'notifications':
         return (
           <NotificationsScreen
@@ -441,6 +497,9 @@ export default function App(): React.ReactElement {
             }
             onOpenComment={(storyId, versionId) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'comments', storyId, versionId }))
+            }
+            onOpenInquiry={(inquiryId) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'inquiry', inquiryId }))
             }
             onUserUpdated={handleUserUpdated}
             onSetRooted={() => setOverlays((stack) => pushOverlay(stack, { name: 'rootedSetup' }))}

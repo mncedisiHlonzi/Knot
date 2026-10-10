@@ -190,6 +190,28 @@ func (s *Service) NotifyReactionCreated(ctx context.Context, recipientID, actorI
 	return s.notify(ctx, recipientID, actorID, EventReactionCreated, EntityType(entityType), entityID, reactionType)
 }
 
+// NotifyInquiryAnswered records that actorID answered an inquiry asked by
+// recipientID.
+//
+// The entity is the inquiry, not the answer: the inbox opens the question, where
+// the new answer is visible in its thread. The answer's own id is deliberately not
+// stored — a notification that pointed at an answer would need a second endpoint to
+// resolve it, and the question is what the asker wants to see (KNOT-ADR-056).
+func (s *Service) NotifyInquiryAnswered(ctx context.Context, recipientID, actorID, inquiryID string) error {
+	return s.notify(ctx, recipientID, actorID, EventInquiryAnswered, EntityInquiry, inquiryID, "")
+}
+
+// NotifyInquiryNearby records that actorID asked a question about a place the
+// recipient is Rooted in.
+//
+// It is the one event a recipient can receive about content they have no part in:
+// the notification exists because of where they are from, not because of anything
+// they authored. It is fired once per recipient, so the caller — not this
+// package — decides who "the first Rooted users of this place" are (KNOT-ADR-056).
+func (s *Service) NotifyInquiryNearby(ctx context.Context, recipientID, actorID, inquiryID string) error {
+	return s.notify(ctx, recipientID, actorID, EventInquiryNearby, EntityInquiry, inquiryID, "")
+}
+
 // notify is the shared body of the three hooks. It never returns a wrapped
 // store error to a caller in another domain that would have to know this
 // package's error types: it returns the error Create produced, having logged it.
@@ -243,7 +265,7 @@ func validateCreate(in CreateInput) (Notification, error) {
 	if !in.EventType.Valid() {
 		return Notification{}, &ValidationError{
 			Field:   "event_type",
-			Message: "must be one of version.created, comment.created, bridge.created, reaction.created",
+			Message: "must be one of version.created, comment.created, bridge.created, reaction.created, inquiry.answered, inquiry.nearby",
 		}
 	}
 	if !in.EventType.acceptsEntityType(in.EntityType) {

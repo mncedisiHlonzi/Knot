@@ -162,6 +162,51 @@ func (s *PostgresStore) BatchPrimaryPublic(ctx context.Context, userIDs []string
 	return out, nil
 }
 
+// RootedUserIDsByPlace returns the ids of at most limit users whose primary
+// public signal is for place, earliest declarer first.
+//
+// The order is (created_at ASC, id ASC) — "the first N Rooted users of this place"
+// read literally: the people who declared the connection earliest. A user has at
+// most one primary signal (the partial unique index), so no duplicate user id can
+// be returned and no DISTINCT is needed.
+//
+// The match is exact on the stored place, which is the same free text a signal was
+// declared with; it is served by rooted_signals_place_idx. Only primary, public
+// signals route: a hidden signal is one its owner chose not to be findable by, and
+// routing an unknown person's question to them would breach that (KNOT-ADR-056).
+func (s *PostgresStore) RootedUserIDsByPlace(ctx context.Context, place string, limit int) ([]string, error) {
+	if place == "" || limit < 1 {
+		return []string{}, nil
+	}
+
+	const query = `
+		SELECT user_id
+		FROM rooted_signals
+		WHERE is_primary = true AND is_public = true AND place = $1
+		ORDER BY created_at ASC, id ASC
+		LIMIT $2`
+
+	rows, err := s.pool.Query(ctx, query, place, limit)
+	if err != nil {
+		return nil, fmt.Errorf("rooted: root user ids by place: %w", err)
+	}
+	defer rows.Close()
+
+	userIDs := make([]string, 0, limit)
+	for rows.Next() {
+		var userID string
+		if err := rows.Scan(&userID); err != nil {
+			return nil, fmt.Errorf("rooted: root user ids by place: %w", err)
+		}
+		userIDs = append(userIDs, userID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rooted: root user ids by place: %w", err)
+	}
+
+	return userIDs, nil
+}
+
 // UserExists reports whether a user row exists. A malformed id is reported as
 // false rather than as a database error.
 func (s *PostgresStore) UserExists(ctx context.Context, userID string) (bool, error) {

@@ -11,18 +11,20 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/knot/backend/internal/conversations"
+	"github.com/knot/backend/internal/inquiries"
 	"github.com/knot/backend/internal/stories"
 	"github.com/knot/backend/internal/versions"
 )
 
 // integrationEnv is what the integration tests work with: the profile store under
-// test, the three content stores used to author activities, the pool, and two
-// users to attribute them to.
+// test, the content stores used to author activities, the pool, and two users to
+// attribute them to.
 type integrationEnv struct {
 	store        *PostgresStore
 	storyStore   *stories.PostgresStore
 	versionStore *versions.PostgresStore
 	convStore    *conversations.PostgresStore
+	inquiryStore *inquiries.PostgresStore
 	pool         *pgxpool.Pool
 	prefix       string
 	userA        string
@@ -56,7 +58,7 @@ func integrationSetup(t *testing.T) integrationEnv {
 	}
 
 	// Every table the union reads must exist for these tests to run.
-	for _, table := range []string{"public.stories", "public.story_versions", "public.comments", "public.bridges", "public.users"} {
+	for _, table := range []string{"public.stories", "public.story_versions", "public.comments", "public.bridges", "public.inquiries", "public.inquiry_answers", "public.users"} {
 		var present bool
 		if err := pool.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", table).Scan(&present); err != nil {
 			pool.Close()
@@ -92,12 +94,19 @@ func integrationSetup(t *testing.T) integrationEnv {
 		t.Fatalf("conversations.NewPostgresStore() error = %v, want nil", err)
 	}
 
+	inquiryStore, err := inquiries.NewPostgresStore(pool)
+	if err != nil {
+		pool.Close()
+		t.Fatalf("inquiries.NewPostgresStore() error = %v, want nil", err)
+	}
+
 	prefix := fmt.Sprintf("knot-it-profile-%d-", time.Now().UnixNano())
 	env := integrationEnv{
 		store:        store,
 		storyStore:   storyStore,
 		versionStore: versionStore,
 		convStore:    convStore,
+		inquiryStore: inquiryStore,
 		pool:         pool,
 		prefix:       prefix,
 	}
@@ -417,4 +426,129 @@ func TestPostgresStoreListForUserOrdersNewestFirst(t *testing.T) {
 	if secondIndex > firstIndex {
 		t.Errorf("the newer comment is at %d and the older at %d, want newest first", secondIndex, firstIndex)
 	}
+}
+
+// TestPostgresStoreListForUserIncludesInquiriesAndAnswers proves the wall's two
+// new branches: a question the owner asked, and an answer the owner gave to
+// someone else's question.
+func TestPostgresStoreListForUserIncludesInquiriesAndAnswers(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	place := "Manguzi"
+	inquiry, err := env.inquiryStore.CreateInquiry(ctx, inquiries.Inquiry{
+		AuthorID: env.userA,
+		Title:    "Why do the cattle come home at the same hour?",
+		Body:     "Every evening, without anyone calling them.",
+		Language: "eng",
+		Place:    &place,
+	})
+	if err != nil {
+		t.Fatalf("CreateInquiry() error = %v, want nil", err)
+	}
+
+	// The answer is older than the inquiry's activity would be if it were written
+	// after, so give the answer a distinct timestamp by waiting a moment.
+	time.Sleep(2 * time.Millisecond)
+	answer, _, err := env.inquiryStore.CreateAnswer(ctx, inquiries.Answer{
+		InquiryID: inquiry.ID,
+		AuthorID:  env.userB,
+		Language:  "eng",
+		Body:      "They follow the river, and the river has a tide.",
+	})
+	if err != nil {
+		t.Fatalf("CreateAnswer() error = %v, want nil", err)
+	}
+
+	// UserA asked the question, so their wall carries an inquiry activity.
+	wallA, _, err := env.store.ListForUser(ctx, env.userA, nil, 50)
+	if err != nil {
+		t.Fatalf("ListForUser(userA) error = %v, want nil", err)
+	}
+
+	var foundInquiry *Activity
+	for i := range wallA {
+		if wallA[i].Kind == KindInquiry && wallA[i].ID == inquiry.ID {
+			foundInquiry = &wallA[i]
+		}
+	}
+	if foundInquiry == nil {
+		t.Fatalf("user A's wall has no inquiry activity for %s: %+v", inquiry.ID, wallA)
+	}
+	if foundInquiry.Payload.Title != inquiry.Title {
+		t.Errorf("inquiry payload title = %q, want %q", foundInquiry.Payload.Title, inquiry.Title)
+	}
+	if foundInquiry.Payload.Place != "Manguzi" {
+		t.Errorf("inquiry payload place = %q, want Manguzi", foundInquiry.Payload.Place)
+	}
+	// An inquiry activity carries no story, version, or comment context.
+	if foundInquiry.Payload.StoryID != "" || foundInquiry.Payload.VersionID != "" {
+		t.Errorf("inquiry payload leaked other context: %+v", foundInquiry.Payload)
+	}
+
+	// UserB answered, so their wall carries an inquiry_answer activity that names
+	// the question it answers.
+	wallB, _, err := env.store.ListForUser(ctx, env.userB, nil, 50)
+	if err != nil {
+		t.Fatalf("ListForUser(userB) error = %v, want nil", err)
+	}
+
+	var foundAnswer *Activity
+	for i := range wallB {
+		if wallB[i].Kind == KindInquiryAnswer && wallB[i].ID == answer.ID {
+			foundAnswer = &wallB[i]
+		}
+	}
+	if foundAnswer == nil {
+		t.Fatalf("user B's wall has no inquiry_answer activity for %s: %+v", answer.ID, wallB)
+	}
+	if foundAnswer.Payload.InquiryID != inquiry.ID {
+		t.Errorf("answer payload inquiry id = %q, want %q", foundAnswer.Payload.InquiryID, inquiry.ID)
+	}
+	if foundAnswer.Payload.InquiryTitle != inquiry.Title {
+		t.Errorf("answer payload inquiry title = %q, want %q", foundAnswer.Payload.InquiryTitle, inquiry.Title)
+	}
+	if foundAnswer.Payload.BodyPreview != answer.Body {
+		t.Errorf("answer payload preview = %q, want %q", foundAnswer.Payload.BodyPreview, answer.Body)
+	}
+
+	// The question belongs to the asker's wall only: userB answered it, but did not
+	// ask it, so it must not appear there a second time as an inquiry.
+	for _, activity := range wallB {
+		if activity.Kind == KindInquiry && activity.ID == inquiry.ID {
+			t.Error("a question appears on the answerer's wall as an inquiry activity")
+		}
+	}
+}
+
+// TestPostgresStoreListForUserPlaceLessInquiryHasNoPlace confirms a place-less
+// question is still wall content, with the place field simply absent.
+func TestPostgresStoreListForUserPlaceLessInquiryHasNoPlace(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	inquiry, err := env.inquiryStore.CreateInquiry(ctx, inquiries.Inquiry{
+		AuthorID: env.userA,
+		Title:    "A question about nowhere in particular",
+		Body:     "Still a question.",
+		Language: "eng",
+	})
+	if err != nil {
+		t.Fatalf("CreateInquiry() error = %v, want nil", err)
+	}
+
+	wall, _, err := env.store.ListForUser(ctx, env.userA, nil, 50)
+	if err != nil {
+		t.Fatalf("ListForUser() error = %v, want nil", err)
+	}
+
+	for _, activity := range wall {
+		if activity.Kind == KindInquiry && activity.ID == inquiry.ID {
+			if activity.Payload.Place != "" {
+				t.Errorf("place = %q, want empty for a place-less inquiry", activity.Payload.Place)
+			}
+			return
+		}
+	}
+	t.Error("the place-less inquiry is missing from the wall")
 }

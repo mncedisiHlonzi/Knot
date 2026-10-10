@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/knot/backend/internal/conversations"
+	"github.com/knot/backend/internal/inquiries"
 	"github.com/knot/backend/internal/reactions"
 	"github.com/knot/backend/internal/stories"
 	"github.com/knot/backend/internal/versions"
@@ -134,7 +135,13 @@ func newTestReactionsHandler(t *testing.T, logger *slog.Logger, service Reaction
 		service = &fakeReactionsService{}
 	}
 
-	handler, err := NewReactionsHandler(service, storyService, versionService, conversationService, notifier, logger)
+	// The inquiries service is only consulted to resolve an inquiry's author, which
+	// none of the story, version, comment, or bridge tests exercise. The default stub
+	// reports not-found, so a reaction that was accidentally routed to an inquiry
+	// fails loudly instead of resolving to an empty author.
+	inquiryService := &fakeInquiriesService{getErr: inquiries.ErrNotFound}
+
+	handler, err := NewReactionsHandler(service, storyService, versionService, conversationService, inquiryService, notifier, logger)
 	if err != nil {
 		t.Fatalf("NewReactionsHandler() error = %v, want nil", err)
 	}
@@ -406,22 +413,25 @@ func TestListReactionsEmptyIsAnArray(t *testing.T) {
 func TestNewReactionsHandlerRejectsMissingDependencies(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	if _, err := NewReactionsHandler(nil, &fakeStoriesService{}, &fakeVersionsService{}, &fakeConversationsService{}, &fakeReactionsNotifier{}, logger); err == nil {
+	if _, err := NewReactionsHandler(nil, &fakeStoriesService{}, &fakeVersionsService{}, &fakeConversationsService{}, &fakeInquiriesService{}, &fakeReactionsNotifier{}, logger); err == nil {
 		t.Error("NewReactionsHandler(nil service) error = nil, want an error")
 	}
-	if _, err := NewReactionsHandler(&fakeReactionsService{}, nil, &fakeVersionsService{}, &fakeConversationsService{}, &fakeReactionsNotifier{}, logger); err == nil {
+	if _, err := NewReactionsHandler(&fakeReactionsService{}, nil, &fakeVersionsService{}, &fakeConversationsService{}, &fakeInquiriesService{}, &fakeReactionsNotifier{}, logger); err == nil {
 		t.Error("NewReactionsHandler(nil stories) error = nil, want an error")
 	}
-	if _, err := NewReactionsHandler(&fakeReactionsService{}, &fakeStoriesService{}, nil, &fakeConversationsService{}, &fakeReactionsNotifier{}, logger); err == nil {
+	if _, err := NewReactionsHandler(&fakeReactionsService{}, &fakeStoriesService{}, nil, &fakeConversationsService{}, &fakeInquiriesService{}, &fakeReactionsNotifier{}, logger); err == nil {
 		t.Error("NewReactionsHandler(nil versions) error = nil, want an error")
 	}
-	if _, err := NewReactionsHandler(&fakeReactionsService{}, &fakeStoriesService{}, &fakeVersionsService{}, nil, &fakeReactionsNotifier{}, logger); err == nil {
+	if _, err := NewReactionsHandler(&fakeReactionsService{}, &fakeStoriesService{}, &fakeVersionsService{}, nil, &fakeInquiriesService{}, &fakeReactionsNotifier{}, logger); err == nil {
 		t.Error("NewReactionsHandler(nil conversations) error = nil, want an error")
 	}
-	if _, err := NewReactionsHandler(&fakeReactionsService{}, &fakeStoriesService{}, &fakeVersionsService{}, &fakeConversationsService{}, nil, logger); err == nil {
+	if _, err := NewReactionsHandler(&fakeReactionsService{}, &fakeStoriesService{}, &fakeVersionsService{}, &fakeConversationsService{}, nil, &fakeReactionsNotifier{}, logger); err == nil {
+		t.Error("NewReactionsHandler(nil inquiries) error = nil, want an error")
+	}
+	if _, err := NewReactionsHandler(&fakeReactionsService{}, &fakeStoriesService{}, &fakeVersionsService{}, &fakeConversationsService{}, &fakeInquiriesService{}, nil, logger); err == nil {
 		t.Error("NewReactionsHandler(nil notifier) error = nil, want an error")
 	}
-	if _, err := NewReactionsHandler(&fakeReactionsService{}, &fakeStoriesService{}, &fakeVersionsService{}, &fakeConversationsService{}, &fakeReactionsNotifier{}, nil); err == nil {
+	if _, err := NewReactionsHandler(&fakeReactionsService{}, &fakeStoriesService{}, &fakeVersionsService{}, &fakeConversationsService{}, &fakeInquiriesService{}, &fakeReactionsNotifier{}, nil); err == nil {
 		t.Error("NewReactionsHandler(nil logger) error = nil, want an error")
 	}
 }

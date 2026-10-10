@@ -39,8 +39,9 @@ var bodyPreviewCharsSQL = strconv.Itoa(MaxBodyPreviewChars)
 //
 // The payload is built in SQL with jsonb_build_object, so the context a card
 // needs (a story's title, an adaptation's story title, a comment's preview, a
-// bridge's source) travels with the row rather than being fetched per activity:
-// the whole page is one query, never N+1 (KNOT-ADR-042).
+// bridge's source, an inquiry's place, an answer's question) travels with the row
+// rather than being fetched per activity: the whole page is one query, never N+1
+// (KNOT-ADR-042).
 //
 // The version branch excludes root versions (parent_version_id IS NOT NULL): a
 // story's root version is the story itself, so counting it again as a "version"
@@ -51,8 +52,13 @@ var bodyPreviewCharsSQL = strconv.Itoa(MaxBodyPreviewChars)
 // artifact, so the bridge branch is the one that represents the act. Without this,
 // one bridge would appear as two activities.
 //
+// The inquiry and inquiry_answer branches need no such exclusion. Asking a question
+// and answering one are different acts by different people, and an answer always
+// belongs to someone else's inquiry, so the two can never describe the same row.
+//
 // Comments and bridges join their version (and, for a bridge, its source comment)
-// to resolve the story/version ids a client needs to open the right thread.
+// to resolve the story/version ids a client needs to open the right thread. An
+// inquiry_answer joins its inquiry to name the question it answers.
 var activityUnion = `
 	SELECT
 		'story' AS kind,
@@ -114,6 +120,34 @@ var activityUnion = `
 	FROM bridges b
 	JOIN comments sc ON sc.id = b.source_comment_id
 	WHERE b.author_id = $1
+
+	UNION ALL
+
+	SELECT
+		'inquiry' AS kind,
+		i.id AS id,
+		i.created_at AS created_at,
+		jsonb_build_object(
+			'title', i.title,
+			'place', i.place
+		) AS payload
+	FROM inquiries i
+	WHERE i.author_id = $1
+
+	UNION ALL
+
+	SELECT
+		'inquiry_answer' AS kind,
+		a.id AS id,
+		a.created_at AS created_at,
+		jsonb_build_object(
+			'inquiry_id', a.inquiry_id,
+			'inquiry_title', i.title,
+			'body_preview', left(a.body, ` + bodyPreviewCharsSQL + `)
+		) AS payload
+	FROM inquiry_answers a
+	JOIN inquiries i ON i.id = a.inquiry_id
+	WHERE a.author_id = $1
 `
 
 // ListForUser returns one page of a user's wall, newest first, plus the cursor

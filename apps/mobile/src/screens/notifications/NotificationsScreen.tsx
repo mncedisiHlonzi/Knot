@@ -46,6 +46,7 @@ const OPENABLE_ENTITY_TYPES: readonly NotificationEntityType[] = [
   'version',
   'comment',
   'bridge',
+  'inquiry',
 ];
 
 /**
@@ -101,6 +102,12 @@ function describeNotification(notification: Notification): string {
       return `${actor} bridged your comment into another language.`;
     case 'reaction.created':
       return `${actor} ${reactionPhrase(notification.reaction_type)} on your ${notification.entity_type}.`;
+    case 'inquiry.answered':
+      return `${actor} answered your question.`;
+    case 'inquiry.nearby':
+      // The one event about content the recipient has no part in: it fires because
+      // of where they are from, so the sentence names the act, not "your".
+      return `${actor} asked a question about your place.`;
     default:
       return `${actor} did something on your content.`;
   }

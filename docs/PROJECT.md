@@ -54,6 +54,24 @@ This is the full canonical loop. The public-facing four-verb loop above is a sim
 
 Every feature Knot builds must strengthen this loop.
 
+### A second loop — asking
+
+> **Ask → Answer → Know**
+
+Curious Inquiries adds a second loop that runs beside the storytelling one rather than
+replacing it:
+
+1. **Ask** — someone asks a question about a place, naming it.
+2. **Answer** — the people Rooted in that place answer publicly, in their own words and
+   under their own names.
+3. **Know** — an answer is not a conclusion. Questions stay open, so a place keeps
+   accumulating what its people know.
+
+It strengthens the same principle the four verbs do — local voices first, conversation
+rather than broadcast — by making the question the unit of exchange. The two loops do not
+merge: a story is authored content about a place, an inquiry is a question asked *of* the
+people there, and the composer for each stays separate (KNOT-ADR-055, KNOT-ADR-058).
+
 ## Guiding principles
 
 - **Human adaptation over machine translation.** People, not models, carry meaning.

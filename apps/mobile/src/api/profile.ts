@@ -6,14 +6,15 @@
  * carrying the server's machine-readable code.
  *
  * The wall is public, so no token is needed. It is one chronological stream
- * merged from the four things a person can author — stories, versions
- * (adaptations), comments, and bridges.
+ * merged from the things a person can author — stories, versions (adaptations),
+ * comments, bridges, inquiries, and answers to inquiries.
  */
 import { request } from './client';
 import type { AuthorRooted } from './rooted';
 
 /** What a user did, as the server names it. The set is closed. */
-export type ActivityKind = 'story' | 'version' | 'comment' | 'bridge';
+export type ActivityKind =
+  'story' | 'version' | 'comment' | 'bridge' | 'inquiry' | 'inquiry_answer';
 
 /** The context of a story activity. */
 export type StoryActivityPayload = {
@@ -41,6 +42,20 @@ export type BridgeActivityPayload = {
   readonly source_comment_id: string;
   readonly version_id: string;
   readonly target_language: string;
+};
+
+/** The context of an inquiry activity: the question the owner asked. */
+export type InquiryActivityPayload = {
+  readonly title: string;
+  /** The place asked about, or absent when the question names none. */
+  readonly place?: string;
+};
+
+/** The context of an inquiry_answer activity: the question the owner answered. */
+export type InquiryAnswerActivityPayload = {
+  readonly inquiry_id: string;
+  readonly inquiry_title: string;
+  readonly body_preview: string;
 };
 
 /**
@@ -74,6 +89,18 @@ export type Activity =
       readonly id: string;
       readonly created_at: string;
       readonly payload: BridgeActivityPayload;
+    }
+  | {
+      readonly kind: 'inquiry';
+      readonly id: string;
+      readonly created_at: string;
+      readonly payload: InquiryActivityPayload;
+    }
+  | {
+      readonly kind: 'inquiry_answer';
+      readonly id: string;
+      readonly created_at: string;
+      readonly payload: InquiryAnswerActivityPayload;
     };
 
 /** The public identity header of a wall. */

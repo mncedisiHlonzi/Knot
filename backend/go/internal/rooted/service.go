@@ -95,6 +95,31 @@ func (s *Service) GetPublicSignals(ctx context.Context, userID string) ([]Signal
 	return nonNilSignals(signals), nil
 }
 
+// RootedUserIDsByPlace returns the ids of at most limit users who are primarily
+// and publicly Rooted in place, earliest declarer first.
+//
+// It is the routing lookup Curious Inquiries uses to find the first people to ask
+// about a place (KNOT-ADR-056). The place is trimmed, because surrounding
+// whitespace is never meaningful, and a blank place or a non-positive limit yields
+// an empty slice rather than a query: there is nothing to route and nothing to
+// bound. The result is never nil, so a caller can range over it directly.
+func (s *Service) RootedUserIDsByPlace(ctx context.Context, place string, limit int) ([]string, error) {
+	trimmed := strings.TrimSpace(place)
+	if trimmed == "" || limit < 1 {
+		return []string{}, nil
+	}
+
+	userIDs, err := s.store.RootedUserIDsByPlace(ctx, trimmed, limit)
+	if err != nil {
+		return nil, fmt.Errorf("rooted: root user ids by place: %w", err)
+	}
+	if userIDs == nil {
+		return []string{}, nil
+	}
+
+	return userIDs, nil
+}
+
 // GetPrimaryPublicSignal returns the user's primary public signal, or nil when the
 // user has none (or the id is not a UUID).
 //

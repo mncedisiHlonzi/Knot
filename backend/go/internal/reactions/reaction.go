@@ -75,12 +75,17 @@ const (
 	EntityComment EntityType = "comment"
 	// EntityBridge is one bridge.
 	EntityBridge EntityType = "bridge"
+	// EntityInquiry is one question asked about a place (KNOT-ADR-057).
+	//
+	// Answers are deliberately absent: an answer is a reply, and replies carry no
+	// reactions at MVP (KNOT-ADR-052).
+	EntityInquiry EntityType = "inquiry"
 )
 
 // Valid reports whether t is one of the supported entity types.
 func (t EntityType) Valid() bool {
 	switch t {
-	case EntityStory, EntityVersion, EntityComment, EntityBridge:
+	case EntityStory, EntityVersion, EntityComment, EntityBridge, EntityInquiry:
 		return true
 	default:
 		return false

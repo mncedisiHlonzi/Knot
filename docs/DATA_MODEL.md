@@ -537,15 +537,30 @@ PostgreSQL seeks to the resume point instead of sorting the table.
 
 ### The event and entity sets are closed
 
-`event_type` is one of `version.created`, `comment.created`, or `bridge.created`, and
-`entity_type` is one of `story`, `version`, `comment`, or `bridge`. Both sets are CHECK
-constraints *and* Go constants with a `Valid` method, so a value outside them is refused
-before it reaches the database.
+`event_type` is one of `version.created`, `comment.created`, `bridge.created`,
+`reaction.created`, `inquiry.answered`, or `inquiry.nearby`; `entity_type` is one of `story`,
+`version`, `comment`, `bridge`, or `inquiry`. Both sets are CHECK constraints *and* Go constants
+with a `Valid` method, so a value outside them is refused before it reaches the database. The
+constraints are widened in the same migration that starts writing a new event — a migration that
+adds an event without widening the CHECK would fail at the first write (KNOT-ADR-050,
+KNOT-ADR-056).
 
-Each event maps to exactly one entity type (`version.created` → `version`,
-`comment.created` → `comment`, `bridge.created` → `bridge`), and the service enforces the
-mapping. A notification therefore always points at something a client can render, and
-"an adaptation" can never be filed against a comment.
+Each event maps to exactly one entity type — `version.created` → `version`,
+`comment.created` → `comment`, `bridge.created` → `bridge`, and both inquiry events → `inquiry`
+— and the service enforces the mapping. A notification therefore always points at something a
+client can render, and "an adaptation" can never be filed against a comment.
+
+The one exception is `reaction.created`, whose entity is whatever was reacted to: it accepts any
+of the entity kinds rather than one fixed type, because a reaction reuses the entity it points
+at so the client opens the same screen a tap on the content would.
+
+Both inquiry events name the **inquiry** rather than the answer, so a tap opens the question,
+where the new answer is visible in its thread. That keeps one destination for both events and
+avoids an endpoint whose only purpose would be to resolve an answer id.
+
+`inquiry.nearby` is the only event a recipient can receive about content they have no part in:
+it fires because of where they are from — the recipient is Rooted in the place the question
+names — rather than because they authored something.
 
 ### `entity_id` has no foreign key
 
@@ -616,12 +631,90 @@ The insert relies on `reactions_unique_per_user_entity_type` as its `ON CONFLICT
 it does not create already exists, so the same call deletes it. Both writes run in one
 transaction, so the entity is never observed with the signal half-applied.
 
+## `inquiries`
+
+A question someone asked about a place (KNOT-016).
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` | PK, `gen_random_uuid()` |
+| `author_id` | `uuid` | NOT NULL, FK `users(id)` `ON DELETE CASCADE` |
+| `title` | `text` | NOT NULL, 1–200 characters after trimming |
+| `body` | `text` | NOT NULL, 1–5,000 characters after trimming |
+| `language` | `text` | NOT NULL, a valid ISO 639-3 code (KNOT-ADR-046) |
+| `place` | `text` | NULL, 1–100 characters after trimming, one line, no tabs |
+| `place_country` | `text` | NULL, ≤100 characters |
+| `latitude` | `double precision` | NULL |
+| `longitude` | `double precision` | NULL |
+| `answer_count` | `integer` | NOT NULL DEFAULT 0, maintained by the application |
+| `created_at` | `timestamptz` | NOT NULL DEFAULT `now()`, the list's sort key |
+| `updated_at` | `timestamptz` | NOT NULL DEFAULT `now()` |
+
+### Indexes and constraints
+
+| Index | Serves |
+| --- | --- |
+| `inquiries_created_at_id_idx (created_at DESC, id DESC)` | `GET /inquiries`, the keyset order |
+| `inquiries_place_idx (place)` | the `?place=` filter, and Rooted routing |
+| `inquiries_author_id_idx (author_id)` | a user's own inquiries, and the wall's inquiry branch |
+
+There is **no** CHECK on `language`: the canonical ISO 639-3 list is compile-time data the
+application owns, and the notifications and reactions migrations take the same position. There
+is no CHECK on the coordinate pair either — the pair is enforced by the service, exactly as it
+is on `stories` and `rooted_signals` (KNOT-ADR-034).
+
+### `answer_count` is denormalised, and maintained in the insert's transaction
+
+The count is stored on the inquiry so the list and the detail can show "3 answers" without a
+correlated `COUNT(*)` per row. It is not maintained by a trigger: the service inserts the
+answer, increments the count, and commits both in one transaction, having first locked the
+inquiry row with `SELECT … FOR UPDATE`. Two answers arriving at once serialise on that lock, so
+neither can observe the other's pre-increment value and write it back (the KNOT-ADR-054
+pattern). The lock is on `inquiries.id` — one stable row, and the entity whose count is being
+changed — not on `inquiry_answers` rows.
+
+`updated_at` is deliberately **not** touched by an answer. An answer is new activity on the
+inquiry rather than an edit of it, and the wall orders by `created_at`, so bumping `updated_at`
+would misreport an edit that never happened.
+
+## `inquiry_answers`
+
+A public, attributed reply to one inquiry (KNOT-016).
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` | PK, `gen_random_uuid()` |
+| `inquiry_id` | `uuid` | NOT NULL, FK `inquiries(id)` `ON DELETE CASCADE` |
+| `author_id` | `uuid` | NOT NULL, FK `users(id)` `ON DELETE CASCADE` |
+| `language` | `text` | NOT NULL, a valid ISO 639-3 code |
+| `body` | `text` | NOT NULL, 1–5,000 characters after trimming |
+| `created_at` | `timestamptz` | NOT NULL DEFAULT `now()`, the thread's sort key |
+| `updated_at` | `timestamptz` | NOT NULL DEFAULT `now()` |
+
+### Indexes and constraints
+
+| Index | Serves |
+| --- | --- |
+| `inquiry_answers_inquiry_created_idx (inquiry_id, created_at ASC, id ASC)` | `GET /inquiries/{id}/answers`, oldest first |
+| `inquiry_answers_author_id_idx (author_id)` | a user's own answers, and the wall's `inquiry_answer` branch |
+
+The index is ascending because an answer thread reads as a conversation: the earliest answer
+leads, the opposite of the inquiry list. `ON DELETE CASCADE` on `inquiry_id` means removing a
+question takes its answers with it — there is no delete route at MVP, but the schema is honest
+when a row is removed by hand.
+
+### Operations that deliberately do not exist
+
+No accepted answer, no closing, no ranking, no editing, no deletion, no anonymity, and no
+follow/notify-me. Each is a product decision, not an omission: an inquiry stays open forever
+because a place's knowledge is plural (KNOT-ADR-055).
+
 ## The profile wall (a read model, no new table)
 
 The profile wall (`GET /users/{id}/profile`) is **not backed by a table**. It is a read
-model over the four entity tables that already exist — `stories`, `story_versions`,
-`comments`, and `bridges` — unioned in one query, filtered by the author, and ordered
-chronologically:
+model over the entity tables that already exist — `stories`, `story_versions`,
+`comments`, `bridges`, `inquiries`, and `inquiry_answers` — unioned in one query, filtered by
+the author, and ordered chronologically:
 
 ```sql
 SELECT kind, id, created_at, payload
@@ -662,29 +755,55 @@ FROM (
     FROM bridges b
     JOIN comments sc ON sc.id = b.source_comment_id
     WHERE b.author_id = $1
+
+    UNION ALL
+    SELECT 'inquiry' AS kind, i.id, i.created_at,
+           jsonb_build_object('title', i.title,
+                              'place', i.place)
+    FROM inquiries i
+    WHERE i.author_id = $1
+
+    UNION ALL
+    SELECT 'inquiry_answer' AS kind, a.id, a.created_at,
+           jsonb_build_object('inquiry_id',    a.inquiry_id,
+                              'inquiry_title', i.title,
+                              'body_preview',  left(a.body, 200))
+    FROM inquiry_answers a
+    JOIN inquiries i ON i.id = a.inquiry_id
+    WHERE a.author_id = $1
 ) AS activities
 WHERE (created_at, id) < ($2::timestamptz, $3::uuid)   -- when a cursor is sent
 ORDER BY created_at DESC, id DESC
 LIMIT $4
 ```
 
-**Why a union and not a materialised `activities` table.** The four entities are already
-the source of truth; a fifth table would have to be written on every create in four
-domains, kept in sync on every delete, and backfilled. A read model with one query costs
+**Why a union and not a materialised `activities` table.** The entities are already
+the source of truth; an extra table would have to be written on every create in every
+domain, kept in sync on every delete, and backfilled. A read model with one query costs
 one scan of each author-indexed table and stays correct by construction (KNOT-ADR-042).
 
 **Why the payload is built in SQL.** `jsonb_build_object` attaches the context a card needs
-— a story's title, an adaptation's story title, a comment's preview, a bridge's source —
-to the row, so a whole page is one query rather than one per activity. The comment preview
-is `left(body, 200)`, so a full body never travels to a client through the wall.
+— a story's title, an adaptation's story title, a comment's preview, a bridge's source, an
+inquiry's place, an answer's question — to the row, so a whole page is one query rather than
+one per activity. The comment and answer previews are `left(body, 200)`, so a full body never
+travels to a client through the wall.
 
 **Two acts are deliberately not double-counted.** A story's root version is excluded from
 the `version` branch (the root *is* the story), and a bridge's target comment is excluded
 from the `comment` branch (the target is the bridge's artifact). Both are single acts that
-write two rows each, so listing both rows would list one action twice.
+write two rows each, so listing both rows would list one action twice. The inquiry branches
+need no such exclusion: asking a question and answering one are different acts by different
+people, and an answer always belongs to someone else's inquiry.
+
+**The six wall kinds.** `story`, `version`, `comment`, `bridge`, `inquiry`, and
+`inquiry_answer`, with payloads `{title, pillar, language}`, `{story_id, story_title,
+language}`, `{version_id, story_id, body_preview}`, `{source_comment_id, version_id,
+target_language}`, `{title, place}`, and `{inquiry_id, inquiry_title, body_preview}`. Every
+payload field carries `omitempty`, so a place-less inquiry has no `place` key at all rather
+than an explicit null.
 
 **Indexes it relies on.** `stories_author_id_idx`, `story_versions_author_id_idx`,
-`comments_author_id_idx`, and `bridges_author_id_idx` narrow each branch to the author;
-the `ORDER BY (created_at DESC, id DESC)` is a sort over the merged rows, which is bounded
-by the four per-author filters. Each branch's primary-key lookup for the join is an index
-scan.
+`comments_author_id_idx`, `bridges_author_id_idx`, `inquiries_author_id_idx`, and
+`inquiry_answers_author_id_idx` narrow each branch to the author; the
+`ORDER BY (created_at DESC, id DESC)` is a sort over the merged rows, which is bounded by the
+per-author filters. Each branch's primary-key lookup for the join is an index scan.

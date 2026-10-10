@@ -44,13 +44,20 @@ func TestEventTypeEntityTypeRejectsUnknownEvents(t *testing.T) {
 }
 
 func TestEventTypeValid(t *testing.T) {
-	for _, event := range []EventType{EventVersionCreated, EventCommentCreated, EventBridgeCreated, EventReactionCreated} {
+	for _, event := range []EventType{
+		EventVersionCreated,
+		EventCommentCreated,
+		EventBridgeCreated,
+		EventReactionCreated,
+		EventInquiryAnswered,
+		EventInquiryNearby,
+	} {
 		if !event.Valid() {
 			t.Errorf("%q.Valid() = false, want true", event)
 		}
 	}
 
-	for _, event := range []EventType{"", "version.deleted", "VERSION.CREATED", "reaction.deleted"} {
+	for _, event := range []EventType{"", "version.deleted", "VERSION.CREATED", "reaction.deleted", "inquiry.closed", "inquiry.created"} {
 		if event.Valid() {
 			t.Errorf("%q.Valid() = true, want false", event)
 		}
@@ -58,7 +65,8 @@ func TestEventTypeValid(t *testing.T) {
 }
 
 func TestEventTypeAcceptsEntityType(t *testing.T) {
-	// The three content events each accept exactly one entity kind.
+	// The content events and the two inquiry events each accept exactly one entity
+	// kind.
 	tests := []struct {
 		event  EventType
 		entity EntityType
@@ -66,12 +74,16 @@ func TestEventTypeAcceptsEntityType(t *testing.T) {
 		{EventVersionCreated, EntityVersion},
 		{EventCommentCreated, EntityComment},
 		{EventBridgeCreated, EntityBridge},
+		{EventInquiryAnswered, EntityInquiry},
+		{EventInquiryNearby, EntityInquiry},
 	}
+	allEntities := []EntityType{EntityStory, EntityVersion, EntityComment, EntityBridge, EntityInquiry}
+
 	for _, test := range tests {
 		if !test.event.acceptsEntityType(test.entity) {
 			t.Errorf("%q.acceptsEntityType(%q) = false, want true", test.event, test.entity)
 		}
-		for _, other := range []EntityType{EntityStory, EntityVersion, EntityComment, EntityBridge} {
+		for _, other := range allEntities {
 			if other == test.entity {
 				continue
 			}
@@ -81,8 +93,8 @@ func TestEventTypeAcceptsEntityType(t *testing.T) {
 		}
 	}
 
-	// reaction.created may target any of the four entity kinds.
-	for _, entity := range []EntityType{EntityStory, EntityVersion, EntityComment, EntityBridge} {
+	// reaction.created may target any of the entity kinds.
+	for _, entity := range allEntities {
 		if !EventReactionCreated.acceptsEntityType(entity) {
 			t.Errorf("reaction.created.acceptsEntityType(%q) = false, want true", entity)
 		}
@@ -122,13 +134,13 @@ func TestValidateCreateReactionType(t *testing.T) {
 }
 
 func TestEntityTypeValid(t *testing.T) {
-	for _, entity := range []EntityType{EntityStory, EntityVersion, EntityComment, EntityBridge} {
+	for _, entity := range []EntityType{EntityStory, EntityVersion, EntityComment, EntityBridge, EntityInquiry} {
 		if !entity.Valid() {
 			t.Errorf("%q.Valid() = false, want true", entity)
 		}
 	}
 
-	for _, entity := range []EntityType{"", "user", "STORY"} {
+	for _, entity := range []EntityType{"", "user", "STORY", "inquiry_answer"} {
 		if entity.Valid() {
 			t.Errorf("%q.Valid() = true, want false", entity)
 		}

@@ -33,6 +33,11 @@ type UserProfileScreenProps = {
   readonly onOpenStory: (storyId: string) => void;
   /** Called to open a comment thread. */
   readonly onOpenComment: (storyId: string, versionId: string) => void;
+  /**
+   * Called to open a question. An inquiry activity opens its own question; an
+   * inquiry_answer activity opens the question it answered.
+   */
+  readonly onOpenInquiry: (inquiryId: string) => void;
   /** Called with the updated user after a successful avatar upload. */
   readonly onUserUpdated: (user: User) => void;
   /** Called when the owner wants to set or replace their Rooted signal. */
@@ -61,6 +66,8 @@ const KIND_LABELS: Readonly<Record<Activity['kind'], string>> = {
   version: 'Adaptation',
   comment: 'Comment',
   bridge: 'Bridge',
+  inquiry: 'Question',
+  inquiry_answer: 'Answer',
 };
 
 /** The headline for one activity: the most useful single line of its payload. */
@@ -74,6 +81,10 @@ function activityHeadline(activity: Activity): string {
       return activity.payload.body_preview;
     case 'bridge':
       return `Bridged into ${languageName(activity.payload.target_language)}`;
+    case 'inquiry':
+      return activity.payload.title;
+    case 'inquiry_answer':
+      return activity.payload.inquiry_title;
     default:
       return '';
   }
@@ -90,6 +101,14 @@ function activityMeta(activity: Activity): string {
       return 'On a version';
     case 'bridge':
       return 'From a comment';
+    case 'inquiry':
+      // A place-less question is ordinary, so it reads as a statement rather than
+      // as a missing value.
+      return activity.payload.place === undefined || activity.payload.place === ''
+        ? 'No place named'
+        : `About ${activity.payload.place}`;
+    case 'inquiry_answer':
+      return `Answered: ${activity.payload.body_preview}`;
     default:
       return '';
   }
@@ -115,6 +134,7 @@ export default function UserProfileScreen({
   isOwnProfile,
   onOpenStory,
   onOpenComment,
+  onOpenInquiry,
   onUserUpdated,
   onSetRooted,
   onSignOut,
@@ -212,7 +232,9 @@ export default function UserProfileScreen({
    * A story opens the story. An adaptation opens the story it belongs to. A
    * comment opens its version's thread (the payload already names both ids). A
    * bridge names only its source comment and version, so the story is resolved
-   * through `GET /comments/{id}` before the thread opens.
+   * through `GET /comments/{id}` before the thread opens. A question and an answer
+   * both open the question: the payload names the inquiry in each case, so no
+   * lookup is needed (KNOT-ADR-057).
    */
   const handleOpenActivity = useCallback(
     (activity: Activity): void => {
@@ -238,11 +260,19 @@ export default function UserProfileScreen({
             }
           })();
           return;
+        case 'inquiry':
+          onOpenInquiry(activity.id);
+          return;
+        case 'inquiry_answer':
+          // An answer has no screen of its own: it belongs to the question it
+          // answers, which is where the reader wants to land.
+          onOpenInquiry(activity.payload.inquiry_id);
+          return;
         default:
           return;
       }
     },
-    [onOpenComment, onOpenStory],
+    [onOpenComment, onOpenInquiry, onOpenStory],
   );
 
   const avatarUri =
