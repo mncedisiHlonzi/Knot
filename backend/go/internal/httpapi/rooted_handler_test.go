@@ -128,17 +128,17 @@ func newRouterWithRooted(t *testing.T, logger *slog.Logger, enricher testEnriche
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandler(storiesService, enricher, enricher, &fakeStoryMediaLookup{}, logger)
+	storiesHandler, err := NewStoriesHandler(storiesService, enricher, enricher, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
 
-	versionsHandler, err := NewVersionsHandler(versionsService, enricher, enricher, logger)
+	versionsHandler, err := NewVersionsHandler(versionsService, enricher, enricher, &fakeReactionsLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewVersionsHandler() error = %v, want nil", err)
 	}
 
-	conversationsHandler, err := NewConversationsHandler(conversationsService, enricher, enricher, logger)
+	conversationsHandler, err := NewConversationsHandler(conversationsService, enricher, enricher, &fakeReactionsLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewConversationsHandler() error = %v, want nil", err)
 	}
@@ -158,7 +158,7 @@ func newRouterWithRooted(t *testing.T, logger *slog.Logger, enricher testEnriche
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}
 
-	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, newTestAvatarHandler(t, logger), newTestStoryMediaHandler(t, logger), newTestNotificationsHandler(t, logger), newTestProfileHandler(t, logger), authMiddleware, "0.1.0", logger)
+	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, newTestAvatarHandler(t, logger), newTestStoryMediaHandler(t, logger), newTestNotificationsHandler(t, logger), newTestProfileHandler(t, logger), newTestReactionsRouterHandler(t, logger), authMiddleware, "0.1.0", logger)
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v, want nil", err)
 	}

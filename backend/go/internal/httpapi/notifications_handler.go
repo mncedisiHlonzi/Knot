@@ -77,13 +77,16 @@ type notificationActorResponse struct {
 // Read is derived from read_at rather than exposing the timestamp: the client
 // renders "unread dot" or not, and the exact instant is not part of the contract.
 type notificationResponse struct {
-	ID         string                     `json:"id"`
-	EventType  string                     `json:"event_type"`
-	EntityType string                     `json:"entity_type"`
-	EntityID   string                     `json:"entity_id"`
-	Read       bool                       `json:"read"`
-	CreatedAt  time.Time                  `json:"created_at"`
-	Actor      *notificationActorResponse `json:"actor"`
+	ID         string `json:"id"`
+	EventType  string `json:"event_type"`
+	EntityType string `json:"entity_type"`
+	EntityID   string `json:"entity_id"`
+	// ReactionType is the perspective signal a reaction.created notification names,
+	// and "" for every other event, so the inbox can render the emoji and label.
+	ReactionType string                     `json:"reaction_type"`
+	Read         bool                       `json:"read"`
+	CreatedAt    time.Time                  `json:"created_at"`
+	Actor        *notificationActorResponse `json:"actor"`
 }
 
 // listNotificationsResponse is the GET /notifications body. Notifications is
@@ -263,12 +266,13 @@ func newNotificationResponses(ctx context.Context, users NotificationActors, roo
 
 	for _, notification := range page {
 		response := notificationResponse{
-			ID:         notification.ID,
-			EventType:  string(notification.EventType),
-			EntityType: string(notification.EntityType),
-			EntityID:   notification.EntityID,
-			Read:       notification.IsRead(),
-			CreatedAt:  notification.CreatedAt,
+			ID:           notification.ID,
+			EventType:    string(notification.EventType),
+			EntityType:   string(notification.EntityType),
+			EntityID:     notification.EntityID,
+			ReactionType: notification.ReactionType,
+			Read:         notification.IsRead(),
+			CreatedAt:    notification.CreatedAt,
 		}
 
 		if actor, ok := resolved[notification.ActorID]; ok {

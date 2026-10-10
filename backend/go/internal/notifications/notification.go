@@ -80,12 +80,17 @@ const (
 	// EventBridgeCreated fires when someone bridges a comment the recipient
 	// authored into another language.
 	EventBridgeCreated EventType = "bridge.created"
+	// EventReactionCreated fires when someone leaves a perspective reaction on
+	// content the recipient authored (KNOT-ADR-050). Unlike the other events, its
+	// entity is whatever was reacted to, so it is the one event with no fixed
+	// target entity.
+	EventReactionCreated EventType = "reaction.created"
 )
 
 // Valid reports whether e is one of the supported events.
 func (e EventType) Valid() bool {
 	switch e {
-	case EventVersionCreated, EventCommentCreated, EventBridgeCreated:
+	case EventVersionCreated, EventCommentCreated, EventBridgeCreated, EventReactionCreated:
 		return true
 	default:
 		return false
@@ -118,12 +123,12 @@ func (t EntityType) Valid() bool {
 	}
 }
 
-// EntityType returns the entity an event must reference, and whether the event is
-// known.
+// EntityType returns the entity an event must reference, and whether the event has
+// a single fixed target.
 //
-// The mapping is one-to-one for the current event set, and the service enforces
-// it, so a caller cannot file "an adaptation" against a comment and produce a
-// notification the client cannot open.
+// It is defined for the events whose entity is fixed. `reaction.created` is
+// deliberately absent: a reaction's entity is whatever was reacted to, so it may
+// target any of the four entity types. Use acceptsEntityType to check that event.
 func (e EventType) EntityType() (EntityType, bool) {
 	switch e {
 	case EventVersionCreated:
@@ -134,6 +139,25 @@ func (e EventType) EntityType() (EntityType, bool) {
 		return EntityBridge, true
 	default:
 		return "", false
+	}
+}
+
+// acceptsEntityType reports whether entityType is a valid target for the event.
+//
+// The three content events each name one fixed entity kind; `reaction.created`
+// accepts any of the four, because it points at whatever was reacted to.
+func (e EventType) acceptsEntityType(entityType EntityType) bool {
+	switch e {
+	case EventVersionCreated:
+		return entityType == EntityVersion
+	case EventCommentCreated:
+		return entityType == EntityComment
+	case EventBridgeCreated:
+		return entityType == EntityBridge
+	case EventReactionCreated:
+		return entityType.Valid()
+	default:
+		return false
 	}
 }
 
@@ -151,6 +175,11 @@ type Notification struct {
 	EntityType EntityType
 	// EntityID is the id of the entity the client should open.
 	EntityID string
+	// ReactionType is the perspective signal a reaction.created notification
+	// refers to, and "" for every other event (KNOT-ADR-050). It is a plain string
+	// so this package stays domain-agnostic: the closed set is a CHECK in the
+	// schema and a rule in the reactions domain, not a type this package owns.
+	ReactionType string
 	// ReadAt is when the recipient read the notification, or nil while unread.
 	ReadAt *time.Time
 	// CreatedAt is the creation time. It is the inbox's primary sort key.
@@ -175,6 +204,9 @@ type CreateInput struct {
 	EntityType EntityType
 	// EntityID is the id of the entity and must be canonical UUID text.
 	EntityID string
+	// ReactionType is required for event reaction.created and must be empty for
+	// every other event.
+	ReactionType string
 }
 
 // NotificationStore is the persistence contract for notifications. The service

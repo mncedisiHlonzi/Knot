@@ -11,7 +11,7 @@ import (
 // notificationColumns is the canonical SELECT/RETURNING column list. It is a
 // constant so every query in this file stays consistent with scanNotification,
 // and its order is the order that scanner reads.
-const notificationColumns = `id, user_id, actor_id, event_type, entity_type, entity_id, read_at, created_at`
+const notificationColumns = `id, user_id, actor_id, event_type, entity_type, entity_id, read_at, created_at, reaction_type`
 
 // PostgresStore is the pgx-backed implementation of NotificationStore.
 //
@@ -36,9 +36,15 @@ func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 // timestamp PostgreSQL generated.
 func (s *PostgresStore) Create(ctx context.Context, notification Notification) (Notification, error) {
 	const query = `
-		INSERT INTO notifications (user_id, actor_id, event_type, entity_type, entity_id)
-		VALUES ($1, $2, $3, $4, $5)
+		INSERT INTO notifications (user_id, actor_id, event_type, entity_type, entity_id, reaction_type)
+		VALUES ($1, $2, $3, $4, $5, $6)
 		RETURNING ` + notificationColumns
+
+	// reaction_type is NULL for every event but reaction.created.
+	var reactionType *string
+	if notification.ReactionType != "" {
+		reactionType = &notification.ReactionType
+	}
 
 	created, err := scanNotification(s.pool.QueryRow(
 		ctx,
@@ -48,6 +54,7 @@ func (s *PostgresStore) Create(ctx context.Context, notification Notification) (
 		string(notification.EventType),
 		string(notification.EntityType),
 		notification.EntityID,
+		reactionType,
 	))
 	if err != nil {
 		return Notification{}, fmt.Errorf("notifications: insert: %w", err)
@@ -186,6 +193,7 @@ func scanNotification(row rowScanner) (Notification, error) {
 		notification Notification
 		eventType    string
 		entityType   string
+		reactionType *string
 		readAt       *time.Time
 	)
 
@@ -198,6 +206,7 @@ func scanNotification(row rowScanner) (Notification, error) {
 		&notification.EntityID,
 		&readAt,
 		&notification.CreatedAt,
+		&reactionType,
 	)
 	if err != nil {
 		return Notification{}, err
@@ -206,6 +215,9 @@ func scanNotification(row rowScanner) (Notification, error) {
 	notification.EventType = EventType(eventType)
 	notification.EntityType = EntityType(entityType)
 	notification.ReadAt = readAt
+	if reactionType != nil {
+		notification.ReactionType = *reactionType
+	}
 
 	return notification, nil
 }

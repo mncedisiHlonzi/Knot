@@ -10,6 +10,7 @@
  * the tree as a flat list; assembling it into a nesting is the client's job.
  */
 import { request } from './client';
+import type { ReactionCounts } from './reactions';
 import type { AuthorRooted } from './rooted';
 
 /** One written version of a story. */
@@ -39,6 +40,13 @@ export type StoryVersion = {
    * server attaches it to the version, tree, and adapt responses.
    */
   readonly author_rooted?: AuthorRooted | null;
+  /**
+   * The counts of each perspective signal on the version (KNOT-ADR-051). Optional
+   * because an older server omits it.
+   */
+  readonly reactions?: ReactionCounts;
+  /** The signals the signed-in reader holds, as reaction-type strings. */
+  readonly my_reactions?: readonly string[];
 };
 
 /** The request body for POST /stories/{id}/adapt. */

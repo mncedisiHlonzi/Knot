@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/knot/backend/internal/reactions"
 	"github.com/knot/backend/internal/versions"
 )
 
@@ -22,16 +23,18 @@ type VersionsService interface {
 
 // VersionsHandler serves the Tell My People endpoints.
 type VersionsHandler struct {
-	service VersionsService
-	authors AuthorLookup
-	rooted  RootedLookup
-	logger  *slog.Logger
+	service   VersionsService
+	authors   AuthorLookup
+	rooted    RootedLookup
+	reactions ReactionsLookup
+	logger    *slog.Logger
 }
 
 // NewVersionsHandler returns a handler backed by service. The author lookup names
-// and pictures each version's author (one batched read per response), and the
-// rooted lookup attaches that author's inline Rooted summary.
-func NewVersionsHandler(service VersionsService, authors AuthorLookup, rooted RootedLookup, logger *slog.Logger) (*VersionsHandler, error) {
+// and pictures each version's author (one batched read per response), the rooted
+// lookup attaches that author's inline Rooted summary, and the reactions lookup
+// attaches the perspective-reaction counts and the reader's own signals.
+func NewVersionsHandler(service VersionsService, authors AuthorLookup, rooted RootedLookup, reactions ReactionsLookup, logger *slog.Logger) (*VersionsHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: versions handler requires a service")
 	}
@@ -41,10 +44,13 @@ func NewVersionsHandler(service VersionsService, authors AuthorLookup, rooted Ro
 	if rooted == nil {
 		return nil, fmt.Errorf("httpapi: versions handler requires a rooted lookup")
 	}
+	if reactions == nil {
+		return nil, fmt.Errorf("httpapi: versions handler requires a reactions lookup")
+	}
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: versions handler requires a logger")
 	}
-	return &VersionsHandler{service: service, authors: authors, rooted: rooted, logger: logger}, nil
+	return &VersionsHandler{service: service, authors: authors, rooted: rooted, reactions: reactions, logger: logger}, nil
 }
 
 // createAdaptationRequest is the POST /stories/{id}/adapt body.
@@ -87,6 +93,10 @@ type versionResponse struct {
 	// when they have none. It is a summary (place and duration only), attached at
 	// the HTTP layer; see KNOT-ADR-017.
 	AuthorRooted *rootedSummary `json:"author_rooted"`
+	// Reactions is the count of each of the four perspective signals on the
+	// version (KNOT-ADR-051). MyReactions is the signals the reader holds.
+	Reactions   reactionCountsResponse `json:"reactions"`
+	MyReactions []string               `json:"my_reactions"`
 }
 
 // versionEnvelope wraps a single version, so the response shape can gain sibling
@@ -170,6 +180,19 @@ func (h *VersionsHandler) Tree(w http.ResponseWriter, r *http.Request) {
 		items = append(items, item)
 	}
 
+	// One batched pair of reads decorates the whole tree with reaction counts and
+	// the reader's own signals (KNOT-ADR-051).
+	readerID, _ := UserIDFromContext(r.Context())
+	versionIDs := make([]string, 0, len(items))
+	for i := range items {
+		versionIDs = append(versionIDs, items[i].ID)
+	}
+	reactionData := loadReactions(r.Context(), h.reactions, h.logger, reactions.EntityVersion, readerID, versionIDs)
+	for i := range items {
+		items[i].Reactions = reactionData.Counts[items[i].ID]
+		items[i].MyReactions = orEmptyStrings(reactionData.Mine[items[i].ID])
+	}
+
 	writeJSON(w, http.StatusOK, treeResponse{StoryID: storyID, Versions: items})
 }
 
@@ -184,6 +207,9 @@ func (h *VersionsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	response := newVersionResponse(version)
 	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{version.AuthorID})[version.AuthorID]
 	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, version.AuthorID)
+
+	userID, _ := UserIDFromContext(r.Context())
+	response.Reactions, response.MyReactions = reactionsForEntity(r.Context(), h.reactions, h.logger, reactions.EntityVersion, userID, version.ID)
 
 	writeJSON(w, http.StatusOK, versionEnvelope{Version: response})
 }
@@ -225,6 +251,8 @@ func newVersionResponse(version versions.StoryVersion) versionResponse {
 		AdaptationNote:  optionalString(version.AdaptationNote),
 		CreatedAt:       version.CreatedAt,
 		UpdatedAt:       version.UpdatedAt,
+		// Emit [] rather than null until the enrichment fills it in.
+		MyReactions: []string{},
 	}
 }
 

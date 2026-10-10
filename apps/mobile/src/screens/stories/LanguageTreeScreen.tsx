@@ -2,14 +2,21 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { describeError } from '../../api/client';
+import { EMPTY_REACTION_COUNTS } from '../../api/reactions';
 import { StoryVersion, versionDepths, versionsApi } from '../../api/versions';
 import AuthorLine from '../../components/AuthorLine';
+import ReactionBar from '../../components/ReactionBar';
 import { languageName } from '../../data/languages';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 
 type LanguageTreeScreenProps = {
   /** The story whose language tree to show. */
   readonly storyId: string;
+  /**
+   * The signed-in user's access token, or undefined when signed out. A reaction
+   * needs it; without it the bars invite the reader to sign in.
+   */
+  readonly token?: string;
   /** Called when a version's author is tapped, to open their profile. */
   readonly onOpenUserProfile: (userId: string) => void;
   /** Called when the person returns to the story. */
@@ -29,6 +36,7 @@ const INDENT_PER_LEVEL = spacing.lg;
  */
 export default function LanguageTreeScreen({
   storyId,
+  token,
   onOpenUserProfile,
   onBack,
 }: LanguageTreeScreenProps): React.ReactElement {
@@ -94,6 +102,24 @@ export default function LanguageTreeScreen({
               onPress={() => onOpenUserProfile(version.author_id)}
             />
           </View>
+          {/* A compact bar: emoji and count only, to keep the tree dense. */}
+          <ReactionBar
+            entityType="version"
+            entityId={version.id}
+            counts={version.reactions ?? EMPTY_REACTION_COUNTS}
+            myReactions={version.my_reactions ?? []}
+            token={token}
+            compact
+            onChange={(counts, mine) =>
+              setVersions((previous) =>
+                previous.map((item) =>
+                  item.id === version.id
+                    ? { ...item, reactions: counts, my_reactions: mine }
+                    : item,
+                ),
+              )
+            }
+          />
           {version.adaptation_note !== null && version.adaptation_note !== '' ? (
             <Text style={styles.note}>{version.adaptation_note}</Text>
           ) : null}

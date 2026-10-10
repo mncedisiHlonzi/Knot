@@ -17,6 +17,7 @@ import {
   NotificationEntityType,
   notificationsApi,
 } from '../../api/notifications';
+import { REACTION_EMOJI, REACTION_LABELS, ReactionType } from '../../api/reactions';
 import RootedBadge from '../../components/RootedBadge';
 import { API_BASE_URL } from '../../config/api';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
@@ -40,7 +41,25 @@ type NotificationsScreenProps = {
  * same way. A version tap lands on the story detail, while a comment or a bridge
  * lands on the comment's thread.
  */
-const OPENABLE_ENTITY_TYPES: readonly NotificationEntityType[] = ['version', 'comment', 'bridge'];
+const OPENABLE_ENTITY_TYPES: readonly NotificationEntityType[] = [
+  'story',
+  'version',
+  'comment',
+  'bridge',
+];
+
+/**
+ * Names a reaction signal for the inbox sentence: its emoji and label, e.g.
+ * "✅ Rings true". An unknown or absent type falls back to a generic phrase, so a
+ * row from a newer server never reads as broken.
+ */
+function reactionPhrase(raw: string | undefined): string {
+  if (raw !== undefined && raw in REACTION_LABELS) {
+    const type = raw as ReactionType;
+    return `${REACTION_EMOJI[type]} ${REACTION_LABELS[type]}`;
+  }
+  return 'reacted';
+}
 
 /** Builds the absolute URL for an actor's avatar, or undefined when they have none. */
 function avatarSource(avatarUrl: string): { uri: string } | undefined {
@@ -80,6 +99,8 @@ function describeNotification(notification: Notification): string {
       return `${actor} commented on your version.`;
     case 'bridge.created':
       return `${actor} bridged your comment into another language.`;
+    case 'reaction.created':
+      return `${actor} ${reactionPhrase(notification.reaction_type)} on your ${notification.entity_type}.`;
     default:
       return `${actor} did something on your content.`;
   }

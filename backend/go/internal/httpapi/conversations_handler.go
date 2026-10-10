@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/knot/backend/internal/conversations"
+	"github.com/knot/backend/internal/reactions"
 )
 
 // ConversationsService is the slice of the conversations service that the HTTP
@@ -26,16 +27,19 @@ type ConversationsService interface {
 
 // ConversationsHandler serves the comment and bridge endpoints.
 type ConversationsHandler struct {
-	service ConversationsService
-	authors AuthorLookup
-	rooted  RootedLookup
-	logger  *slog.Logger
+	service   ConversationsService
+	authors   AuthorLookup
+	rooted    RootedLookup
+	reactions ReactionsLookup
+	logger    *slog.Logger
 }
 
 // NewConversationsHandler returns a handler backed by service. The author lookup
 // names and pictures every author named by a response (one batched read per
-// response), and the rooted lookup attaches each author's inline Rooted summary.
-func NewConversationsHandler(service ConversationsService, authors AuthorLookup, rooted RootedLookup, logger *slog.Logger) (*ConversationsHandler, error) {
+// response), the rooted lookup attaches each author's inline Rooted summary, and
+// the reactions lookup attaches perspective-reaction counts and the reader's own
+// signals.
+func NewConversationsHandler(service ConversationsService, authors AuthorLookup, rooted RootedLookup, reactions ReactionsLookup, logger *slog.Logger) (*ConversationsHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: conversations handler requires a service")
 	}
@@ -45,10 +49,13 @@ func NewConversationsHandler(service ConversationsService, authors AuthorLookup,
 	if rooted == nil {
 		return nil, fmt.Errorf("httpapi: conversations handler requires a rooted lookup")
 	}
+	if reactions == nil {
+		return nil, fmt.Errorf("httpapi: conversations handler requires a reactions lookup")
+	}
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: conversations handler requires a logger")
 	}
-	return &ConversationsHandler{service: service, authors: authors, rooted: rooted, logger: logger}, nil
+	return &ConversationsHandler{service: service, authors: authors, rooted: rooted, reactions: reactions, logger: logger}, nil
 }
 
 // createCommentRequest is the POST /versions/{id}/comments body.
@@ -99,6 +106,12 @@ type commentResponse struct {
 	// when they have none. It is a summary (place and duration only), attached at
 	// the HTTP layer; see KNOT-ADR-017.
 	AuthorRooted *rootedSummary `json:"author_rooted"`
+	// Reactions is the count of each of the four perspective signals on the
+	// comment (KNOT-ADR-051). MyReactions is the signals the reader holds. A reply
+	// carries the fields too, but the client renders no bar for a reply: reactions
+	// are top-level only (KNOT-ADR-052).
+	Reactions   reactionCountsResponse `json:"reactions"`
+	MyReactions []string               `json:"my_reactions"`
 }
 
 // commentEnvelope wraps a single comment so the response shape can gain sibling
@@ -131,6 +144,9 @@ type commentDetailResponse struct {
 	AuthorAvatarURL   *string `json:"author_avatar_url"`
 	// AuthorRooted is the comment author's primary public Rooted signal, or null.
 	AuthorRooted *rootedSummary `json:"author_rooted"`
+	// Reactions and MyReactions mirror the thread projection (KNOT-ADR-051).
+	Reactions   reactionCountsResponse `json:"reactions"`
+	MyReactions []string               `json:"my_reactions"`
 }
 
 // commentDetailEnvelope wraps a single resolved comment.
@@ -163,6 +179,10 @@ type bridgeResponse struct {
 	// have none. It is a summary (place and duration only), attached at the HTTP
 	// layer; see KNOT-ADR-017.
 	AuthorRooted *rootedSummary `json:"author_rooted"`
+	// Reactions is the count of each of the four perspective signals on the bridge
+	// (KNOT-ADR-051). MyReactions is the signals the reader holds.
+	Reactions   reactionCountsResponse `json:"reactions"`
+	MyReactions []string               `json:"my_reactions"`
 }
 
 // bridgeEnvelope wraps a single bridge.
@@ -254,6 +274,20 @@ func (h *ConversationsHandler) ListComments(w http.ResponseWriter, r *http.Reque
 		items = append(items, item)
 	}
 
+	// One batched pair of reads decorates the page with reaction counts and the
+	// reader's own signals. Replies carry the fields too, but the client renders no
+	// bar for them (KNOT-ADR-052).
+	readerID, _ := UserIDFromContext(r.Context())
+	commentIDs := make([]string, 0, len(items))
+	for i := range items {
+		commentIDs = append(commentIDs, items[i].ID)
+	}
+	reactionData := loadReactions(r.Context(), h.reactions, h.logger, reactions.EntityComment, readerID, commentIDs)
+	for i := range items {
+		items[i].Reactions = reactionData.Counts[items[i].ID]
+		items[i].MyReactions = orEmptyStrings(reactionData.Mine[items[i].ID])
+	}
+
 	writeJSON(w, http.StatusOK, commentListResponse{Comments: items, NextCursor: next})
 }
 
@@ -327,6 +361,19 @@ func (h *ConversationsHandler) ListBridges(w http.ResponseWriter, r *http.Reques
 		items = append(items, item)
 	}
 
+	// One batched pair of reads decorates the list with reaction counts and the
+	// reader's own signals (KNOT-ADR-051).
+	readerID, _ := UserIDFromContext(r.Context())
+	bridgeIDs := make([]string, 0, len(items))
+	for i := range items {
+		bridgeIDs = append(bridgeIDs, items[i].ID)
+	}
+	reactionData := loadReactions(r.Context(), h.reactions, h.logger, reactions.EntityBridge, readerID, bridgeIDs)
+	for i := range items {
+		items[i].Reactions = reactionData.Counts[items[i].ID]
+		items[i].MyReactions = orEmptyStrings(reactionData.Mine[items[i].ID])
+	}
+
 	writeJSON(w, http.StatusOK, bridgeListResponse{Bridges: items})
 }
 
@@ -341,6 +388,9 @@ func (h *ConversationsHandler) GetBridge(w http.ResponseWriter, r *http.Request)
 	response := newBridgeResponse(bridge)
 	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{bridge.AuthorID})[bridge.AuthorID]
 	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, bridge.AuthorID)
+
+	userID, _ := UserIDFromContext(r.Context())
+	response.Reactions, response.MyReactions = reactionsForEntity(r.Context(), h.reactions, h.logger, reactions.EntityBridge, userID, bridge.ID)
 
 	writeJSON(w, http.StatusOK, bridgeEnvelope{Bridge: response})
 }
@@ -360,6 +410,9 @@ func (h *ConversationsHandler) GetComment(w http.ResponseWriter, r *http.Request
 	response := newCommentDetailResponse(comment)
 	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{comment.AuthorID})[comment.AuthorID]
 	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, comment.AuthorID)
+
+	userID, _ := UserIDFromContext(r.Context())
+	response.Reactions, response.MyReactions = reactionsForEntity(r.Context(), h.reactions, h.logger, reactions.EntityComment, userID, comment.ID)
 
 	writeJSON(w, http.StatusOK, commentDetailEnvelope{Comment: response})
 }
@@ -424,6 +477,8 @@ func newCommentResponse(comment conversations.Comment) commentResponse {
 		ParentCommentID: comment.ParentCommentID,
 		CreatedAt:       comment.CreatedAt,
 		UpdatedAt:       comment.UpdatedAt,
+		// Emit [] rather than null until the enrichment fills it in.
+		MyReactions: []string{},
 	}
 }
 
@@ -441,6 +496,8 @@ func newCommentDetailResponse(comment conversations.Comment) commentDetailRespon
 		ParentCommentID: comment.ParentCommentID,
 		CreatedAt:       comment.CreatedAt,
 		UpdatedAt:       comment.UpdatedAt,
+		// Emit [] rather than null until the enrichment fills it in.
+		MyReactions: []string{},
 	}
 }
 
@@ -455,5 +512,7 @@ func newBridgeResponse(bridge conversations.Bridge) bridgeResponse {
 		TargetLanguage:  bridge.TargetLanguage,
 		AdaptationNote:  optionalString(bridge.AdaptationNote),
 		CreatedAt:       bridge.CreatedAt,
+		// Emit [] rather than null until the enrichment fills it in.
+		MyReactions: []string{},
 	}
 }

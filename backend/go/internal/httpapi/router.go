@@ -47,13 +47,14 @@ type Router struct {
 	storyMedia     *StoryMediaHandler
 	notifications  *NotificationsHandler
 	profile        *ProfileHandler
+	reactions      *ReactionsHandler
 	authMiddleware *AuthMiddleware
 	version        string
 	logger         *slog.Logger
 }
 
 // NewRouter returns the root handler for the API.
-func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, avatarHandler *AvatarHandler, storyMediaHandler *StoryMediaHandler, notificationsHandler *NotificationsHandler, profileHandler *ProfileHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
+func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, avatarHandler *AvatarHandler, storyMediaHandler *StoryMediaHandler, notificationsHandler *NotificationsHandler, profileHandler *ProfileHandler, reactionsHandler *ReactionsHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
 	if auth == nil {
 		return nil, errNilHandler("auth")
 	}
@@ -84,6 +85,9 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 	if profileHandler == nil {
 		return nil, errNilHandler("profile")
 	}
+	if reactionsHandler == nil {
+		return nil, errNilHandler("reactions")
+	}
 	if authMiddleware == nil {
 		return nil, errNilHandler("auth middleware")
 	}
@@ -101,6 +105,7 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 		storyMedia:     storyMediaHandler,
 		notifications:  notificationsHandler,
 		profile:        profileHandler,
+		reactions:      reactionsHandler,
 		authMiddleware: authMiddleware,
 		version:        version,
 		logger:         logger,
@@ -117,25 +122,38 @@ func (r *Router) Handler() http.Handler {
 	mux.HandleFunc("POST /auth/register", r.auth.Register)
 	mux.HandleFunc("POST /auth/login", r.auth.Login)
 
-	// Stories. Publishing requires an access token; reading is open.
+	// Stories. Publishing requires an access token; reading is open. The reads use
+	// optional auth so a signed-in caller's reaction highlights can be attached.
 	mux.HandleFunc("POST /stories", r.authMiddleware.Require(r.stories.Create))
-	mux.HandleFunc("GET /stories", r.stories.List)
-	mux.HandleFunc("GET /stories/{id}", r.stories.Get)
+	mux.HandleFunc("GET /stories", r.authMiddleware.Optional(r.stories.List))
+	mux.HandleFunc("GET /stories/{id}", r.authMiddleware.Optional(r.stories.Get))
 
 	// Tell My People: story versions and the Language Tree. Adapting requires an
 	// access token; reading a version or a tree is open.
 	mux.HandleFunc("POST /stories/{id}/adapt", r.authMiddleware.Require(r.versions.Adapt))
-	mux.HandleFunc("GET /stories/{id}/tree", r.versions.Tree)
-	mux.HandleFunc("GET /versions/{id}", r.versions.Get)
+	mux.HandleFunc("GET /stories/{id}/tree", r.authMiddleware.Optional(r.versions.Tree))
+	mux.HandleFunc("GET /versions/{id}", r.authMiddleware.Optional(r.versions.Get))
 
 	// Conversations: comments on a version, and the bridges between comments.
 	// Commenting and bridging require an access token; reading is open.
 	mux.HandleFunc("POST /versions/{id}/comments", r.authMiddleware.Require(r.conversations.CreateComment))
-	mux.HandleFunc("GET /versions/{id}/comments", r.conversations.ListComments)
-	mux.HandleFunc("GET /comments/{id}", r.conversations.GetComment)
+	mux.HandleFunc("GET /versions/{id}/comments", r.authMiddleware.Optional(r.conversations.ListComments))
+	mux.HandleFunc("GET /comments/{id}", r.authMiddleware.Optional(r.conversations.GetComment))
 	mux.HandleFunc("POST /comments/{id}/bridges", r.authMiddleware.Require(r.conversations.CreateBridge))
-	mux.HandleFunc("GET /comments/{id}/bridges", r.conversations.ListBridges)
-	mux.HandleFunc("GET /bridges/{id}", r.conversations.GetBridge)
+	mux.HandleFunc("GET /comments/{id}/bridges", r.authMiddleware.Optional(r.conversations.ListBridges))
+	mux.HandleFunc("GET /bridges/{id}", r.authMiddleware.Optional(r.conversations.GetBridge))
+
+	// Reactions: the four perspective signals, per entity kind. Toggling requires
+	// an access token; listing is public. The path names the entity kind, so each
+	// toggle resolves its target through that domain's own service (KNOT-ADR-050).
+	mux.HandleFunc("POST /stories/{id}/reactions", r.authMiddleware.Require(r.reactions.ToggleStory))
+	mux.HandleFunc("GET /stories/{id}/reactions", r.reactions.ListStory)
+	mux.HandleFunc("POST /versions/{id}/reactions", r.authMiddleware.Require(r.reactions.ToggleVersion))
+	mux.HandleFunc("GET /versions/{id}/reactions", r.reactions.ListVersion)
+	mux.HandleFunc("POST /comments/{id}/reactions", r.authMiddleware.Require(r.reactions.ToggleComment))
+	mux.HandleFunc("GET /comments/{id}/reactions", r.reactions.ListComment)
+	mux.HandleFunc("POST /bridges/{id}/reactions", r.authMiddleware.Require(r.reactions.ToggleBridge))
+	mux.HandleFunc("GET /bridges/{id}/reactions", r.reactions.ListBridge)
 
 	// Rooted: a user's self-declared connection to a place. Writing a signal and
 	// reading your own signals require an access token; reading another user's

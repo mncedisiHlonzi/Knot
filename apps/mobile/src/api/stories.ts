@@ -6,6 +6,7 @@
  * carrying the server's machine-readable code.
  */
 import { request, uploadFile } from './client';
+import type { ReactionCounts } from './reactions';
 import type { AuthorRooted } from './rooted';
 import { MAX_IMAGE_BYTES, MAX_VIDEO_BYTES } from '../config/dev';
 
@@ -84,6 +85,14 @@ export type Story = {
    * server attaches it to the story detail response.
    */
   readonly author_rooted?: AuthorRooted | null;
+  /**
+   * The counts of each perspective signal on the story (KNOT-ADR-051). Optional
+   * because an older server omits it, and because the API types describe the wire
+   * format optimistically.
+   */
+  readonly reactions?: ReactionCounts;
+  /** The signals the signed-in reader holds, as reaction-type strings. */
+  readonly my_reactions?: readonly string[];
   /**
    * The story's attached media. On the detail it is the full list in display
    * order; on the feed it is a single-item preview (or an empty array). Always

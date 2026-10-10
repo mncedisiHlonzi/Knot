@@ -259,6 +259,13 @@ export default function App(): React.ReactElement {
     void (async () => {
       try {
         switch (notification.entity_type) {
+          case 'story': {
+            // A reaction on a story: the entity id names the story itself.
+            setOverlays((stack) =>
+              pushOverlay(stack, { name: 'detail', storyId: notification.entity_id }),
+            );
+            return;
+          }
           case 'version': {
             const { version } = await versionsApi.getVersion(notification.entity_id);
             setOverlays((stack) =>
@@ -324,6 +331,7 @@ export default function App(): React.ReactElement {
         return (
           <StoryDetailScreen
             id={overlay.storyId}
+            token={current.accessToken}
             onBack={handleBack}
             onAdapt={(parentVersionId) =>
               setOverlays((stack) =>
@@ -360,6 +368,7 @@ export default function App(): React.ReactElement {
         return (
           <LanguageTreeScreen
             storyId={overlay.storyId}
+            token={current.accessToken}
             onOpenUserProfile={openUserProfile}
             onBack={handleBack}
           />

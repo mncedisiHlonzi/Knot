@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/knot/backend/internal/reactions"
 	"github.com/knot/backend/internal/stories"
 )
 
@@ -30,18 +31,21 @@ type StoriesService interface {
 
 // StoriesHandler serves the story endpoints.
 type StoriesHandler struct {
-	service StoriesService
-	authors AuthorLookup
-	rooted  RootedLookup
-	media   StoryMediaLookup
-	logger  *slog.Logger
+	service   StoriesService
+	authors   AuthorLookup
+	rooted    RootedLookup
+	media     StoryMediaLookup
+	reactions ReactionsLookup
+	logger    *slog.Logger
 }
 
 // NewStoriesHandler returns a handler backed by service. The author lookup names and
 // pictures each story's author (one batched read per response), the rooted lookup
-// attaches that author's inline Rooted summary, and the media lookup attaches the
-// story's media (in full on the detail, as a single preview on the feed).
-func NewStoriesHandler(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, logger *slog.Logger) (*StoriesHandler, error) {
+// attaches that author's inline Rooted summary, the media lookup attaches the
+// story's media (in full on the detail, as a single preview on the feed), and the
+// reactions lookup attaches the perspective-reaction counts and the reader's own
+// signals.
+func NewStoriesHandler(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, logger *slog.Logger) (*StoriesHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a service")
 	}
@@ -54,10 +58,13 @@ func NewStoriesHandler(service StoriesService, authors AuthorLookup, rooted Root
 	if media == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a story media lookup")
 	}
+	if reactions == nil {
+		return nil, fmt.Errorf("httpapi: stories handler requires a reactions lookup")
+	}
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a logger")
 	}
-	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, logger: logger}, nil
+	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, logger: logger}, nil
 }
 
 // createStoryRequest is the POST /stories body.
@@ -118,6 +125,12 @@ type storyResponse struct {
 	// the full list in display order; on the feed it is a single-item preview (or
 	// an empty array) so a card can show a thumbnail.
 	Media []storyMediaResponse `json:"media"`
+	// Reactions is the count of each of the four perspective signals on the story,
+	// always all four keys (KNOT-ADR-051). MyReactions is the signals the
+	// authenticated reader holds, as an array of reaction types ([] when signed
+	// out or when they hold none), so the client can highlight them.
+	Reactions   reactionCountsResponse `json:"reactions"`
+	MyReactions []string               `json:"my_reactions"`
 }
 
 // storyEnvelope wraps a single story, so the response shape can gain sibling
@@ -189,6 +202,9 @@ func (h *StoriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, story.AuthorID)
 	response.Media = storyMediaForDetail(r.Context(), h.media, h.logger, story.ID)
 
+	userID, _ := UserIDFromContext(r.Context())
+	response.Reactions, response.MyReactions = reactionsForEntity(r.Context(), h.reactions, h.logger, reactions.EntityStory, userID, story.ID)
+
 	writeJSON(w, http.StatusOK, storyEnvelope{Story: response})
 }
 
@@ -230,6 +246,15 @@ func (h *StoriesHandler) List(w http.ResponseWriter, r *http.Request) {
 		if preview, ok := previews[items[i].ID]; ok {
 			items[i].Media = preview
 		}
+	}
+
+	// One batched pair of reads decorates the whole page with reaction counts and
+	// the reader's own signals (KNOT-ADR-051).
+	readerID, _ := UserIDFromContext(r.Context())
+	reactionData := loadReactions(r.Context(), h.reactions, h.logger, reactions.EntityStory, readerID, ids)
+	for i := range items {
+		items[i].Reactions = reactionData.Counts[items[i].ID]
+		items[i].MyReactions = orEmptyStrings(reactionData.Mine[items[i].ID])
 	}
 
 	writeJSON(w, http.StatusOK, listStoriesResponse{Stories: items, NextCursor: next})
@@ -308,6 +333,7 @@ func newStoryResponse(story stories.Story) storyResponse {
 		CreatedAt:           story.CreatedAt,
 		UpdatedAt:           story.UpdatedAt,
 		// Emit [] rather than null until the enrichment fills it in.
-		Media: []storyMediaResponse{},
+		Media:       []storyMediaResponse{},
+		MyReactions: []string{},
 	}
 }

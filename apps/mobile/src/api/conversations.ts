@@ -8,6 +8,7 @@
  * always an `ApiError` carrying the server's machine-readable code.
  */
 import { request } from './client';
+import type { ReactionCounts } from './reactions';
 import type { AuthorRooted } from './rooted';
 
 /** One comment on a story version. */
@@ -41,6 +42,14 @@ export type Comment = {
    * server attaches it to the comment list and create responses.
    */
   readonly author_rooted?: AuthorRooted | null;
+  /**
+   * The counts of each perspective signal on the comment (KNOT-ADR-051). A reply
+   * carries the field too, but the client renders no bar for a reply: reactions
+   * are top-level only (KNOT-ADR-052).
+   */
+  readonly reactions?: ReactionCounts;
+  /** The signals the signed-in reader holds, as reaction-type strings. */
+  readonly my_reactions?: readonly string[];
 };
 
 /** The request body for POST /versions/{id}/comments. */
@@ -104,6 +113,13 @@ export type Bridge = {
    * server attaches it to the bridge list, get, and create responses.
    */
   readonly author_rooted?: AuthorRooted | null;
+  /**
+   * The counts of each perspective signal on the bridge (KNOT-ADR-051). Optional
+   * because an older server omits it.
+   */
+  readonly reactions?: ReactionCounts;
+  /** The signals the signed-in reader holds, as reaction-type strings. */
+  readonly my_reactions?: readonly string[];
 };
 
 /** The request body for POST /comments/{id}/bridges. */

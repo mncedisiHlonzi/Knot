@@ -13,11 +13,13 @@ import {
 import Video from 'react-native-video';
 
 import { describeError } from '../../api/client';
+import { EMPTY_REACTION_COUNTS } from '../../api/reactions';
 import { Story, StoryMedia, storiesApi } from '../../api/stories';
 import { versionsApi } from '../../api/versions';
 import AuthorLine from '../../components/AuthorLine';
 import CameraCaptureBadge from '../../components/CameraCaptureBadge';
 import MediaGalleryModal from '../../components/MediaGalleryModal';
+import ReactionBar from '../../components/ReactionBar';
 import { API_BASE_URL } from '../../config/api';
 import { languageName } from '../../data/languages';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
@@ -83,6 +85,11 @@ function MediaTile({
 type StoryDetailScreenProps = {
   /** The id of the story to read. */
   readonly id: string;
+  /**
+   * The signed-in user's access token, or undefined when signed out. A reaction
+   * needs it; without it the bar invites the reader to sign in.
+   */
+  readonly token?: string;
   /** Called when the person returns to the feed. */
   readonly onBack: () => void;
   /**
@@ -110,6 +117,7 @@ type StoryDetailScreenProps = {
  */
 export default function StoryDetailScreen({
   id,
+  token,
   onBack,
   onAdapt,
   onViewTree,
@@ -181,6 +189,22 @@ export default function StoryDetailScreen({
           ) : null}
 
           <Text style={styles.body}>{story.body}</Text>
+
+          {/* The four perspective signals sit directly under the telling. */}
+          <ReactionBar
+            entityType="story"
+            entityId={story.id}
+            counts={story.reactions ?? EMPTY_REACTION_COUNTS}
+            myReactions={story.my_reactions ?? []}
+            token={token}
+            onChange={(counts, mine) =>
+              setStory((previous) =>
+                previous === undefined
+                  ? previous
+                  : { ...previous, reactions: counts, my_reactions: mine },
+              )
+            }
+          />
 
           {media.length === 1 ? (
             <MediaTile

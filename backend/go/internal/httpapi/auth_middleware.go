@@ -97,6 +97,34 @@ func (m *AuthMiddleware) Require(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// Optional authenticates a public route without requiring a credential.
+//
+// A request that carries a valid bearer token gains the user id on its context,
+// exactly as Require would set it; a request with no token, or with a token that
+// does not validate, proceeds anonymously (UserIDFromContext then reports false).
+// It exists so a public read can still be personalised — for example, so
+// GET /stories can include the caller's own reactions — without turning the route
+// into a protected one (KNOT-ADR-051).
+func (m *AuthMiddleware) Optional(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		raw, ok := bearerToken(r)
+		if !ok {
+			next(w, r)
+			return
+		}
+
+		claims, err := m.tokens.ParseAccessToken(raw)
+		if err != nil || claims == nil || claims.Subject == "" {
+			// A public route does not refuse a bad credential; it serves the
+			// anonymous view rather than a 401.
+			next(w, r)
+			return
+		}
+
+		next(w, r.WithContext(withUserID(r.Context(), claims.Subject)))
+	}
+}
+
 // reject logs the reason and writes the uniform 401 response. The reason is
 // logged, never returned: the response body is identical for every cause.
 func (m *AuthMiddleware) reject(w http.ResponseWriter, r *http.Request, reason string) {

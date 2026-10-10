@@ -1187,14 +1187,15 @@ content. Every route below is protected, and every route is scoped to the caller
 token — there is no user id in any request, and no way to read or mark another person's
 inbox. Delivery is in-app only; there is no push channel (KNOT-ADR-039).
 
-Three events exist, and each one fires only when the recipient and the actor are different
+Four events exist, and each one fires only when the recipient and the actor are different
 people:
 
-| `event_type`      | Fires when                                             | `entity_type` | `entity_id` names  |
-| ----------------- | ------------------------------------------------------ | ------------- | ------------------ |
-| `version.created` | someone adapts a version the recipient authored         | `version`     | the new version     |
-| `comment.created` | someone comments on a version the recipient authored, **or replies to a comment the recipient authored** | `comment` | the new comment |
-| `bridge.created`  | someone bridges a comment the recipient authored        | `bridge`      | the new bridge      |
+| `event_type`       | Fires when                                             | `entity_type`           | `entity_id` names  |
+| ------------------ | ------------------------------------------------------ | ----------------------- | ------------------ |
+| `version.created`  | someone adapts a version the recipient authored         | `version`               | the new version     |
+| `comment.created`  | someone comments on a version the recipient authored, **or replies to a comment the recipient authored** | `comment` | the new comment |
+| `bridge.created`   | someone bridges a comment the recipient authored        | `bridge`                | the new bridge      |
+| `reaction.created` | someone leaves a perspective reaction on content the recipient authored | the target's own kind | the reacted-to entity |
 
 For `comment.created`, the recipient is the **version's author** for a top-level comment and
 the **replied-to comment's author** for a reply (KNOT-ADR-047). A reply therefore notifies
@@ -1202,7 +1203,11 @@ the person being answered even when a third person wrote the version, and the tw
 never notify the same person twice: only one notification is written per comment.
 
 Acting on your own content never notifies you, and the database enforces the same rule
-(KNOT-ADR-038).
+(KNOT-ADR-038). A `reaction.created` notification fires only when a signal is **created**
+(toggling one off is silent) and only when the reactor is not the content's author; it
+carries `reaction_type` (one of the four signals), and no other event does. Its
+`entity_type` is the reacted-to content's own kind, so the client opens the same screen a tap
+on the content would.
 
 ### The notification object
 
@@ -1212,6 +1217,7 @@ Acting on your own content never notifies you, and the database enforces the sam
   "event_type": "version.created",
   "entity_type": "version",
   "entity_id": "3d5c9f24-1b8e-4c7a-9f0b-6e2d8a1c4b77",
+  "reaction_type": "",
   "read": false,
   "created_at": "2026-10-09T12:00:00Z",
   "actor": {
@@ -1224,9 +1230,11 @@ Acting on your own content never notifies you, and the database enforces the sam
 ```
 
 `read` is derived from the stored `read_at`; the timestamp itself is not part of the
-contract, because the client only draws an unread marker. `actor` is `null` when the acting
-account can no longer be resolved, so a row never disappears just because its actor was
-deleted. `avatar_url` is a **path on this API** (`""` when the actor has no avatar), never a
+contract, because the client only draws an unread marker. `reaction_type` names the signal a
+`reaction.created` event carries (`"rings_true"`, `"know_it_differently"`,
+`"adds_something_new"`, or `"needs_a_source"`) and is `""` for every other event. `actor` is
+`null` when the acting account can no longer be resolved, so a row never disappears just
+because its actor was deleted. `avatar_url` is a **path on this API** (`""` when the actor has no avatar), never a
 link to object storage, and `author_rooted` is the same
 [inline Rooted summary](#author_rooted-on-content-responses) that content responses carry.
 
@@ -1281,6 +1289,76 @@ write that caused it. Adapting a version, commenting, or bridging stores the not
 after the primary row is committed, and a failure to store it is logged and swallowed rather
 than failing the request — the adaptation or comment must not be lost because an inbox write
 failed (KNOT-ADR-038).
+
+## Reactions
+
+The four **perspective signals** a reader can leave on a story, a version, a comment, or a
+bridge (KNOT-ADR-050). They are not likes: the four do not compete, a reader may hold any
+combination of them on the same entity, and none of them cancels another. Nothing sorts or
+ranks content by them.
+
+| `reaction_type`        | Meaning                     | Emoji |
+| ---------------------- | --------------------------- | ----- |
+| `rings_true`           | "Rings true to me"          | ✅     |
+| `know_it_differently`  | "I know it differently"     | 🔄     |
+| `adds_something_new`   | "Adds something new"        | ➕     |
+| `needs_a_source`       | "Needs a source"            | 📎     |
+
+Every content response carries two reaction fields (KNOT-ADR-051):
+
+```json
+"reactions": { "rings_true": 3, "know_it_differently": 1, "adds_something_new": 0, "needs_a_source": 2 },
+"my_reactions": ["rings_true", "adds_something_new"]
+```
+
+`reactions` is the count of each signal, always all four keys. `my_reactions` is the signals
+the **authenticated caller** holds, as an array of type strings — `[]` when the caller is
+signed out or holds none. These fields are attached to the story detail and feed, the version
+detail and tree, the comment list and detail, and the bridge list and detail.
+
+### POST /{entity}/{id}/reactions
+
+Toggles one signal on one entity, as the authenticated user. **Protected.** The request body
+is `{ "reaction_type": "rings_true" }`. Toggling a signal the caller already holds removes
+it; otherwise it is added, so a caller never has to know the current state.
+
+Returns **200** with the entity's updated counts:
+
+```json
+{ "reactions": { "rings_true": 1, "know_it_differently": 0, "adds_something_new": 0, "needs_a_source": 0 } }
+```
+
+- `POST /stories/{id}/reactions`
+- `POST /versions/{id}/reactions`
+- `POST /comments/{id}/reactions`
+- `POST /bridges/{id}/reactions`
+
+Errors: **400** `validation_error` for an unknown `reaction_type`, or for a reaction on a
+**reply** (reactions are top-level only, KNOT-ADR-052); **401** `unauthorized`; **404**
+`not_found` when the entity does not exist.
+
+### GET /{entity}/{id}/reactions
+
+Returns **200** with every reaction on the entity, newest first, each reactor resolved.
+**Public.** An id that names nothing returns an empty array rather than a 404.
+
+```json
+{
+  "reactions": [
+    {
+      "id": "9c1e4a77-2f3b-4d5e-8a6b-1c2d3e4f5a6b",
+      "user": { "id": "22222222-2222-4222-8222-222222222222", "display_name": "Ada Lovelace", "avatar_url": "/users/22222222-2222-4222-8222-222222222222/avatar?v=ada.png" },
+      "reaction_type": "rings_true",
+      "created_at": "2026-10-10T09:00:00Z"
+    }
+  ]
+}
+```
+
+- `GET /stories/{id}/reactions`
+- `GET /versions/{id}/reactions`
+- `GET /comments/{id}/reactions`
+- `GET /bridges/{id}/reactions`
 
 ## Tokens
 

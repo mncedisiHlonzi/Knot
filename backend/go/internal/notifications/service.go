@@ -164,31 +164,43 @@ func (s *Service) MarkAllRead(ctx context.Context, userID string) (int, error) {
 // (KNOT-ADR-040). A failure is logged and returned; the caller ignores it so the
 // adaptation that triggered it still succeeds (KNOT-ADR-038).
 func (s *Service) NotifyVersionCreated(ctx context.Context, recipientID, actorID, versionID string) error {
-	return s.notify(ctx, recipientID, actorID, EventVersionCreated, EntityVersion, versionID)
+	return s.notify(ctx, recipientID, actorID, EventVersionCreated, EntityVersion, versionID, "")
 }
 
 // NotifyCommentCreated records that actorID commented on a version authored by
 // recipientID.
 func (s *Service) NotifyCommentCreated(ctx context.Context, recipientID, actorID, commentID string) error {
-	return s.notify(ctx, recipientID, actorID, EventCommentCreated, EntityComment, commentID)
+	return s.notify(ctx, recipientID, actorID, EventCommentCreated, EntityComment, commentID, "")
 }
 
 // NotifyBridgeCreated records that actorID bridged a comment authored by
 // recipientID.
 func (s *Service) NotifyBridgeCreated(ctx context.Context, recipientID, actorID, bridgeID string) error {
-	return s.notify(ctx, recipientID, actorID, EventBridgeCreated, EntityBridge, bridgeID)
+	return s.notify(ctx, recipientID, actorID, EventBridgeCreated, EntityBridge, bridgeID, "")
+}
+
+// NotifyReactionCreated records that actorID left a reaction on content
+// authored by recipientID (KNOT-ADR-050).
+//
+// entityType is the target's own kind (story, version, comment, or bridge): a
+// reaction reuses the entity it points at rather than introducing a new one, so
+// the client opens the same screen a tap on the content would. reactionType is
+// which of the four signals was left, so the inbox can name it.
+func (s *Service) NotifyReactionCreated(ctx context.Context, recipientID, actorID, entityType, reactionType, entityID string) error {
+	return s.notify(ctx, recipientID, actorID, EventReactionCreated, EntityType(entityType), entityID, reactionType)
 }
 
 // notify is the shared body of the three hooks. It never returns a wrapped
 // store error to a caller in another domain that would have to know this
 // package's error types: it returns the error Create produced, having logged it.
-func (s *Service) notify(ctx context.Context, recipientID, actorID string, event EventType, entity EntityType, entityID string) error {
+func (s *Service) notify(ctx context.Context, recipientID, actorID string, event EventType, entity EntityType, entityID, reactionType string) error {
 	_, err := s.Create(ctx, CreateInput{
-		UserID:     recipientID,
-		ActorID:    actorID,
-		EventType:  event,
-		EntityType: entity,
-		EntityID:   entityID,
+		UserID:       recipientID,
+		ActorID:      actorID,
+		EventType:    event,
+		EntityType:   entity,
+		EntityID:     entityID,
+		ReactionType: reactionType,
 	})
 	if err == nil {
 		return nil
@@ -228,29 +240,42 @@ func validateCreate(in CreateInput) (Notification, error) {
 		return Notification{}, ErrSelfNotification
 	}
 
-	expected, ok := in.EventType.EntityType()
-	if !ok {
+	if !in.EventType.Valid() {
 		return Notification{}, &ValidationError{
 			Field:   "event_type",
-			Message: "must be one of version.created, comment.created, bridge.created",
+			Message: "must be one of version.created, comment.created, bridge.created, reaction.created",
 		}
 	}
-	if in.EntityType != expected {
+	if !in.EventType.acceptsEntityType(in.EntityType) {
 		return Notification{}, &ValidationError{
 			Field:   "entity_type",
-			Message: fmt.Sprintf("must be %s for event %s", expected, in.EventType),
+			Message: fmt.Sprintf("must be a valid entity for event %s", in.EventType),
 		}
 	}
 	if !isUUID(in.EntityID) {
 		return Notification{}, &ValidationError{Field: "entity_id", Message: "must be a UUID"}
 	}
 
+	// The reaction type travels only with reaction.created, so a mis-wired caller
+	// cannot file a signal against an adaptation.
+	if in.EventType == EventReactionCreated {
+		if in.ReactionType == "" {
+			return Notification{}, &ValidationError{Field: "reaction_type", Message: "is required for event reaction.created"}
+		}
+	} else if in.ReactionType != "" {
+		return Notification{}, &ValidationError{
+			Field:   "reaction_type",
+			Message: fmt.Sprintf("must be empty for event %s", in.EventType),
+		}
+	}
+
 	return Notification{
-		UserID:     in.UserID,
-		ActorID:    in.ActorID,
-		EventType:  in.EventType,
-		EntityType: in.EntityType,
-		EntityID:   in.EntityID,
+		UserID:       in.UserID,
+		ActorID:      in.ActorID,
+		EventType:    in.EventType,
+		EntityType:   in.EntityType,
+		EntityID:     in.EntityID,
+		ReactionType: in.ReactionType,
 	}, nil
 }
 

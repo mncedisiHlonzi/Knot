@@ -351,6 +351,52 @@ indented inside its parent's card. Tapping **Reply** focuses the composer
 (`composerRef.current?.focus()`) so the keyboard opens ready to type, and the payload still names
 the top-level comment through `replyTargetId`.
 
+### Perspective reactions
+
+`internal/reactions` owns the four perspective signals (KNOT-ADR-050). It is layered like the
+other content domains — `reaction.go` (the closed sets, `Summary`, the store contract),
+`service.go` (Toggle, ListForEntity, SummaryForEntity, BatchSummaries, BatchMyReactions), and
+`postgres_store.go` — and it knows nothing about HTTP, JSON, or any content domain. Entity
+existence is the caller's job: `entity_id` is polymorphic and has no foreign key, so the HTTP
+layer resolves the target through its own domain service first.
+
+**Endpoints.** One toggle and one list per entity kind, registered in `router.go`:
+
+```
+POST /stories/{id}/reactions      POST /versions/{id}/reactions
+POST /comments/{id}/reactions     POST /bridges/{id}/reactions
+GET  /stories/{id}/reactions      GET  /versions/{id}/reactions
+GET  /comments/{id}/reactions     GET  /bridges/{id}/reactions
+```
+
+The toggle takes `{"reaction_type":"rings_true"}` and answers with the entity's updated
+`{"reactions":{…}}`; it is protected. The list is public and returns the actors. The toggle
+resolves the entity through `stories`/`versions`/`conversations` (a `404` for a missing entity),
+refuses a reply with a `400` (KNOT-ADR-052), and fires `NotifyReactionCreated` only when the
+signal was **created** on **someone else's** content.
+
+**Enrichment.** Every content response carries `reactions` (all four counts) and `my_reactions`
+(the reader's own signals) — see `ReactionsLookup` and `loadReactions` in `internal/httpapi/enrich.go`.
+A page costs **two batched reads** regardless of size, so a feed, tree, thread, or bridge list
+never fans out into a query per row. The public content reads are wrapped in
+`AuthMiddleware.Optional`, so a valid token fills `my_reactions` and an absent or invalid one
+yields `[]`: the routes stay public (KNOT-ADR-051). `notifications` gained a nullable
+`reaction_type` column so an inbox row can name the signal.
+
+**Mobile.** `src/api/reactions.ts` wraps the eight routes and owns the emoji and labels;
+`src/components/ReactionBar.tsx` renders the four chips, toggles optimistically, reverts on
+error, and invites a signed-out reader to sign in. It is applied to the story detail (below the
+body), each version row in the language tree (compact: emoji and count only), and each
+**top-level** comment in the thread (below the body, above the Replies link and the
+Reply/Bridge row). Replies have no bar. The inbox renders `reaction.created` as
+"{actor} ✅ Rings true on your comment." and opens the target — a story, version, comment, or
+bridge — through the existing tap-through routing.
+
+> **Disclosure.** `BridgeScreen` is a **compose form** for a new bridge; it never renders an
+> existing bridge, so there is no bridge body to place a bar under. Bridge reactions are fully
+> supported by the API and by `ReactionBar` (`entityType="bridge"`), and will be surfaced when a
+> surface that displays a bridge exists.
+
 ### Native dependencies (Mapbox, AsyncStorage)
 
 The Discovery Map uses **`@rnmapbox/maps`** (KNOT-011a, KNOT-ADR-026) — the app's first native

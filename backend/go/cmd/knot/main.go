@@ -35,6 +35,7 @@ import (
 	"github.com/knot/backend/internal/identity"
 	"github.com/knot/backend/internal/notifications"
 	"github.com/knot/backend/internal/profile"
+	"github.com/knot/backend/internal/reactions"
 	"github.com/knot/backend/internal/rooted"
 	"github.com/knot/backend/internal/storage"
 	"github.com/knot/backend/internal/stories"
@@ -200,10 +201,25 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
+	// Reactions: the four perspective signals. The service is both the toggle
+	// engine and the enrichment lookup the content handlers use to attach counts
+	// and the reader's own signals to a response (KNOT-ADR-051). It reuses the
+	// identity service as its batched actor lookup, exactly as the content
+	// handlers do, so it is built before them.
+	reactionsStore, err := reactions.NewPostgresStore(pool)
+	if err != nil {
+		return err
+	}
+
+	reactionsService, err := reactions.NewService(reactionsStore, service, logger)
+	if err != nil {
+		return err
+	}
+
 	// The identity service doubles as the batched author lookup every content
 	// handler enriches with, so a response names and pictures its authors without
 	// a query per row (KNOT-ADR-041).
-	storiesHandler, err := httpapi.NewStoriesHandler(storiesService, service, rootedService, storyMediaService, logger)
+	storiesHandler, err := httpapi.NewStoriesHandler(storiesService, service, rootedService, storyMediaService, reactionsService, logger)
 	if err != nil {
 		return err
 	}
@@ -242,7 +258,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	versionsHandler, err := httpapi.NewVersionsHandler(versionsService, service, rootedService, logger)
+	versionsHandler, err := httpapi.NewVersionsHandler(versionsService, service, rootedService, reactionsService, logger)
 	if err != nil {
 		return err
 	}
@@ -259,7 +275,15 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	conversationsHandler, err := httpapi.NewConversationsHandler(conversationsService, service, rootedService, logger)
+	conversationsHandler, err := httpapi.NewConversationsHandler(conversationsService, service, rootedService, reactionsService, logger)
+	if err != nil {
+		return err
+	}
+
+	// The reactions handler owns the eight per-entity reaction routes. It uses the
+	// three content services only to resolve an entity's author and confirm it
+	// exists, and the notifications service to fire reaction.created (KNOT-ADR-050).
+	reactionsHandler, err := httpapi.NewReactionsHandler(reactionsService, storiesService, versionsService, conversationsService, notificationsService, logger)
 	if err != nil {
 		return err
 	}
@@ -314,7 +338,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, avatarHandler, storyMediaHandler, notificationsHandler, profileHandler, authMiddleware, appinfo.Version, logger)
+	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, avatarHandler, storyMediaHandler, notificationsHandler, profileHandler, reactionsHandler, authMiddleware, appinfo.Version, logger)
 	if err != nil {
 		return err
 	}

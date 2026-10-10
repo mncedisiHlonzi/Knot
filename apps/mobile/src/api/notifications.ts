@@ -16,7 +16,8 @@ import type { AuthorRooted } from './rooted';
  * What happened, as the server names it. The set is closed: the server's schema
  * refuses anything else.
  */
-export type NotificationEventType = 'version.created' | 'comment.created' | 'bridge.created';
+export type NotificationEventType =
+  'version.created' | 'comment.created' | 'bridge.created' | 'reaction.created';
 
 /** The kind of thing `entity_id` names. */
 export type NotificationEntityType = 'story' | 'version' | 'comment' | 'bridge';
@@ -36,8 +37,14 @@ export type Notification = {
   readonly id: string;
   readonly event_type: NotificationEventType;
   readonly entity_type: NotificationEntityType;
-  /** The id of the thing to open: a version, a comment, or a bridge. */
+  /** The id of the thing to open: a story, version, comment, or bridge. */
   readonly entity_id: string;
+  /**
+   * The perspective signal a reaction.created notification names, and "" (or
+   * absent, from an older server) for every other event. The inbox renders its
+   * emoji and label.
+   */
+  readonly reaction_type?: string;
   readonly read: boolean;
   readonly created_at: string;
   /** The user who acted, or null when their account can no longer be resolved. */

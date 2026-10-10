@@ -1317,3 +1317,182 @@ label for the space the pattern exists to save; a reply in a different language 
 its author line and body. The label is computed from the reply count and two booleans, so a stale
 expansion id for a comment that later leaves the page is harmless.
 
+---
+
+## KNOT-ADR-050 — The four reactions are perspective signals, not likes
+
+**Decision ID:** KNOT-ADR-050
+**Date:** 2026-10-10
+**Status:** Accepted
+
+**Context:** The Master Brief (§10 Community Perspectives) names four reactions — "rings true to
+me", "I know it differently", "adds something new", and "needs a source" — as signals of
+perspective and knowledge quality. A conventional "like" is the wrong shape for them: a single
+accumulating counter rewards agreement and hides disagreement, and it tempts the product into
+ranking content by popularity. Knot exists to carry perspectives that are not the majority one,
+so a control that quietly suppresses an unpopular telling would defeat the product.
+
+**Decision:**
+- A reaction is one of **four closed types**, and the set is a CHECK constraint in
+  `0013_reactions`. There is no "dislike" and no fifth signal.
+- The four **do not compete**: a user may hold **any combination** of them on the same entity at
+  once, and holding one never removes another. The unique index is
+  `(user_id, entity_type, entity_id, reaction_type)`, so it forbids a duplicate of one signal
+  rather than a second signal.
+- Reactions **do not sort, rank, filter, or hide** content anywhere. They are counts shown beside
+  the content, and nothing reads them to order a feed or a thread.
+- A reaction attaches to a **story, version, comment, or bridge** — the four authored content
+  kinds. The toggle routes are **per entity kind** (`POST /stories/{id}/reactions`), so each one
+  resolves its target through that domain's own service and this domain needs no polymorphic
+  existence check.
+- Toggling is the only mutation, and it is **idempotent per signal**: toggling a signal the user
+  holds removes it; otherwise it is added. A caller never has to know the current state.
+- Creating a reaction on **someone else's** content fires a `reaction.created` notification;
+  removing one is silent, and reacting to your own content notifies nobody (the rule
+  KNOT-ADR-038 already applies to every action).
+- `entity_id` is a bare UUID with **no foreign key**, because one column cannot reference four
+  tables. Referential integrity is enforced by the application, and `user_id` cascades on delete.
+  Orphan reactions for a deleted entity are accepted at MVP and a sweep is a future task.
+
+**Alternatives Considered:**
+1. **A single like counter** — rejected. It collapses four different things a reader can mean into
+   one number, and it is the shape that invites ranking by popularity.
+2. **A single signed score (up/down, or a -1…+1 per signal)** — rejected. Summing perspectives
+   into one number is exactly the suppression by design the four signals exist to prevent.
+3. **A polymorphic endpoint with a server-side existence check** — rejected. It would force this
+   package to depend on every content domain, or force a lookup table of existence checks; the
+   per-entity routes get the same guarantee from each domain's own `Get`.
+4. **A foreign key per entity type (four nullable columns)** — rejected. Four nullable columns
+   with four partial unique indexes is more schema than one polymorphic pair with one index, and
+   the read query would need a branch per type.
+5. **Reactions as a row on the content tables** — rejected. A reaction is about a user and a
+   content row; denormalising it onto the content would make "who reacted" unanswerable and the
+   counts unmaintainable.
+6. **A reaction per user per entity (one signal maximum)** — rejected. It would make the four
+   exclusive, which is the one thing they are not.
+
+**Reason:** The four signals are a vocabulary for perspective, and a vocabulary is only useful if
+its words can be used together and none of them silences another. Keeping them as independent
+counts, never as a score, is what keeps the product from quietly deciding which telling matters.
+
+**Consequences:** Nothing in the product can say "this story is more agreed with than that one",
+because no ordering reads the counts — that is deliberate, and any future ranking would need its
+own decision. A user can hold all four signals at once on one comment, which reads as noise to
+someone expecting a like/dislike pair; the four emoji-and-label chips are the affordance that
+makes the set legible. `entity_id` carrying no foreign key means a deleted entity leaves its
+reactions behind, so counts for a deleted story could outlive it until a sweep runs; nothing
+deletes content today, so this is a disclosure rather than a live bug.
+
+---
+
+## KNOT-ADR-051 — Reactions are aggregated into entity responses, and the reader's own signals are named
+
+**Decision ID:** KNOT-ADR-051
+**Date:** 2026-10-10
+**Status:** Accepted
+
+**Context:** Every surface that shows a story, version, comment, or bridge also needs its
+reaction counts, and the reader needs to see which of the four they already hold so a tap can
+toggle the right one. If the client asked for the counts itself, opening one screen would cost an
+extra request per entity, and a feed or a language tree would fan out into a request per row.
+The public content routes also have no user on the context today, because reading a story is open
+to anyone, so there is nowhere for a signed-in reader's own signals to come from.
+
+**Decision:**
+- Each entity response gains two fields: `reactions`, always all four counts
+  (`{"rings_true":0,"know_it_differently":0,"adds_something_new":0,"needs_a_source":0}`), and
+  `my_reactions`, the signals the signed-in reader holds as an array of type strings (`[]` when
+  signed out or when they hold none).
+- The counts are attached to the **story detail and feed**, the **version detail and tree**, the
+  **comment list and comment detail**, and the **bridge list and bridge detail**. Create
+  responses carry the fields too, as zeros and `[]`, so the wire shape is uniform.
+- Enrichment is **batched**: a page of entities is decorated with **two queries** (one for the
+  counts, one for the reader's own signals), never one per row. This is the same shape the author
+  and Rooted enrichment already uses.
+- The public reads that carry the fields are wrapped in a new **optional authentication**
+  middleware: a valid bearer token puts the reader on the context so `my_reactions` can be
+  filled, and a request with no token (or a token that does not validate) proceeds anonymously
+  with `my_reactions: []`. The routes stay public.
+- Enrichment failures are **logged and swallowed**: a story, version, comment, or bridge stays
+  readable with zero counts when the reactions read fails, exactly as a missing Rooted signal
+  does not break a response.
+- A bridge reaction notification reuses the target's entity kind, so the notification carries no
+  new entity type. `reaction.created` records **which signal** was left in a nullable
+  `notifications.reaction_type` column, because the inbox names the signal ("✅ Rings true on your
+  story") and the type is not otherwise derivable from the event.
+
+**Alternatives Considered:**
+1. **A separate `GET /reactions?ids=…` the client calls per screen** — rejected. It is a second
+   round trip for every screen and an N+1 for a feed, for data the response can carry for free.
+2. **Omitting `my_reactions` and having the client fetch the full reaction list** — rejected. The
+   list is unbounded and public, it costs a request per entity, and the client only needs the
+   reader's own four bits.
+3. **Making the content reads protected so a user is always present** — rejected. Reading a story
+   is public and must stay so; requiring a token to read would break the product's open reading.
+4. **Trusting a `?me=` or a body user id for the reader** — rejected. The reader is only ever the
+   token's subject; a client-supplied identity would let anyone read anyone's highlights.
+5. **Deriving the notification's emoji on the client from the reaction list** — rejected. It is a
+   second request per notification and it breaks the moment the signal is toggled off before the
+   inbox is opened.
+6. **A separate `reaction_count` table or a materialised view** — rejected. A grouped
+   `count(*)` over the index is fast at this scale, and a second source of truth would need
+   maintenance on every toggle.
+
+**Reason:** The counts and the reader's own signals are decorations of the entity, so they belong
+on the entity's response, computed in one batched read per page. Optional authentication is the
+smallest way to personalise a public read without closing it.
+
+**Consequences:** A page of content now costs two extra queries regardless of size, so the
+marginal cost of reactions is constant rather than linear. A reader with an expired token sees
+`my_reactions: []` with no error, because a public read does not fail on a bad credential — the
+cost of keeping the read open. The `notifications.reaction_type` column is nullable and carries
+the closed set as a CHECK, so this package stays domain-agnostic: it stores a string, and the
+reactions domain owns the vocabulary. Every handler that projects an entity now depends on the
+reactions lookup, which widened the content-handler constructors and the router.
+
+---
+
+## KNOT-ADR-052 — No reactions on replies at MVP
+
+**Decision ID:** KNOT-ADR-052
+**Date:** 2026-10-10
+**Status:** Accepted
+
+**Context:** KNOT-ADR-047 added one-level comment replies, and this task added reactions. A reply
+is a comment row, so the reaction table could accept one, and the thread renders replies beside
+their parent. But the thread already offers a per-reply affordance ("Reply", "Bridge to another
+language"), and the mobile thread shows exactly one reaction bar per top-level comment. A reply is
+part of its parent's thread rather than a separate piece of content a reader arrives at.
+
+**Decision:**
+- Reactions attach to **top-level comments only**. The mobile thread renders **no bar for a
+  reply**.
+- The server **refuses** a reaction on a reply with a `400 validation_error`, rather than silently
+  accepting one the client never shows. The comment toggle resolves the comment through the
+  conversations service and rejects one whose `parent_comment_id` is set.
+- The thread's reactions therefore cover the conversation: a reader reacts to the top-level
+  comment, and its replies are part of what they are reacting to.
+- This is a **product-scope decision, not a schema limit**: the table would accept a reply's id,
+  and lifting the rule is a change to the comment toggle's guard plus the mobile rendering.
+
+**Alternatives Considered:**
+1. **A bar on every reply** — rejected for this task. It doubles the controls in a dense thread
+   for a signal that already reads at the thread level, and it clutters the one-level nesting the
+   thread works to keep legible.
+2. **Accepting a reply reaction server-side but not rendering it** — rejected. It would let a
+   client write state the product never shows, and the counts would be invisible to every reader.
+3. **Rolling reply reactions up into the parent's counts** — rejected. It would make a parent's
+   count depend on rows the reader cannot see, and it conflates "this comment" with "this thread".
+4. **Reactions on replies instead of on top-level comments** — rejected. A thread's signal then
+   requires picking a reply, and a top-level comment with no replies would be unreachable.
+
+**Reason:** One bar per top-level comment covers the thread without doubling the affordances in
+it, and refusing the write keeps the stored state aligned with what the product renders.
+
+**Consequences:** A reader who wants to signal something about one particular reply has no
+control for it; they can reply, bridge, or react to the thread. If engagement data later shows
+that gap matters, the change is small and reversible, which is why this is a scope decision
+rather than a schema constraint. The comment toggle's guard means a reaction on a reply is a
+`400` rather than a silent no-op, so a client that tries it learns why instead of seeing a count
+that never appears.
+

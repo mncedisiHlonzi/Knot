@@ -24,6 +24,7 @@ Migrations live in `backend/go/migrations/` and are applied with
 | `0010`  | `notifications` | The `notifications` table, its inbox index, and its unread partial index |
 | `0011`  | `iso_639_3` | Rewrites every stored language from a two-letter ISO 639-1 code to its three-letter ISO 639-3 counterpart |
 | `0012`  | `comment_replies` | The `comments.parent_comment_id` column, its index and foreign key, and the self-parent check constraint |
+| `0013`  | `reactions` | The `reactions` table and its indexes; the `notifications.reaction_type` column; and the widened notification event CHECK |
 
 Applied versions are recorded in the `schema_migrations` table, which the runner creates
 on first use.
@@ -508,6 +509,7 @@ is written per comment, so neither case can notify twice.
 | `event_type`  | `text`        | no       | —                   | What happened; a closed set, see below                                   |
 | `entity_type` | `text`        | no       | —                   | The kind of thing `entity_id` names; a closed set, see below              |
 | `entity_id`   | `uuid`        | no       | —                   | The id of the thing to open. **No foreign key** — see below              |
+| `reaction_type` | `text`      | yes      | `NULL`              | Which perspective signal a `reaction.created` names; `NULL` for every other event (KNOT-ADR-051) |
 | `read_at`     | `timestamptz` | yes      | `NULL`              | When the recipient read it; `NULL` means unread                          |
 | `created_at`  | `timestamptz` | no       | `now()`             | The inbox's primary sort key                                            |
 
@@ -523,6 +525,7 @@ is written per comment, so neither case can notify twice.
 | `notifications_check`               | Check constraint             | `actor_id`, `user_id`                             | `actor_id <> user_id`: you are never notified about your own action    |
 | `notifications_event_type_check`    | Check constraint             | `event_type`                                      | The event set is closed in the database, not only in Go                |
 | `notifications_entity_type_check`   | Check constraint             | `entity_type`                                     | The entity set is closed in the database                               |
+| `notifications_reaction_type_check` | Check constraint             | `reaction_type`                                   | A `reaction.created` signal is inside the closed set, or the column is `NULL` (KNOT-ADR-050) |
 
 The composite index mirrors `comments_version_id_created_at_idx` and
 `stories_created_at_id_idx`: it is descending on both columns and in the same order as the
@@ -568,6 +571,47 @@ the row is the whole feature, and the client polls its own inbox (KNOT-ADR-039).
 - **No `updated_at`.** A notification is a record of a past event; only `read_at` changes.
 - **No grouping or de-duplication.** Ten adaptations are ten rows, because each points at a
 different thing to open.
+
+## `reactions`
+
+One user's one **perspective signal** on one piece of content (KNOT-ADR-050). It is not a
+like: the four signals do not compete, a user may hold any combination of them on the same
+entity, and nothing orders content by them.
+
+| Column          | Type          | Nullable | Default             | Notes                                                          |
+| --------------- | ------------- | -------- | ------------------- | -------------------------------------------------------------- |
+| `id`            | `uuid`        | no       | `gen_random_uuid()` | Primary key                                                     |
+| `user_id`       | `uuid`        | no       | —                   | References `users(id)`; the person who reacted                    |
+| `entity_type`   | `text`        | no       | —                   | One of `story`, `version`, `comment`, `bridge`; a closed set      |
+| `entity_id`     | `uuid`        | no       | —                   | The reacted-to row. **No foreign key** — see below                |
+| `reaction_type` | `text`        | no       | —                   | One of the four signals; a closed set                             |
+| `created_at`    | `timestamptz` | no       | `now()`             | Insertion time                                                    |
+
+### Indexes and constraints
+
+| Name                                    | Kind             | Columns                                                       | Purpose                                                        |
+| --------------------------------------- | ---------------- | ------------------------------------------------------------- | -------------------------------------------------------------- |
+| `reactions_pkey`                        | Primary key      | `id`                                                          | Row identity                                                     |
+| `reactions_unique_per_user_entity_type` | Unique index     | `(user_id, entity_type, entity_id, reaction_type)`             | One user holds each signal on an entity at most once; also the toggle's `ON CONFLICT` target |
+| `reactions_entity_idx`                  | Btree index      | `(entity_type, entity_id)`                                     | Serves the count aggregation for one entity and the batched `= ANY($2)` for a page |
+| `reactions_user_idx`                    | Btree index      | `(user_id)`                                                    | Serves the `my_reactions` enrichment                             |
+| `reactions_user_id_fkey`                | Foreign key      | `user_id` → `users(id)`                                        | `ON DELETE CASCADE`: deleting an account removes its reactions   |
+| `reactions_entity_type_check`           | Check constraint | `entity_type`                                                  | The entity set is closed in the database                         |
+| `reactions_reaction_type_check`         | Check constraint | `reaction_type`                                                | The four-signal set is closed in the database                    |
+
+### `entity_id` is polymorphic and has no foreign key
+
+A reaction points at one of four tables, which a single column cannot reference. The
+`entity_type` CHECK closes the set of kinds, and the **application** enforces referential
+integrity: every toggle route resolves its target through that domain's own service before it
+writes. The cost is that a deleted entity leaves its reactions behind — nothing deletes
+content today, so a sweep is a future task rather than a live defect (KNOT-ADR-050).
+
+### Toggling is one transaction, and the unique index is the switch
+
+The insert relies on `reactions_unique_per_user_entity_type` as its `ON CONFLICT` target: a row
+it does not create already exists, so the same call deletes it. Both writes run in one
+transaction, so the entity is never observed with the signal half-applied.
 
 ## The profile wall (a read model, no new table)
 
