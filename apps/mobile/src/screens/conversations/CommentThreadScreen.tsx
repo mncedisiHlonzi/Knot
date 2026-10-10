@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -25,9 +25,11 @@ import { isLanguageCode, languageName } from '../../data/languages';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
 import {
   DEFAULT_COMPOSE_LANGUAGE,
+  REPLIES_PREVIEW_COUNT,
+  groupComments,
   initialComposeLanguage,
-  isReply,
   languageChipLabel,
+  repliesLinkLabel,
   replyTargetId,
 } from './commentThread';
 
@@ -71,12 +73,15 @@ function validateForm(body: string, language: string): string | undefined {
 }
 
 /**
- * One version's conversation: a list of comments, newest thread first, each
- * followed by its replies, with a comment box at the bottom.
+ * One version's conversation: the top-level comments, newest first, each with its
+ * replies revealed inline on demand, and a comment box at the bottom.
  *
- * Threading is one level deep (KNOT-ADR-047). A reply is indented under the
- * comment it answers, and the "Reply" action on a reply answers the same
- * top-level comment, so the thread never nests further than that.
+ * Threading is one level deep (KNOT-ADR-047). Replies are hidden behind a link
+ * under their parent and expand in place (KNOT-ADR-049): the first tap shows the
+ * first few, a second tap shows the rest, and the next tap collapses them again.
+ * A collapsed comment never pushes its neighbours off the screen, however many
+ * replies it gathers. The "Reply" action on a reply answers the same top-level
+ * comment, so the thread never nests further than that.
  *
  * Every comment carries a "Bridge to another language" action. A bridge is how
  * someone replies in their own language: it writes a new comment in the target
@@ -120,6 +125,15 @@ export default function CommentThreadScreen({
   const [replyTo, setReplyTo] = useState<Comment | undefined>(undefined);
   const [composeError, setComposeError] = useState<string | undefined>(undefined);
   const [posting, setPosting] = useState(false);
+
+  // Which comments show their replies, and which show every reply rather than the
+  // first few. Both are session-only and per comment: leaving the thread forgets
+  // them (KNOT-ADR-049). Each change makes a new Set so React sees a new value.
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const [fullyExpandedIds, setFullyExpandedIds] = useState<Set<string>>(() => new Set());
+
+  // The composer, so a Reply tap can put the cursor in it (KNOT-015e-fix).
+  const composerRef = useRef<TextInput>(null);
 
   useEffect(() => {
     if (hasSuggestedLanguage) {
@@ -208,6 +222,54 @@ export default function CommentThreadScreen({
     }
   }, [loadingMore, nextCursor, versionId]);
 
+  // The list renders top-level comments only; each one owns its replies, which it
+  // reveals inline when expanded. The order the API returned is preserved.
+  const { topLevel, repliesByParent } = useMemo(() => groupComments(comments), [comments]);
+
+  // Tapping the replies link moves a comment through collapsed → the first few →
+  // all → collapsed. `total` decides whether a second tap is needed at all.
+  function handleRepliesLinkPress(commentId: string, total: number): void {
+    const expanded = expandedIds.has(commentId);
+    const fullyExpanded = fullyExpandedIds.has(commentId);
+
+    if (!expanded) {
+      setExpandedIds((previous) => {
+        const next = new Set(previous);
+        next.add(commentId);
+        return next;
+      });
+      return;
+    }
+
+    if (!fullyExpanded && total > REPLIES_PREVIEW_COUNT) {
+      setFullyExpandedIds((previous) => {
+        const next = new Set(previous);
+        next.add(commentId);
+        return next;
+      });
+      return;
+    }
+
+    setExpandedIds((previous) => {
+      const next = new Set(previous);
+      next.delete(commentId);
+      return next;
+    });
+    setFullyExpandedIds((previous) => {
+      const next = new Set(previous);
+      next.delete(commentId);
+      return next;
+    });
+  }
+
+  // Tapping Reply targets the comment the user tapped — a reply keeps that reply's
+  // author in the banner — while the payload names the top-level comment through
+  // `replyTargetId`. The composer is focused so the keyboard opens ready to type.
+  function handleReplyPress(comment: Comment): void {
+    setReplyTo(comment);
+    composerRef.current?.focus();
+  }
+
   async function handlePost(): Promise<void> {
     const problem = validateForm(body, composeLanguage);
     if (problem !== undefined) {
@@ -256,34 +318,78 @@ export default function CommentThreadScreen({
       {loading ? <ActivityIndicator style={styles.spinner} /> : null}
 
       <FlatList
-        data={comments}
+        data={topLevel}
         keyExtractor={(comment) => comment.id}
         contentContainerStyle={styles.list}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
-        renderItem={({ item }) => (
-          <View style={[styles.card, isReply(item) ? styles.replyCard : null]}>
-            <View style={styles.cardMeta}>
-              <Text style={styles.badge}>{languageName(item.language)}</Text>
-              <AuthorLine
-                displayName={item.author_display_name}
-                avatarUrl={item.author_avatar_url}
-                createdAt={item.created_at}
-                rooted={item.author_rooted}
-                size={isReply(item) ? 'small' : 'medium'}
-                onPress={() => onOpenUserProfile(item.author_id)}
-              />
+        renderItem={({ item }) => {
+          const replies = repliesByParent[item.id] ?? [];
+          const expanded = expandedIds.has(item.id);
+          const fullyExpanded = fullyExpandedIds.has(item.id);
+          const linkLabel = repliesLinkLabel(replies.length, expanded, fullyExpanded);
+          // Collapsed shows none; the first tap shows the first few; the second
+          // tap (fully expanded) shows them all.
+          const visibleReplies = expanded
+            ? fullyExpanded
+              ? replies
+              : replies.slice(0, REPLIES_PREVIEW_COUNT)
+            : [];
+
+          return (
+            <View style={styles.card}>
+              <View style={styles.cardMeta}>
+                <Text style={styles.badge}>{languageName(item.language)}</Text>
+                <AuthorLine
+                  displayName={item.author_display_name}
+                  avatarUrl={item.author_avatar_url}
+                  createdAt={item.created_at}
+                  rooted={item.author_rooted}
+                  size="medium"
+                  onPress={() => onOpenUserProfile(item.author_id)}
+                />
+              </View>
+              <Text style={styles.body}>{item.body}</Text>
+              {linkLabel !== null ? (
+                <Pressable
+                  style={styles.repliesLink}
+                  onPress={() => handleRepliesLinkPress(item.id, replies.length)}
+                  accessibilityRole="button"
+                >
+                  <Text style={styles.repliesLinkText}>{linkLabel}</Text>
+                </Pressable>
+              ) : null}
+              <View style={styles.cardActions}>
+                <Pressable style={styles.action} onPress={() => handleReplyPress(item)}>
+                  <Text style={styles.actionText}>Reply</Text>
+                </Pressable>
+                <Pressable style={styles.action} onPress={() => onBridge(item)}>
+                  <Text style={styles.actionText}>Bridge to another language</Text>
+                </Pressable>
+              </View>
+              {visibleReplies.map((reply) => (
+                <View key={reply.id} style={styles.replyRow}>
+                  <AuthorLine
+                    displayName={reply.author_display_name}
+                    avatarUrl={reply.author_avatar_url}
+                    createdAt={reply.created_at}
+                    rooted={reply.author_rooted}
+                    size="small"
+                    onPress={() => onOpenUserProfile(reply.author_id)}
+                  />
+                  <Text style={styles.replyBody}>{reply.body}</Text>
+                  <View style={styles.replyActions}>
+                    <Pressable style={styles.replyAction} onPress={() => handleReplyPress(reply)}>
+                      <Text style={styles.actionText}>Reply</Text>
+                    </Pressable>
+                    <Pressable style={styles.replyAction} onPress={() => onBridge(reply)}>
+                      <Text style={styles.actionText}>Bridge to another language</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ))}
             </View>
-            <Text style={styles.body}>{item.body}</Text>
-            <View style={styles.cardActions}>
-              <Pressable style={styles.action} onPress={() => setReplyTo(item)}>
-                <Text style={styles.actionText}>Reply</Text>
-              </Pressable>
-              <Pressable style={styles.action} onPress={() => onBridge(item)}>
-                <Text style={styles.actionText}>Bridge to another language</Text>
-              </Pressable>
-            </View>
-          </View>
-        )}
+          );
+        }}
         ListEmptyComponent={
           !loading && error === undefined ? (
             <Text style={styles.hint}>No comments yet. Start the conversation.</Text>
@@ -321,6 +427,7 @@ export default function CommentThreadScreen({
           </View>
         ) : null}
         <TextInput
+          ref={composerRef}
           style={styles.composerInput}
           value={body}
           onChangeText={setBody}
@@ -567,10 +674,39 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     fontSize: fontSizes.sm,
   },
-  // A reply is indented under the comment it answers. Threading is one level
-  // deep, so one indent is the whole story (KNOT-ADR-047).
-  replyCard: {
-    marginLeft: spacing.lg,
+  // A reply sits inside its parent's card, indented to show the hierarchy. The
+  // indent is inside the card, so the thread reads as one unit and the reply is
+  // shallower than the old nested card (KNOT-ADR-049).
+  replyRow: {
+    borderTopColor: colors.border.subtle,
+    borderTopWidth: 1,
+    marginLeft: spacing.xl,
+    marginTop: spacing.md,
+    paddingTop: spacing.md,
+  },
+  replyBody: {
+    color: colors.text.primary,
+    fontSize: fontSizes.sm,
+    lineHeight: lineHeights.sm,
+    marginTop: spacing.xs,
+  },
+  replyActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  replyAction: {
+    marginRight: spacing.lg,
+    marginTop: spacing.sm,
+  },
+  // The expand/collapse link sits above the action buttons, so the replies it
+  // reveals appear below the actions that address the comment itself.
+  repliesLink: {
+    marginTop: spacing.sm,
+  },
+  repliesLinkText: {
+    color: colors.text.brand,
+    fontSize: fontSizes.sm,
+    fontWeight: fontWeights.medium,
   },
   secondaryButton: {
     alignItems: 'center',

@@ -20,7 +20,7 @@ Discovery Map, Curious Inquiries, notifications. **Post-MVP** — everything aft
 | CreateStory | Stories | Phase 1 | Shipped | KNOT-004 | Publish a story: pillar, language, title, body, coarse place, one media link, and a sensitive flag. |
 | AdaptStory | Tell My People | Phase 1 | Shipped | KNOT-005 | Retell an existing version in another language, prefilled from the version being adapted. |
 | LanguageTree | Tell My People | Phase 1 | Shipped | KNOT-005 | See every version of a story as an indented list, by depth, with language badges. |
-| CommentThread | Conversations | Phase 1 | Shipped | KNOT-006 | Read a version's comments newest-first and post a new one. Replies, indented one level, and a composer language chip added by KNOT-015e. |
+| CommentThread | Conversations | Phase 1 | Shipped | KNOT-006 | Read a version's comments newest-first and post a new one. Replies expand inline, collapsed by default, and a composer language chip — added by KNOT-015e and reworked by KNOT-015e-fix. |
 | Bridge | Conversations | Phase 1 | Shipped | KNOT-006 | Bridge a comment into another language, joining two conversations. |
 
 Nine screens shipped; the same list is visible in the `ScreenName` state machine in

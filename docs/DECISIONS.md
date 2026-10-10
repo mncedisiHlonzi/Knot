@@ -1241,3 +1241,79 @@ visit; that is the cost of not editing their profile, and it is the trade this d
 takes. The picker's clear control leaves the composer with no language, which the
 composer reports as a validation error rather than silently restoring a default.
 
+---
+
+## KNOT-ADR-049 — A comment's replies expand inline, collapsed by default, three at a time
+
+**Decision ID:** KNOT-ADR-049
+**Date:** 2026-10-10
+**Status:** Accepted
+
+**Context:** KNOT-ADR-047 added one-level replies, and the mobile thread rendered them in the
+same flat list, indented under their parent as a nested card. On device the founder found the
+failure mode: a comment that gathers many replies fills the screen with them and pushes the
+next top-level comment — and the parent itself, once the user scrolls — out of view. A
+conversation is read by scanning what people are saying, so a single thread must not be able to
+hide everything else.
+
+**Decision:**
+- The mobile thread renders **top-level comments only** as the list rows. Each comment's
+  replies are hidden behind a link under its body and above its action buttons, and reveal
+  **in place** when tapped — Instagram's pattern.
+- **Collapsed by default.** The link reads `View N reply` / `View N replies` for one to three
+  replies, and `View all N replies` for more than three.
+- **The first tap shows the first three replies** (`REPLIES_PREVIEW_COUNT`). When more remain,
+  the link reads `View all N replies` again and the second tap reveals the rest. When every
+  reply is shown the link reads `Hide replies`, and tapping it collapses the thread again. A
+  comment with three replies or fewer is fully revealed by its first tap, so it goes straight
+  to `Hide replies`.
+- Replies render **compact**: a small `AuthorLine`, a smaller body, and the same Reply and
+  Bridge actions, indented inside the parent's card rather than being a card of their own.
+- **Expansion state is per comment and session-only.** It lives in the screen's `useState` —
+  two `Set<string>`s, `expandedIds` and `fullyExpandedIds`, each updated immutably with a new
+  `Set` — so leaving the thread forgets it. Nothing is persisted, and no Context or global
+  store holds it.
+- The grouping and the link label are **pure functions** in
+  `apps/mobile/src/screens/conversations/commentThread.ts` — `groupComments` and
+  `repliesLinkLabel` — tested without rendering React Native.
+- The **Reply** action on a parent or a reply sets `replyTo` to the tapped comment, so the
+  composer's banner names the person being answered, while the payload still names the
+  top-level comment through `replyTargetId` (KNOT-ADR-047). It also **focuses the composer**,
+  closing the gap disclosed by KNOT-015e that tapping Reply did not open the keyboard.
+
+**Alternatives Considered:**
+1. **Keeping the flat, indent-rendered list** — rejected. This is the decision being corrected:
+   many replies dominate the screen and push every other comment, and the parent, off it.
+2. **A separate screen per thread** — rejected. It costs a navigation step for the very reading
+   the conversation screen exists to do, and it loses the surrounding conversation.
+3. **Paginated "load more replies" per comment** — rejected for this task. All of a comment's
+   replies arrive in the initial page (KNOT-ADR-047), so the app already holds them; paging
+   would add a request and a loading state for data in memory. It remains a known limitation,
+   to be addressed only if a thread ever grows that large.
+4. **Persisting expansion state** (per device or on the server) — rejected. The thread is a
+   reading surface; remembering which threads were open across visits is a preference the
+   product has not asked for, and it would make the screen's output depend on hidden state.
+5. **Expanding all of a comment's replies when the comment itself is tapped** — rejected. A tap
+   on the body should not have a side effect on the replies; the link is the affordance, and it
+   names its count.
+6. **A hard cap on rendered replies** — rejected. The threshold is what the user chooses to
+   spend; silently dropping replies past a cap would hide a person's words with no way to reach
+   them.
+7. **Truncating the parent while its replies are expanded** — rejected. The parent is the
+   question the replies answer; hiding it to save space is the opposite of what the screen is
+   for.
+
+**Reason:** A conversation should read as a list of things people said, so the default view is
+one row per person. Revealing replies on demand keeps the parent visible, keeps its neighbours
+reachable, and puts the cost of a long thread where the user chose to pay it. Three replies are
+enough to show a comment is being discussed without spending the screen on it.
+
+**Consequences:** A comment's replies are still not independently pageable, so a comment with
+hundreds of replies loads them all in the initial page — a limitation KNOT-ADR-047 already
+accepted and this decision does not change. The expansion state is forgotten on exit by design,
+so a user who wants to keep a long reply thread in view re-expands it on each visit. Replies no
+longer carry the language badge a top-level comment does, because the compact row trades that
+label for the space the pattern exists to save; a reply in a different language is still read by
+its author line and body. The label is computed from the reply count and two booleans, so a stale
+expansion id for a comment that later leaves the page is harmless.
+

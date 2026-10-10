@@ -94,12 +94,14 @@ bridge-count badge is deferred.
 boundary.
 
 **Current status.** **Shipped.** `CommentThreadScreen` — a newest-first, cursor-paged list
-with a compose box, pull-to-refresh, a "Reply" action and a "Bridge to another language"
-action on every comment — and `BridgeScreen`, which writes a new comment in a target language
-and joins it to the one it came from. A reply is indented under the comment it answers, and
-threading is one level deep: replying to a reply stays in the same thread. The composer's
-language is a chip that opens the language picker, defaults to the user's own language, and
-lasts for the visit.
+of top-level comments with a compose box, pull-to-refresh, a "Reply" action and a "Bridge to
+another language" action on every comment — and `BridgeScreen`, which writes a new comment in
+a target language and joins it to the one it came from. Replies are collapsed under their
+parent and expand inline on tap, three at a time (KNOT-ADR-049), so a comment with many
+replies never pushes the rest of the conversation off the screen. Threading is one level deep:
+replying to a reply stays in the same thread, and tapping Reply focuses the composer. The
+composer's language is a chip that opens the language picker, defaults to the user's own
+language, and lasts for the visit.
 
 **MVP phase.** Phase 1.
 

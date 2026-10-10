@@ -329,7 +329,8 @@ and tapping it opens `LanguagePicker` in `single` mode inside a modal sheet
 (KNOT-ADR-048). The chip reads `languageName(code)` when that name is at most 12 characters
 and the code itself otherwise — 1,630 of the 7,927 names are longer than the chip — which is
 `languageChipLabel` in `apps/mobile/src/screens/conversations/commentThread.ts`. That module
-holds the composer's pure rules (chip label, reply target, starting language) so they are
+holds the thread's pure rules — the chip label, the reply target, the starting language, how a
+flat page is grouped into parents and replies, and what the replies link reads — so they are
 tested without rendering React Native.
 
 The composer starts in the user's first preferred language. A user who has none has no
@@ -337,6 +338,18 @@ preferred tag to send, so the composer fetches the version (`GET /versions/{id}`
 the version's language, showing `…` in the chip while the request is in flight and falling
 back to `eng` if it fails — `initialComposeLanguage` encodes the order. The choice is **not**
 persisted: it lasts for the visit, and the profile keeps its own screen (KNOT-ADR-048).
+
+The thread renders **top-level comments only**. A comment's replies are collapsed under a link
+above its action buttons and reveal **in place** when tapped (KNOT-ADR-049): the first tap shows
+the first three, a second tap shows the rest, and the next tap hides them again. `repliesLinkLabel`
+computes the link — `View 1 reply`, `View N replies`, `View all N replies`, or `Hide replies` —
+and `groupComments` splits the flat page the API returns into `topLevel` plus `repliesByParent`. The
+expansion is held in the screen's `useState` (`expandedIds` and `fullyExpandedIds`, two
+`Set<string>`s updated immutably) and is session-only: leaving the thread forgets it. A reply is
+rendered compact — a small `AuthorLine`, a smaller body, and the same Reply and Bridge actions,
+indented inside its parent's card. Tapping **Reply** focuses the composer
+(`composerRef.current?.focus()`) so the keyboard opens ready to type, and the payload still names
+the top-level comment through `replyTargetId`.
 
 ### Native dependencies (Mapbox, AsyncStorage)
 
