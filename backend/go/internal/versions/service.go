@@ -81,6 +81,11 @@ func (s *Service) GetVersion(ctx context.Context, id string) (StoryVersion, erro
 		return StoryVersion{}, fmt.Errorf("versions: get version: %w", err)
 	}
 
+	// A detail view of a blocked author's version is not found (KNOT-ADR-064).
+	if moderation.IsExcludedAuthor(ctx, version.AuthorID) {
+		return StoryVersion{}, ErrNotFound
+	}
+
 	return version, nil
 }
 

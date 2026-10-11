@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/knot/backend/internal/moderation"
 )
 
 // notificationColumns is the canonical SELECT/RETURNING column list. It is a
@@ -79,12 +81,19 @@ func (s *PostgresStore) List(ctx context.Context, userID string, cursor *Cursor,
 	query := `SELECT ` + notificationColumns + ` FROM notifications WHERE user_id = $1`
 	args := []any{userID}
 
+	// Hide a blocked actor's notifications: an action by someone on either side of
+	// a block with the viewer is not surfaced (KNOT-ADR-064).
+	if excluded := moderation.ExcludedAuthors(ctx); len(excluded) > 0 {
+		args = append(args, excluded)
+		query += fmt.Sprintf(` AND actor_id <> ALL($%d::uuid[])`, len(args))
+	}
+
 	if cursor != nil {
 		// The explicit casts are required because a row comparison does not
 		// reliably infer the parameter types, and they are safe because
 		// DecodeCursor has already proven the id is canonical UUID text.
-		query += ` AND (created_at, id) < ($2::timestamptz, $3::uuid)`
 		args = append(args, cursor.CreatedAt(), cursor.ID())
+		query += fmt.Sprintf(` AND (created_at, id) < ($%d::timestamptz, $%d::uuid)`, len(args)-1, len(args))
 	}
 
 	query += fmt.Sprintf(` ORDER BY created_at DESC, id DESC LIMIT $%d`, len(args)+1)
@@ -125,12 +134,17 @@ func (s *PostgresStore) UnreadCount(ctx context.Context, userID string) (int, er
 		return 0, nil
 	}
 
+	query := `SELECT count(*) FROM notifications WHERE user_id = $1 AND read_at IS NULL`
+	args := []any{userID}
+
+	// The badge must agree with the list, which hides a blocked actor (KNOT-ADR-064).
+	if excluded := moderation.ExcludedAuthors(ctx); len(excluded) > 0 {
+		args = append(args, excluded)
+		query += fmt.Sprintf(` AND actor_id <> ALL($%d::uuid[])`, len(args))
+	}
+
 	var count int
-	if err := s.pool.QueryRow(
-		ctx,
-		`SELECT count(*) FROM notifications WHERE user_id = $1 AND read_at IS NULL`,
-		userID,
-	).Scan(&count); err != nil {
+	if err := s.pool.QueryRow(ctx, query, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("notifications: unread count: %w", err)
 	}
 

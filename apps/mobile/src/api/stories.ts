@@ -248,13 +248,13 @@ export const storiesApi = {
     return request<StoryResponse>('/stories', { method: 'POST', body: payload, token });
   },
 
-  /** GET /stories/{id} — reads one story. Public. */
-  getStory(id: string): Promise<StoryResponse> {
-    return request<StoryResponse>(`/stories/${encodeURIComponent(id)}`, { method: 'GET' });
+  /** GET /stories/{id} — reads one story. Public. A token hides blocked authors. */
+  getStory(id: string, token?: string): Promise<StoryResponse> {
+    return request<StoryResponse>(`/stories/${encodeURIComponent(id)}`, { method: 'GET', token });
   },
 
   /** GET /stories — reads one page of the feed, newest first. Public. */
-  listStories(options: ListStoriesOptions = {}): Promise<StoryListResponse> {
-    return request<StoryListResponse>(`/stories${feedQuery(options)}`, { method: 'GET' });
+  listStories(options: ListStoriesOptions = {}, token?: string): Promise<StoryListResponse> {
+    return request<StoryListResponse>(`/stories${feedQuery(options)}`, { method: 'GET', token });
   },
 };

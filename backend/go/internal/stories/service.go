@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/knot/backend/internal/language"
+	"github.com/knot/backend/internal/moderation"
 )
 
 // CreateStory validates the input, stores it, and returns the stored story.
@@ -46,6 +47,12 @@ func (s *Service) GetStory(ctx context.Context, id string) (Story, error) {
 			return Story{}, ErrNotFound
 		}
 		return Story{}, fmt.Errorf("stories: get story: %w", err)
+	}
+
+	// A detail view of a blocked author's story is not found, matching the list
+	// filter and the bridge/profile pattern (KNOT-ADR-064).
+	if moderation.IsExcludedAuthor(ctx, story.AuthorID) {
+		return Story{}, ErrNotFound
 	}
 
 	return story, nil

@@ -133,6 +133,11 @@ func (s *Service) GetInquiry(ctx context.Context, id string) (Inquiry, error) {
 		return Inquiry{}, fmt.Errorf("inquiries: get inquiry: %w", err)
 	}
 
+	// A detail view of a blocked author's inquiry is not found (KNOT-ADR-064).
+	if moderation.IsExcludedAuthor(ctx, inquiry.AuthorID) {
+		return Inquiry{}, ErrNotFound
+	}
+
 	return inquiry, nil
 }
 
@@ -302,6 +307,11 @@ func (s *Service) GetAnswer(ctx context.Context, id string) (Answer, error) {
 			return Answer{}, ErrNotFound
 		}
 		return Answer{}, fmt.Errorf("inquiries: get answer: %w", err)
+	}
+
+	// A detail view of a blocked author's answer is not found (KNOT-ADR-064).
+	if moderation.IsExcludedAuthor(ctx, answer.AuthorID) {
+		return Answer{}, ErrNotFound
 	}
 
 	return answer, nil

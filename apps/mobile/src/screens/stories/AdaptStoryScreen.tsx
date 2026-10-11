@@ -103,7 +103,7 @@ export default function AdaptStoryScreen({
     setLoadError(undefined);
 
     try {
-      const result = await versionsApi.getVersion(parentVersionId);
+      const result = await versionsApi.getVersion(parentVersionId, token);
       setParent(result.version);
       // Prefill from the version being adapted so the adapter edits a retelling.
       setTitle(result.version.title);
@@ -113,7 +113,7 @@ export default function AdaptStoryScreen({
     } finally {
       setLoading(false);
     }
-  }, [parentVersionId]);
+  }, [parentVersionId, token]);
 
   useEffect(() => {
     void load();

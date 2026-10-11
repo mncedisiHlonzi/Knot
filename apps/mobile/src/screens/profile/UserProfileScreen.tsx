@@ -166,7 +166,7 @@ export default function UserProfileScreen({
     setError(undefined);
 
     try {
-      const page = await profileApi.getUserProfile(userId, undefined, PROFILE_PAGE_SIZE);
+      const page = await profileApi.getUserProfile(userId, undefined, PROFILE_PAGE_SIZE, token);
       setProfile(page.user);
       setActivities(page.activities);
       setNextCursor(page.next_cursor);
@@ -175,7 +175,7 @@ export default function UserProfileScreen({
     } finally {
       setLoading(false);
     }
-  }, [userId]);
+  }, [token, userId]);
 
   useEffect(() => {
     void loadFirstPage();
@@ -186,7 +186,7 @@ export default function UserProfileScreen({
     setError(undefined);
 
     try {
-      const page = await profileApi.getUserProfile(userId, undefined, PROFILE_PAGE_SIZE);
+      const page = await profileApi.getUserProfile(userId, undefined, PROFILE_PAGE_SIZE, token);
       setProfile(page.user);
       setActivities(page.activities);
       setNextCursor(page.next_cursor);
@@ -195,7 +195,7 @@ export default function UserProfileScreen({
     } finally {
       setRefreshing(false);
     }
-  }, [userId]);
+  }, [token, userId]);
 
   const loadMore = useCallback(async (): Promise<void> => {
     if (nextCursor === '' || loadingMore) {
@@ -206,7 +206,7 @@ export default function UserProfileScreen({
     setError(undefined);
 
     try {
-      const page = await profileApi.getUserProfile(userId, nextCursor, PROFILE_PAGE_SIZE);
+      const page = await profileApi.getUserProfile(userId, nextCursor, PROFILE_PAGE_SIZE, token);
       // Append rather than replace: the cursor is exclusive, so a page never
       // repeats an activity already on screen.
       setActivities((existing) => [...existing, ...page.activities]);
@@ -216,7 +216,7 @@ export default function UserProfileScreen({
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, nextCursor, userId]);
+  }, [loadingMore, nextCursor, token, userId]);
 
   const handleAvatarPicked = useCallback(
     async (media: PickedMedia): Promise<void> => {
@@ -331,6 +331,7 @@ export default function UserProfileScreen({
             try {
               const { comment } = await conversationsApi.getComment(
                 activity.payload.source_comment_id,
+                token,
               );
               onOpenComment(comment.story_id, comment.version_id);
             } catch {

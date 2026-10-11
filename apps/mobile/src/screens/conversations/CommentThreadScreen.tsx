@@ -145,7 +145,7 @@ export default function CommentThreadScreen({
 
     async function resolveVersionLanguage(): Promise<void> {
       try {
-        const { version } = await versionsApi.getVersion(versionId);
+        const { version } = await versionsApi.getVersion(versionId, token);
         if (!cancelled) {
           setComposeLanguage(initialComposeLanguage(undefined, version.language));
         }
@@ -164,14 +164,18 @@ export default function CommentThreadScreen({
     return () => {
       cancelled = true;
     };
-  }, [hasSuggestedLanguage, versionId]);
+  }, [hasSuggestedLanguage, token, versionId]);
 
   const loadFirstPage = useCallback(async (): Promise<void> => {
     setLoading(true);
     setError(undefined);
 
     try {
-      const page = await conversationsApi.listComments(versionId, { limit: THREAD_PAGE_SIZE });
+      const page = await conversationsApi.listComments(
+        versionId,
+        { limit: THREAD_PAGE_SIZE },
+        token,
+      );
       setComments(page.comments);
       setNextCursor(page.next_cursor);
     } catch (caught) {
@@ -179,7 +183,7 @@ export default function CommentThreadScreen({
     } finally {
       setLoading(false);
     }
-  }, [versionId]);
+  }, [token, versionId]);
 
   useEffect(() => {
     void loadFirstPage();
@@ -189,7 +193,11 @@ export default function CommentThreadScreen({
     setRefreshing(true);
 
     try {
-      const page = await conversationsApi.listComments(versionId, { limit: THREAD_PAGE_SIZE });
+      const page = await conversationsApi.listComments(
+        versionId,
+        { limit: THREAD_PAGE_SIZE },
+        token,
+      );
       setComments(page.comments);
       setNextCursor(page.next_cursor);
       setError(undefined);
@@ -198,7 +206,7 @@ export default function CommentThreadScreen({
     } finally {
       setRefreshing(false);
     }
-  }, [versionId]);
+  }, [token, versionId]);
 
   const loadMore = useCallback(async (): Promise<void> => {
     if (nextCursor === '' || loadingMore) {
@@ -208,10 +216,14 @@ export default function CommentThreadScreen({
     setLoadingMore(true);
 
     try {
-      const page = await conversationsApi.listComments(versionId, {
-        cursor: nextCursor,
-        limit: THREAD_PAGE_SIZE,
-      });
+      const page = await conversationsApi.listComments(
+        versionId,
+        {
+          cursor: nextCursor,
+          limit: THREAD_PAGE_SIZE,
+        },
+        token,
+      );
       // Append rather than replace: the cursor is exclusive, so a page never
       // repeats a comment already on screen.
       setComments((existing) => [...existing, ...page.comments]);
@@ -221,7 +233,7 @@ export default function CommentThreadScreen({
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, nextCursor, versionId]);
+  }, [loadingMore, nextCursor, token, versionId]);
 
   // The list renders top-level comments only; each one owns its replies, which it
   // reveals inline when expanded. The order the API returned is preserved.

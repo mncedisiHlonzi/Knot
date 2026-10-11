@@ -1335,3 +1335,51 @@ its target exists without the moderation package importing a content domain.
 
 Run the moderation integration tests against Postgres (migration 0015 applied) by
 setting `KNOT_POSTGRES_DSN`; they skip otherwise.
+
+### Block filtering is a cross-cutting concern — the audit checklist
+
+Every content **list** endpoint and every content **detail** read must apply the
+block filter, and every content **write** must refuse a blocked interaction. The
+filter is the viewer's mutual block set, carried on the request context
+(`moderation.ExcludedAuthors(ctx)`) and resolved once per authenticated request by
+the auth middleware.
+
+Two rules:
+
+- **Lists** add `author_id <> ALL($n::uuid[])` (or `s.author_id` / `b.author_id`
+  where the row is aliased) from `moderation.ExcludedAuthors(ctx)`. The predicate
+  is absent when the set is empty, so anonymous readers pay nothing.
+- **Detail** reads return **404** for a blocked author's resource
+  (`moderation.IsExcludedAuthor(ctx, entity.AuthorID)` → the domain's not-found),
+  because an invisible resource must be indistinguishable from one that does not
+  exist. The profile wall follows the same rule.
+
+The canonical checklist — every content read and its current state:
+
+| Endpoint | Filter |
+| --- | --- |
+| `GET /stories` (feed) | list predicate (`stories.ListStories`) |
+| `GET /stories/{id}` | detail 404 (`stories.GetStory`) |
+| `GET /stories/{id}/tree` | structural — not filtered (KNOT-ADR-060) |
+| `GET /versions/{id}` | detail 404 (`versions.GetVersion`) |
+| `GET /versions/{id}/comments` | list predicate (`conversations.ListComments` + `ListReplies`) |
+| `GET /comments/{id}` | detail 404 (`conversations.GetComment`) |
+| `GET /comments/{id}/bridges` | list predicate (`conversations.ListBridgesForComment`) |
+| `GET /bridges/{id}` | detail 404 (`conversations.GetBridge`) |
+| `GET /inquiries` | list predicate (`inquiries.ListInquiries`) |
+| `GET /inquiries/{id}` | detail 404 (`inquiries.GetInquiry`) |
+| `GET /inquiries/{id}/answers` | list predicate (`inquiries.ListAnswers`) |
+| `GET /answers/{id}` | detail 404 (`inquiries.GetAnswer`) |
+| `GET /users/{id}/profile` | 404 when the owner is blocked (`profile.GetProfile`) |
+| `GET /notifications` (+ `unread_count`) | list predicate on `actor_id` |
+| `GET /reports/mine`, `GET /blocks/mine` | own data — no filter (N/A) |
+
+A **write** (`POST`) is refused with `moderation.ErrBlocked` (→ 403 `blocked`) when
+it targets content authored by anyone on either side of a block: commenting,
+bridging, reacting, answering, and adapting.
+
+**The client must send its token on these reads.** The filter only applies to an
+authenticated request; a public read made without an `Authorization` header is
+anonymous and sees everything. The mobile API modules (`stories.ts`,
+`conversations.ts`, `versions.ts`, `profile.ts`) therefore take an optional `token`
+and the screens pass the signed-in user's token.

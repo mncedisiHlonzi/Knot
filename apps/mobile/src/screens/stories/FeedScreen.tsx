@@ -53,7 +53,7 @@ export default function FeedScreen({
     setError(undefined);
 
     try {
-      const page = await storiesApi.listStories({ limit: FEED_PAGE_SIZE });
+      const page = await storiesApi.listStories({ limit: FEED_PAGE_SIZE }, token);
       setStories(page.stories);
       setNextCursor(page.next_cursor);
     } catch (caught) {
@@ -61,7 +61,7 @@ export default function FeedScreen({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [token]);
 
   useEffect(() => {
     void loadFirstPage();
@@ -109,7 +109,10 @@ export default function FeedScreen({
     setError(undefined);
 
     try {
-      const page = await storiesApi.listStories({ cursor: nextCursor, limit: FEED_PAGE_SIZE });
+      const page = await storiesApi.listStories(
+        { cursor: nextCursor, limit: FEED_PAGE_SIZE },
+        token,
+      );
       // Append rather than replace: the cursor is exclusive, so a page never
       // repeats a story already on screen.
       setStories((existing) => [...existing, ...page.stories]);
@@ -119,7 +122,7 @@ export default function FeedScreen({
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, nextCursor]);
+  }, [loadingMore, nextCursor, token]);
 
   return (
     <FlatList

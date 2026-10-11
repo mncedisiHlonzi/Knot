@@ -49,14 +49,14 @@ export default function LanguageTreeScreen({
     setError(undefined);
 
     try {
-      const result = await versionsApi.getTree(storyId);
+      const result = await versionsApi.getTree(storyId, token);
       setVersions(result.versions);
     } catch (caught) {
       setError(describeError(caught));
     } finally {
       setLoading(false);
     }
-  }, [storyId]);
+  }, [storyId, token]);
 
   useEffect(() => {
     void load();

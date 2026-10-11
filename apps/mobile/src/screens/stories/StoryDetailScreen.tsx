@@ -143,8 +143,8 @@ export default function StoryDetailScreen({
       // The story carries its root version's content; the tree carries every
       // version of it, so the count comes from the tree.
       const [storyResult, treeResult] = await Promise.all([
-        storiesApi.getStory(id),
-        versionsApi.getTree(id),
+        storiesApi.getStory(id, token),
+        versionsApi.getTree(id, token),
       ]);
       setStory(storyResult.story);
       setVersionCount(treeResult.versions.length);
@@ -153,7 +153,7 @@ export default function StoryDetailScreen({
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, token]);
 
   useEffect(() => {
     void load();

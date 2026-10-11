@@ -1928,3 +1928,38 @@ filtered query is asserted for an exact count — never a global `COUNT(*)` or a
 own filtered rows, not a weakened `>=`. `t.Cleanup` still removes the rows a test
 wrote, but correctness does not depend on it — a leftover row from another run
 cannot change a scoped result. New integration tests must follow this rule.
+
+## KNOT-ADR-064 — Every content list and every content detail must apply the block filter
+
+Block filtering is a cross-cutting concern, and KNOT-017a did not apply it
+everywhere: on device a blocked author's stories and comments stayed visible. The
+predicate was correct in the stores, but two things were missing.
+
+1. **Detail routes had no check.** `GET /stories/{id}`, `GET /versions/{id}`,
+`GET /comments/{id}`, `GET /inquiries/{id}`, and `GET /answers/{id}` returned a
+blocked author's resource with 200. A detail view of an invisible resource must be
+indistinguishable from one that does not exist, so each now answers **404**
+(`moderation.IsExcludedAuthor(ctx, entity.AuthorID)`) — the pattern
+`GET /bridges/{id}` and the profile wall already used.
+2. **The mobile client did not send its token on public reads.** The server applies
+the filter from the request's block set, which is resolved from the bearer token;
+a read made without one is anonymous and sees everything. Only the inquiries API
+forwarded the token, which is exactly why inquiries worked and stories and
+comments did not. `stories.ts`, `conversations.ts`, `versions.ts`, and
+`profile.ts` now take an optional `token`, and the screens pass it.
+
+Notifications are filtered too: the inbox and its unread badge hide an action by a
+blocked actor (`actor_id <> ALL(...)`).
+
+**Policy — list versus detail.** A **list** hides blocked authors' rows with the
+predicate. A **detail** read of a blocked author's resource is **404**, not 403:
+the resource is invisible, and a 403 would confirm it exists. Own-data lists
+(`/reports/mine`, `/blocks/mine`) and the structural language tree are named as
+exceptions.
+
+**Consequences.** The filter is a property of every content read, not just the
+feed. `docs/DEVELOPMENT.md` holds the audit table (endpoint → filter) as the
+canonical checklist: a new list endpoint adds the predicate, a new detail endpoint
+adds the 404, and a new public read must forward the token. A read that is
+deliberately not filtered is named in the table, so the omission is explicit
+rather than accidental.

@@ -294,6 +294,9 @@ export default function App(): React.ReactElement {
    */
   function handleOpenNotification(notification: Notification): void {
     void (async () => {
+      // The token lets the server hide an entity authored by someone the viewer
+      // has blocked (or who has blocked the viewer) (KNOT-ADR-064).
+      const token = session?.accessToken;
       try {
         switch (notification.entity_type) {
           case 'story': {
@@ -304,20 +307,20 @@ export default function App(): React.ReactElement {
             return;
           }
           case 'version': {
-            const { version } = await versionsApi.getVersion(notification.entity_id);
+            const { version } = await versionsApi.getVersion(notification.entity_id, token);
             setOverlays((stack) =>
               pushOverlay(stack, { name: 'detail', storyId: version.story_id }),
             );
             return;
           }
           case 'comment': {
-            const { comment } = await conversationsApi.getComment(notification.entity_id);
+            const { comment } = await conversationsApi.getComment(notification.entity_id, token);
             openCommentThread(comment.version_id, comment.story_id);
             return;
           }
           case 'bridge': {
-            const { bridge } = await conversationsApi.getBridge(notification.entity_id);
-            const { comment } = await conversationsApi.getComment(bridge.source_comment_id);
+            const { bridge } = await conversationsApi.getBridge(notification.entity_id, token);
+            const { comment } = await conversationsApi.getComment(bridge.source_comment_id, token);
             openCommentThread(comment.version_id, comment.story_id);
             return;
           }

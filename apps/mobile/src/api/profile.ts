@@ -134,7 +134,12 @@ export const profileApi = {
    * `cursor` omits the first page; `limit` defaults to the server's 20 and is
    * clamped to 50. Both are omitted from the query string when not needed.
    */
-  getUserProfile(userId: string, cursor?: string, limit?: number): Promise<UserProfile> {
+  getUserProfile(
+    userId: string,
+    cursor?: string,
+    limit?: number,
+    token?: string,
+  ): Promise<UserProfile> {
     const parts: string[] = [];
 
     if (limit !== undefined) {
@@ -148,6 +153,7 @@ export const profileApi = {
 
     return request<UserProfile>(`/users/${encodeURIComponent(userId)}/profile${query}`, {
       method: 'GET',
+      token,
     });
   },
 };

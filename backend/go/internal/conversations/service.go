@@ -399,6 +399,11 @@ func (s *Service) GetComment(ctx context.Context, id string) (Comment, error) {
 		return Comment{}, fmt.Errorf("conversations: get comment: %w", err)
 	}
 
+	// A detail view of a blocked author's comment is not found (KNOT-ADR-064).
+	if moderation.IsExcludedAuthor(ctx, comment.AuthorID) {
+		return Comment{}, ErrNotFound
+	}
+
 	return comment, nil
 }
 

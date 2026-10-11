@@ -210,9 +210,11 @@ func (h *ReactionsHandler) toggle(w http.ResponseWriter, r *http.Request, entity
 	}
 
 	// Resolve the entity through its own domain first: this both proves it exists
-	// (404) and yields its author, who is the notification's recipient.
+	// (404) and yields its author, who is the notification's recipient. The lookup
+	// ignores the viewer's block set so a blocked target is resolved (and then
+	// refused with 403 below) rather than reported as missing (KNOT-ADR-064).
 	entityID := r.PathValue("id")
-	authorID, err := authorOf(r.Context(), entityID)
+	authorID, err := authorOf(moderation.WithoutExcludedAuthors(r.Context()), entityID)
 	if err != nil {
 		h.writeResolveError(w, r, err, entityType)
 		return

@@ -184,21 +184,29 @@ export const conversationsApi = {
     });
   },
 
-  /** GET /versions/{id}/comments — one page of a version's comments. Public. */
-  listComments(versionId: string, options: ListCommentsOptions = {}): Promise<CommentListResponse> {
+  /** GET /versions/{id}/comments — one page of a version's comments. Public. A
+   * token hides comments by blocked authors. */
+  listComments(
+    versionId: string,
+    options: ListCommentsOptions = {},
+    token?: string,
+  ): Promise<CommentListResponse> {
     return request<CommentListResponse>(
       `/versions/${encodeURIComponent(versionId)}/comments${threadQuery(options)}`,
-      { method: 'GET' },
+      { method: 'GET', token },
     );
   },
 
   /**
    * GET /comments/{id} — resolves one comment, naming its version and story. It
    * is how a notification that points at a comment finds the thread to open.
-   * Public.
+   * Public. A token hides a blocked author's comment (the server answers 404).
    */
-  getComment(id: string): Promise<CommentDetailResponse> {
-    return request<CommentDetailResponse>(`/comments/${encodeURIComponent(id)}`, { method: 'GET' });
+  getComment(id: string, token?: string): Promise<CommentDetailResponse> {
+    return request<CommentDetailResponse>(`/comments/${encodeURIComponent(id)}`, {
+      method: 'GET',
+      token,
+    });
   },
 
   /**
@@ -218,14 +226,15 @@ export const conversationsApi = {
   },
 
   /** GET /comments/{id}/bridges — every bridge touching a comment. Public. */
-  listBridgesForComment(commentId: string): Promise<BridgeListResponse> {
+  listBridgesForComment(commentId: string, token?: string): Promise<BridgeListResponse> {
     return request<BridgeListResponse>(`/comments/${encodeURIComponent(commentId)}/bridges`, {
       method: 'GET',
+      token,
     });
   },
 
   /** GET /bridges/{id} — reads one bridge. Public. */
-  getBridge(id: string): Promise<BridgeResponse> {
-    return request<BridgeResponse>(`/bridges/${encodeURIComponent(id)}`, { method: 'GET' });
+  getBridge(id: string, token?: string): Promise<BridgeResponse> {
+    return request<BridgeResponse>(`/bridges/${encodeURIComponent(id)}`, { method: 'GET', token });
   },
 };

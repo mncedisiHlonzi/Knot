@@ -92,15 +92,20 @@ export const versionsApi = {
   },
 
   /** GET /stories/{id}/tree — every version of a story. Public. */
-  getTree(storyId: string): Promise<LanguageTreeResponse> {
+  getTree(storyId: string, token?: string): Promise<LanguageTreeResponse> {
     return request<LanguageTreeResponse>(`/stories/${encodeURIComponent(storyId)}/tree`, {
       method: 'GET',
+      token,
     });
   },
 
-  /** GET /versions/{id} — reads one version. Public. */
-  getVersion(id: string): Promise<VersionResponse> {
-    return request<VersionResponse>(`/versions/${encodeURIComponent(id)}`, { method: 'GET' });
+  /** GET /versions/{id} — reads one version. Public. A token hides a blocked
+   * author's version (the server answers 404). */
+  getVersion(id: string, token?: string): Promise<VersionResponse> {
+    return request<VersionResponse>(`/versions/${encodeURIComponent(id)}`, {
+      method: 'GET',
+      token,
+    });
   },
 };
 

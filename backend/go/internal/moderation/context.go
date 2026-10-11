@@ -67,3 +67,13 @@ func IsExcludedAuthor(ctx context.Context, authorID string) bool {
 	}
 	return false
 }
+
+// WithoutExcludedAuthors returns ctx with the hidden-author set removed.
+//
+// A read that must resolve an entity regardless of a block — so it can tell a
+// blocked target (403) from a missing one (404) — uses this for its lookup, then
+// applies IsExcludedAuthor itself. Storing an empty set (rather than deleting the
+// key) is enough: ExcludedAuthors then reports nothing hidden.
+func WithoutExcludedAuthors(ctx context.Context) context.Context {
+	return context.WithValue(ctx, excludedAuthorsKey{}, []string(nil))
+}
