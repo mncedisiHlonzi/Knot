@@ -838,3 +838,53 @@ migration.
 
 Every statement is idempotent (`IF NOT EXISTS` / `pg_constraint` guards), so
 re-applying `0015_moderation.up.sql` by hand is safe.
+
+## Search (migration 0016, KNOT-018)
+
+Full-text search adds **one generated column and one GIN index to each of two tables** — two, not
+three, and not to `stories`.
+
+| Table | Column | Index |
+| --- | --- | --- |
+| `story_versions` | `search_vector tsvector` | `story_versions_search_vector_idx` (GIN) |
+| `inquiries` | `search_vector tsvector` | `inquiries_search_vector_idx` (GIN) |
+
+### Why `stories` has no `search_vector`
+
+A story row carries no title and no body: its content *is* its root version, joined through
+`stories.root_version_id` (which is `NOT NULL` and `UNIQUE`, so the join is always one row).
+Copying that text onto `stories` would duplicate it, need its own maintenance, and let it drift
+from the version it is derived from. A **story** search result therefore comes from
+`story_versions WHERE parent_version_id IS NULL` joined to `stories`, and it carries the story id;
+a **version** result comes from the non-root rows and carries its own id plus its story's id.
+
+### The column is generated, never written
+
+```sql
+search_vector tsvector GENERATED ALWAYS AS (
+  setweight(to_tsvector('simple', coalesce(title, '')), 'A') ||
+  setweight(to_tsvector('simple', coalesce(body, '')), 'B')
+) STORED
+```
+
+PostgreSQL maintains it on every insert and update, so it cannot drift from `title` and `body`
+and no application code ever writes it. The two-argument `to_tsvector(regconfig, text)` form is
+used because only it is immutable, which a generated column requires. The weights are `A` for the
+title and `B` for the body, so a title hit outranks a body hit without a second index.
+
+### `simple`, not a language configuration
+
+The `simple` configuration lower-cases and tokenises but does **not** stem. Knot is multilingual:
+English stemming would corrupt isiZulu or Sepedi lexemes, and there is no single stemmer for the
+languages Knot serves (KNOT-ADR-065). The cost is that "running" does not match "run"; the
+query layer's prefix matching recovers most of the practical loss, since "runn" does.
+
+`pg_trgm` is deliberately **not** used. Prefix matching (`mang:*`) covers partial-word search
+without a second extension, a second index, or a second query path.
+
+### Idempotency
+
+`ALTER TABLE ... ADD COLUMN` has no `IF NOT EXISTS`, so each column is added behind an
+`information_schema` guard and each index uses `CREATE INDEX IF NOT EXISTS`. Applying
+`0016_search.up.sql` twice is therefore a no-op, and the `down` file drops the indexes and columns
+behind matching guards. Verified in both directions against the local database.

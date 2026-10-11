@@ -1639,3 +1639,76 @@ A write that targets content authored by either side of a block is refused with
 `{"error":{"code":"blocked","message":"you cannot interact with this content"}}`.
 This covers commenting, bridging, reacting, answering an inquiry, and adapting a
 story.
+
+## Search (KNOT-018)
+
+`GET /search` — full-text search across stories, versions, and inquiries in **one** ranked list.
+Public with optional auth: a signed-in reader's blocked authors are hidden (KNOT-ADR-064), an
+anonymous reader sees everything.
+
+### Query parameters
+
+| Name | Type | Notes |
+| --- | --- | --- |
+| `q` | string | The phrase to match. At least 2 characters when present. Optional **only if** another filter is given. |
+| `type` | `story` \| `version` \| `inquiry` | Restrict to one corpus. Omit for all three. |
+| `pillar` | `wonder` \| `heritage` | Restrict to one pillar. **Excludes inquiries** — they have no pillar. |
+| `language` | ISO 639-3 | e.g. `eng`, validated against the canonical list. |
+| `author_id` | uuid | Restrict to one author. |
+| `place` | string | Exact match on the stored spelling (a story's `approximate_location`, an inquiry's `place`). |
+| `cursor` | opaque | A `next_cursor` from a previous page. |
+| `limit` | integer | Default 20, maximum 50. A larger value is clamped, not refused. |
+
+Matching is word-based and case-insensitive. The phrase is reduced to letters and digits and each
+term is matched as a **prefix**, so `mang` finds `Manguzi` and `MANGUZI` finds it too. There is no
+stemming and no fuzzy matching.
+
+### Response
+
+200:
+
+```json
+{
+  "results": [
+    {
+      "kind": "story",
+      "id": "0b1c…",
+      "story_id": "0b1c…",
+      "title": "Cattle come home at dusk",
+      "preview": "The herd walks back from the river as the light goes…",
+      "language": "eng",
+      "pillar": "wonder",
+      "place": "Manguzi",
+      "author_id": "7f30…",
+      "author_display_name": "Aisha Nkosi",
+      "author_avatar_url": "/users/7f30…/avatar",
+      "author_rooted": { "place": "Manguzi", "duration_bucket": "years" },
+      "created_at": "2026-10-01T09:00:00Z"
+    }
+  ],
+  "next_cursor": ""
+}
+```
+
+- `kind` is `story`, `version`, or `inquiry`.
+- `id` is the story id, the version id, or the inquiry id — whatever a client opens.
+- `story_id` is the story a version belongs to. It equals `id` for a story and is `null` for an
+  inquiry.
+- `pillar` is `null` for an inquiry. `place` is `null` when no place was recorded.
+- `preview` is the body truncated to 200 characters. Matched terms are **not** highlighted.
+- `author_display_name`, `author_avatar_url`, and `author_rooted` are the same inline attribution
+  every other content response carries, filled by one batched lookup per response.
+- `next_cursor` is `""` on the last page.
+
+Ordering is `rank DESC, created_at DESC, id DESC`, so the best match is first and equal ranks fall
+back to newest. Pages are walked with `next_cursor` exactly as the feed is walked.
+
+### Errors
+
+| Status | Code | When |
+| --- | --- | --- |
+| 400 | `validation_error` | A phrase shorter than 2 characters or longer than 200, an unknown `type` / `pillar` / `language`, a malformed `author_id` or `cursor`, a `place` over 100 characters, a `limit` below 1, or **no phrase and no filter at all**. |
+| 500 | `internal_error` | The search could not be served. |
+
+A request with neither a phrase nor a filter is refused rather than answered with the whole corpus,
+and a 1-character phrase is refused rather than served — a client should not send one.

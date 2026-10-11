@@ -31,6 +31,7 @@ import InquiryListScreen from './src/screens/inquiries/InquiryListScreen';
 import NotificationsScreen from './src/screens/notifications/NotificationsScreen';
 import RootedSetupScreen from './src/screens/profile/RootedSetupScreen';
 import UserProfileScreen from './src/screens/profile/UserProfileScreen';
+import SearchScreen from './src/screens/search/SearchScreen';
 import AdaptStoryScreen from './src/screens/stories/AdaptStoryScreen';
 import CreateStoryScreen from './src/screens/stories/CreateStoryScreen';
 import FeedScreen from './src/screens/stories/FeedScreen';
@@ -63,6 +64,7 @@ type Overlay =
   | { readonly name: 'placeStories'; readonly place: string }
   | { readonly name: 'inquiry'; readonly inquiryId: string }
   | { readonly name: 'askInquiry' }
+  | { readonly name: 'search' }
   | { readonly name: 'userProfile'; readonly userId: string };
 
 /** The two auth screens, shown before there is a session. Login is the default. */
@@ -267,6 +269,7 @@ export default function App(): React.ReactElement {
             onOpenNotifications={() =>
               setOverlays((stack) => pushOverlay(stack, { name: 'notifications' }))
             }
+            onOpenSearch={() => setOverlays((stack) => pushOverlay(stack, { name: 'search' }))}
             onOpenUserProfile={openUserProfile}
             onSignOut={handleSignOut}
           />
@@ -499,6 +502,23 @@ export default function App(): React.ReactElement {
           <NotificationsScreen
             token={current.accessToken}
             onOpenEntity={handleOpenNotification}
+            onBack={handleBack}
+          />
+        );
+      case 'search':
+        return (
+          <SearchScreen
+            token={current.accessToken}
+            onOpenStory={(storyId) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId }))
+            }
+            onOpenVersionTree={(storyId) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'tree', storyId }))
+            }
+            onOpenInquiry={(inquiryId) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'inquiry', inquiryId }))
+            }
+            onOpenUserProfile={openUserProfile}
             onBack={handleBack}
           />
         );

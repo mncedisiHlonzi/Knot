@@ -1963,3 +1963,73 @@ canonical checklist: a new list endpoint adds the predicate, a new detail endpoi
 adds the 404, and a new public read must forward the token. A read that is
 deliberately not filtered is named in the table, so the omission is explicit
 rather than accidental.
+
+## KNOT-ADR-065 — Search is PostgreSQL full-text search with `tsvector` + GIN, and the `simple` configuration
+
+**Decision.** Search is served by the database Knot already runs. Each searchable table carries a
+`GENERATED ALWAYS ... STORED` `tsvector` column with a GIN index; the query matches with
+`@@ to_tsquery('simple', …)` and orders by `ts_rank`. The `simple` configuration is used — not
+`english`, and not a per-language configuration. There is no external search engine, no
+embeddings, and no semantic search.
+
+**Why not an external engine.** The corpora are small (a place has dozens of stories, not
+millions) and already live in PostgreSQL. A second service would add an operational dependency, a
+second source of truth, and a reindexing path — in exchange for features (facets, typo
+correction, per-field boosting) that this product does not need yet. `tsvector` + GIN answers the
+actual question ("find the stories and questions about Manguzi") with one query, no new process,
+and no new deployment.
+
+**Why `simple`, and why that is the point.** Knot is multilingual: isiZulu, Sepedi, and English
+stories sit in the same corpus, and a story's adaptations are other languages again. English
+stemming would rewrite isiZulu lexemes through an English algorithm and silently match the wrong
+words; per-language configurations would require detecting the language of every query and
+picking a configuration for it. `simple` lower-cases and tokenises without stemming, so it
+behaves identically in every language and the query needs no language decision at all.
+
+**Consequences.** Recall is lexeme-exact: "running" does not match "run". The query layer
+compensates by matching every term as a **prefix** (`mang:*`), which finds "Manguzi" from "mang"
+and therefore also covers most of what stemming would have. `pg_trgm` was considered for
+substring search and rejected: prefix matching covers the same practical ground without a second
+extension or index. The term weights (title `A`, body `B`) and the ranking function (`ts_rank`)
+are the two tuning knobs, and both are documented in `docs/DEVELOPMENT.md`.
+
+## KNOT-ADR-066 — Search lives behind a header icon on the feed, not in a fifth tab
+
+**Decision.** The search entry point is a magnifying-glass icon in the feed's header, next to the
+notification bell. Tapping it pushes a `search` overlay. The tab bar keeps its five destinations
+(Feed, Map, Create, Inquiries, Profile) and does not change.
+
+**Why.** A tab is a *destination* — a place you go and stay (KNOT-ADR-044). Search is a
+*question* you ask and leave: the moment you find the story you wanted, you are in the story, not
+in search. Giving it a tab would take a fifth of the bar's width permanently, from destinations
+that are always useful, for a screen that is visited in short bursts. An overlay also gives
+search the navigation it needs for free: back pops the stack and returns the person to wherever
+they were, and opening a result pushes onto the same stack, so Back from a result returns to the
+results.
+
+**Consequences.** Search is reachable only from the feed's header — not from the Map, the inquiry
+list, or a profile. That is acceptable at this size: the feed is the default tab, so search is one
+unavoidable screen away. Moving it later (into a tab, or into the inquiry list's header too) is a
+wiring change in `App.tsx` and does not touch the API.
+
+## KNOT-ADR-067 — The search endpoint is public with optional auth
+
+**Decision.** `GET /search` is public and is wrapped in `AuthMiddleware.Optional`. A request
+carrying a valid bearer token has its block set resolved onto the context and the query hides
+those authors; a request with no token, or with one that does not validate, is served anonymously
+with no filter and no 401.
+
+**Why this shape.** Search is a read of public content, so requiring a credential would lock out
+signed-out readers for no gain — and the same content is already reachable without one through
+the feed, the language tree, and the inquiry list. But search is also a *content list*, and under
+KNOT-ADR-064 every content list must apply the block filter; a search that still surfaced a
+blocked author's story would be a hole in exactly the guarantee the filter exists to provide. The
+optional-auth path serves both constraints at once: the route stays open, and a signed-in reader
+gets the filter.
+
+**Consequences.** The filter is applied in SQL, inside each of the three unioned subqueries, not
+in the handler — so a blocked author's rows never reach the ranking, and a page that would have
+been dominated by them is filled with visible results instead. Anonymous requests carry no block
+set, which needs no special case in the query because `author_id <> ALL('{}'::uuid[])` is `true`.
+The mobile client sends its token on every search request for the same reason it does on every
+other content read (KNOT-017a-fix2).

@@ -391,6 +391,7 @@ func (e *storyMediaTestEnv) router(t *testing.T, subject string) http.Handler {
 		newTestReactionsRouterHandler(t, e.logger),
 		newTestInquiriesHandler(t, e.logger),
 		newTestModerationHandler(t, e.logger),
+		newTestSearchHandler(t, e.logger),
 		authMiddleware,
 		"0.1.0",
 		e.logger,

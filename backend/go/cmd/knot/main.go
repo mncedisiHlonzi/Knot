@@ -39,6 +39,7 @@ import (
 	"github.com/knot/backend/internal/profile"
 	"github.com/knot/backend/internal/reactions"
 	"github.com/knot/backend/internal/rooted"
+	"github.com/knot/backend/internal/search"
 	"github.com/knot/backend/internal/storage"
 	"github.com/knot/backend/internal/stories"
 	"github.com/knot/backend/internal/storymedia"
@@ -377,6 +378,26 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
+	// Search reads across stories, story_versions, and inquiries in one ranked
+	// list, so — like the profile wall and discovery — it owns its own store
+	// rather than widening three domain interfaces. Its handler reuses the identity
+	// service for attribution and the rooted service for inline badges, exactly as
+	// every other content handler does (KNOT-ADR-065).
+	searchStore, err := search.NewPostgresStore(pool)
+	if err != nil {
+		return err
+	}
+
+	searchService, err := search.NewService(searchStore)
+	if err != nil {
+		return err
+	}
+
+	searchHandler, err := httpapi.NewSearchHandler(searchService, service, rootedService, logger)
+	if err != nil {
+		return err
+	}
+
 	// The same issuer that signs access tokens verifies them on protected
 	// routes, so there is one source of truth for the signing key. The middleware
 	// also resolves the caller's block set once per request and carries it on the
@@ -386,7 +407,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, avatarHandler, storyMediaHandler, notificationsHandler, profileHandler, reactionsHandler, inquiriesHandler, moderationHandler, authMiddleware, appinfo.Version, logger)
+	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, avatarHandler, storyMediaHandler, notificationsHandler, profileHandler, reactionsHandler, inquiriesHandler, moderationHandler, searchHandler, authMiddleware, appinfo.Version, logger)
 	if err != nil {
 		return err
 	}

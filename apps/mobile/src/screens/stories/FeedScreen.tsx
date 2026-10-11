@@ -21,6 +21,8 @@ type FeedScreenProps = {
   readonly onCreateStory: () => void;
   /** Called when the person opens their notifications. */
   readonly onOpenNotifications: () => void;
+  /** Called when the person opens search. */
+  readonly onOpenSearch: () => void;
   /** Called when the person signs out. */
   readonly onSignOut: () => void;
 };
@@ -39,6 +41,7 @@ export default function FeedScreen({
   onOpenUserProfile,
   onCreateStory,
   onOpenNotifications,
+  onOpenSearch,
   onSignOut,
 }: FeedScreenProps): React.ReactElement {
   const [stories, setStories] = useState<readonly Story[]>([]);
@@ -133,25 +136,35 @@ export default function FeedScreen({
         <View>
           <View style={styles.titleRow}>
             <Text style={styles.title}>Knot</Text>
-            <Pressable
-              style={styles.bellButton}
-              onPress={handleOpenNotifications}
-              accessibilityRole="button"
-              accessibilityLabel={
-                unreadCount === 0
-                  ? 'Notifications, none unread'
-                  : `Notifications, ${unreadCount} unread`
-              }
-            >
-              <Text style={styles.bellIcon}>🔔</Text>
-              {unreadCount > 0 ? (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>
-                    {unreadCount > 99 ? '99+' : String(unreadCount)}
-                  </Text>
-                </View>
-              ) : null}
-            </Pressable>
+            <View style={styles.headerActions}>
+              <Pressable
+                style={styles.searchButton}
+                onPress={onOpenSearch}
+                accessibilityRole="button"
+                accessibilityLabel="Search stories, versions, and questions"
+              >
+                <Text style={styles.searchIcon}>🔍</Text>
+              </Pressable>
+              <Pressable
+                style={styles.bellButton}
+                onPress={handleOpenNotifications}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  unreadCount === 0
+                    ? 'Notifications, none unread'
+                    : `Notifications, ${unreadCount} unread`
+                }
+              >
+                <Text style={styles.bellIcon}>🔔</Text>
+                {unreadCount > 0 ? (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>
+                      {unreadCount > 99 ? '99+' : String(unreadCount)}
+                    </Text>
+                  </View>
+                ) : null}
+              </Pressable>
+            </View>
           </View>
           <Text style={styles.session}>Signed in as {email}</Text>
 
@@ -286,6 +299,10 @@ const styles = StyleSheet.create({
     fontSize: fontSizes.base,
     marginTop: spacing.lg,
   },
+  headerActions: {
+    alignItems: 'center',
+    flexDirection: 'row',
+  },
   primaryButton: {
     alignItems: 'center',
     backgroundColor: colors.brand.purple,
@@ -311,6 +328,12 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     fontSize: fontSizes.base,
     fontWeight: fontWeights.semiBold,
+  },
+  searchButton: {
+    padding: spacing.sm,
+  },
+  searchIcon: {
+    fontSize: fontSizes.lg,
   },
   sectionTitle: {
     color: colors.text.primary,

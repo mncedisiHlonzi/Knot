@@ -50,13 +50,14 @@ type Router struct {
 	reactions      *ReactionsHandler
 	inquiries      *InquiriesHandler
 	moderation     *ModerationHandler
+	search         *SearchHandler
 	authMiddleware *AuthMiddleware
 	version        string
 	logger         *slog.Logger
 }
 
 // NewRouter returns the root handler for the API.
-func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, avatarHandler *AvatarHandler, storyMediaHandler *StoryMediaHandler, notificationsHandler *NotificationsHandler, profileHandler *ProfileHandler, reactionsHandler *ReactionsHandler, inquiriesHandler *InquiriesHandler, moderationHandler *ModerationHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
+func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, avatarHandler *AvatarHandler, storyMediaHandler *StoryMediaHandler, notificationsHandler *NotificationsHandler, profileHandler *ProfileHandler, reactionsHandler *ReactionsHandler, inquiriesHandler *InquiriesHandler, moderationHandler *ModerationHandler, searchHandler *SearchHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
 	if auth == nil {
 		return nil, errNilHandler("auth")
 	}
@@ -96,6 +97,9 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 	if moderationHandler == nil {
 		return nil, errNilHandler("moderation")
 	}
+	if searchHandler == nil {
+		return nil, errNilHandler("search")
+	}
 	if authMiddleware == nil {
 		return nil, errNilHandler("auth middleware")
 	}
@@ -116,6 +120,7 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 		reactions:      reactionsHandler,
 		inquiries:      inquiriesHandler,
 		moderation:     moderationHandler,
+		search:         searchHandler,
 		authMiddleware: authMiddleware,
 		version:        version,
 		logger:         logger,
@@ -209,6 +214,12 @@ func (r *Router) Handler() http.Handler {
 	// send "Cape%20Town" and reach the handler with "Cape Town".
 	mux.HandleFunc("GET /discovery/clusters", r.authMiddleware.Optional(r.discovery.Clusters))
 	mux.HandleFunc("GET /discovery/places/{place}", r.authMiddleware.Optional(r.discovery.PlaceStories))
+
+	// Search: one ranked list across stories, versions, and inquiries. The route is
+	// public and runs through the optional-auth path for the same reason discovery
+	// does: a signed-in reader's block set must reach the query, and a request
+	// without a valid token is served anonymously (KNOT-ADR-064, KNOT-ADR-067).
+	mux.HandleFunc("GET /search", r.authMiddleware.Optional(r.search.Search))
 
 	// Avatars: a user's profile image. Uploading requires an access token;
 	// reading is open, because an avatar is part of a public profile. The bytes

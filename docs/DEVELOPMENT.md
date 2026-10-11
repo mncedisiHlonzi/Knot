@@ -803,6 +803,7 @@ curl -s -X POST http://localhost:8080/auth/register \
 | `GET /inquiries/{id}/answers` | public (optional auth) | `internal/httpapi/inquiries_handler.go` |
 | `GET /answers/{id}` | public (optional auth) | `internal/httpapi/inquiries_handler.go` |
 | `POST`/`GET /inquiries/{id}/reactions` | Bearer / public | `internal/httpapi/reactions_handler.go` |
+| `GET /search` | public (optional auth) | `internal/httpapi/search_handler.go` |
 
 Routes are declared in one place, `NewRouter` in `internal/httpapi/router.go`, using
 Go 1.22 method-qualified `ServeMux` patterns. There is no router dependency.
@@ -1139,6 +1140,54 @@ Three properties matter:
 `rooted_signals_place_idx` is added because every earlier Rooted read was by user; finding "the
 users Rooted in this place" is the first read keyed by place.
 
+### Search (KNOT-018)
+
+`internal/search` answers `GET /search`: one ranked list across stories, versions, and inquiries.
+It is layered like the other domains (`search.go` types + store contract, `cursor.go`,
+`service.go`, `postgres_store.go`) and owns its store rather than widening three domain
+interfaces, because it is one different read shape over the same data.
+
+**Text lives on two tables, not three.** A story row carries no title or body — its content is its
+root version — so a *story* result comes from `story_versions WHERE parent_version_id IS NULL`
+joined to `stories`, and a *version* result from the non-root rows. `stories` has no
+`search_vector` (KNOT-ADR-065, `docs/DATA_MODEL.md`).
+
+**The SQL is static.** One statement is assembled from exactly two variables: which of the three
+subqueries to union (the `type` filter) and whether the keyset clause is appended (a cursor).
+**No value is ever interpolated into the statement** — the twelve parameters are bound, and the
+same placeholder is reused inside all three subqueries, which PostgreSQL permits. The block filter
+needs no dynamic SQL at all: `author_id <> ALL('{}'::uuid[])` is `true`, so an empty set is a
+no-op and the anonymous case disappears.
+
+**Phrases become prefix terms.** `tsQuery` reduces a phrase to letters and digits and emits
+`term:*` for each, joined by `&`. That is what makes `mang` find `Manguzi`, and it also means no
+character that is meaningful in tsquery syntax (`&`, `|`, `!`, `(`, `)`, `:*`, quotes) can reach
+the parser from user input — the reason the endpoint cannot be made to 500 with a crafted phrase.
+A phrase with no letters or digits at all becomes an unmatchable term rather than an error.
+
+**The cursor carries the rank.** Pagination is a keyset over `(search_rank DESC, created_at DESC,
+id DESC)` and the cursor encodes all three. `ts_rank` is a property of the matched document, so a
+page walk that spans a write can skip or repeat a row. That is the accepted trade-off: ordering by
+recency alone would make a search result list useless.
+
+**Tuning knobs.** Both are one-line changes:
+
+| Knob | Where | Current value |
+| --- | --- | --- |
+| Term weights | the generated column in `0016_search.up.sql` (`setweight(…, 'A'/'B')`) | title `A`, body `B` |
+| Ranking function | `ts_rank` in `internal/search/postgres_store.go` | `ts_rank(search_vector, to_tsquery('simple', $8))` |
+
+Swapping `ts_rank` for `ts_rank_cd` (cover density, which rewards adjacent terms) changes only
+the score's scale, because the rank is only ever compared to itself — but it does mean an
+existing `next_cursor` from before the change may skip or repeat rows, so it is a deploy-time
+decision rather than a hot toggle.
+
+**Tests.** `internal/search` has unit tests for the query builder, the cursor, and every
+validation rule, and integration tests (skipped without `KNOT_POSTGRES_DSN`) for full-text search
+across all three types, each filter, combined filters, the block filter, case-insensitive and
+prefix matching, exact-once pagination, and a filter-only search. Integration tests use a per-run
+token so they are unaffected by the real content in the developer's database (KNOT-ADR-063).
+
 ### Migrations
 
 - SQL lives in `backend/go/migrations/`, named `<version>_<name>.up.sql` and
@@ -1373,6 +1422,7 @@ The canonical checklist — every content read and its current state:
 | `GET /users/{id}/profile` | 404 when the owner is blocked (`profile.GetProfile`) |
 | `GET /discovery/clusters` | list predicate (`discovery.ListClusters`) |
 | `GET /discovery/places/{place}` | list predicate (`discovery.ListStoriesAtPlace`) |
+| `GET /search` | list predicate (`search.Search`) |
 | `GET /notifications` (+ `unread_count`) | list predicate on `actor_id` |
 | `GET /reports/mine`, `GET /blocks/mine` | own data — no filter (N/A) |
 
@@ -1383,8 +1433,9 @@ bridging, reacting, answering, and adapting.
 **The client must send its token on these reads.** The filter only applies to an
 authenticated request; a public read made without an `Authorization` header is
 anonymous and sees everything. The mobile API modules (`stories.ts`,
-`conversations.ts`, `versions.ts`, `profile.ts`, `discovery.ts`) therefore take an
-optional `token` and the screens pass the signed-in user's token. A public route
-that must still personalise its response — such as the two Discovery endpoints —
-is wrapped in `authMiddleware.Optional`, which resolves the block set for a
-signed-in caller and serves the anonymous view otherwise (KNOT-017a-fix3).
+`conversations.ts`, `versions.ts`, `profile.ts`, `discovery.ts`, `search.ts`)
+therefore take an optional `token` and the screens pass the signed-in user's
+token. A public route that must still personalise its response — such as the two
+Discovery endpoints and Search — is wrapped in `authMiddleware.Optional`, which
+resolves the block set for a signed-in caller and serves the anonymous view
+otherwise (KNOT-017a-fix3, KNOT-018).
