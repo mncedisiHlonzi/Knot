@@ -19,6 +19,7 @@ import {
   storiesApi,
   uploadStoryMedia,
 } from '../../api/stories';
+import { DEFAULT_LANGUAGE_CODE } from '../../config/language';
 import CameraCaptureBadge from '../../components/CameraCaptureBadge';
 import LanguagePicker from '../../components/LanguagePicker';
 import LocationPicker, { PickedPlace } from '../../components/LocationPicker';
@@ -42,7 +43,7 @@ type CreateStoryScreenProps = {
 };
 
 /** The language the form starts with. */
-const DEFAULT_LANGUAGE = 'eng';
+const DEFAULT_LANGUAGE = DEFAULT_LANGUAGE_CODE;
 
 /** Field limits, mirroring the server's rules so the user is told early. */
 const MAX_TITLE_LENGTH = 200;

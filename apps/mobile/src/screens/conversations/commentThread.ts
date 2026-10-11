@@ -8,13 +8,15 @@
  * React Native, and so the screen stays about layout and requests.
  */
 import type { Comment } from '../../api/conversations';
+import { DEFAULT_LANGUAGE_CODE } from '../../config/language';
 import { isLanguageCode, languageName } from '../../data/languages';
 
 /**
  * The language the comment box falls back to when neither the caller nor the
- * version names one the app knows.
+ * version names one the app knows. Aliases the app-wide fallback so there is a
+ * single canonical default (KNOT-016-fix).
  */
-export const DEFAULT_COMPOSE_LANGUAGE = 'eng';
+export const DEFAULT_COMPOSE_LANGUAGE = DEFAULT_LANGUAGE_CODE;
 
 /**
  * The widest language name the chip shows before falling back to the code.

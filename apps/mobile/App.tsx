@@ -6,6 +6,8 @@ import { conversationsApi, type Comment } from './src/api/conversations';
 import type { Notification } from './src/api/notifications';
 import type { Story } from './src/api/stories';
 import { versionsApi } from './src/api/versions';
+import { DEFAULT_LANGUAGE_CODE } from './src/config/language';
+import { isLanguageCode } from './src/data/languages';
 import { colors, spacing } from './src/theme';
 import TabBar from './src/components/TabBar';
 import type { TabName } from './src/components/TabBar';
@@ -67,11 +69,20 @@ type Overlay =
 type AuthMode = 'login' | 'register';
 
 /**
- * The first preferred language tag that is not blank, or "eng" when the profile
- * names none. Used to seed the language field when adapting and commenting.
+ * The first preferred language tag that is a canonical ISO 639-3 code, or
+ * undefined when the profile names none the app knows. A legacy or malformed tag
+ * is ignored rather than forwarded, because the server rejects it (KNOT-016-fix).
+ */
+function preferredLanguageTag(user: User): string | undefined {
+  return user.preferred_languages.map((tag) => tag.trim()).find((tag) => isLanguageCode(tag));
+}
+
+/**
+ * The first canonical preferred language, or the app-wide fallback. Used to seed
+ * the language field when asking, adapting, and commenting.
  */
 function preferredLanguage(user: User): string {
-  return user.preferred_languages.find((tag) => tag.trim() !== '') ?? 'eng';
+  return preferredLanguageTag(user) ?? DEFAULT_LANGUAGE_CODE;
 }
 
 /**
@@ -413,7 +424,7 @@ export default function App(): React.ReactElement {
           <CommentThreadScreen
             versionId={overlay.versionId}
             token={current.accessToken}
-            language={current.user.preferred_languages.find((tag) => tag.trim() !== '')}
+            language={preferredLanguageTag(current.user)}
             onBridge={(comment) =>
               setOverlays((stack) =>
                 pushOverlay(stack, {

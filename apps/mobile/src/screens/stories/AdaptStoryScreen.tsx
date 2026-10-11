@@ -10,6 +10,7 @@ import {
 
 import { describeError } from '../../api/client';
 import { CreateAdaptationPayload, StoryVersion, versionsApi } from '../../api/versions';
+import { DEFAULT_LANGUAGE_CODE } from '../../config/language';
 import LanguagePicker from '../../components/LanguagePicker';
 import { isLanguageCode, languageName } from '../../data/languages';
 import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
@@ -34,7 +35,7 @@ const MAX_TITLE_LENGTH = 200;
 const MAX_NOTE_LENGTH = 1000;
 
 /** The language the form starts with when the caller offers nothing usable. */
-const DEFAULT_LANGUAGE = 'eng';
+const DEFAULT_LANGUAGE = DEFAULT_LANGUAGE_CODE;
 
 /**
  * Returns the first client-side validation problem, or undefined when the form is

@@ -15,9 +15,10 @@ import {
 import { describeError } from '../../api/client';
 import { ANSWER_PAGE_SIZE, Inquiry, InquiryAnswer, inquiriesApi } from '../../api/inquiries';
 import { EMPTY_REACTION_COUNTS, ReactionCounts } from '../../api/reactions';
+import { DEFAULT_LANGUAGE_CODE } from '../../config/language';
 import AuthorLine from '../../components/AuthorLine';
 import ReactionBar from '../../components/ReactionBar';
-import { languageName } from '../../data/languages';
+import { isLanguageCode, languageName } from '../../data/languages';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
 import { answerCountLabel, answerDraftError, inquiryPlaceLabel } from '../../utils/inquiry';
 import { formatRelativeTime } from '../../utils/time';
@@ -68,7 +69,11 @@ export default function InquiryDetailScreen({
   const [posting, setPosting] = useState(false);
   const [answerError, setAnswerError] = useState<string | undefined>(undefined);
 
-  const language = preferredLanguages.find((tag) => tag.trim() !== '') ?? 'eng';
+  // Only a canonical ISO 639-3 code is usable: a legacy or malformed preference is
+  // ignored rather than forwarded, or the server rejects the answer (KNOT-016-fix).
+  const language =
+    preferredLanguages.map((tag) => tag.trim()).find((tag) => isLanguageCode(tag)) ??
+    DEFAULT_LANGUAGE_CODE;
 
   const loadFirstPage = useCallback(
     async (mode: 'initial' | 'refresh'): Promise<void> => {

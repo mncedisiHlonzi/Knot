@@ -346,8 +346,18 @@ tested without rendering React Native.
 The composer starts in the user's first preferred language. A user who has none has no
 preferred tag to send, so the composer fetches the version (`GET /versions/{id}`) and uses
 the version's language, showing `…` in the chip while the request is in flight and falling
-back to `eng` if it fails — `initialComposeLanguage` encodes the order. The choice is **not**
-persisted: it lasts for the visit, and the profile keeps its own screen (KNOT-ADR-048).
+back to the app-wide default if it fails — `initialComposeLanguage` encodes the order. The
+choice is **not** persisted: it lasts for the visit, and the profile keeps its own screen
+(KNOT-ADR-048).
+
+**Every language default in the app is a three-letter ISO 639-3 code.** The single canonical
+fallback lives in `apps/mobile/src/config/language.ts` as `DEFAULT_LANGUAGE_CODE = 'eng'`.
+Import it rather than writing a literal, and never seed or fall back to a two-letter ISO
+639-1 code such as `'en'` — the server validates with `language.IsValid` and rejects
+anything that is not a canonical three-letter code. A stored preference that is not a
+canonical code is ignored (the code paths check `isLanguageCode`) rather than forwarded.
+`src/config/__tests__/language.test.ts` scans the source tree and fails if a two-letter code
+reappears as a default (KNOT-016-fix).
 
 The thread renders **top-level comments only**. A comment's replies are collapsed under a link
 above its action buttons and reveal **in place** when tapped (KNOT-ADR-049): the first tap shows
