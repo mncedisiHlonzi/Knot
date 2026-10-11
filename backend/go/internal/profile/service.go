@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/knot/backend/internal/identity"
+	"github.com/knot/backend/internal/moderation"
 )
 
 // Service holds the profile-wall business rules.
@@ -41,6 +42,11 @@ func NewService(users UserLookup, activities ActivityStore) (*Service, error) {
 // activity at all.
 func (s *Service) GetProfile(ctx context.Context, userID string, rawCursor string, limit int) (Profile, string, error) {
 	if !isUUID(userID) {
+		return Profile{}, "", ErrNotFound
+	}
+	// A wall belonging to someone on either side of a block with the viewer is
+	// hidden entirely: it is reported as not found (KNOT-ADR-060).
+	if moderation.IsExcludedAuthor(ctx, userID) {
 		return Profile{}, "", ErrNotFound
 	}
 	if limit < 1 || limit > MaxListLimit {

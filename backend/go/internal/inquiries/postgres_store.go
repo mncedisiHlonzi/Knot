@@ -9,6 +9,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/knot/backend/internal/moderation"
 )
 
 // foreignKeyViolation is the PostgreSQL SQLSTATE raised by a foreign key
@@ -123,6 +125,12 @@ func (s *PostgresStore) ListInquiries(ctx context.Context, cursor *Cursor, limit
 	query := `SELECT ` + inquiryColumns + ` FROM inquiries`
 	args := make([]any, 0, 4)
 	conditions := make([]string, 0, 2)
+
+	// Hide inquiries authored by anyone on either side of a block with the viewer.
+	if excluded := moderation.ExcludedAuthors(ctx); len(excluded) > 0 {
+		args = append(args, excluded)
+		conditions = append(conditions, fmt.Sprintf("author_id <> ALL($%d::uuid[])", len(args)))
+	}
 
 	if place != "" {
 		args = append(args, place)
@@ -262,6 +270,12 @@ func (s *PostgresStore) ListAnswers(ctx context.Context, inquiryID string, curso
 
 	query := `SELECT ` + answerColumns + ` FROM inquiry_answers WHERE inquiry_id = $1`
 	args := []any{inquiryID}
+
+	// Hide answers authored by anyone on either side of a block with the viewer.
+	if excluded := moderation.ExcludedAuthors(ctx); len(excluded) > 0 {
+		args = append(args, excluded)
+		query += fmt.Sprintf(" AND author_id <> ALL($%d::uuid[])", len(args))
+	}
 
 	if cursor != nil {
 		args = append(args, cursor.CreatedAt(), cursor.ID())

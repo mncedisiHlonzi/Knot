@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/knot/backend/internal/identity"
+	"github.com/knot/backend/internal/moderation"
 )
 
 // userIDContextKey is the context key under which the authenticated user id is
@@ -43,6 +44,27 @@ type AccessTokenParser interface {
 	ParseAccessToken(raw string) (*identity.Claims, error)
 }
 
+// BlockLookup resolves a signed-in user's mutual block set. It is satisfied by
+// the moderation service and is deliberately narrower than the whole service:
+// the middleware only needs the set of authors hidden from this viewer
+// (KNOT-ADR-060).
+type BlockLookup interface {
+	// BlockedUserIDs returns everyone the user has blocked, plus everyone who has
+	// blocked the user.
+	BlockedUserIDs(ctx context.Context, userID string) ([]string, error)
+}
+
+// AuthMiddlewareOption configures the auth middleware at construction time.
+type AuthMiddlewareOption func(*AuthMiddleware)
+
+// WithBlockLookup configures the middleware to resolve a signed-in user's block
+// set once per request and attach it to the request context, where the content
+// stores read it to filter a page (KNOT-ADR-060). Without it the middleware still
+// authenticates; it simply attaches no block set.
+func WithBlockLookup(lookup BlockLookup) AuthMiddlewareOption {
+	return func(m *AuthMiddleware) { m.blocks = lookup }
+}
+
 // AuthMiddleware authenticates requests that must carry a bearer access token.
 //
 // It is applied per route rather than globally: public routes such as
@@ -50,18 +72,24 @@ type AccessTokenParser interface {
 // with Require see a user id on the context.
 type AuthMiddleware struct {
 	tokens AccessTokenParser
+	blocks BlockLookup
 	logger *slog.Logger
 }
 
 // NewAuthMiddleware returns middleware backed by tokens.
-func NewAuthMiddleware(tokens AccessTokenParser, logger *slog.Logger) (*AuthMiddleware, error) {
+func NewAuthMiddleware(tokens AccessTokenParser, logger *slog.Logger, opts ...AuthMiddlewareOption) (*AuthMiddleware, error) {
 	if tokens == nil {
 		return nil, fmt.Errorf("httpapi: auth middleware requires a token parser")
 	}
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: auth middleware requires a logger")
 	}
-	return &AuthMiddleware{tokens: tokens, logger: logger}, nil
+
+	middleware := &AuthMiddleware{tokens: tokens, logger: logger}
+	for _, opt := range opts {
+		opt(middleware)
+	}
+	return middleware, nil
 }
 
 // Require wraps next so that it only runs for a request carrying a valid bearer
@@ -93,7 +121,7 @@ func (m *AuthMiddleware) Require(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		next(w, r.WithContext(withUserID(r.Context(), claims.Subject)))
+		next(w, r.WithContext(m.withBlocks(withUserID(r.Context(), claims.Subject), claims.Subject)))
 	}
 }
 
@@ -121,8 +149,33 @@ func (m *AuthMiddleware) Optional(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		next(w, r.WithContext(withUserID(r.Context(), claims.Subject)))
+		next(w, r.WithContext(m.withBlocks(withUserID(r.Context(), claims.Subject), claims.Subject)))
 	}
+}
+
+// withBlocks attaches the viewer's mutual block set to ctx, so the content stores
+// can filter a page and the content services can refuse a blocked write.
+//
+// It is one query per authenticated request (KNOT-ADR-060). A lookup failure is
+// logged and swallowed: content must stay readable when moderation is
+// unavailable, and the request simply sees no hidden authors. An anonymous request
+// never reaches here, because there is no user id to resolve.
+func (m *AuthMiddleware) withBlocks(ctx context.Context, userID string) context.Context {
+	if m.blocks == nil {
+		return ctx
+	}
+
+	ids, err := m.blocks.BlockedUserIDs(ctx, userID)
+	if err != nil {
+		m.logger.WarnContext(ctx,
+			"block lookup failed",
+			slog.String("request_id", RequestIDFromContext(ctx)),
+			slog.String("error", err.Error()),
+		)
+		return ctx
+	}
+
+	return moderation.WithExcludedAuthors(ctx, ids)
 }
 
 // reject logs the reason and writes the uniform 401 response. The reason is

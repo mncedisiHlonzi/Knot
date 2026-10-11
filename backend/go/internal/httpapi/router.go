@@ -49,13 +49,14 @@ type Router struct {
 	profile        *ProfileHandler
 	reactions      *ReactionsHandler
 	inquiries      *InquiriesHandler
+	moderation     *ModerationHandler
 	authMiddleware *AuthMiddleware
 	version        string
 	logger         *slog.Logger
 }
 
 // NewRouter returns the root handler for the API.
-func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, avatarHandler *AvatarHandler, storyMediaHandler *StoryMediaHandler, notificationsHandler *NotificationsHandler, profileHandler *ProfileHandler, reactionsHandler *ReactionsHandler, inquiriesHandler *InquiriesHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
+func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, avatarHandler *AvatarHandler, storyMediaHandler *StoryMediaHandler, notificationsHandler *NotificationsHandler, profileHandler *ProfileHandler, reactionsHandler *ReactionsHandler, inquiriesHandler *InquiriesHandler, moderationHandler *ModerationHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
 	if auth == nil {
 		return nil, errNilHandler("auth")
 	}
@@ -92,6 +93,9 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 	if inquiriesHandler == nil {
 		return nil, errNilHandler("inquiries")
 	}
+	if moderationHandler == nil {
+		return nil, errNilHandler("moderation")
+	}
 	if authMiddleware == nil {
 		return nil, errNilHandler("auth middleware")
 	}
@@ -111,6 +115,7 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 		profile:        profileHandler,
 		reactions:      reactionsHandler,
 		inquiries:      inquiriesHandler,
+		moderation:     moderationHandler,
 		authMiddleware: authMiddleware,
 		version:        version,
 		logger:         logger,
@@ -228,6 +233,16 @@ func (r *Router) Handler() http.Handler {
 	mux.HandleFunc("GET /notifications/unread_count", r.authMiddleware.Require(r.notifications.UnreadCount))
 	mux.HandleFunc("POST /notifications/read_all", r.authMiddleware.Require(r.notifications.MarkAllRead))
 	mux.HandleFunc("POST /notifications/{id}/read", r.authMiddleware.Require(r.notifications.MarkRead))
+
+	// Moderation foundation (KNOT-017a): content reports and user blocks. Every
+	// route is protected. Reports are private to the reporter and the moderator
+	// queue; blocks are silent. The moderator queue and its actions ship in
+	// KNOT-017b, so this task registers no moderator route.
+	mux.HandleFunc("POST /reports", r.authMiddleware.Require(r.moderation.CreateReport))
+	mux.HandleFunc("GET /reports/mine", r.authMiddleware.Require(r.moderation.ListMyReports))
+	mux.HandleFunc("POST /blocks/{user_id}", r.authMiddleware.Require(r.moderation.CreateBlock))
+	mux.HandleFunc("DELETE /blocks/{user_id}", r.authMiddleware.Require(r.moderation.DeleteBlock))
+	mux.HandleFunc("GET /blocks/mine", r.authMiddleware.Require(r.moderation.ListBlocks))
 
 	return withRequestID(withRequestLogging(r.logger, withRecover(r.logger, mux)))
 }

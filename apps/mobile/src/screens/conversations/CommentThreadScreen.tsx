@@ -21,6 +21,7 @@ import {
 import { versionsApi } from '../../api/versions';
 import AuthorLine from '../../components/AuthorLine';
 import LanguagePicker from '../../components/LanguagePicker';
+import ReportAction from '../../components/ReportAction';
 import { isLanguageCode, languageName } from '../../data/languages';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
 import {
@@ -365,6 +366,7 @@ export default function CommentThreadScreen({
                 <Pressable style={styles.action} onPress={() => onBridge(item)}>
                   <Text style={styles.actionText}>Bridge to another language</Text>
                 </Pressable>
+                <ReportAction token={token} entityType="comment" entityId={item.id} />
               </View>
               {visibleReplies.map((reply) => (
                 <View key={reply.id} style={styles.replyRow}>
@@ -384,6 +386,7 @@ export default function CommentThreadScreen({
                     <Pressable style={styles.replyAction} onPress={() => onBridge(reply)}>
                       <Text style={styles.actionText}>Bridge to another language</Text>
                     </Pressable>
+                    <ReportAction token={token} entityType="comment" entityId={reply.id} />
                   </View>
                 </View>
               ))}

@@ -20,6 +20,7 @@ import AuthorLine from '../../components/AuthorLine';
 import CameraCaptureBadge from '../../components/CameraCaptureBadge';
 import MediaGalleryModal from '../../components/MediaGalleryModal';
 import ReactionBar from '../../components/ReactionBar';
+import ReportAction from '../../components/ReportAction';
 import { API_BASE_URL } from '../../config/api';
 import { languageName } from '../../data/languages';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
@@ -206,6 +207,11 @@ export default function StoryDetailScreen({
             }
           />
 
+          {/* Report lives in the overflow control at the end of the actions. */}
+          <View style={styles.reportRow}>
+            <ReportAction token={token} entityType="story" entityId={story.id} />
+          </View>
+
           {media.length === 1 ? (
             <MediaTile
               media={media[0]}
@@ -270,6 +276,10 @@ export default function StoryDetailScreen({
 }
 
 const styles = StyleSheet.create({
+  reportRow: {
+    alignItems: 'flex-end',
+    marginTop: spacing.xs,
+  },
   authorRow: {
     marginTop: spacing.sm,
   },

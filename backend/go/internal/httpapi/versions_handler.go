@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/knot/backend/internal/moderation"
 	"github.com/knot/backend/internal/reactions"
 	"github.com/knot/backend/internal/versions"
 )
@@ -226,6 +227,8 @@ func (h *VersionsHandler) writeServiceError(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, codeValidation, fmt.Sprintf("%s %s", validation.Field, validation.Message))
 	case errors.Is(err, versions.ErrNotFound):
 		writeError(w, http.StatusNotFound, codeNotFound, notFoundMessage)
+	case errors.Is(err, moderation.ErrBlocked):
+		writeError(w, http.StatusForbidden, codeBlocked, "you cannot interact with this content")
 	default:
 		h.logger.ErrorContext(
 			r.Context(),

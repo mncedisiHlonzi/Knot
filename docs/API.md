@@ -1593,3 +1593,49 @@ type, so a refresh token cannot be used as an access token. Send the access toke
 exists today. Removing `refresh_token`/`jti` rotation and revocation from scope was
 deliberate — see KNOT-ADR-005. Access tokens are not stored server-side, so a protected
 route trusts the signature and expiry and nothing else.
+
+## Moderation (KNOT-017a)
+
+Reports and blocks: the collection half of the moderation system. The moderator
+queue and its actions (hide/warn/suspend) ship in KNOT-017b, so there is no
+moderator route here.
+
+### POST /reports
+
+Protected. Body: `{ "entity_type", "entity_id", "category", "reason"? }`.
+`entity_type` is one of `story | version | comment | bridge | inquiry |
+inquiry_answer`. `category` is one of `harassment | hate_speech | misinformation |
+spam | sensitive_content | other`; `reason` is **required** when the category is
+`other` and optional otherwise. Returns **201** with the report object. A repeat by
+the same user on the same entity is **409**; an entity that does not exist is
+**404**. Reports are private to the reporter and the moderator queue.
+
+### GET /reports/mine
+
+Protected, cursor-paginated (`cursor`, `limit`). Returns
+`{ "reports": [ ... ], "next_cursor": "" }`, newest first.
+
+### POST /blocks/{user_id} · DELETE /blocks/{user_id}
+
+Protected. Both are idempotent and answer **204**. Blocking yourself is **400**.
+
+### GET /blocks/mine
+
+Protected, cursor-paginated. Returns
+`{ "blocks": [ { "user": { "id", "display_name", "avatar_url", "role" },
+"created_at" } ], "next_cursor": "" }`.
+
+### Block-based filtering and write prevention
+
+Blocking is **mutual hiding plus write prevention** (KNOT-ADR-060). The server
+resolves a viewer's block set once per authenticated request and filters it out of
+every content list: the feed, a version's comments and their replies, a comment's
+bridges, the inquiry list and its answers, and a user's profile wall (which answers
+**404** when its owner is on either side of a block). Anonymous readers carry no
+block set and see everything.
+
+A write that targets content authored by either side of a block is refused with
+**403** and the machine code **`blocked`**:
+`{"error":{"code":"blocked","message":"you cannot interact with this content"}}`.
+This covers commenting, bridging, reacting, answering an inquiry, and adapting a
+story.

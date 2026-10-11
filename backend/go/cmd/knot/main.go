@@ -34,6 +34,7 @@ import (
 	"github.com/knot/backend/internal/httpapi"
 	"github.com/knot/backend/internal/identity"
 	"github.com/knot/backend/internal/inquiries"
+	"github.com/knot/backend/internal/moderation"
 	"github.com/knot/backend/internal/notifications"
 	"github.com/knot/backend/internal/profile"
 	"github.com/knot/backend/internal/reactions"
@@ -351,14 +352,41 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	// The same issuer that signs access tokens verifies them on protected
-	// routes, so there is one source of truth for the signing key.
-	authMiddleware, err := httpapi.NewAuthMiddleware(tokens, logger)
+	// Moderation (KNOT-017a): blocks and reports. The entity lookup confirms a
+	// reported entity exists through the content services built above, so the
+	// moderation package never imports a content domain. The service is the
+	// block lookup the auth middleware resolves once per authenticated request, and
+	// the block/report handler's backend.
+	moderationStore, err := moderation.NewPostgresStore(pool)
 	if err != nil {
 		return err
 	}
 
-	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, avatarHandler, storyMediaHandler, notificationsHandler, profileHandler, reactionsHandler, inquiriesHandler, authMiddleware, appinfo.Version, logger)
+	entityExistence, err := httpapi.NewEntityExistence(storiesService, versionsService, conversationsService, conversationsService, inquiriesService, inquiriesService)
+	if err != nil {
+		return err
+	}
+
+	moderationService, err := moderation.NewService(moderationStore, entityExistence, logger)
+	if err != nil {
+		return err
+	}
+
+	moderationHandler, err := httpapi.NewModerationHandler(moderationService, service, logger)
+	if err != nil {
+		return err
+	}
+
+	// The same issuer that signs access tokens verifies them on protected
+	// routes, so there is one source of truth for the signing key. The middleware
+	// also resolves the caller's block set once per request and carries it on the
+	// context, where the content stores filter a page from it (KNOT-ADR-060).
+	authMiddleware, err := httpapi.NewAuthMiddleware(tokens, logger, httpapi.WithBlockLookup(moderationService))
+	if err != nil {
+		return err
+	}
+
+	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, avatarHandler, storyMediaHandler, notificationsHandler, profileHandler, reactionsHandler, inquiriesHandler, moderationHandler, authMiddleware, appinfo.Version, logger)
 	if err != nil {
 		return err
 	}

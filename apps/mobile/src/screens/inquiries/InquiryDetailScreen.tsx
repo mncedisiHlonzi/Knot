@@ -18,6 +18,7 @@ import { EMPTY_REACTION_COUNTS, ReactionCounts } from '../../api/reactions';
 import { DEFAULT_LANGUAGE_CODE } from '../../config/language';
 import AuthorLine from '../../components/AuthorLine';
 import ReactionBar from '../../components/ReactionBar';
+import ReportAction from '../../components/ReportAction';
 import { isLanguageCode, languageName } from '../../data/languages';
 import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
 import { answerCountLabel, answerDraftError, inquiryPlaceLabel } from '../../utils/inquiry';
@@ -222,6 +223,10 @@ export default function InquiryDetailScreen({
                   token={token}
                   onChange={applyReactionCounts}
                 />
+
+                <View style={styles.reportRow}>
+                  <ReportAction token={token} entityType="inquiry" entityId={inquiry.id} />
+                </View>
               </View>
             ) : null}
 
@@ -243,6 +248,9 @@ export default function InquiryDetailScreen({
             <Text style={styles.answerMeta}>
               {languageName(item.language)} · {formatRelativeTime(item.created_at)}
             </Text>
+            <View style={styles.answerActions}>
+              <ReportAction token={token} entityType="inquiry_answer" entityId={item.id} />
+            </View>
           </View>
         )}
         ListFooterComponent={
@@ -297,6 +305,13 @@ export default function InquiryDetailScreen({
 }
 
 const styles = StyleSheet.create({
+  answerActions: {
+    alignItems: 'flex-end',
+  },
+  reportRow: {
+    alignItems: 'flex-end',
+    marginTop: spacing.sm,
+  },
   answerBody: {
     color: colors.text.primary,
     fontSize: fontSizes.md,

@@ -68,6 +68,10 @@ type User struct {
 	DisplayName         string
 	PreferredLanguages  []string
 	ApproximateLocation string
+	// Role is the account's moderation role: "user", "moderator", or "admin".
+	// It is assigned manually (there is no API to change it), defaults to
+	// "user", and is read by the moderation layer to gate the 017b queue.
+	Role string
 	// AvatarURL is the object key of the user's avatar in the media bucket, not
 	// a public URL. Empty means the user has no avatar. The HTTP layer turns it
 	// into the backend path clients fetch (see avatar_handler.go).

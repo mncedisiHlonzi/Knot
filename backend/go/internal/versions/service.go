@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/knot/backend/internal/language"
+	"github.com/knot/backend/internal/moderation"
 )
 
 // CreateAdaptation validates the input, checks that the parent version belongs
@@ -38,6 +39,12 @@ func (s *Service) CreateAdaptation(ctx context.Context, in CreateAdaptationInput
 			Field:   "parent_version_id",
 			Message: "must belong to the same story",
 		}
+	}
+
+	// Block-based write prevention: a user cannot adapt content authored by someone
+	// on either side of a block (KNOT-ADR-060).
+	if moderation.IsExcludedAuthor(ctx, parent.AuthorID) {
+		return StoryVersion{}, moderation.ErrBlocked
 	}
 
 	created, err := s.store.CreateVersion(ctx, version)

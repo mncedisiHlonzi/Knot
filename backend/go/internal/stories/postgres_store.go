@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/knot/backend/internal/moderation"
 )
 
 // storyColumns is the canonical SELECT column list for a story read together
@@ -135,18 +138,30 @@ func (s *PostgresStore) GetStory(ctx context.Context, id string) (Story, error) 
 // returned, and the cursor is derived from the last row that is.
 func (s *PostgresStore) ListStories(ctx context.Context, cursor *Cursor, limit int) ([]Story, *Cursor, error) {
 	query := `SELECT ` + storyColumns + storyFrom
-	args := make([]any, 0, 3)
+	args := make([]any, 0, 4)
+	conditions := make([]string, 0, 2)
+
+	// Hide stories authored by anyone on either side of a block with the viewer.
+	// An anonymous reader carries no set, so the predicate is simply absent.
+	if excluded := moderation.ExcludedAuthors(ctx); len(excluded) > 0 {
+		args = append(args, excluded)
+		conditions = append(conditions, fmt.Sprintf("s.author_id <> ALL($%d::uuid[])", len(args)))
+	}
 
 	if cursor != nil {
 		// The explicit casts are required because a row comparison does not
 		// reliably infer the parameter types, and they are safe because
 		// DecodeCursor has already proven the id is canonical UUID text.
-		query += ` WHERE (s.created_at, s.id) < ($1::timestamptz, $2::uuid)`
 		args = append(args, cursor.CreatedAt(), cursor.ID())
+		conditions = append(conditions, fmt.Sprintf("(s.created_at, s.id) < ($%d::timestamptz, $%d::uuid)", len(args)-1, len(args)))
 	}
 
-	query += fmt.Sprintf(` ORDER BY s.created_at DESC, s.id DESC LIMIT $%d`, len(args)+1)
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
 	args = append(args, limit+1)
+	query += fmt.Sprintf(` ORDER BY s.created_at DESC, s.id DESC LIMIT $%d`, len(args))
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {

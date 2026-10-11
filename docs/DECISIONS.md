@@ -1839,3 +1839,66 @@ which are a place to browse, not a form to fill in.
   ("No questions yet. Ask the first one.").
 - The tab is rendered for a signed-out user too, where asking is refused by the server. The list
   itself is public, so browsing questions does not require an account.
+
+## KNOT-ADR-059 — User roles live on the user record, assigned manually for MVP
+
+A user's moderation role is a `role` column on `users` (`user | moderator |
+admin`), a closed set enforced by a CHECK. There is deliberately **no API** to
+assign a role: for the MVP a role is set in the database by an operator, which
+keeps the privilege-escalation surface at zero while the moderation system is
+small. An assignment UI, if it is ever needed, is a later task.
+
+**Consequences.** Every account defaults to `user`. `moderation.IsModerator` and
+`IsAdmin` interpret the stored string; the identity package never depends on the
+moderation package, because a role travels as a plain string. The only place a
+role is consulted is the KNOT-017b moderator routes.
+
+## KNOT-ADR-060 — Blocking is mutual hiding plus write prevention, applied in one query per request
+
+A block is stored as one directed row (`blocker_id`, `blocked_id`), but the app
+treats it as **mutual**: if A blocks B, then A's content is hidden from B and B's
+from A, and neither can interact with the other's content.
+
+The viewer's mutual block set is resolved **once per authenticated request**, in
+the auth middleware, and carried on the request context
+(`moderation.WithExcludedAuthors`). Every content list appends a single
+`author_id <> ALL($n::uuid[])` predicate from that set, so a page is filtered in
+one query with no fan-out; the profile wall answers 404 when its owner is on the
+set. A write that targets content authored by the set returns 403 `blocked`.
+Anonymous readers carry no set and see everything.
+
+**Consequences.** Filtering is a read-time projection, not a row-visible flag, so
+unblocking restores content immediately. The block set costs one query per
+authenticated request even on routes that do not filter — acceptable at MVP and
+easy to make lazy later. A block created between the set's resolution and a write
+is not seen by that write, a small window that matters only for adversarial
+timing. The language tree is deliberately **not** filtered: it is a structural
+view of the story, and a hidden version is a client concern (KNOT-017b).
+
+## KNOT-ADR-061 — A report is per-user-per-entity, and reports aggregate into one case per entity
+
+A user may report a given entity once: `reports_one_per_user_per_entity` is a
+unique index, so a repeat is a 409 rather than a duplicate row. Many users may
+report the same entity, and their reports aggregate into **one** moderation case
+(`moderation_cases_entity_unique`), whose `report_count` is incremented in the
+same transaction that inserts the report.
+
+**Consequences.** The moderator queue reads one row per entity, sorted by
+`updated_at`, without a COUNT per entity. A user cannot inflate a case by
+re-reporting; distinct voices are what move `report_count`. Creating a case and
+inserting its first report are atomic, so a report can never exist without its
+case.
+
+## KNOT-ADR-062 — Six fixed report categories; "other" requires a free-text reason
+
+Report categories are a closed set of six — `harassment`, `hate_speech`,
+`misinformation`, `spam`, `sensitive_content`, `other` — enforced by a CHECK. When
+the category is `other`, a free-text `reason` is required; for the other five it
+is optional.
+
+**Consequences.** A category is a machine-classifiable signal a moderator can
+filter and count by, which a free-text-only report could not be. `other` exists so
+a reporter is never forced to mislabel, and requiring a reason there keeps it from
+becoming an information-free catch-all. The set is a product decision (like the
+stories pillar), so it is a CHECK rather than a lookup table and changes with a
+migration.

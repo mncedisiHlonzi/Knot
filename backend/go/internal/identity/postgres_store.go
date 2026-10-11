@@ -17,7 +17,7 @@ const uniqueViolation = "23505"
 
 // userColumns is the canonical SELECT/RETURNING column list. It is a constant so
 // every query in this file stays consistent with scanUser.
-const userColumns = `id, email, phone, password_hash, display_name, preferred_languages, approximate_location, avatar_url, created_at, updated_at`
+const userColumns = `id, email, phone, password_hash, display_name, role, preferred_languages, approximate_location, avatar_url, created_at, updated_at`
 
 // PostgresStore is the pgx-backed implementation of UserStore.
 //
@@ -213,6 +213,7 @@ func scanUser(row rowScanner) (*User, error) {
 		&phone,
 		&user.PasswordHash,
 		&user.DisplayName,
+		&user.Role,
 		&preferredLanguage,
 		&location,
 		&avatarURL,

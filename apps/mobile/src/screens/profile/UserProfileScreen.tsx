@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Image,
   Pressable,
@@ -12,6 +13,7 @@ import {
 
 import { User, describeError } from '../../api/client';
 import { conversationsApi } from '../../api/conversations';
+import { BlockedUser, blocksApi, describeModerationError } from '../../api/moderation';
 import { Activity, PROFILE_PAGE_SIZE, ProfileUser, profileApi } from '../../api/profile';
 import { uploadAvatar } from '../../api/users';
 import MediaPickerSheet, { PickedMedia } from '../../components/MediaPickerSheet';
@@ -153,6 +155,12 @@ export default function UserProfileScreen({
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [avatarError, setAvatarError] = useState<string | undefined>(undefined);
 
+  const [blocking, setBlocking] = useState(false);
+  const [blockError, setBlockError] = useState<string | undefined>(undefined);
+  const [showBlocked, setShowBlocked] = useState(false);
+  const [blockedUsers, setBlockedUsers] = useState<readonly BlockedUser[]>([]);
+  const [blockedLoading, setBlockedLoading] = useState(false);
+
   const loadFirstPage = useCallback(async (): Promise<void> => {
     setLoading(true);
     setError(undefined);
@@ -224,6 +232,76 @@ export default function UserProfileScreen({
       }
     },
     [onUserUpdated, token],
+  );
+
+  /**
+   * Blocks the profile's owner after a confirmation, then returns to the previous
+   * screen: the wall is now hidden, so leaving it is the honest response.
+   */
+  const handleBlock = useCallback((): void => {
+    const name = profile?.display_name ?? 'this person';
+    Alert.alert(
+      `Block ${name}?`,
+      'Their content will be hidden from you and they will not be able to interact with your content.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Block',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setBlocking(true);
+              setBlockError(undefined);
+              try {
+                await blocksApi.block(userId, token);
+                onBack?.();
+              } catch (caught) {
+                setBlockError(describeModerationError(caught));
+              } finally {
+                setBlocking(false);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  }, [onBack, profile, token, userId]);
+
+  /** Loads the owner's block list, used by the "Blocked users" section. */
+  const loadBlockedUsers = useCallback(async (): Promise<void> => {
+    setBlockedLoading(true);
+    setBlockError(undefined);
+    try {
+      const page = await blocksApi.listBlocks(token, undefined, 50);
+      setBlockedUsers(page.blocks.map((entry) => entry.user));
+    } catch (caught) {
+      setBlockError(describeModerationError(caught));
+    } finally {
+      setBlockedLoading(false);
+    }
+  }, [token]);
+
+  const toggleBlockedUsers = useCallback((): void => {
+    setShowBlocked((current) => {
+      const next = !current;
+      if (next) {
+        void loadBlockedUsers();
+      }
+      return next;
+    });
+  }, [loadBlockedUsers]);
+
+  const handleUnblock = useCallback(
+    async (blockedID: string): Promise<void> => {
+      setBlockError(undefined);
+      try {
+        await blocksApi.unblock(blockedID, token);
+        setBlockedUsers((current) => current.filter((user) => user.id !== blockedID));
+      } catch (caught) {
+        setBlockError(describeModerationError(caught));
+      }
+    },
+    [token],
   );
 
   /**
@@ -353,6 +431,58 @@ export default function UserProfileScreen({
                 </View>
               ) : null}
 
+              {!isOwnProfile ? (
+                <View style={styles.ownerButtons}>
+                  <Pressable
+                    style={[styles.secondaryButton, blocking ? styles.disabled : null]}
+                    onPress={handleBlock}
+                    disabled={blocking}
+                    accessibilityRole="button"
+                    accessibilityLabel="Block this user"
+                  >
+                    <Text style={styles.secondaryButtonText}>
+                      {blocking ? 'Blocking…' : 'Block'}
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : null}
+
+              {isOwnProfile ? (
+                <View style={styles.ownerButtons}>
+                  <Pressable style={styles.secondaryButton} onPress={toggleBlockedUsers}>
+                    <Text style={styles.secondaryButtonText}>
+                      {showBlocked ? 'Hide blocked users' : 'Blocked users'}
+                    </Text>
+                  </Pressable>
+                </View>
+              ) : null}
+
+              {isOwnProfile && showBlocked ? (
+                <View style={styles.blockedList}>
+                  {blockedLoading ? <ActivityIndicator /> : null}
+                  {blockedUsers.map((user) => (
+                    <View key={user.id} style={styles.blockedRow}>
+                      <Text style={styles.blockedName}>{user.display_name}</Text>
+                      <Pressable
+                        style={styles.secondaryButton}
+                        onPress={() => {
+                          void handleUnblock(user.id);
+                        }}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Unblock ${user.display_name}`}
+                      >
+                        <Text style={styles.secondaryButtonText}>Unblock</Text>
+                      </Pressable>
+                    </View>
+                  ))}
+                  {!blockedLoading && blockedUsers.length === 0 ? (
+                    <Text style={styles.hint}>You have not blocked anyone.</Text>
+                  ) : null}
+                </View>
+              ) : null}
+
+              {blockError !== undefined ? <Text style={styles.error}>{blockError}</Text> : null}
+
               {avatarError !== undefined ? <Text style={styles.error}>{avatarError}</Text> : null}
 
               <MediaPickerSheet
@@ -423,6 +553,23 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     fontSize: fontSizes.xl,
     fontWeight: fontWeights.bold,
+  },
+  blockedList: {
+    marginTop: spacing.sm,
+    width: '100%',
+  },
+  blockedName: {
+    color: colors.text.primary,
+    flex: 1,
+    fontSize: fontSizes.md,
+  },
+  blockedRow: {
+    alignItems: 'center',
+    borderColor: colors.border.subtle,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.sm,
   },
   card: {
     backgroundColor: colors.bg.surface,

@@ -85,7 +85,7 @@ type ErrorEnvelope = {
 
 /** The minimal request description this client builds. */
 type RequestOptions = {
-  readonly method: 'GET' | 'POST';
+  readonly method: 'GET' | 'POST' | 'DELETE';
   readonly body?: unknown;
   /**
    * Access token for a protected endpoint, sent as a bearer credential. Public

@@ -8,6 +8,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/knot/backend/internal/moderation"
 )
 
 // PostgreSQL SQLSTATEs the store classifies. A unique violation is how the
@@ -165,12 +167,18 @@ func (s *PostgresStore) ListComments(ctx context.Context, versionID string, curs
 	query := `SELECT ` + commentColumns + ` FROM comments WHERE version_id = $1 AND parent_comment_id IS NULL`
 	args := []any{versionID}
 
+	// Hide comments authored by anyone on either side of a block with the viewer.
+	if excluded := moderation.ExcludedAuthors(ctx); len(excluded) > 0 {
+		args = append(args, excluded)
+		query += fmt.Sprintf(` AND author_id <> ALL($%d::uuid[])`, len(args))
+	}
+
 	if cursor != nil {
 		// The explicit casts are required because a row comparison does not
 		// reliably infer the parameter types, and they are safe because
 		// DecodeCursor has already proven the id is canonical UUID text.
-		query += ` AND (created_at, id) < ($2::timestamptz, $3::uuid)`
 		args = append(args, cursor.CreatedAt(), cursor.ID())
+		query += fmt.Sprintf(` AND (created_at, id) < ($%d::timestamptz, $%d::uuid)`, len(args)-1, len(args))
 	}
 
 	query += fmt.Sprintf(` ORDER BY created_at DESC, id DESC LIMIT $%d`, len(args)+1)
@@ -215,13 +223,21 @@ func (s *PostgresStore) ListReplies(ctx context.Context, parentIDs []string) ([]
 		return []Comment{}, nil
 	}
 
-	const query = `
+	query := `
 		SELECT ` + commentColumns + `
 		FROM comments
-		WHERE parent_comment_id = ANY($1::uuid[])
-		ORDER BY created_at ASC, id ASC`
+		WHERE parent_comment_id = ANY($1::uuid[])`
+	args := []any{parentIDs}
 
-	rows, err := s.pool.Query(ctx, query, parentIDs)
+	// Hide replies authored by anyone on either side of a block with the viewer.
+	if excluded := moderation.ExcludedAuthors(ctx); len(excluded) > 0 {
+		args = append(args, excluded)
+		query += fmt.Sprintf(` AND author_id <> ALL($%d::uuid[])`, len(args))
+	}
+
+	query += ` ORDER BY created_at ASC, id ASC`
+
+	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("conversations: list replies: %w", err)
 	}
@@ -375,13 +391,21 @@ func (s *PostgresStore) ListBridgesForComment(ctx context.Context, commentID str
 		return nil, ErrNotFound
 	}
 
-	const query = `
+	query := `
 		SELECT ` + bridgeColumns + `
 		FROM bridges
-		WHERE source_comment_id = $1 OR target_comment_id = $1
-		ORDER BY created_at DESC, id DESC`
+		WHERE (source_comment_id = $1 OR target_comment_id = $1)`
+	args := []any{commentID}
 
-	return s.queryBridges(ctx, query, commentID)
+	// Hide bridges authored by anyone on either side of a block with the viewer.
+	if excluded := moderation.ExcludedAuthors(ctx); len(excluded) > 0 {
+		args = append(args, excluded)
+		query += fmt.Sprintf(` AND author_id <> ALL($%d::uuid[])`, len(args))
+	}
+
+	query += ` ORDER BY created_at DESC, id DESC`
+
+	return s.queryBridges(ctx, query, args...)
 }
 
 // ListBridgesForStory returns every bridge whose source comment belongs to a
@@ -408,15 +432,23 @@ func (s *PostgresStore) ListBridgesForStory(ctx context.Context, storyID string)
 		return nil, ErrNotFound
 	}
 
-	const query = `
+	query := `
 		SELECT b.id, b.source_comment_id, b.target_comment_id, b.author_id, b.target_language, b.adaptation_note, b.created_at
 		FROM bridges b
 		JOIN comments c ON c.id = b.source_comment_id
 		JOIN story_versions v ON v.id = c.version_id
-		WHERE v.story_id = $1
-		ORDER BY b.created_at DESC, b.id DESC`
+		WHERE v.story_id = $1`
+	args := []any{storyID}
 
-	return s.queryBridges(ctx, query, storyID)
+	// Hide bridges authored by anyone on either side of a block with the viewer.
+	if excluded := moderation.ExcludedAuthors(ctx); len(excluded) > 0 {
+		args = append(args, excluded)
+		query += fmt.Sprintf(` AND b.author_id <> ALL($%d::uuid[])`, len(args))
+	}
+
+	query += ` ORDER BY b.created_at DESC, b.id DESC`
+
+	return s.queryBridges(ctx, query, args...)
 }
 
 // queryBridges runs a bridge SELECT and scans every row.

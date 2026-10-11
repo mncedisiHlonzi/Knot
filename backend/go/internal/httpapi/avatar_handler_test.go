@@ -381,6 +381,7 @@ func newAvatarTestRouter(t *testing.T, env *avatarTestEnv) http.Handler {
 		newTestProfileHandler(t, logger),
 		newTestReactionsRouterHandler(t, logger),
 		newTestInquiriesHandler(t, logger),
+		newTestModerationHandler(t, logger),
 		authMiddleware,
 		"0.1.0",
 		logger,

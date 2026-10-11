@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/knot/backend/internal/inquiries"
+	"github.com/knot/backend/internal/moderation"
 	"github.com/knot/backend/internal/reactions"
 )
 
@@ -493,6 +494,8 @@ func (h *InquiriesHandler) writeServiceError(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusNotFound, codeNotFound, notFoundMessage)
 	case errors.Is(err, inquiries.ErrUserNotFound):
 		writeError(w, http.StatusNotFound, codeNotFound, "user not found")
+	case errors.Is(err, moderation.ErrBlocked):
+		writeError(w, http.StatusForbidden, codeBlocked, "you cannot interact with this content")
 	default:
 		h.logger.ErrorContext(
 			r.Context(),

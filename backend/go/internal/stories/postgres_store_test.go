@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/knot/backend/internal/moderation"
 )
 
 // integrationStore is what the integration tests work with: the store under test
@@ -111,6 +113,70 @@ func newIntegrationStory(author, name string) Story {
 		ApproximateLocation: "Cape Town",
 		MediaURLs:           []string{"https://example.test/" + name + ".jpg"},
 	}
+}
+
+// TestPostgresStoreListStoriesHidesExcludedAuthors proves the block filter: a
+// story by an author on the viewer's block set is absent from the page, while a
+// story by anyone else is still present.
+func TestPostgresStoreListStoriesHidesExcludedAuthors(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	// A second author, whose story the viewer will hide. The test users share the
+	// setup prefix, so the cleanup deletes them (and cascades to their stories).
+	var other string
+	if err := env.pool.QueryRow(
+		ctx,
+		`INSERT INTO users (email, password_hash, display_name, preferred_languages)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id`,
+		env.prefix+"other@example.test",
+		"$argon2id$v=19$m=65536,t=1,p=4$c2FsdA$a2V5",
+		"Hidden Author",
+		[]string{"eng"},
+	).Scan(&other); err != nil {
+		t.Fatalf("could not create the second author: %v", err)
+	}
+
+	hidden, err := env.store.CreateStory(ctx, newIntegrationStory(other, "hidden"))
+	if err != nil {
+		t.Fatalf("CreateStory(hidden) error = %v, want nil", err)
+	}
+	visible, err := env.store.CreateStory(ctx, newIntegrationStory(env.author, "visible"))
+	if err != nil {
+		t.Fatalf("CreateStory(visible) error = %v, want nil", err)
+	}
+
+	// Unfiltered: both are present (the hidden one is newest, so it leads).
+	unfiltered, _, err := env.store.ListStories(ctx, nil, 50)
+	if err != nil {
+		t.Fatalf("ListStories() error = %v, want nil", err)
+	}
+	if !storyPageHasID(unfiltered, hidden.ID) || !storyPageHasID(unfiltered, visible.ID) {
+		t.Fatalf("unfiltered page did not contain both stories")
+	}
+
+	// Filtered: the hidden author's story is gone; the other remains.
+	filtered, _, err := env.store.ListStories(moderation.WithExcludedAuthors(ctx, []string{other}), nil, 50)
+	if err != nil {
+		t.Fatalf("ListStories(filtered) error = %v, want nil", err)
+	}
+	if storyPageHasID(filtered, hidden.ID) {
+		t.Error("filtered page contains the blocked author's story")
+	}
+	if !storyPageHasID(filtered, visible.ID) {
+		t.Error("filtered page is missing the unblocked author's story")
+	}
+}
+
+// storyPageHasID reports whether a page contains a story with the given id.
+func storyPageHasID(page []Story, id string) bool {
+	for _, story := range page {
+		if story.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func TestPostgresStoreCreateStoryRoundTrip(t *testing.T) {

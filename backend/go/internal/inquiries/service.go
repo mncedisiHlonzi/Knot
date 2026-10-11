@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/knot/backend/internal/language"
+	"github.com/knot/backend/internal/moderation"
 )
 
 // Logger is the slice of slog.Logger this package needs: a warning when routing
@@ -200,6 +201,22 @@ func (s *Service) CreateAnswer(ctx context.Context, inquiryID, authorID string, 
 	}
 	answer.InquiryID = inquiryID
 	answer.AuthorID = authorID
+
+	// Block-based write prevention: a user cannot answer an inquiry authored by
+	// someone on either side of a block (KNOT-ADR-060). Skipped entirely when the
+	// request carries no block set, so the common case costs no extra query.
+	if len(moderation.ExcludedAuthors(ctx)) > 0 {
+		inquiry, err := s.store.GetInquiry(ctx, inquiryID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return Answer{}, ErrNotFound
+			}
+			return Answer{}, fmt.Errorf("inquiries: load inquiry: %w", err)
+		}
+		if moderation.IsExcludedAuthor(ctx, inquiry.AuthorID) {
+			return Answer{}, moderation.ErrBlocked
+		}
+	}
 
 	stored, inquiryAuthorID, err := s.store.CreateAnswer(ctx, answer)
 	if err != nil {

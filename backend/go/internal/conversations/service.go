@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/knot/backend/internal/language"
+	"github.com/knot/backend/internal/moderation"
 )
 
 // Service holds the conversation business rules.
@@ -72,6 +73,27 @@ func (s *Service) CreateComment(ctx context.Context, in CreateCommentInput) (Com
 		// belongs to, so the stored thread is never deeper than one level.
 		if parent.ParentCommentID != nil {
 			comment.ParentCommentID = parent.ParentCommentID
+		}
+	}
+
+	// Block-based write prevention (KNOT-ADR-060): a user cannot comment on a
+	// version, or reply to a comment, authored by someone on either side of a
+	// block. The check is skipped entirely when the request carries no block set
+	// (anonymous readers, and viewers who have blocked nobody), so the common case
+	// costs no extra query.
+	if len(moderation.ExcludedAuthors(ctx)) > 0 {
+		versionAuthor, err := s.comments.VersionAuthor(ctx, comment.VersionID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return Comment{}, ErrNotFound
+			}
+			return Comment{}, fmt.Errorf("conversations: resolve version author: %w", err)
+		}
+		if moderation.IsExcludedAuthor(ctx, versionAuthor) {
+			return Comment{}, moderation.ErrBlocked
+		}
+		if addressedTo != nil && moderation.IsExcludedAuthor(ctx, addressedTo.AuthorID) {
+			return Comment{}, moderation.ErrBlocked
 		}
 	}
 
@@ -268,6 +290,12 @@ func (s *Service) CreateBridge(ctx context.Context, in CreateBridgeInput) (Bridg
 		return Bridge{}, Comment{}, Comment{}, fmt.Errorf("conversations: load source comment: %w", err)
 	}
 
+	// Block-based write prevention: a user cannot bridge a comment authored by
+	// someone on either side of a block (KNOT-ADR-060).
+	if moderation.IsExcludedAuthor(ctx, source.AuthorID) {
+		return Bridge{}, Comment{}, Comment{}, moderation.ErrBlocked
+	}
+
 	if source.Language == input.TargetLanguage {
 		return Bridge{}, Comment{}, Comment{}, &ValidationError{
 			Field:   "target_language",
@@ -336,6 +364,13 @@ func (s *Service) GetBridge(ctx context.Context, id string) (Bridge, error) {
 			return Bridge{}, ErrNotFound
 		}
 		return Bridge{}, fmt.Errorf("conversations: get bridge: %w", err)
+	}
+
+	// A bridge authored by someone on either side of a block with the viewer is
+	// hidden: it is reported as not found rather than as forbidden, so a blocked
+	// author's content is indistinguishable from content that does not exist.
+	if moderation.IsExcludedAuthor(ctx, bridge.AuthorID) {
+		return Bridge{}, ErrNotFound
 	}
 
 	return bridge, nil

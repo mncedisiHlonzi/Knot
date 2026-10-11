@@ -807,3 +807,34 @@ than an explicit null.
 `inquiry_answers_author_id_idx` narrow each branch to the author; the
 `ORDER BY (created_at DESC, id DESC)` is a sort over the merged rows, which is bounded by the
 per-author filters. Each branch's primary-key lookup for the join is an index scan.
+
+## Moderation (migration 0015, KNOT-017a)
+
+The safety foundation: who may moderate, who has blocked whom, and what has been
+reported. Only `blocks`, `reports`, `moderation_cases`, and `audit_log` are used in
+KNOT-017a; `moderation_actions` is created here so KNOT-017b needs no new
+migration.
+
+- **`users.role`** — `TEXT NOT NULL DEFAULT 'user'`, `CHECK (role IN ('user',
+  'moderator', 'admin'))`. Assigned manually at MVP; there is no API to change it.
+- **`blocks`** — one **directed** block per row (`blocker_id`, `blocked_id`), both
+  `REFERENCES users(id) ON DELETE CASCADE`, with `CHECK (blocker_id <> blocked_id)`.
+  `blocks_unique_pair (blocker_id, blocked_id)` makes a block idempotent;
+  `blocks_blocked_id_idx` makes "who blocked me" cheap. Every read treats the pair
+  as mutual, so both directions are consulted (KNOT-ADR-060).
+- **`reports`** — one user's report of one entity: `reporter_id`, `entity_type`
+  (six kinds), `entity_id` (no foreign key: the six kinds live in six tables),
+  `category`, nullable `reason`, `created_at`.
+  `reports_one_per_user_per_entity` is unique, so a repeat is a 409;
+  `reports_entity_idx (entity_type, entity_id)` groups an entity's reports.
+- **`moderation_cases`** — one per entity (`moderation_cases_entity_unique`),
+  `status` in `open | actioned | dismissed`, and a denormalised `report_count`
+  incremented in the same transaction that inserts a report (the KNOT-ADR-054
+  pattern). `moderation_cases_status_updated_idx (status, updated_at DESC)` serves
+  the 017b queue.
+- **`moderation_actions`** — a moderator's action on a case (017b).
+- **`audit_log`** — append-only; one row per block/report event (and, later, per
+  moderator action). `metadata JSONB NOT NULL DEFAULT '{}'`.
+
+Every statement is idempotent (`IF NOT EXISTS` / `pg_constraint` guards), so
+re-applying `0015_moderation.up.sql` by hand is safe.

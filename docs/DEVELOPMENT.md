@@ -1285,3 +1285,31 @@ character, an argon2id key's final character), each failing about one run in six
 There are **no deployment steps**. CI verifies the foundation only.
 
 > The first CI run is the real test of the version pins — see "Version drift" above.
+
+## Moderation: reports and blocks (KNOT-017a)
+
+`internal/moderation` is the safety foundation: `role.go` (the `Role` type and its
+helpers), `block.go` (`Block`, `BlockStore`, `BlockService`), `report.go`
+(`Report`, categories, entity kinds, `ReportStore`, `EntityLookup`,
+`ReportService`), `audit.go` (the append-only trail), `cursor.go`, `context.go`
+(the request-scoped excluded-author set), `store.go` / `postgres_store.go` (pgx),
+and `service.go` (the composed `Service` the composition root wires).
+
+**Routes** (all protected): `POST /reports`, `GET /reports/mine`,
+`POST /blocks/{user_id}`, `DELETE /blocks/{user_id}`, `GET /blocks/mine`. There is
+no moderator route in this task; they ship in KNOT-017b.
+
+**The block filter.** The auth middleware resolves the caller's mutual block set
+once per request and attaches it to the request context. The content stores read it
+with `moderation.ExcludedAuthors(ctx)` and append `author_id <> ALL($n::uuid[])` to
+their list queries; when the set is empty the predicate is absent, so an anonymous
+reader and a user with no blocks pay nothing. The content services refuse a write
+whose target author is in the set and return `moderation.ErrBlocked`, which the
+handlers map to **403 `blocked`**.
+
+**The entity lookup.** `httpapi.EntityExistence` implements
+`moderation.EntityLookup` over the four content services, so a report can confirm
+its target exists without the moderation package importing a content domain.
+
+Run the moderation integration tests against Postgres (migration 0015 applied) by
+setting `KNOT_POSTGRES_DSN`; they skip otherwise.

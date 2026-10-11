@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/knot/backend/internal/conversations"
+	"github.com/knot/backend/internal/moderation"
 	"github.com/knot/backend/internal/reactions"
 )
 
@@ -454,6 +455,8 @@ func (h *ConversationsHandler) writeServiceError(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusBadRequest, codeValidation, fmt.Sprintf("%s %s", validation.Field, validation.Message))
 	case errors.Is(err, conversations.ErrNotFound):
 		writeError(w, http.StatusNotFound, codeNotFound, notFoundMessage)
+	case errors.Is(err, moderation.ErrBlocked):
+		writeError(w, http.StatusForbidden, codeBlocked, "you cannot interact with this content")
 	default:
 		h.logger.ErrorContext(
 			r.Context(),

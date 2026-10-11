@@ -10,6 +10,7 @@ import (
 
 	"github.com/knot/backend/internal/conversations"
 	"github.com/knot/backend/internal/inquiries"
+	"github.com/knot/backend/internal/moderation"
 	"github.com/knot/backend/internal/reactions"
 	"github.com/knot/backend/internal/stories"
 	"github.com/knot/backend/internal/versions"
@@ -214,6 +215,13 @@ func (h *ReactionsHandler) toggle(w http.ResponseWriter, r *http.Request, entity
 	authorID, err := authorOf(r.Context(), entityID)
 	if err != nil {
 		h.writeResolveError(w, r, err, entityType)
+		return
+	}
+
+	// Block-based write prevention (KNOT-ADR-060): a user cannot react to content
+	// authored by someone on either side of a block.
+	if moderation.IsExcludedAuthor(r.Context(), authorID) {
+		writeError(w, http.StatusForbidden, codeBlocked, "you cannot interact with this content")
 		return
 	}
 
