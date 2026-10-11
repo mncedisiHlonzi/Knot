@@ -13,6 +13,7 @@
  * carrying the server's machine-readable code.
  */
 import { ApiError, describeError, request } from './client';
+import { buildQueryString } from './query';
 
 /** The kinds of content that can be reported. The set matches the server's schema. */
 export type ReportEntityType =
@@ -125,14 +126,7 @@ export const reportsApi = {
    * GET /reports/mine — the caller's own reports, newest first, cursor-paginated.
    */
   listMyReports(token: string, cursor?: string, limit?: number): Promise<ReportPage> {
-    const query = new URLSearchParams();
-    if (cursor !== undefined && cursor !== '') {
-      query.set('cursor', cursor);
-    }
-    if (limit !== undefined) {
-      query.set('limit', String(limit));
-    }
-    const suffix = query.toString() === '' ? '' : `?${query.toString()}`;
+    const suffix = buildQueryString({ cursor, limit });
     return request<ReportPage>(`/reports/mine${suffix}`, { method: 'GET', token });
   },
 };
@@ -159,14 +153,7 @@ export const blocksApi = {
    * cursor-paginated.
    */
   listBlocks(token: string, cursor?: string, limit?: number): Promise<BlockPage> {
-    const query = new URLSearchParams();
-    if (cursor !== undefined && cursor !== '') {
-      query.set('cursor', cursor);
-    }
-    if (limit !== undefined) {
-      query.set('limit', String(limit));
-    }
-    const suffix = query.toString() === '' ? '' : `?${query.toString()}`;
+    const suffix = buildQueryString({ cursor, limit });
     return request<BlockPage>(`/blocks/mine${suffix}`, { method: 'GET', token });
   },
 };

@@ -1902,3 +1902,29 @@ a reporter is never forced to mislabel, and requiring a reason there keeps it fr
 becoming an information-free catch-all. The set is a product decision (like the
 stories pillar), so it is a CHECK rather than a lookup table and changes with a
 migration.
+
+## KNOT-ADR-063 — Integration tests must be robust to pre-existing data in the developer's local database
+
+Knot's integration tests run against a real PostgreSQL database named by
+`KNOT_POSTGRES_DSN`, and a developer's local database holds real accounts and
+content — the founder's own, plus whatever previous runs left behind. CI runs on a
+clean database, so a test that assumes an empty table is green there and red on a
+developer's machine (KNOT-017a-fix: the inquiries list tests failed on a real
+Manguzi inquiry).
+
+The rule: **no integration test may assume a clean database.** Every test scopes
+its assertions to the rows it created.
+
+- **Per-run unique markers.** A value a test filters or counts on — an email, a
+display name, a place, a slug — carries a per-run token
+(`knot-inquiries-it-<nanos>-<label>`, `Cape Town <token>`), so the query sees only
+the test's own rows. The token is derived once per run and reused across the
+test's rows.
+- **Scoped assertions.** A page is asserted for membership of the test's rows, or a
+filtered query is asserted for an exact count — never a global `COUNT(*)` or a bare
+`len(page)` over an unfiltered list.
+
+**Consequences.** Tests stay as strong as before: an exact count over the test's
+own filtered rows, not a weakened `>=`. `t.Cleanup` still removes the rows a test
+wrote, but correctness does not depend on it — a leftover row from another run
+cannot change a scoped result. New integration tests must follow this rule.

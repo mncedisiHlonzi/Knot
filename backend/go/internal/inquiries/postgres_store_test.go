@@ -123,6 +123,17 @@ func seedInquiry(t *testing.T, pool *pgxpool.Pool, authorID, title, place string
 	return id
 }
 
+// uniquePlace returns a place name scoped to this test run, so a place-filtered
+// query sees only the rows this test created and never a real place in the
+// developer's database that happens to share the name (KNOT-ADR-063).
+//
+// The prefix is already unique per run (`knot-inquiries-it-<nanos>-`), and the
+// label distinguishes several places within one run. The label keeps its case, so
+// an exact-match assertion comparing a lower-cased form still differs from it.
+func uniquePlace(prefix, label string) string {
+	return prefix + label
+}
+
 func TestPostgresStoreCreateInquiryRoundTrips(t *testing.T) {
 	store, pool, prefix := integrationSetup(t)
 	ctx := context.Background()
@@ -232,11 +243,15 @@ func TestPostgresStoreListInquiriesIsNewestFirstAndPaginates(t *testing.T) {
 	ctx := context.Background()
 	authorID := createUser(t, pool, prefix, "author")
 
-	oldest := seedInquiry(t, pool, authorID, "oldest", "Manguzi", 3*time.Hour)
-	middle := seedInquiry(t, pool, authorID, "middle", "Manguzi", 2*time.Hour)
-	newest := seedInquiry(t, pool, authorID, "newest", "Manguzi", 1*time.Hour)
+	// Scoped to a per-run place so the page holds only this test's rows: a real
+	// inquiry in the developer's database can never shift the page (KNOT-ADR-063).
+	place := uniquePlace(prefix, "Page")
 
-	firstPage, next, err := store.ListInquiries(ctx, nil, 2, "")
+	oldest := seedInquiry(t, pool, authorID, "oldest", place, 3*time.Hour)
+	middle := seedInquiry(t, pool, authorID, "middle", place, 2*time.Hour)
+	newest := seedInquiry(t, pool, authorID, "newest", place, 1*time.Hour)
+
+	firstPage, next, err := store.ListInquiries(ctx, nil, 2, place)
 	if err != nil {
 		t.Fatalf("ListInquiries() error = %v, want nil", err)
 	}
@@ -250,7 +265,7 @@ func TestPostgresStoreListInquiriesIsNewestFirstAndPaginates(t *testing.T) {
 		t.Fatal("next cursor = nil, want one because a third inquiry remains")
 	}
 
-	secondPage, next, err := store.ListInquiries(ctx, next, 2, "")
+	secondPage, next, err := store.ListInquiries(ctx, next, 2, place)
 	if err != nil {
 		t.Fatalf("ListInquiries(page 2) error = %v, want nil", err)
 	}
@@ -276,20 +291,23 @@ func TestPostgresStoreListInquiriesFiltersByPlace(t *testing.T) {
 	ctx := context.Background()
 	authorID := createUser(t, pool, prefix, "author")
 
-	seedInquiry(t, pool, authorID, "manguzi one", "Manguzi", time.Hour)
-	manguzi := seedInquiry(t, pool, authorID, "manguzi two", "Manguzi", 2*time.Hour)
-	seedInquiry(t, pool, authorID, "elsewhere", "Durban", 3*time.Hour)
+	here := uniquePlace(prefix, "Here")
+	elsewhere := uniquePlace(prefix, "Elsewhere")
 
-	page, next, err := store.ListInquiries(ctx, nil, 20, "Manguzi")
+	seedInquiry(t, pool, authorID, "here one", here, time.Hour)
+	second := seedInquiry(t, pool, authorID, "here two", here, 2*time.Hour)
+	seedInquiry(t, pool, authorID, "elsewhere", elsewhere, 3*time.Hour)
+
+	page, next, err := store.ListInquiries(ctx, nil, 20, here)
 	if err != nil {
 		t.Fatalf("ListInquiries(place) error = %v, want nil", err)
 	}
 	if len(page) != 2 {
-		t.Fatalf("page length = %d, want 2 (only the Manguzi inquiries)", len(page))
+		t.Fatalf("page length = %d, want 2 (only this run's place)", len(page))
 	}
 	for _, inquiry := range page {
-		if inquiry.Place == nil || *inquiry.Place != "Manguzi" {
-			t.Errorf("inquiry %q has place %v, want Manguzi", inquiry.Title, inquiry.Place)
+		if inquiry.Place == nil || *inquiry.Place != here {
+			t.Errorf("inquiry %q has place %v, want %q", inquiry.Title, inquiry.Place, here)
 		}
 	}
 	if next != nil {
@@ -298,16 +316,17 @@ func TestPostgresStoreListInquiriesFiltersByPlace(t *testing.T) {
 
 	found := false
 	for _, inquiry := range page {
-		if inquiry.ID == manguzi {
+		if inquiry.ID == second {
 			found = true
 		}
 	}
 	if !found {
-		t.Error("the second Manguzi inquiry is missing from the filtered page")
+		t.Error("the second inquiry at the run's place is missing from the filtered page")
 	}
 
-	// The place match is an exact match on the stored spelling.
-	none, _, err := store.ListInquiries(ctx, nil, 20, "manguzi")
+	// The place match is an exact match on the stored spelling: a differently
+	// cased form of the place yields nothing.
+	none, _, err := store.ListInquiries(ctx, nil, 20, strings.ToLower(here))
 	if err != nil {
 		t.Fatalf("ListInquiries(lower-case place) error = %v, want nil", err)
 	}

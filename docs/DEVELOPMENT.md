@@ -1268,6 +1268,28 @@ importable by every test that needs it — the JWT and password tests in
 This is not hypothetical: it has already caused two flaky tests (a JWT signature's final
 character, an argon2id key's final character), each failing about one run in sixteen.
 
+## Testing — integration tests and the local database
+
+**No integration test may assume a clean database.** Every test that runs against
+Postgres (`KNOT_POSTGRES_DSN` set) shares the developer's database with real
+accounts and content, so a test that counts rows globally, filters by a well-known
+place name, or inserts a fixed email/name will read someone else's data and fail on
+a machine where CI (a clean database) is green.
+
+Every integration test must instead **scope its assertions to the rows it
+created**, by one of:
+
+- a **per-run unique marker** in the values it inserts — a timestamp or UUID in the
+  email, name, slug, or place (`knot-inquiries-it-<nanos>-…`, `Cape Town <token>`),
+  so a filtered query returns only the test's own rows; or
+- a filter on the test's own rows when counting, rather than a global `COUNT(*)` or
+  a bare `len(page)` over an unfiltered list.
+
+`t.Cleanup` deletes what the test wrote, but cleanup is not a substitute for
+scoping: a test must pass even when a *previous* run's rows (or a real user's) are
+still present. Assertions are not weakened to `>=` a count when an exact count is
+what the test is about — the data is scoped, not the assertion.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request. It has four jobs:
