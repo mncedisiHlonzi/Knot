@@ -525,6 +525,13 @@ from the Mapbox console (Account → Tokens). The two files must stay in sync.
   shape so `npm run typecheck` still succeeds on a fresh clone before `secrets.local.ts` exists.
   Metro (and the Android resource merger) still need the real files, so create them before
   running `npm start` or `npx react-native run-android`.
+- **Jest uses a module mock** so the test suite also runs on a fresh clone where
+  `secrets.local.ts` does not exist (KNOT-018-fix). The committed
+  `apps/mobile/src/config/__mocks__/secrets.local.ts` supplies a placeholder token, and
+  `jest.config.js` maps every import of `./secrets.local` to it via `moduleNameMapper`. The mock
+  wins even when the real local file is present, so tests behave identically on every machine.
+  **Keep the mock in sync with the shape of `secrets.local.ts`**: any new exported constant must
+  be added to the mock too, or a test that imports it will see `undefined`.
 - These are deliberately plain TypeScript and Android XML rather than `.env` files: the bundler
   and Android's resource merger already understand them, so no extra tooling or dependency is
   needed.
