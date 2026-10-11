@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/knot/backend/internal/moderation"
 	"github.com/knot/backend/internal/stories"
 )
 
@@ -92,7 +93,18 @@ func (s *PostgresStore) ListClusters(ctx context.Context, filter ClusterFilter) 
 		WHERE (s.approximate_location_lower IS NOT NULL
 			OR (s.latitude IS NOT NULL AND s.longitude IS NOT NULL))`
 
-	args := make([]any, 0, 3)
+	args := make([]any, 0, 4)
+
+	// Hide stories authored by anyone on either side of a block with the viewer.
+	// The predicate is applied inside the WHERE clause, before the grouping, so a
+	// cluster's story count and language set reflect only the stories the viewer
+	// can see, and a cluster left with no visible stories disappears entirely. An
+	// anonymous reader carries no set, so the predicate is simply absent and the
+	// query is byte-for-byte what it was before.
+	if excluded := moderation.ExcludedAuthors(ctx); len(excluded) > 0 {
+		args = append(args, excluded)
+		query += fmt.Sprintf(` AND s.author_id <> ALL($%d::uuid[])`, len(args))
+	}
 
 	if filter.Pillar != "" {
 		args = append(args, string(filter.Pillar))
@@ -183,6 +195,15 @@ func (s *PostgresStore) ListStoriesAtPlace(ctx context.Context, placeLower strin
 		// DecodeCursor has already proven the id is canonical UUID text.
 		query += ` AND (s.created_at, s.id) < ($2::timestamptz, $3::uuid)`
 		args = append(args, cursor.CreatedAt(), cursor.ID())
+	}
+
+	// Hide stories authored by anyone on either side of a block with the viewer. It
+	// is appended after the cursor predicate so the cursor keeps its fixed $2/$3
+	// placeholders. An anonymous reader carries no set, so the predicate is absent
+	// and the page is exactly what it was before.
+	if excluded := moderation.ExcludedAuthors(ctx); len(excluded) > 0 {
+		args = append(args, excluded)
+		query += fmt.Sprintf(` AND s.author_id <> ALL($%d::uuid[])`, len(args))
 	}
 
 	query += fmt.Sprintf(` ORDER BY s.created_at DESC, s.id DESC LIMIT $%d`, len(args)+1)

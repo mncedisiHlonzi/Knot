@@ -200,11 +200,15 @@ func (r *Router) Handler() http.Handler {
 	// "/avatar" (KNOT-ADR-042).
 	mux.HandleFunc("GET /users/{id}/profile", r.profile.Get)
 
-	// Discovery: finding stories by place. Both routes are public. The place is a
-	// path segment and is URL-decoded by the router, so a client may send
-	// "Cape%20Town" and reach the handler with "Cape Town".
-	mux.HandleFunc("GET /discovery/clusters", r.discovery.Clusters)
-	mux.HandleFunc("GET /discovery/places/{place}", r.discovery.PlaceStories)
+	// Discovery: finding stories by place. Both routes are public reads, but they
+	// run through the optional-auth path so that a signed-in caller's mutual block
+	// set is resolved onto the request context and the discovery queries can hide
+	// blocked authors' stories (KNOT-017a-fix3). A request with no token — or one
+	// that does not validate — proceeds anonymously and is served unfiltered. The
+	// place is a path segment and is URL-decoded by the router, so a client may
+	// send "Cape%20Town" and reach the handler with "Cape Town".
+	mux.HandleFunc("GET /discovery/clusters", r.authMiddleware.Optional(r.discovery.Clusters))
+	mux.HandleFunc("GET /discovery/places/{place}", r.authMiddleware.Optional(r.discovery.PlaceStories))
 
 	// Avatars: a user's profile image. Uploading requires an access token;
 	// reading is open, because an avatar is part of a public profile. The bytes

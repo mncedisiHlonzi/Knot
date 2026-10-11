@@ -788,8 +788,8 @@ curl -s -X POST http://localhost:8080/auth/register \
 | `POST /users/me/rooted`        | `Bearer` | `internal/httpapi/rooted_handler.go` |
 | `GET /users/me/rooted`         | `Bearer` | `internal/httpapi/rooted_handler.go` |
 | `GET /users/{id}/rooted`       | public   | `internal/httpapi/rooted_handler.go` |
-| `GET /discovery/clusters`      | public   | `internal/httpapi/discovery_handler.go` |
-| `GET /discovery/places/{place}` | public  | `internal/httpapi/discovery_handler.go` |
+| `GET /discovery/clusters`      | public (optional auth) | `internal/httpapi/discovery_handler.go` |
+| `GET /discovery/places/{place}` | public (optional auth) | `internal/httpapi/discovery_handler.go` |
 | `POST /users/me/avatar`        | `Bearer` | `internal/httpapi/avatar_handler.go` |
 | `GET /users/{id}/avatar`       | public   | `internal/httpapi/avatar_handler.go` |
 | `GET /notifications`           | `Bearer` | `internal/httpapi/notifications_handler.go` |
@@ -1371,6 +1371,8 @@ The canonical checklist — every content read and its current state:
 | `GET /inquiries/{id}/answers` | list predicate (`inquiries.ListAnswers`) |
 | `GET /answers/{id}` | detail 404 (`inquiries.GetAnswer`) |
 | `GET /users/{id}/profile` | 404 when the owner is blocked (`profile.GetProfile`) |
+| `GET /discovery/clusters` | list predicate (`discovery.ListClusters`) |
+| `GET /discovery/places/{place}` | list predicate (`discovery.ListStoriesAtPlace`) |
 | `GET /notifications` (+ `unread_count`) | list predicate on `actor_id` |
 | `GET /reports/mine`, `GET /blocks/mine` | own data — no filter (N/A) |
 
@@ -1381,5 +1383,8 @@ bridging, reacting, answering, and adapting.
 **The client must send its token on these reads.** The filter only applies to an
 authenticated request; a public read made without an `Authorization` header is
 anonymous and sees everything. The mobile API modules (`stories.ts`,
-`conversations.ts`, `versions.ts`, `profile.ts`) therefore take an optional `token`
-and the screens pass the signed-in user's token.
+`conversations.ts`, `versions.ts`, `profile.ts`, `discovery.ts`) therefore take an
+optional `token` and the screens pass the signed-in user's token. A public route
+that must still personalise its response — such as the two Discovery endpoints —
+is wrapped in `authMiddleware.Optional`, which resolves the block set for a
+signed-in caller and serves the anonymous view otherwise (KNOT-017a-fix3).

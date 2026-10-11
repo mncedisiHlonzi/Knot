@@ -200,6 +200,7 @@ export default function App(): React.ReactElement {
       case 'discoveryMap':
         return (
           <DiscoveryMapScreen
+            token={current.accessToken}
             onOpenPlace={(place) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'placeStories', place }))
             }
@@ -465,6 +466,7 @@ export default function App(): React.ReactElement {
         return (
           <PlaceStoriesScreen
             place={overlay.place}
+            token={current.accessToken}
             onOpenStory={(id) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId: id }))
             }

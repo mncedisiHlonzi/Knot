@@ -101,25 +101,33 @@ function placeQuery(options: ListPlaceStoriesOptions): string {
 
 /** The discovery endpoints. */
 export const discoveryApi = {
-  /** GET /discovery/clusters — places with stories, most stories first. Public. */
-  listClusters(options: ListClustersOptions = {}): Promise<ClusterListResponse> {
+  /**
+   * GET /discovery/clusters — places with stories, most stories first. Public.
+   * A token hides blocked authors' stories: the server resolves the caller's
+   * mutual block set, and a place left with no visible stories drops out of the
+   * list entirely. Omit the token for the anonymous view.
+   */
+  listClusters(options: ListClustersOptions = {}, token?: string): Promise<ClusterListResponse> {
     return request<ClusterListResponse>(`/discovery/clusters${clusterQuery(options)}`, {
       method: 'GET',
+      token,
     });
   },
 
   /**
    * GET /discovery/places/{place} — one page of the stories at a place, newest
    * first. Public. The place is URL-encoded; the server matches it case
-   * insensitively, so the caller's casing does not matter.
+   * insensitively, so the caller's casing does not matter. A token hides blocked
+   * authors' stories; omit it for the anonymous view.
    */
   listStoriesAtPlace(
     place: string,
     options: ListPlaceStoriesOptions = {},
+    token?: string,
   ): Promise<StoryListResponse> {
     return request<StoryListResponse>(
       `/discovery/places/${encodeURIComponent(place)}${placeQuery(options)}`,
-      { method: 'GET' },
+      { method: 'GET', token },
     );
   },
 };

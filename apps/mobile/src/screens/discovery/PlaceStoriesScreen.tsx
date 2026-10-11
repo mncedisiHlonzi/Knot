@@ -18,6 +18,12 @@ import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 type PlaceStoriesScreenProps = {
   /** The place whose stories are shown, as it was named by the server. */
   readonly place: string;
+  /**
+   * The signed-in user's access token, or undefined when signed out. It is sent
+   * on every page request so the server hides blocked authors' stories; an
+   * anonymous request sees everything.
+   */
+  readonly token?: string;
   /** Called when a story is tapped. */
   readonly onOpenStory: (id: string) => void;
   /** Called when the person leaves this place. */
@@ -45,6 +51,7 @@ function formatDate(value: string): string {
  */
 export default function PlaceStoriesScreen({
   place,
+  token,
   onOpenStory,
   onBack,
 }: PlaceStoriesScreenProps): React.ReactElement {
@@ -65,7 +72,11 @@ export default function PlaceStoriesScreen({
       setError(undefined);
 
       try {
-        const page = await discoveryApi.listStoriesAtPlace(place, { limit: PLACE_PAGE_SIZE });
+        const page = await discoveryApi.listStoriesAtPlace(
+          place,
+          { limit: PLACE_PAGE_SIZE },
+          token,
+        );
         setStories(page.stories);
         setNextCursor(page.next_cursor);
       } catch (caught) {
@@ -75,7 +86,7 @@ export default function PlaceStoriesScreen({
         setRefreshing(false);
       }
     },
-    [place],
+    [place, token],
   );
 
   useEffect(() => {
@@ -91,10 +102,14 @@ export default function PlaceStoriesScreen({
     setError(undefined);
 
     try {
-      const page = await discoveryApi.listStoriesAtPlace(place, {
-        cursor: nextCursor,
-        limit: PLACE_PAGE_SIZE,
-      });
+      const page = await discoveryApi.listStoriesAtPlace(
+        place,
+        {
+          cursor: nextCursor,
+          limit: PLACE_PAGE_SIZE,
+        },
+        token,
+      );
       // Append rather than replace: the cursor is exclusive, so a page never
       // repeats a story already on screen.
       setStories((existing) => [...existing, ...page.stories]);
@@ -104,7 +119,7 @@ export default function PlaceStoriesScreen({
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, nextCursor, place]);
+  }, [loadingMore, nextCursor, place, token]);
 
   return (
     <FlatList

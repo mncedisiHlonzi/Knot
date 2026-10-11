@@ -12,6 +12,12 @@ import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
 type DiscoveryMapScreenProps = {
   /** Called when a place is tapped, on the map or in the list below it. */
   readonly onOpenPlace: (place: string) => void;
+  /**
+   * The signed-in user's access token, or undefined when signed out. It is sent
+   * on the cluster request so the server hides blocked authors' stories; an
+   * anonymous request sees every place.
+   */
+  readonly token?: string;
 };
 
 /** The pillar filter, plus "all". */
@@ -77,6 +83,7 @@ function coordinateForCluster(cluster: PlaceCluster): PlaceCoordinate | undefine
  */
 export default function DiscoveryMapScreen({
   onOpenPlace,
+  token,
 }: DiscoveryMapScreenProps): React.ReactElement {
   const [clusters, setClusters] = useState<readonly PlaceCluster[]>([]);
   const [filter, setFilter] = useState<PillarFilter>('all');
@@ -88,14 +95,17 @@ export default function DiscoveryMapScreen({
     setError(undefined);
 
     try {
-      const result = await discoveryApi.listClusters(filter === 'all' ? {} : { pillar: filter });
+      const result = await discoveryApi.listClusters(
+        filter === 'all' ? {} : { pillar: filter },
+        token,
+      );
       setClusters(result.clusters);
     } catch (caught) {
       setError(describeError(caught));
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [filter, token]);
 
   useEffect(() => {
     void load();
