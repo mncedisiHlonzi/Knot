@@ -26,17 +26,13 @@
 	<true/>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-	  <!-- Do not change NSAllowsArbitraryLoads to true, or you will risk app rejection! -->
 		<key>NSAllowsArbitraryLoads</key>
 		<false/>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string></string>
-	<!-- react-native-image-picker (KNOT-ADR-031): the camera, photo library, and
-	     microphone are used to capture or choose story media and a profile
-	     picture. iOS refuses to show the picker without these strings. -->
+	<string/>
 	<key>NSCameraUsageDescription</key>
 	<string>Knot uses the camera so you can capture a photo or video for a story or your profile picture.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
@@ -57,5 +53,18 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<false/>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Inter-Medium.ttf</string>
+		<string>PlusJakartaSans-Medium.ttf</string>
+		<string>PlusJakartaSans-SemiBold.ttf</string>
+		<string>Inter-Bold.ttf</string>
+		<string>PlusJakartaSans-Regular.ttf</string>
+		<string>Inter-Regular.ttf</string>
+		<string>Inter-ExtraBold.ttf</string>
+		<string>PlusJakartaSans-Bold.ttf</string>
+		<string>PlusJakartaSans-ExtraBold.ttf</string>
+		<string>Inter-SemiBold.ttf</string>
+	</array>
 </dict>
 </plist>
