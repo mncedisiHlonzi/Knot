@@ -14,6 +14,7 @@ export default tseslint.config(
       'babel.config.js',
       'jest.config.js',
       'metro.config.js',
+      'react-native.config.js',
     ],
   },
   js.configs.recommended,
