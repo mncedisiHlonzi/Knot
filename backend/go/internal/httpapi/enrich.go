@@ -8,6 +8,7 @@ import (
 	"github.com/knot/backend/internal/reactions"
 	"github.com/knot/backend/internal/rooted"
 	"github.com/knot/backend/internal/storymedia"
+	"github.com/knot/backend/internal/storystats"
 )
 
 // StoryMediaLookup is the story-media enrichment dependency: the full list for
@@ -364,4 +365,44 @@ func orEmptyStrings(values []string) []string {
 		return []string{}
 	}
 	return values
+}
+
+// StoryStatsLookup is the aggregate-counts enrichment dependency: one batched
+// read of the version, language, comment, and media counts for a set of stories.
+//
+// It is deliberately narrower than the whole storystats store. A content handler
+// only decorates a story response with its counts, so it depends on the single
+// batched read that does that (KNOT-020c-fix).
+type StoryStatsLookup interface {
+	CountsForStories(ctx context.Context, storyIDs []string) (map[string]storystats.Counts, error)
+}
+
+// storyStats loads the aggregate counts for a page of stories in one batched
+// call, keyed by story id.
+//
+// It is the sibling of authorAttributions and loadReactions: one read per
+// response, never one per row, so enriching a feed page does not fan out into a
+// query per story.
+//
+// Enrichment is supplementary, so a failure is logged and swallowed rather than
+// failing the whole response: a story must stay readable when its counts cannot
+// be read, and the caller simply shows zeros. A story with no counts in any table
+// has no entry, which the caller reads as the zero Counts.
+func storyStats(ctx context.Context, lookup StoryStatsLookup, logger *slog.Logger, storyIDs []string) map[string]storystats.Counts {
+	if len(storyIDs) == 0 {
+		return nil
+	}
+
+	counts, err := lookup.CountsForStories(ctx, storyIDs)
+	if err != nil {
+		logger.WarnContext(
+			ctx,
+			"story stats enrichment failed",
+			slog.String("request_id", RequestIDFromContext(ctx)),
+			slog.String("error", err.Error()),
+		)
+		return nil
+	}
+
+	return counts
 }

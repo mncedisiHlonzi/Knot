@@ -5,7 +5,6 @@ import {
   FlatList,
   Pressable,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -19,7 +18,6 @@ import EmptyState from '../../components/EmptyState';
 import FeedEntry from '../../components/FeedEntry';
 import Header from '../../components/Header';
 import Logomark from '../../components/Logomark';
-import { API_BASE_URL } from '../../config/api';
 import { colors, layout, radius, spacing, tabularNums, typeScale } from '../../theme';
 
 /** The logomark's size in the feed header. */
@@ -45,30 +43,18 @@ type FeedScreenProps = {
 };
 
 /**
- * Resolves a story's feed media preview to a full URL, or null.
- *
- * The feed carries at most one preview item; its `url` is a relative path, so it
- * is joined to the API base. A missing or blank preview resolves to null and the
- * entry draws no image.
- */
-function mediaPreviewUrl(story: Story): string | null {
-  const first = story.media !== undefined ? story.media[0] : undefined;
-  if (first === undefined) {
-    return null;
-  }
-  const path = typeof first.url === 'string' ? first.url.trim() : '';
-  return path === '' ? null : `${API_BASE_URL}${path}`;
-}
-
-/**
  * The public story feed, newest first, as a continuous hairline-separated column.
  *
+ * The layout pins everything but the list: the header and the four text tabs are
+ * fixed siblings ABOVE the FlatList, so only the feed entries scroll beneath them
+ * (the scroll offset still drives the header's scroll-linked elevation). The tab
+ * row is a plain flex row of four equal-width tabs rather than a horizontal
+ * scroller, so the labels are centred, never clipped, and never slide sideways.
+ * The tabs are a local selection only — the feed endpoint has no pillar filter
+ * yet, so they do not change the query (KNOT-020c disclosure).
+ *
  * Paging is keyset-based: each page returns an opaque `next_cursor` that is sent
- * back verbatim to fetch the following page; an empty cursor ends the list. The
- * header and the text tabs sit above the scrolling list; the header fades in the
- * canvas fill and lifts as the list scrolls beneath it. The four text tabs are a
- * local selection only — the feed endpoint has no pillar filter yet, so they do
- * not change the query (KNOT-020c disclosure).
+ * back verbatim to fetch the following page; an empty cursor ends the list.
  */
 export default function FeedScreen({
   token,
@@ -182,64 +168,64 @@ export default function FeedScreen({
 
   return (
     <View style={styles.container}>
-      <Header
-        scrollY={scrollY}
-        left={<Logomark size={LOGOMARK_SIZE} />}
-        right={
-          <View style={styles.headerActions}>
-            <Pressable
-              style={styles.iconButton}
-              onPress={onOpenSearch}
-              accessibilityRole="button"
-              accessibilityLabel="Search stories, versions, and questions"
-            >
-              <MagnifyingGlass color={colors.text.tertiary} size={ICON_SIZE} />
-            </Pressable>
-            <Pressable
-              style={styles.iconButton}
-              onPress={handleOpenNotifications}
-              accessibilityRole="button"
-              accessibilityLabel={bellLabel}
-            >
-              <Bell color={colors.text.tertiary} size={ICON_SIZE} />
-              {unreadCount > 0 ? (
-                <View style={styles.badge}>
-                  <Text style={[typeScale.caption, tabularNums, styles.badgeText]}>
-                    {unreadCount > 99 ? '99+' : String(unreadCount)}
-                  </Text>
-                </View>
-              ) : null}
-            </Pressable>
-          </View>
-        }
-      />
-
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.tabs}
-        contentContainerStyle={styles.tabsContent}
-      >
-        {FEED_TABS.map((label) => {
-          const active = label === activeTab;
-          return (
-            <Pressable
-              key={label}
-              style={[styles.tab, active ? styles.tabActive : null]}
-              onPress={() => setActiveTab(label)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-              accessibilityLabel={label}
-            >
-              <Text
-                style={[typeScale.button, styles.tabLabel, active ? styles.tabLabelActive : null]}
+      {/* The fixed top region: the header and the tab row never scroll. Only the
+          FlatList below them does. */}
+      <View style={styles.topBar}>
+        <Header
+          scrollY={scrollY}
+          left={<Logomark size={LOGOMARK_SIZE} />}
+          right={
+            <View style={styles.headerActions}>
+              <Pressable
+                style={styles.iconButton}
+                onPress={onOpenSearch}
+                accessibilityRole="button"
+                accessibilityLabel="Search stories, versions, and questions"
               >
-                {label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+                <MagnifyingGlass color={colors.text.tertiary} size={ICON_SIZE} />
+              </Pressable>
+              <Pressable
+                style={styles.iconButton}
+                onPress={handleOpenNotifications}
+                accessibilityRole="button"
+                accessibilityLabel={bellLabel}
+              >
+                <Bell color={colors.text.tertiary} size={ICON_SIZE} />
+                {unreadCount > 0 ? (
+                  <View style={styles.badge}>
+                    <Text style={[typeScale.caption, tabularNums, styles.badgeText]}>
+                      {unreadCount > 99 ? '99+' : String(unreadCount)}
+                    </Text>
+                  </View>
+                ) : null}
+              </Pressable>
+            </View>
+          }
+        />
+
+        <View style={styles.tabs}>
+          {FEED_TABS.map((label) => {
+            const active = label === activeTab;
+            return (
+              <Pressable
+                key={label}
+                style={[styles.tab, active ? styles.tabActive : null]}
+                onPress={() => setActiveTab(label)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                accessibilityLabel={label}
+              >
+                <Text
+                  style={[typeScale.button, styles.tabLabel, active ? styles.tabLabelActive : null]}
+                  numberOfLines={1}
+                >
+                  {label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
 
       <FlatList
         data={stories}
@@ -266,15 +252,20 @@ export default function FeedScreen({
               author_avatar_url: item.author_avatar_url,
               author_display_name: item.author_display_name,
               author_rooted: item.author_rooted ?? null,
+              comment_count: item.comment_count,
               created_at: item.created_at,
+              first_media_type: item.first_media_type ?? null,
+              first_media_url: item.first_media_url ?? null,
               id: item.id,
               language: item.language,
-              media_preview_url: mediaPreviewUrl(item),
+              language_count: item.language_count,
+              media_count: item.media_count,
               pillar: item.pillar,
               place: item.approximate_location,
               preview: item.body,
               reactions: item.reactions,
               title: item.title,
+              version_count: item.version_count,
             }}
             onPress={() => onOpenStory(item.id)}
             onOpenAuthor={() => onOpenUserProfile(item.author_id)}
@@ -349,28 +340,33 @@ const styles = StyleSheet.create({
   spinner: {
     marginTop: spacing.xl,
   },
+  // One tab, one quarter of the row: the label is centred and single-lined, so it
+  // cannot clip. The 2px underline sits below the label, over the row's hairline.
   tab: {
-    borderBottomColor: 'transparent',
-    borderBottomWidth: 2,
+    alignItems: 'center',
+    borderBottomColor: colors.border.hairline,
+    borderBottomWidth: 1,
+    flex: 1,
     paddingBottom: spacing.sm,
     paddingTop: spacing.md,
   },
   tabActive: {
     borderBottomColor: colors.brand.primary,
+    borderBottomWidth: 2,
   },
   tabLabel: {
     color: colors.text.tertiary,
+    textAlign: 'center',
   },
   tabLabelActive: {
     color: colors.text.primary,
   },
   tabs: {
-    borderBottomColor: colors.border.hairline,
-    borderBottomWidth: 1,
-    flexGrow: 0,
+    flexDirection: 'row',
+    paddingHorizontal: spacing.lg,
   },
-  tabsContent: {
-    gap: spacing.xl,
-    paddingHorizontal: layout.screenPaddingFeed,
+  topBar: {
+    backgroundColor: colors.bg.canvas,
+    zIndex: 1,
   },
 });

@@ -15,42 +15,73 @@ export function totalReactions(counts: ReactionCounts): number {
   );
 }
 
-/** The pieces a feed entry's meta row needs, already reduced to what is shown. */
-export type FeedMeta = {
-  /** The version segment, or an empty string when there are none. */
-  readonly versions: string;
-  /** The reactions-and-comments suffix, joined with " · " (empty when neither). */
-  readonly suffix: string;
+/** The kinds of segment a feed entry's meta row can show, in order. */
+export type FeedMetaSegmentKey = 'versions' | 'languages' | 'reactions' | 'comments';
+
+/** One piece of the meta row: its label and whether it leads with a glyph. */
+export type FeedMetaSegment = {
+  readonly key: FeedMetaSegmentKey;
+  /** The text to render, e.g. "4 versions", "3 languages", "128", "14 comments". */
+  readonly label: string;
+  /**
+   * The spoken form, which spells the number out in words where the visible label
+   * is a bare total (the reaction segment reads as "128 reactions" to a screen
+   * reader, not "128").
+   */
+  readonly accessibilityLabel: string;
+  /**
+   * True for the reaction segment, which draws the rings-true glyph before the
+   * bare total rather than a worded label.
+   */
+  readonly withGlyph: boolean;
 };
 
 /**
- * Builds the two meta-row segments a feed entry shows: the version count, and the
- * reactions/comment suffix.
+ * Builds the meta row's segments from a story's counts, in the order they appear:
+ * versions, languages, reactions, comments.
  *
  * A zero count is omitted rather than shown as "0 versions", so an entry with no
- * reactions yet reads as a quiet row rather than a tally of nothing. The suffix is
- * a single string so it can be rendered as one text node beside the (tappable)
- * version count.
+ * activity reads as a quiet row rather than a tally of nothing. An empty result
+ * means there is nothing to show and the caller renders no meta row at all (the
+ * relative time is already carried by the author line). The reaction segment is a
+ * bare total paired with the rings-true glyph; the rest are pluralised labels via
+ * {@link countLabel}.
  */
-export function feedMeta(input: {
+export function feedMetaSegments(input: {
   readonly versionCount?: number;
+  readonly languageCount?: number;
   readonly reactions?: ReactionCounts;
   readonly commentCount?: number;
-}): FeedMeta {
+}): readonly FeedMetaSegment[] {
+  const segments: FeedMetaSegment[] = [];
+
   const versions = input.versionCount ?? 0;
+  if (versions > 0) {
+    const label = countLabel(versions, 'version', 'versions');
+    segments.push({ accessibilityLabel: label, key: 'versions', label, withGlyph: false });
+  }
+
+  const languages = input.languageCount ?? 0;
+  if (languages > 0) {
+    const label = countLabel(languages, 'language', 'languages');
+    segments.push({ accessibilityLabel: label, key: 'languages', label, withGlyph: false });
+  }
+
   const reactions = input.reactions === undefined ? 0 : totalReactions(input.reactions);
-  const comments = input.commentCount ?? 0;
-
-  const suffix: string[] = [];
   if (reactions > 0) {
-    suffix.push(countLabel(reactions, 'reaction', 'reactions'));
-  }
-  if (comments > 0) {
-    suffix.push(countLabel(comments, 'comment', 'comments'));
+    segments.push({
+      accessibilityLabel: countLabel(reactions, 'reaction', 'reactions'),
+      key: 'reactions',
+      label: String(reactions),
+      withGlyph: true,
+    });
   }
 
-  return {
-    versions: versions > 0 ? countLabel(versions, 'version', 'versions') : '',
-    suffix: suffix.join(' · '),
-  };
+  const comments = input.commentCount ?? 0;
+  if (comments > 0) {
+    const label = countLabel(comments, 'comment', 'comments');
+    segments.push({ accessibilityLabel: label, key: 'comments', label, withGlyph: false });
+  }
+
+  return segments;
 }

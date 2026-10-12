@@ -36,16 +36,18 @@ type StoriesHandler struct {
 	rooted    RootedLookup
 	media     StoryMediaLookup
 	reactions ReactionsLookup
+	stats     StoryStatsLookup
 	logger    *slog.Logger
 }
 
 // NewStoriesHandler returns a handler backed by service. The author lookup names and
 // pictures each story's author (one batched read per response), the rooted lookup
 // attaches that author's inline Rooted summary, the media lookup attaches the
-// story's media (in full on the detail, as a single preview on the feed), and the
+// story's media (in full on the detail, as a single preview on the feed), the
 // reactions lookup attaches the perspective-reaction counts and the reader's own
-// signals.
-func NewStoriesHandler(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, logger *slog.Logger) (*StoriesHandler, error) {
+// signals, and the stats lookup attaches the story's aggregate counts (versions,
+// languages, comments, media) in one batched read per response.
+func NewStoriesHandler(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, stats StoryStatsLookup, logger *slog.Logger) (*StoriesHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a service")
 	}
@@ -61,10 +63,13 @@ func NewStoriesHandler(service StoriesService, authors AuthorLookup, rooted Root
 	if reactions == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a reactions lookup")
 	}
+	if stats == nil {
+		return nil, fmt.Errorf("httpapi: stories handler requires a story stats lookup")
+	}
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a logger")
 	}
-	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, logger: logger}, nil
+	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, stats: stats, logger: logger}, nil
 }
 
 // createStoryRequest is the POST /stories body.
@@ -131,6 +136,21 @@ type storyResponse struct {
 	// out or when they hold none), so the client can highlight them.
 	Reactions   reactionCountsResponse `json:"reactions"`
 	MyReactions []string               `json:"my_reactions"`
+	// VersionCount, LanguageCount, CommentCount, and MediaCount are the story's
+	// aggregate counts, attached in one batched read (KNOT-020c-fix). Zero is a
+	// real answer (no comments yet), so they are ints rather than pointers and are
+	// always present, letting a feed entry render its meta row without a second
+	// request.
+	VersionCount  int `json:"version_count"`
+	LanguageCount int `json:"language_count"`
+	CommentCount  int `json:"comment_count"`
+	MediaCount    int `json:"media_count"`
+	// FirstMediaType and FirstMediaURL describe the story's first media item (in
+	// display order), or are null when it has none, so the feed can render an
+	// image, a video placeholder, or nothing without walking the media array
+	// (KNOT-020c-fix).
+	FirstMediaType *string `json:"first_media_type"`
+	FirstMediaURL  *string `json:"first_media_url"`
 }
 
 // storyEnvelope wraps a single story, so the response shape can gain sibling
@@ -201,6 +221,7 @@ func (h *StoriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{story.AuthorID})[story.AuthorID]
 	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, story.AuthorID)
 	response.Media = storyMediaForDetail(r.Context(), h.media, h.logger, story.ID)
+	attachStoryCounts(&response, h.stats, r, h.logger, story.ID)
 
 	userID, _ := UserIDFromContext(r.Context())
 	response.Reactions, response.MyReactions = reactionsForEntity(r.Context(), h.reactions, h.logger, reactions.EntityStory, userID, story.ID)
@@ -246,6 +267,19 @@ func (h *StoriesHandler) List(w http.ResponseWriter, r *http.Request) {
 		if preview, ok := previews[items[i].ID]; ok {
 			items[i].Media = preview
 		}
+	}
+
+	// One batched read attaches the version, language, comment, and media counts
+	// to the whole page, and the first media item's type and URL come from the
+	// preview just attached (KNOT-020c-fix).
+	counts := storyStats(r.Context(), h.stats, h.logger, ids)
+	for i := range items {
+		entry := counts[items[i].ID]
+		items[i].VersionCount = entry.Versions
+		items[i].LanguageCount = entry.Languages
+		items[i].CommentCount = entry.Comments
+		items[i].MediaCount = entry.Media
+		items[i].FirstMediaType, items[i].FirstMediaURL = firstMediaFields(items[i].Media)
 	}
 
 	// One batched pair of reads decorates the whole page with reaction counts and
@@ -336,4 +370,32 @@ func newStoryResponse(story stories.Story) storyResponse {
 		Media:       []storyMediaResponse{},
 		MyReactions: []string{},
 	}
+}
+
+// attachStoryCounts attaches a single story's aggregate counts and its first
+// media item's type and URL, in one batched read (KNOT-020c-fix).
+//
+// It is the single-entity counterpart of the batched loop in List. The first
+// media fields are read from the response's own media, so the detail and the feed
+// agree on which item is first, and are null when the story has no media.
+func attachStoryCounts(response *storyResponse, lookup StoryStatsLookup, r *http.Request, logger *slog.Logger, storyID string) {
+	counts := storyStats(r.Context(), lookup, logger, []string{storyID})[storyID]
+	response.VersionCount = counts.Versions
+	response.LanguageCount = counts.Languages
+	response.CommentCount = counts.Comments
+	response.MediaCount = counts.Media
+	response.FirstMediaType, response.FirstMediaURL = firstMediaFields(response.Media)
+}
+
+// firstMediaFields returns the type and relative URL of the first media item, or
+// (nil, nil) when there is none, so the wire fields are nullable rather than empty
+// strings.
+func firstMediaFields(media []storyMediaResponse) (*string, *string) {
+	if len(media) == 0 {
+		return nil, nil
+	}
+
+	kind := media[0].MediaType
+	url := media[0].URL
+	return &kind, &url
 }

@@ -318,7 +318,13 @@ and the pillar it belongs to.
   ],
   "sensitive": false,
   "created_at": "2026-10-07T18:26:37.134182+02:00",
-  "updated_at": "2026-10-07T18:26:37.134182+02:00"
+  "updated_at": "2026-10-07T18:26:37.134182+02:00",
+  "version_count": 4,
+  "language_count": 3,
+  "comment_count": 14,
+  "media_count": 5,
+  "first_media_type": "image",
+  "first_media_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content"
 }
 ```
 
@@ -336,6 +342,19 @@ is not in the client's fallback lookup table.
 is a **single-item preview** — the first item only, or an empty array — so a card can show
 one thumbnail without downloading every item's metadata. It is always an array, never
 `null`.
+
+`version_count`, `language_count`, `comment_count`, and `media_count` are the story's
+aggregate counts, attached to both the feed and the detail by one batched read per count
+type (never a query per story). `version_count` is every version in the story's tree,
+including the root; `language_count` is the distinct languages across those versions;
+`comment_count` is every comment on any version, replies included; `media_count` is the
+number of attached media items. Zero is a real answer, so the fields are always present as
+integers (KNOT-020c-fix).
+
+`first_media_type` is `"image"` or `"video"`, and `first_media_url` is the path on this
+API that serves the first media item's bytes — or both are `null` when the story has no
+media. They let the feed draw a preview (an image, or a placeholder for a video, since no
+poster frame is stored yet) without reading the `media` array (KNOT-020c-fix).
 
 `GET /stories/{id}` also carries `author_rooted`, the author's inline Rooted summary, or
 `null`. See [`author_rooted` on content responses](#author_rooted-on-content-responses).

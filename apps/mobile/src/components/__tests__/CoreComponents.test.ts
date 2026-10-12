@@ -6,7 +6,7 @@ import FeedEntry from '../FeedEntry';
 import PillarTag from '../PillarTag';
 import RootedBadge from '../RootedBadge';
 import TabBar from '../TabBar';
-import { countLabel, feedMeta, totalReactions } from '../feedEntryMeta';
+import { countLabel, feedMetaSegments, totalReactions } from '../feedEntryMeta';
 
 /**
  * These are the hookless components of the KNOT-020b library. The project has no
@@ -34,8 +34,10 @@ jest.mock('react-native', () => ({
 // SVGs now, mapped to a stub by jest.config.js (KNOT-020b-fix).
 jest.mock('phosphor-react-native', () => ({
   House: () => null,
+  Images: () => null,
   MagnifyingGlass: () => null,
   MapTrifold: () => null,
+  PlayCircle: () => null,
   Plus: () => null,
   User: () => null,
   X: () => null,
@@ -205,23 +207,39 @@ describe('FeedEntry', () => {
   it('renders a full entry without invoking the press handlers', () => {
     const onPress = jest.fn();
     const onOpenAuthor = jest.fn();
-    const onOpenTree = jest.fn();
 
-    const element = FeedEntry({ story, onPress, onOpenAuthor, onOpenTree });
+    const element = FeedEntry({ story, onPress, onOpenAuthor });
 
     expect(element).toBeTruthy();
     expect(onPress).not.toHaveBeenCalled();
     expect(onOpenAuthor).not.toHaveBeenCalled();
-    expect(onOpenTree).not.toHaveBeenCalled();
   });
 
-  it('renders with a media preview and with no author fields', () => {
+  it('renders an image preview, and a video placeholder with a count badge', () => {
     expect(
       FeedEntry({
-        story: { ...story, media_preview_url: 'https://x/y.jpg' },
+        story: {
+          ...story,
+          first_media_type: 'image',
+          first_media_url: '/stories/x/media/y/content',
+        },
         onPress: () => undefined,
       }),
     ).toBeTruthy();
+    expect(
+      FeedEntry({
+        story: {
+          ...story,
+          first_media_type: 'video',
+          first_media_url: '/stories/x/media/y/content',
+          media_count: 5,
+        },
+        onPress: () => undefined,
+      }),
+    ).toBeTruthy();
+  });
+
+  it('renders with no author fields, no media, and every count zero', () => {
     expect(
       FeedEntry({
         story: {
@@ -231,6 +249,8 @@ describe('FeedEntry', () => {
           author_rooted: null,
           reactions: undefined,
           comment_count: 0,
+          language_count: 0,
+          media_count: 0,
           version_count: 0,
         },
         onPress: () => undefined,
@@ -239,10 +259,12 @@ describe('FeedEntry', () => {
   });
 });
 
-describe('feedMeta helpers', () => {
+describe('feedMetaSegments helper', () => {
   it('pluralises a count', () => {
     expect(countLabel(1, 'version', 'versions')).toBe('1 version');
     expect(countLabel(4, 'version', 'versions')).toBe('4 versions');
+    expect(countLabel(1, 'language', 'languages')).toBe('1 language');
+    expect(countLabel(2, 'comment', 'comments')).toBe('2 comments');
   });
 
   it('sums the four signals', () => {
@@ -256,19 +278,43 @@ describe('feedMeta helpers', () => {
     ).toBe(14);
   });
 
-  it('omits zero counts rather than showing them', () => {
-    expect(feedMeta({ versionCount: 0, commentCount: 0 })).toEqual({ versions: '', suffix: '' });
-    expect(
-      feedMeta({
-        versionCount: 2,
-        commentCount: 3,
-        reactions: {
-          rings_true: 1,
-          know_it_differently: 0,
-          adds_something_new: 0,
-          needs_a_source: 0,
-        },
-      }),
-    ).toEqual({ versions: '2 versions', suffix: '1 reaction · 3 comments' });
+  it('orders the segments versions, languages, reactions, comments', () => {
+    const segments = feedMetaSegments({
+      versionCount: 4,
+      languageCount: 3,
+      commentCount: 14,
+      reactions: {
+        rings_true: 128,
+        know_it_differently: 19,
+        adds_something_new: 7,
+        needs_a_source: 2,
+      },
+    });
+
+    expect(segments.map((segment) => segment.key)).toEqual([
+      'versions',
+      'languages',
+      'reactions',
+      'comments',
+    ]);
+    expect(segments.map((segment) => segment.label)).toEqual([
+      '4 versions',
+      '3 languages',
+      '156',
+      '14 comments',
+    ]);
+    // Only the reaction segment leads with a glyph, and it spells its number out
+    // for a screen reader rather than reading a bare "156".
+    expect(segments.filter((segment) => segment.withGlyph).map((segment) => segment.key)).toEqual([
+      'reactions',
+    ]);
+    expect(segments[2].accessibilityLabel).toBe('156 reactions');
+  });
+
+  it('omits zero counts and shows no row at all when everything is zero', () => {
+    expect(feedMetaSegments({ versionCount: 0, languageCount: 0, commentCount: 0 })).toEqual([]);
+    expect(feedMetaSegments({ versionCount: 1 })).toEqual([
+      { accessibilityLabel: '1 version', key: 'versions', label: '1 version', withGlyph: false },
+    ]);
   });
 });

@@ -92,6 +92,18 @@ export const colors = {
     /** @deprecated not in the new palette; retained legacy value. */
     warning: '#D97706',
   },
+  scrim: {
+    /**
+     * The translucent navy drawn behind a small white-on-media chip (a media
+     * count, a "Video" tag). It is a scrim, not a surface: it is only ever
+     * painted over an image or a video placeholder, never on the canvas
+     * (KNOT-020c-fix).
+     *
+     * It lives here rather than as a literal on a screen so the value stays the
+     * one place an overlay colour is defined.
+     */
+    overlay: 'rgba(15, 23, 42, 0.6)',
+  },
 
   // --- Deprecated top-level aliases (KNOT-020a) ------------------------------
 

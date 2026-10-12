@@ -99,6 +99,23 @@ export type Story = {
    * present on responses from the current server, never null.
    */
   readonly media?: readonly StoryMedia[];
+  /**
+   * The story's aggregate counts, attached to both the feed and the detail by the
+   * server's batched enrichment (KNOT-020c-fix). They are optional because the
+   * API types describe the wire format optimistically: a response from an older
+   * server omits them, and the client treats a missing count as zero.
+   */
+  readonly version_count?: number;
+  readonly language_count?: number;
+  readonly comment_count?: number;
+  readonly media_count?: number;
+  /**
+   * The first media item's kind and its relative path on the API, or null when
+   * the story has no media. The feed uses them so a video preview can be drawn as
+   * a placeholder (no poster frame is stored yet) and an image rendered directly.
+   */
+  readonly first_media_type?: 'image' | 'video' | null;
+  readonly first_media_url?: string | null;
 };
 
 /** The request body for POST /stories. */

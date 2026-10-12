@@ -43,6 +43,7 @@ import (
 	"github.com/knot/backend/internal/storage"
 	"github.com/knot/backend/internal/stories"
 	"github.com/knot/backend/internal/storymedia"
+	"github.com/knot/backend/internal/storystats"
 	"github.com/knot/backend/internal/versions"
 	"github.com/knot/backend/migrations"
 )
@@ -219,10 +220,19 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
+	// Story stats: the aggregate counts a story carries (versions, languages,
+	// comments, media). They span the version, conversation, and media domains, so
+	// they are a read model of their own rather than a query in any one store
+	// (KNOT-020c-fix).
+	storyStatsStore, err := storystats.NewPostgresStore(pool)
+	if err != nil {
+		return err
+	}
+
 	// The identity service doubles as the batched author lookup every content
 	// handler enriches with, so a response names and pictures its authors without
 	// a query per row (KNOT-ADR-041).
-	storiesHandler, err := httpapi.NewStoriesHandler(storiesService, service, rootedService, storyMediaService, reactionsService, logger)
+	storiesHandler, err := httpapi.NewStoriesHandler(storiesService, service, rootedService, storyMediaService, reactionsService, storyStatsStore, logger)
 	if err != nil {
 		return err
 	}

@@ -173,8 +173,17 @@ func newRouter(t *testing.T, logger *slog.Logger, service StoriesService) http.H
 }
 
 // newRouterWithMediaLookup is newRouter with an explicit media lookup, so the
-// media array attached to story responses can be asserted.
+// media array attached to story responses can be asserted. Its stats lookup is
+// inert.
 func newRouterWithMediaLookup(t *testing.T, logger *slog.Logger, service StoriesService, lookup StoryMediaLookup) http.Handler {
+	t.Helper()
+	return newRouterWithLookups(t, logger, service, lookup, &fakeStoryStatsLookup{})
+}
+
+// newRouterWithLookups is newRouterWithMediaLookup with explicit media and stats
+// lookups, so a test can assert both the media array and the aggregate counts a
+// story response carries.
+func newRouterWithLookups(t *testing.T, logger *slog.Logger, service StoriesService, lookup StoryMediaLookup, stats StoryStatsLookup) http.Handler {
 	t.Helper()
 
 	authHandler, err := NewAuthHandler(&fakeAuthService{}, logger)
@@ -182,7 +191,7 @@ func newRouterWithMediaLookup(t *testing.T, logger *slog.Logger, service Stories
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandler(service, &fakeAuthorService{}, &fakeRootedService{}, lookup, &fakeReactionsLookup{}, logger)
+	storiesHandler, err := NewStoriesHandler(service, &fakeAuthorService{}, &fakeRootedService{}, lookup, &fakeReactionsLookup{}, stats, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
@@ -720,23 +729,26 @@ func TestListStoriesUnexpectedFailureIsInternalError(t *testing.T) {
 func TestNewStoriesHandlerRejectsMissingDependencies(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	if _, err := NewStoriesHandler(nil, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, logger); err == nil {
-		t.Error("NewStoriesHandler(nil, authors, rooted, media, reactions, logger) error = nil, want an error")
+	if _, err := NewStoriesHandler(nil, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, logger); err == nil {
+		t.Error("NewStoriesHandler(nil, authors, rooted, media, reactions, stats, logger) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, nil, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, logger); err == nil {
-		t.Error("NewStoriesHandler(service, nil authors, rooted, media, reactions, logger) error = nil, want an error")
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, nil, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, logger); err == nil {
+		t.Error("NewStoriesHandler(service, nil authors, rooted, media, reactions, stats, logger) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, nil); err == nil {
-		t.Error("NewStoriesHandler(service, authors, rooted, media, reactions, nil) error = nil, want an error")
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, nil, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, logger); err == nil {
+		t.Error("NewStoriesHandler(service, authors, nil rooted, media, reactions, stats, logger) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, nil, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, logger); err == nil {
-		t.Error("NewStoriesHandler(service, authors, nil rooted, media, reactions, logger) error = nil, want an error")
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, nil, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, logger); err == nil {
+		t.Error("NewStoriesHandler(service, authors, rooted, nil media, reactions, stats, logger) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, nil, &fakeReactionsLookup{}, logger); err == nil {
-		t.Error("NewStoriesHandler(service, authors, rooted, nil media, reactions, logger) error = nil, want an error")
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, nil, &fakeStoryStatsLookup{}, logger); err == nil {
+		t.Error("NewStoriesHandler(service, authors, rooted, media, nil reactions, stats, logger) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, nil, logger); err == nil {
-		t.Error("NewStoriesHandler(service, authors, rooted, media, nil reactions, logger) error = nil, want an error")
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, nil, logger); err == nil {
+		t.Error("NewStoriesHandler(service, authors, rooted, media, reactions, nil stats, logger) error = nil, want an error")
+	}
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, nil); err == nil {
+		t.Error("NewStoriesHandler(service, authors, rooted, media, reactions, stats, nil logger) error = nil, want an error")
 	}
 }
 

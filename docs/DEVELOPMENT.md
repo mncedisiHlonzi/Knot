@@ -987,6 +987,15 @@ author has no avatar — and a failed lookup is logged and swallowed, leaving an
 and a `null` avatar rather than failing the response (KNOT-ADR-041). The notifications
 handler consumes the same contract: its `NotificationActors` is an alias of `AuthorLookup`.
 
+**Story counts** extend the same pattern. A feed entry needs four aggregates that span three
+tables — `story_versions`, `comments`, and `story_media` — so they are a narrow read model of
+their own, `internal/storystats`, exposed to the handler as the one-method `StoryStatsLookup`
+interface and attached by `storyStats` in `internal/httpapi/enrich.go`. Its store runs **one
+grouped query per count type** for the whole page (never a query per story), a failure is
+logged and swallowed so a story stays readable, and a story absent from the result reads as
+the zero `Counts`. The `first_media_type`/`first_media_url` fields are derived from the media
+preview the handler has already attached, so they cost no extra query (KNOT-020c-fix).
+
 ### Notifications
 
 `GET /notifications`, `GET /notifications/unread_count`, `POST /notifications/{id}/read`,
