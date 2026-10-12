@@ -1,7 +1,12 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
+import RootedMark from '../assets/brand/rooted-mark.svg';
 import { colors, radius, spacing, typeScale } from '../theme';
+import SvgImage from './SvgImage';
+
+/** The Rooted mark's drawn size, per the design (KNOT-020b-fix). */
+const ROOTED_MARK_SIZE = 14;
 
 /** Display labels for the duration buckets, keyed by the server's values. */
 const DURATION_LABELS: Readonly<Record<string, string>> = {
@@ -25,7 +30,8 @@ type RootedBadgeProps = {
 
 /**
  * RootedBadge is the inline Rooted summary: a small pill showing where a person
- * is Rooted, plus a short duration label.
+ * is Rooted, plus a short duration label. It leads with the 14-point Rooted mark
+ * (`rooted-mark.svg`, KNOT-020b-fix).
  *
  * It is the one place the Rooted attribution is drawn, on a brand surface fill in
  * the brand ink. It renders nothing when there is no place to show, so a caller
@@ -61,17 +67,20 @@ export default function RootedBadge({
         label === undefined ? `Rooted in ${trimmedPlace}` : `Rooted in ${trimmedPlace}, ${label}`
       }
     >
-      <Text style={[typeScale.caption, styles.text]} numberOfLines={1}>
-        Rooted ·{' '}
-      </Text>
-      <Text style={[typeScale.caption, styles.text, styles.place]} numberOfLines={1}>
-        {trimmedPlace}
-      </Text>
-      {showDuration && label !== undefined ? (
+      <SvgImage source={RootedMark} size={ROOTED_MARK_SIZE} decorative />
+      <View style={styles.textRow}>
         <Text style={[typeScale.caption, styles.text]} numberOfLines={1}>
-          {` · ${label}`}
+          Rooted ·{' '}
         </Text>
-      ) : null}
+        <Text style={[typeScale.caption, styles.text, styles.place]} numberOfLines={1}>
+          {trimmedPlace}
+        </Text>
+        {showDuration && label !== undefined ? (
+          <Text style={[typeScale.caption, styles.text]} numberOfLines={1}>
+            {` · ${label}`}
+          </Text>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -83,6 +92,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brand.surface,
     borderRadius: radius.sm,
     flexDirection: 'row',
+    gap: spacing.xs,
     maxWidth: '100%',
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
@@ -95,5 +105,10 @@ const styles = StyleSheet.create({
   },
   text: {
     color: colors.brand.primary,
+  },
+  textRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexShrink: 1,
   },
 });

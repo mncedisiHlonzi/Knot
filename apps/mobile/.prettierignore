@@ -6,3 +6,7 @@ dist/
 # Generated native projects are not formatted by Prettier.
 ios/
 android/
+
+# Brand assets are hand-authored deliverables — the SVG set plus an HTML gallery
+# (KNOT-020 brand commit) — not application source, so they are not reformatted.
+src/assets/brand/

@@ -410,18 +410,23 @@ comment thread already carries a replies link, Reply, and Bridge and a bar overl
 `reactions` and `my_reactions`, so the existing rows stay readable and auditable; the mobile
 `Comment` type simply no longer declares those fields because nothing renders them.
 
-**Mobile.** `src/api/reactions.ts` wraps the eight routes and owns the emoji and labels;
-`src/components/ReactionBar.tsx` renders the four chips, toggles optimistically, reverts on
-error, and invites a signed-out reader to sign in. It is applied to the story detail (below the
-body) and each version row in the language tree (compact: emoji and count only). It is **not**
-applied to comments (KNOT-ADR-053) or to replies. The inbox renders `reaction.created` as
-"{actor} ✅ Rings true on your comment." and opens the target — a story, version, comment, or
-bridge — through the existing tap-through routing.
+**Mobile.** `src/api/reactions.ts` wraps the eight routes and owns the labels;
+`src/components/ReactionBar.tsx` renders the four perspective signals — Rings true, Know it
+differently, Adds something new, and Needs a source — as equal columns drawn with the brand's
+own Reaction glyphs (`src/assets/brand/reaction-*.svg`, tinted through `currentColor`), toggles
+optimistically, reverts on error, and invites a signed-out reader to sign in. Its `entityType`
+accepts `story`, `version`, and `inquiry`. It is applied to the story detail (below the body) and
+each version row in the language tree (compact: glyph and count only). It is **not** applied to
+comments: the comment thread already carries a replies link, Reply, and Bridge, so a bar
+overloaded it and the comment toggle route answers **400** (KNOT-015g / KNOT-ADR-053). The inbox
+renders `reaction.created` as "{actor} ✅ Rings true on your comment." and opens the target — a
+story, version, comment, or bridge — through the existing tap-through routing.
 
 > **Disclosure.** `BridgeScreen` is a **compose form** for a new bridge; it never renders an
 > existing bridge, so there is no bridge body to place a bar under. Bridge reactions are fully
-> supported by the API and by `ReactionBar` (`entityType="bridge"`), and will be surfaced when a
-> surface that displays a bridge exists.
+> supported by the API (`POST /bridges/{id}/reactions`) and the brand ships a `reaction-bridge`
+> glyph, but the mobile `entityType` union does **not** include `bridge`; it will be widened when
+> a surface that displays an existing bridge exists (KNOT-020c).
 
 ### Native dependencies (Mapbox, AsyncStorage)
 

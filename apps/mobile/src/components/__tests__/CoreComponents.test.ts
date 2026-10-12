@@ -29,15 +29,14 @@ jest.mock('react-native', () => ({
   View: 'View',
 }));
 
+// Only the icons still used by a component under test: TabBar (the tab glyphs)
+// and Chip (its remove affordance). ReactionBar's icons are the committed brand
+// SVGs now, mapped to a stub by jest.config.js (KNOT-020b-fix).
 jest.mock('phosphor-react-native', () => ({
-  CirclesThree: () => null,
   House: () => null,
-  LinkSimple: () => null,
   MagnifyingGlass: () => null,
   MapTrifold: () => null,
   Plus: () => null,
-  PlusCircle: () => null,
-  Target: () => null,
   User: () => null,
   X: () => null,
 }));
@@ -144,6 +143,23 @@ describe('EmptyState', () => {
     const onPress = jest.fn();
     expect(EmptyState({ headline: 'Empty', action: { label: 'Retry', onPress } })).toBeTruthy();
     expect(onPress).not.toHaveBeenCalled();
+  });
+
+  it('draws a named brand illustration instead of the placeholder', () => {
+    const placeholder = EmptyState({ headline: 'Empty' });
+    expect(placeholder.props.children[0].props.children.type).toBe('View');
+
+    const named = EmptyState({ headline: 'Empty', illustrationName: 'no-stories' });
+    expect(named.props.children[0].props.children.type).not.toBe('View');
+  });
+
+  it('lets a caller-supplied illustration node take precedence over the name', () => {
+    const element = EmptyState({
+      headline: 'Empty',
+      illustrationName: 'no-results',
+      illustration: 'CUSTOM',
+    });
+    expect(element.props.children[0].props.children).toBe('CUSTOM');
   });
 });
 

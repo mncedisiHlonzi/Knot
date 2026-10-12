@@ -1,7 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
-import { CirclesThree, LinkSimple, PlusCircle, Target, type Icon } from 'phosphor-react-native';
+import type { SvgProps } from 'react-native-svg';
 
+import AddSomethingNewGlyph from '../assets/brand/reaction-adds-something-new.svg';
+import KnowItDifferentlyGlyph from '../assets/brand/reaction-know-it-differently.svg';
+import NeedsASourceGlyph from '../assets/brand/reaction-needs-a-source.svg';
+import RingsTrueGlyph from '../assets/brand/reaction-rings-true.svg';
 import { describeError } from '../api/client';
 import {
   ReactionCounts,
@@ -10,8 +14,9 @@ import {
   REACTION_TYPES,
   reactionsApi,
 } from '../api/reactions';
-import { colors, radius, spacing, tabularNums, typeScale } from '../theme';
+import { colors, fontWeights, radius, spacing, tabularNums, typeScale } from '../theme';
 import { applyReactionToggle, asReactionTypes, holdsReaction } from './reactionToggle';
+import SvgImage from './SvgImage';
 
 /** The content kinds a reaction can target that the app exposes today. */
 export type ReactionBarEntityType = 'story' | 'version' | 'inquiry';
@@ -37,19 +42,16 @@ type ReactionBarProps = {
 };
 
 /**
- * The Phosphor icon each signal is drawn with. The brand's four custom glyphs ship
- * later, so these are the closest standard approximations (KNOT-020b):
- *
- *   rings_true          Target        — a thing aimed at and hit
- *   know_it_differently  CirclesThree  — overlapping circles, alternative tellings
- *   adds_something_new   PlusCircle    — something added
- *   needs_a_source       LinkSimple    — an unbacked claim wants a link
+ * The brand's own reaction glyph for each signal (KNOT-020b-fix). Each asset is a
+ * 24 x 24 stroke drawn with `currentColor`, so it is tinted through the `color`
+ * prop of `SvgImage`. The fifth glyph, `reaction-bridge.svg`, belongs to the
+ * Bridge screen (KNOT-020c) and is deliberately not used here.
  */
-const REACTION_ICONS: Readonly<Record<ReactionType, Icon>> = {
-  rings_true: Target,
-  know_it_differently: CirclesThree,
-  adds_something_new: PlusCircle,
-  needs_a_source: LinkSimple,
+const REACTION_ICONS: Readonly<Record<ReactionType, React.ComponentType<SvgProps>>> = {
+  rings_true: RingsTrueGlyph,
+  know_it_differently: KnowItDifferentlyGlyph,
+  adds_something_new: AddSomethingNewGlyph,
+  needs_a_source: NeedsASourceGlyph,
 };
 
 /** The icon size drawn in each column. */
@@ -58,10 +60,13 @@ const ICON_SIZE = 22;
 /**
  * The four perspective signals on one piece of content, as a row of equal columns.
  *
- * Each column reads `[icon] [label] [count]` — the count is hidden while it is
+ * Each column reads `[glyph] [label] [count]` — the count is hidden while it is
  * zero, and the label is hidden in the compact variant. A signal the reader holds
- * is highlighted (brand tint fill, brand icon and text). Tapping toggles it: the
- * change is applied optimistically and reverted if the server refuses.
+ * is highlighted on three counts: the column takes the brand tint fill, the glyph
+ * and text take the brand colour, and the label takes the semibold weight — so a
+ * selection is paired with weight rather than signalled by colour alone. Tapping
+ * toggles it: the change is applied optimistically and reverted if the server
+ * refuses.
  *
  * The bar is a perspective, not a like: the four columns never compete, and a
  * reader may hold any combination (KNOT-ADR-050). Signed-out readers are invited
@@ -143,7 +148,7 @@ export default function ReactionBar({
             accessibilityState={{ selected: active }}
             accessibilityLabel={`${REACTION_LABELS[type]}${count > 0 ? `, ${count}` : ''}`}
           >
-            <IconComponent color={tint} size={ICON_SIZE} weight={active ? 'fill' : 'regular'} />
+            <SvgImage source={IconComponent} size={ICON_SIZE} color={tint} decorative />
             {compact ? null : (
               <Text
                 style={[typeScale.caption, styles.label, active ? styles.activeText : null]}
@@ -174,6 +179,7 @@ export default function ReactionBar({
 const styles = StyleSheet.create({
   activeText: {
     color: colors.brand.primary,
+    fontWeight: fontWeights.semibold,
   },
   bar: {
     flexDirection: 'row',
