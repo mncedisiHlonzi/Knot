@@ -17,7 +17,7 @@ Discovery Map, Curious Inquiries, notifications. **Post-MVP** — everything aft
 | Onboarding | Onboarding | Phase 1 | Shipped | KNOT-020c | Three first-run slides (Skip, and Continue → Get started on the last) explaining the loop, ending at the auth screens. Shown once; the flag is persisted in AsyncStorage. |
 | Register | Auth | Phase 1 | Shipped | KNOT-003 | Create an account and receive a session. |
 | Login | Auth | Phase 1 | Shipped | KNOT-003 | Sign in and receive a session. |
-| Feed | Stories | Phase 1 | Shipped | KNOT-004 | Browse the public story feed, newest first, as a continuous hairline-separated column with pull-to-refresh and keyset paging. Redesigned by KNOT-020c. |
+| Feed | Stories | Phase 1 | Shipped | KNOT-004 | Browse the public story feed, newest first, as a continuous hairline-separated column with pull-to-refresh and keyset paging. Each entry carries the author block (name + quiet Rooted line), a plain pillar tag, full-bleed media, and a text meta line; a video auto-plays muted while its entry is on screen, behind a feed-wide mute toggle. Redesigned by KNOT-020c and polished by KNOT-020c-fix, -fix2, and -fix3. |
 | StoryDetail | Stories | Phase 1 | Shipped | KNOT-004 | Read one story in full as an edge-to-edge reading flow (hero, pillar tag, author line, language row, body, signals), with entry points to adapt it, view its tree, and open its conversation. Redesigned by KNOT-020c. Extended by KNOT-005 and KNOT-006. |
 | CreateStory | Stories | Phase 1 | Shipped | KNOT-004 | Publish a story: pillar, language, title, body, coarse place, one media link, and a sensitive flag. |
 | AdaptStory | Tell My People | Phase 1 | Shipped | KNOT-005 | Retell an existing version in another language, prefilled from the version being adapted. |

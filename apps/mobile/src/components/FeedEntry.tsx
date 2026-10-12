@@ -1,12 +1,12 @@
 import React from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Images, PlayCircle } from 'phosphor-react-native';
-import Video from 'react-native-video';
+import { Images } from 'phosphor-react-native';
 
 import { API_BASE_URL } from '../config/api';
 import { colors, layout, radius, spacing, tabularNums, typeScale } from '../theme';
 import AuthorLine from './AuthorLine';
 import { feedMetaLine } from './feedEntryMeta';
+import FeedVideo, { VIDEO_MUTE_BUTTON_SIZE } from './FeedVideo';
 import PillarTag from './PillarTag';
 
 /** The story shape a feed entry renders. */
@@ -44,30 +44,33 @@ type FeedEntryProps = {
   readonly onPress: () => void;
   /** Called when the author's identity is tapped. */
   readonly onOpenAuthor?: () => void;
+  /**
+   * True when this entry is the one the feed judges to be on screen. It is the
+   * single input that plays or pauses the entry's video, so only one video in the
+   * feed is ever playing (KNOT-020c-fix3). Defaults to `false`.
+   */
+  readonly isVisible?: boolean;
+  /** The feed-wide mute state, shared by every video. Defaults to muted. */
+  readonly isMuted?: boolean;
+  /** Called when the entry's mute control is tapped. */
+  readonly onToggleMute?: () => void;
   /** Test identifier. */
   readonly testID?: string;
 };
 
 /**
  * The media preview's aspect ratio (16:9), matching Story Detail's media strip.
- *
- * The design reference's thumbnail is a little wider than this, but 16:9 is the
- * ratio the feed already used and it keeps the entry to a comfortable height
- * (KNOT-020c-fix2).
  */
 const MEDIA_ASPECT_RATIO = 16 / 9;
 
 /** The preview's line limit. */
 const PREVIEW_LINES = 3;
 
-/** The play glyph drawn over a video preview. */
-const PLAY_ICON_SIZE = 48;
-
-/** The circular scrim behind the play glyph. */
-const PLAY_SCRIM_SIZE = 64;
-
 /** The media-count badge's glyph size. */
 const COUNT_ICON_SIZE = 14;
+
+/** A no-op for the mute control when a caller renders an entry without wiring one. */
+const NOOP = (): void => undefined;
 
 /**
  * Resolves a media path returned by the API against the base URL.
@@ -85,27 +88,32 @@ function resolveMediaUrl(path: string | null | undefined): string {
  * One story in the feed, edge-to-edge with hairlines between entries.
  *
  * It is a full-bleed row on the canvas — no card, no border, no shadow — so the
- * feed reads as one continuous column. Its order is the reading order: who told
- * it, which pillar and place, the title, the opening lines, the media, then the
- * meta line. The whole entry is one tap target; the author identity inside it is
- * a nested target that opens the profile (KNOT-ADR-043).
+ * feed reads as one continuous column. Its order is the reading order: the author
+ * block, the pillar tag, the title, the opening lines, the media, then the meta
+ * line. The whole entry is one tap target; the author identity inside it is a
+ * nested target that opens the profile (KNOT-ADR-043).
+ *
+ * The author block is the design reference's three lines: avatar and name with the
+ * relative time, then the quiet Rooted line (no dot, no pill), then the plain
+ * pillar tag (no fill) — which is why the tag is asked for its `plain` variant
+ * (KNOT-020c-fix3).
  *
  * The text column keeps the feed's horizontal inset, but the **media is
- * full-bleed**: no horizontal padding, no corner rounding, so a photo or a video
- * runs edge to edge the way a social feed's media does (KNOT-020c-fix2).
+ * full-bleed**: no horizontal padding and no corner rounding. An image draws
+ * directly; a video is handed to `FeedVideo`, which plays it in place when this
+ * entry is the visible one. The count badge stacks above the video's mute control
+ * so the two never collide.
  *
- * A video preview draws the first frame with `react-native-video`, paused and
- * muted, with a play glyph on a scrim over it. No poster frame is stored, so a
- * grey fill sits behind the video: it shows through while the frame loads or if
- * the video fails, which is the fallback (KNOT-020c-fix2).
- *
- * The meta line is plain text — "4 versions · 3 languages · 128 reactions ·
- * 14 comments" — with no glyphs, each segment omitted when its count is zero.
+ * This component stays **hookless** on purpose — the tests call it as a plain
+ * function — so all playback logic lives in `FeedVideo`.
  */
 export default function FeedEntry({
   story,
   onPress,
   onOpenAuthor,
+  isVisible = false,
+  isMuted = true,
+  onToggleMute = NOOP,
   testID,
 }: FeedEntryProps): React.ReactElement {
   const mediaUrl = resolveMediaUrl(story.first_media_url);
@@ -139,7 +147,7 @@ export default function FeedEntry({
         />
 
         <View style={styles.tagRow}>
-          <PillarTag pillar={story.pillar} place={story.place} />
+          <PillarTag pillar={story.pillar} place={story.place} variant="plain" />
         </View>
 
         <Text style={[typeScale.title, styles.title]}>{story.title}</Text>
@@ -151,27 +159,12 @@ export default function FeedEntry({
       {mediaUrl !== '' ? (
         <View style={styles.mediaFrame}>
           {isVideo ? (
-            <>
-              {/* Shown while the first frame loads, and kept if the video cannot
-                  play at all. */}
-              <View style={styles.videoFallback} />
-
-              <Video
-                source={{ uri: mediaUrl }}
-                style={styles.media}
-                paused
-                muted
-                resizeMode="cover"
-              />
-
-              <View style={styles.playScrim} pointerEvents="none">
-                <PlayCircle color={colors.text.onBrand} size={PLAY_ICON_SIZE} />
-              </View>
-
-              <View style={styles.mediaTag}>
-                <Text style={[typeScale.caption, styles.mediaTagText]}>Video</Text>
-              </View>
-            </>
+            <FeedVideo
+              uri={mediaUrl}
+              isVisible={isVisible}
+              isMuted={isMuted}
+              onToggleMute={onToggleMute}
+            />
           ) : (
             <Image
               source={{ uri: mediaUrl }}
@@ -182,7 +175,10 @@ export default function FeedEntry({
           )}
 
           {mediaCount > 1 ? (
-            <View style={styles.countBadge} accessibilityLabel={`${mediaCount} media items`}>
+            <View
+              style={[styles.countBadge, isVideo ? styles.countBadgeOverVideo : null]}
+              accessibilityLabel={`${mediaCount} media items`}
+            >
               <Images color={colors.text.onBrand} size={COUNT_ICON_SIZE} weight="bold" />
               <Text style={[typeScale.caption, tabularNums, styles.countBadgeText]}>
                 {mediaCount}
@@ -216,6 +212,11 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: spacing.sm,
   },
+  // A video owns the bottom-right corner with its mute control, so the count
+  // badge sits directly above it instead of underneath it.
+  countBadgeOverVideo: {
+    bottom: spacing.sm + VIDEO_MUTE_BUTTON_SIZE + spacing.xs,
+  },
   countBadgeText: {
     color: colors.text.onBrand,
   },
@@ -240,18 +241,6 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     width: '100%',
   },
-  mediaTag: {
-    backgroundColor: colors.scrim.overlay,
-    borderRadius: radius.sm,
-    left: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    position: 'absolute',
-    top: spacing.sm,
-  },
-  mediaTagText: {
-    color: colors.text.onBrand,
-  },
   metaText: {
     color: colors.text.tertiary,
     marginTop: spacing.md,
@@ -259,19 +248,6 @@ const styles = StyleSheet.create({
   // The text column keeps the feed inset; only the media leaves it.
   padded: {
     paddingHorizontal: layout.screenPaddingFeed,
-  },
-  playScrim: {
-    alignItems: 'center',
-    backgroundColor: colors.scrim.overlay,
-    borderRadius: radius.pill,
-    height: PLAY_SCRIM_SIZE,
-    justifyContent: 'center',
-    left: '50%',
-    marginLeft: -PLAY_SCRIM_SIZE / 2,
-    marginTop: -PLAY_SCRIM_SIZE / 2,
-    position: 'absolute',
-    top: '50%',
-    width: PLAY_SCRIM_SIZE,
   },
   preview: {
     color: colors.text.secondary,
@@ -283,8 +259,5 @@ const styles = StyleSheet.create({
   title: {
     color: colors.text.primary,
     marginTop: spacing.sm,
-  },
-  videoFallback: {
-    ...StyleSheet.absoluteFillObject,
   },
 });

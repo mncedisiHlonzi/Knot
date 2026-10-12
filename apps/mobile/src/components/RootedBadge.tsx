@@ -8,9 +8,6 @@ import SvgImage from './SvgImage';
 /** The Rooted mark's drawn size, per the design (KNOT-020b-fix). */
 const ROOTED_MARK_SIZE = 14;
 
-/** The diameter of the indigo dot the quiet variant leads with. */
-const QUIET_DOT_SIZE = 5;
-
 /** Display labels for the duration buckets, keyed by the server's values. */
 const DURATION_LABELS: Readonly<Record<string, string>> = {
   lifelong: 'Lifelong',
@@ -76,12 +73,12 @@ export default function RootedBadge({
   const accessibleLabel =
     label === undefined ? `Rooted in ${trimmedPlace}` : `Rooted in ${trimmedPlace}, ${label}`;
 
-  // The quiet presentation is a line of its own: a small indigo dot and tertiary
-  // text, with no surface fill and no mark, so it sits under a name as a detail.
+  // The quiet presentation is a line of its own: plain tertiary text, with no
+  // dot, no surface fill, no border and no mark, exactly as the design reference
+  // draws it (KNOT-020c-fix3).
   if (variant === 'quiet') {
     return (
       <View style={styles.quiet} testID={testID} accessibilityLabel={accessibleLabel}>
-        <View style={styles.quietDot} />
         <Text style={[typeScale.caption, styles.quietText]} numberOfLines={1}>
           {showDuration && label !== undefined
             ? `Rooted · ${trimmedPlace} · ${label}`
@@ -134,17 +131,8 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   quiet: {
-    alignItems: 'center',
     alignSelf: 'flex-start',
-    flexDirection: 'row',
-    gap: spacing.xs,
     maxWidth: '100%',
-  },
-  quietDot: {
-    backgroundColor: colors.brand.primary,
-    borderRadius: radius.pill,
-    height: QUIET_DOT_SIZE,
-    width: QUIET_DOT_SIZE,
   },
   quietText: {
     color: colors.text.tertiary,

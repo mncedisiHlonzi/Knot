@@ -2033,3 +2033,31 @@ been dominated by them is filled with visible results instead. Anonymous request
 set, which needs no special case in the query because `author_id <> ALL('{}'::uuid[])` is `true`.
 The mobile client sends its token on every search request for the same reason it does on every
 other content read (KNOT-017a-fix2).
+
+## KNOT-ADR-068 — Feed videos auto-play on view, behind one feed-wide mute toggle
+
+**Decision.** A video in the feed plays itself, muted, as soon as its entry is the one the list
+judges to be on screen — the entry that is at least 60% visible. Every other entry's video is
+paused, so at most one plays at a time. A mute control on each video flips a single **feed-wide**
+setting: unmuting one unmutes them all, and the next video to scroll into view follows the same
+setting. The Feed is the only screen that auto-plays; the Story Detail's media viewer is
+unchanged.
+
+**Why this shape.** This is the accepted convention for a vertical content feed (LinkedIn,
+Instagram, TikTok): a video that waits for a tap is dead weight in a scrolling list, and one that
+starts with sound is hostile. Playing silently on view gives the feed life without taking the
+choice away from the reader — and putting the toggle on the video while wiring it to one piece of
+state in `FeedScreen` means a reader who unmutes once is not forced to unmute every clip again,
+while never having sound forced on them by a scroll.
+
+**Consequences.** Activation is viewability-driven (`viewabilityConfig` plus
+`onViewableItemsChanged` on the feed's `FlatList`), so playback follows the scroll rather than a
+tap, and the "only the visible video plays" guarantee is a property of the feed's single
+`activeItemId` rather than of any component. The mute setting is component state: leaving the Feed
+tab or pushing a story detail unmounts the screen and stops every video, which is the whole of the
+pause-on-blur behaviour the app has — there is no navigation-focus hook to use, because the app
+has no navigation library. Playback lives in `FeedVideo` so `FeedEntry` can stay hookless, and the
+duration badge is formatted by the pure `formatDuration`. Because the video starts on its own,
+there is no centre play button to advertise it, so the duration badge and the "Video" tag carry
+that job. No poster frame is stored, so a grey fill covers the moment before the first frame
+decodes.

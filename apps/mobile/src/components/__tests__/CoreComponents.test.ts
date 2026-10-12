@@ -3,6 +3,7 @@ import Button from '../Button';
 import Chip from '../Chip';
 import EmptyState from '../EmptyState';
 import FeedEntry from '../FeedEntry';
+import FeedVideo from '../FeedVideo';
 import PillarTag from '../PillarTag';
 import RootedBadge from '../RootedBadge';
 import TabBar from '../TabBar';
@@ -39,6 +40,8 @@ jest.mock('phosphor-react-native', () => ({
   MapTrifold: () => null,
   PlayCircle: () => null,
   Plus: () => null,
+  SpeakerHigh: () => null,
+  SpeakerSlash: () => null,
   User: () => null,
   X: () => null,
 }));
@@ -187,6 +190,33 @@ describe('TabBar', () => {
   });
 });
 
+/**
+ * Collects every element type in a directly-called component's element tree,
+ * depth-first. There is no renderer, so a structural assertion is the only way to
+ * prove which child component a parent chose to build (KNOT-020c-fix3).
+ */
+function elementTypes(node: unknown, found: unknown[] = []): unknown[] {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      elementTypes(child, found);
+    }
+    return found;
+  }
+  if (node === null || node === undefined || typeof node !== 'object') {
+    return found;
+  }
+
+  const element = node as { type?: unknown; props?: { children?: unknown } };
+  if (element.type !== undefined) {
+    found.push(element.type);
+  }
+  if (element.props !== undefined) {
+    elementTypes(element.props.children, found);
+  }
+
+  return found;
+}
+
 describe('FeedEntry', () => {
   const story = {
     id: 'story-1',
@@ -239,9 +269,40 @@ describe('FeedEntry', () => {
           first_media_url: '/stories/x/media/y/content',
           media_count: 5,
         },
+        isMuted: true,
+        isVisible: true,
+        onToggleMute: () => undefined,
         onPress: () => undefined,
       }),
     ).toBeTruthy();
+  });
+
+  it('renders FeedVideo for a video and never for an image', () => {
+    const image = FeedEntry({
+      story: {
+        ...story,
+        first_media_type: 'image',
+        first_media_url: '/stories/x/media/y/content',
+      },
+      onPress: () => undefined,
+    });
+    expect(elementTypes(image)).toContain('Image');
+    expect(elementTypes(image)).not.toContain(FeedVideo);
+
+    const video = FeedEntry({
+      story: {
+        ...story,
+        first_media_type: 'video',
+        first_media_url: '/stories/x/media/y/content',
+        media_count: 5,
+      },
+      isMuted: false,
+      isVisible: true,
+      onToggleMute: () => undefined,
+      onPress: () => undefined,
+    });
+    expect(elementTypes(video)).toContain(FeedVideo);
+    expect(elementTypes(video)).not.toContain('Image');
   });
 
   it('renders with no author fields, no media, and every count zero', () => {

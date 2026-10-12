@@ -29,6 +29,18 @@ const ICON_SIZE = 24;
 /** The text tabs above the feed. They are a local selection until the API grows a filter. */
 const FEED_TABS = ['For you', 'Wonder', 'Heritage', 'Nearby'] as const;
 
+/**
+ * How much of an entry must be on screen before it becomes the active one. At 60%
+ * only one entry can normally qualify at a time, which is what keeps playback to a
+ * single video (KNOT-020c-fix3).
+ */
+const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 60 };
+
+/** The slice of the viewability callback's payload the feed reads. */
+type ViewabilityInfo = {
+  readonly viewableItems: ReadonlyArray<{ readonly key: string | number }>;
+};
+
 type FeedScreenProps = {
   /** The signed-in user's access token, needed to read the unread count and the feed. */
   readonly token: string;
@@ -71,6 +83,26 @@ export default function FeedScreen({
   const [error, setError] = useState<string | undefined>(undefined);
   const [unreadCount, setUnreadCount] = useState(0);
   const [activeTab, setActiveTab] = useState<string>(FEED_TABS[0]);
+  // The one entry the feed judges to be on screen. Its video plays; every other
+  // entry's pauses (KNOT-020c-fix3).
+  const [activeItemId, setActiveItemId] = useState<string | undefined>(undefined);
+  // One mute setting for the whole feed, muted to begin with: a video that starts
+  // itself must never make a sound.
+  const [isMuted, setIsMuted] = useState(true);
+
+  // The viewability config and the callback must keep their identity for the life
+  // of the list — FlatList misbehaves if either is re-created — so they are held in
+  // refs rather than rebuilt on every render.
+  const viewabilityConfig = useRef(VIEWABILITY_CONFIG).current;
+  const onViewableItemsChanged = useRef((info: ViewabilityInfo): void => {
+    const first = info.viewableItems[0];
+    setActiveItemId(first === undefined ? undefined : String(first.key));
+  }).current;
+
+  /** Flips the feed-wide mute setting; every video follows it. */
+  const toggleMute = useCallback((): void => {
+    setIsMuted((current) => !current);
+  }, []);
 
   // Drives the header's scroll-linked elevation. Held in a ref so it survives
   // re-renders without being re-created.
@@ -237,6 +269,8 @@ export default function FeedScreen({
         data={stories}
         keyExtractor={(story) => story.id}
         contentContainerStyle={styles.listContent}
+        viewabilityConfig={viewabilityConfig}
+        onViewableItemsChanged={onViewableItemsChanged}
         onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
           useNativeDriver: false,
         })}
@@ -273,6 +307,9 @@ export default function FeedScreen({
               title: item.title,
               version_count: item.version_count,
             }}
+            isMuted={isMuted}
+            isVisible={item.id === activeItemId}
+            onToggleMute={toggleMute}
             onPress={() => onOpenStory(item.id)}
             onOpenAuthor={() => onOpenUserProfile(item.author_id)}
           />

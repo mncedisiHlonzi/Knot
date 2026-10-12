@@ -255,6 +255,12 @@ those components and style with the `typeScale` composites and the semantic colo
 manual `fontSize`/`lineHeight`/`fontWeight`. The remaining screens still read the deprecated
 legacy aliases until their own tasks migrate them.
 
+The Feed's video preview is the one stateful piece of that library: `FeedVideo` (KNOT-020c-fix3)
+plays a clip automatically, muted, once its entry is the one the list judges to be at least 60%
+visible, and pauses every other entry's. A single feed-wide mute setting, held in `FeedScreen`,
+governs all of them; `FeedEntry` itself stays hookless and only passes the visibility and mute
+state down. The Feed is the only screen that auto-plays. See KNOT-ADR-068.
+
 ### Author attribution (`AuthorLine`)
 
 Every screen that shows user-generated content attributes it through one component,
