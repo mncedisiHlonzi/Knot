@@ -1,14 +1,13 @@
-import React, { Fragment } from 'react';
+import React from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Images, PlayCircle } from 'phosphor-react-native';
+import Video from 'react-native-video';
 
-import RingsTrueGlyph from '../assets/brand/reaction-rings-true.svg';
 import { API_BASE_URL } from '../config/api';
 import { colors, layout, radius, spacing, tabularNums, typeScale } from '../theme';
 import AuthorLine from './AuthorLine';
-import { feedMetaSegments } from './feedEntryMeta';
+import { feedMetaLine } from './feedEntryMeta';
 import PillarTag from './PillarTag';
-import SvgImage from './SvgImage';
 
 /** The story shape a feed entry renders. */
 type FeedEntryStory = {
@@ -49,20 +48,26 @@ type FeedEntryProps = {
   readonly testID?: string;
 };
 
-/** The media preview's aspect ratio (16:9). */
+/**
+ * The media preview's aspect ratio (16:9), matching Story Detail's media strip.
+ *
+ * The design reference's thumbnail is a little wider than this, but 16:9 is the
+ * ratio the feed already used and it keeps the entry to a comfortable height
+ * (KNOT-020c-fix2).
+ */
 const MEDIA_ASPECT_RATIO = 16 / 9;
 
 /** The preview's line limit. */
 const PREVIEW_LINES = 3;
 
-/** The play glyph drawn in the video placeholder. */
+/** The play glyph drawn over a video preview. */
 const PLAY_ICON_SIZE = 48;
+
+/** The circular scrim behind the play glyph. */
+const PLAY_SCRIM_SIZE = 64;
 
 /** The media-count badge's glyph size. */
 const COUNT_ICON_SIZE = 14;
-
-/** The reaction glyph's size inside the meta row. */
-const META_GLYPH_SIZE = 14;
 
 /**
  * Resolves a media path returned by the API against the base URL.
@@ -81,15 +86,21 @@ function resolveMediaUrl(path: string | null | undefined): string {
  *
  * It is a full-bleed row on the canvas — no card, no border, no shadow — so the
  * feed reads as one continuous column. Its order is the reading order: who told
- * it, which pillar and place, the title, the opening lines, an optional media
- * preview, then the meta row. The whole entry is one tap target; the author
- * identity inside it is a nested target that opens the profile (KNOT-ADR-043).
+ * it, which pillar and place, the title, the opening lines, the media, then the
+ * meta line. The whole entry is one tap target; the author identity inside it is
+ * a nested target that opens the profile (KNOT-ADR-043).
  *
- * The media preview is an image, or — for a video — a placeholder with a play
- * glyph, because the backend stores no poster frame yet (KNOT-020c-fix). When the
- * story has more than one media item, a count badge sits in the preview's corner.
- * The meta row carries versions, languages, the reactions total, and comments,
- * each omitted when zero.
+ * The text column keeps the feed's horizontal inset, but the **media is
+ * full-bleed**: no horizontal padding, no corner rounding, so a photo or a video
+ * runs edge to edge the way a social feed's media does (KNOT-020c-fix2).
+ *
+ * A video preview draws the first frame with `react-native-video`, paused and
+ * muted, with a play glyph on a scrim over it. No poster frame is stored, so a
+ * grey fill sits behind the video: it shows through while the frame loads or if
+ * the video fails, which is the fallback (KNOT-020c-fix2).
+ *
+ * The meta line is plain text — "4 versions · 3 languages · 128 reactions ·
+ * 14 comments" — with no glyphs, each segment omitted when its count is zero.
  */
 export default function FeedEntry({
   story,
@@ -101,7 +112,7 @@ export default function FeedEntry({
   const isVideo = story.first_media_type === 'video';
   const mediaCount = story.media_count ?? 0;
 
-  const meta = feedMetaSegments({
+  const metaLine = feedMetaLine({
     commentCount: story.comment_count,
     languageCount: story.language_count,
     reactions: story.reactions,
@@ -116,31 +127,47 @@ export default function FeedEntry({
       accessibilityLabel={`Open the story: ${story.title}`}
       testID={testID}
     >
-      <AuthorLine
-        displayName={story.author_display_name}
-        avatarUrl={story.author_avatar_url}
-        createdAt={story.created_at}
-        rooted={story.author_rooted ?? null}
-        size="small"
-        onPress={onOpenAuthor}
-      />
+      <View style={styles.padded}>
+        <AuthorLine
+          displayName={story.author_display_name}
+          avatarUrl={story.author_avatar_url}
+          createdAt={story.created_at}
+          rooted={story.author_rooted ?? null}
+          size="medium"
+          showRootedOnNewLine
+          onPress={onOpenAuthor}
+        />
 
-      <View style={styles.tagRow}>
-        <PillarTag pillar={story.pillar} place={story.place} />
+        <View style={styles.tagRow}>
+          <PillarTag pillar={story.pillar} place={story.place} />
+        </View>
+
+        <Text style={[typeScale.title, styles.title]}>{story.title}</Text>
+        <Text style={[typeScale.body, styles.preview]} numberOfLines={PREVIEW_LINES}>
+          {story.preview}
+        </Text>
       </View>
-
-      <Text style={[typeScale.title, styles.title]}>{story.title}</Text>
-      <Text style={[typeScale.body, styles.preview]} numberOfLines={PREVIEW_LINES}>
-        {story.preview}
-      </Text>
 
       {mediaUrl !== '' ? (
         <View style={styles.mediaFrame}>
           {isVideo ? (
             <>
-              <View style={styles.videoPlaceholder}>
-                <PlayCircle color={colors.brand.primary} size={PLAY_ICON_SIZE} />
+              {/* Shown while the first frame loads, and kept if the video cannot
+                  play at all. */}
+              <View style={styles.videoFallback} />
+
+              <Video
+                source={{ uri: mediaUrl }}
+                style={styles.media}
+                paused
+                muted
+                resizeMode="cover"
+              />
+
+              <View style={styles.playScrim} pointerEvents="none">
+                <PlayCircle color={colors.text.onBrand} size={PLAY_ICON_SIZE} />
               </View>
+
               <View style={styles.mediaTag}>
                 <Text style={[typeScale.caption, styles.mediaTagText]}>Video</Text>
               </View>
@@ -148,7 +175,7 @@ export default function FeedEntry({
           ) : (
             <Image
               source={{ uri: mediaUrl }}
-              style={styles.mediaImage}
+              style={styles.media}
               resizeMode="cover"
               accessibilityIgnoresInvertColors
             />
@@ -165,31 +192,13 @@ export default function FeedEntry({
         </View>
       ) : null}
 
-      {meta.length > 0 ? (
-        <View style={styles.metaRow}>
-          {meta.map((segment, index) => (
-            <Fragment key={segment.key}>
-              {index > 0 ? <Text style={[typeScale.caption, styles.metaText]}>·</Text> : null}
-              {segment.withGlyph ? (
-                <SvgImage
-                  source={RingsTrueGlyph}
-                  size={META_GLYPH_SIZE}
-                  color={colors.text.tertiary}
-                  decorative
-                />
-              ) : null}
-              <Text
-                style={[typeScale.caption, tabularNums, styles.metaText]}
-                accessibilityLabel={segment.accessibilityLabel}
-              >
-                {segment.label}
-              </Text>
-            </Fragment>
-          ))}
-        </View>
-      ) : null}
+      <View style={styles.padded}>
+        {metaLine !== '' ? (
+          <Text style={[typeScale.caption, tabularNums, styles.metaText]}>{metaLine}</Text>
+        ) : null}
 
-      <View style={styles.hairline} />
+        <View style={styles.hairline} />
+      </View>
     </Pressable>
   );
 }
@@ -211,7 +220,6 @@ const styles = StyleSheet.create({
     color: colors.text.onBrand,
   },
   entry: {
-    paddingHorizontal: layout.screenPaddingFeed,
     paddingTop: spacing.lg,
   },
   hairline: {
@@ -219,16 +227,17 @@ const styles = StyleSheet.create({
     height: 1,
     marginTop: spacing.lg,
   },
+  media: {
+    height: '100%',
+    width: '100%',
+  },
+  // Full-bleed: no horizontal inset and no rounding, so the media runs edge to
+  // edge (KNOT-020c-fix2).
   mediaFrame: {
     aspectRatio: MEDIA_ASPECT_RATIO,
     backgroundColor: colors.bg.sunken,
-    borderRadius: radius.lg,
     marginTop: spacing.md,
     overflow: 'hidden',
-    width: '100%',
-  },
-  mediaImage: {
-    height: '100%',
     width: '100%',
   },
   mediaTag: {
@@ -243,15 +252,26 @@ const styles = StyleSheet.create({
   mediaTagText: {
     color: colors.text.onBrand,
   },
-  metaRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-    marginTop: spacing.md,
-  },
   metaText: {
     color: colors.text.tertiary,
+    marginTop: spacing.md,
+  },
+  // The text column keeps the feed inset; only the media leaves it.
+  padded: {
+    paddingHorizontal: layout.screenPaddingFeed,
+  },
+  playScrim: {
+    alignItems: 'center',
+    backgroundColor: colors.scrim.overlay,
+    borderRadius: radius.pill,
+    height: PLAY_SCRIM_SIZE,
+    justifyContent: 'center',
+    left: '50%',
+    marginLeft: -PLAY_SCRIM_SIZE / 2,
+    marginTop: -PLAY_SCRIM_SIZE / 2,
+    position: 'absolute',
+    top: '50%',
+    width: PLAY_SCRIM_SIZE,
   },
   preview: {
     color: colors.text.secondary,
@@ -264,9 +284,7 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     marginTop: spacing.sm,
   },
-  videoPlaceholder: {
+  videoFallback: {
     ...StyleSheet.absoluteFillObject,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
 });

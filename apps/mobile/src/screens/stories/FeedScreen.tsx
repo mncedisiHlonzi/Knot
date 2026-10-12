@@ -168,10 +168,11 @@ export default function FeedScreen({
 
   return (
     <View style={styles.container}>
-      {/* The fixed top region: the header and the tab row never scroll. Only the
-          FlatList below them does. */}
+      {/* The fixed top region: the header and the tab row never scroll and never
+          fade. Only the FlatList below them scrolls. */}
       <View style={styles.topBar}>
         <Header
+          pinned
           scrollY={scrollY}
           left={<Logomark size={LOGOMARK_SIZE} />}
           right={
@@ -203,6 +204,11 @@ export default function FeedScreen({
           }
         />
 
+        {/* Four equal-width tabs. Every label takes `typeScale.button` (15 pt
+            semibold), which is the weight the design reference draws all four
+            tabs at; the active tab is distinguished by ink and the indigo
+            underline rather than by weight, so the row stays confident and even
+            (KNOT-020c-fix2). */}
         <View style={styles.tabs}>
           {FEED_TABS.map((label) => {
             const active = label === activeTab;

@@ -37,6 +37,15 @@ type AuthorLineProps = {
   /** Controls the avatar diameter and text weight. Defaults to "small". */
   readonly size?: AuthorLineSize;
   /**
+   * Move the Rooted summary onto its own quieter second line, under the name and
+   * time, instead of sitting inline beside them (KNOT-020c-fix2).
+   *
+   * Defaults to `false`, which keeps the inline attribution every other screen
+   * already renders (Story Detail, Comment Thread, the Language Tree). The Feed
+   * passes `true`.
+   */
+  readonly showRootedOnNewLine?: boolean;
+  /**
    * Called when the author's avatar or name is tapped, to open their profile.
    *
    * When omitted, the identity is plain (not a tap target). The Rooted badge and
@@ -83,6 +92,7 @@ export default function AuthorLine({
   createdAt,
   rooted,
   size = 'small',
+  showRootedOnNewLine = false,
   onPress,
   testID,
 }: AuthorLineProps): React.ReactElement | null {
@@ -107,7 +117,14 @@ export default function AuthorLine({
     return null;
   }
 
-  const hasLeadingSegment = name !== '' || hasRooted;
+  // The Feed's two-line form: the Rooted summary leaves the identity line and
+  // becomes a quiet line of its own beneath it, so the name and time read as one
+  // clean line (KNOT-020c-fix2).
+  const rootedOnNewLine = showRootedOnNewLine === true && hasRooted;
+
+  // The separator before the timestamp belongs only when something precedes it on
+  // its line, and the Rooted badge no longer does when it has moved down.
+  const hasLeadingSegment = name !== '' || (!rootedOnNewLine && hasRooted);
 
   const identity = (
     <>
@@ -128,20 +145,42 @@ export default function AuthorLine({
     </>
   );
 
+  const identityTarget =
+    onPress !== undefined ? (
+      <Pressable
+        style={styles.identity}
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={name === '' ? 'Open profile' : `Open ${name}'s profile`}
+      >
+        {identity}
+      </Pressable>
+    ) : (
+      <View style={styles.identity}>{identity}</View>
+    );
+
+  const timeText =
+    relative === '' ? null : (
+      <Text style={[typeScale.caption, styles.time]}>
+        {hasLeadingSegment ? `· ${relative}` : relative}
+      </Text>
+    );
+
+  if (rootedOnNewLine) {
+    return (
+      <View style={styles.stack} testID={testID}>
+        <View style={styles.row}>
+          {identityTarget}
+          {timeText}
+        </View>
+        <RootedBadge place={rootedPlace} durationBucket={durationBucket} variant="quiet" />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.row} testID={testID}>
-      {onPress !== undefined ? (
-        <Pressable
-          style={styles.identity}
-          onPress={onPress}
-          accessibilityRole="button"
-          accessibilityLabel={name === '' ? 'Open profile' : `Open ${name}'s profile`}
-        >
-          {identity}
-        </Pressable>
-      ) : (
-        <View style={styles.identity}>{identity}</View>
-      )}
+      {identityTarget}
 
       {hasRooted ? (
         <RootedBadge
@@ -151,11 +190,7 @@ export default function AuthorLine({
         />
       ) : null}
 
-      {relative !== '' ? (
-        <Text style={[typeScale.caption, styles.time]}>
-          {hasLeadingSegment ? `· ${relative}` : relative}
-        </Text>
-      ) : null}
+      {timeText}
     </View>
   );
 }
@@ -176,6 +211,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
+  },
+  stack: {
+    gap: spacing.xs,
   },
   time: {
     color: colors.text.tertiary,

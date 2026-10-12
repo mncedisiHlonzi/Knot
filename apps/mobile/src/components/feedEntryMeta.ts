@@ -15,73 +15,47 @@ export function totalReactions(counts: ReactionCounts): number {
   );
 }
 
-/** The kinds of segment a feed entry's meta row can show, in order. */
-export type FeedMetaSegmentKey = 'versions' | 'languages' | 'reactions' | 'comments';
-
-/** One piece of the meta row: its label and whether it leads with a glyph. */
-export type FeedMetaSegment = {
-  readonly key: FeedMetaSegmentKey;
-  /** The text to render, e.g. "4 versions", "3 languages", "128", "14 comments". */
-  readonly label: string;
-  /**
-   * The spoken form, which spells the number out in words where the visible label
-   * is a bare total (the reaction segment reads as "128 reactions" to a screen
-   * reader, not "128").
-   */
-  readonly accessibilityLabel: string;
-  /**
-   * True for the reaction segment, which draws the rings-true glyph before the
-   * bare total rather than a worded label.
-   */
-  readonly withGlyph: boolean;
-};
-
 /**
- * Builds the meta row's segments from a story's counts, in the order they appear:
- * versions, languages, reactions, comments.
+ * Builds a feed entry's meta line: the story's counts as plain text, in the order
+ * versions, languages, reactions, comments, joined by " · ".
+ *
+ * Every segment is a worded, pluralised label — "4 versions · 3 languages ·
+ * 128 reactions · 14 comments" — so the line reads as prose and needs no glyph or
+ * per-segment styling (KNOT-020c-fix2). The reaction segment is the total of the
+ * four perspective signals, spelled out rather than drawn as an icon.
  *
  * A zero count is omitted rather than shown as "0 versions", so an entry with no
- * activity reads as a quiet row rather than a tally of nothing. An empty result
+ * activity reads as a quiet row rather than a tally of nothing. An **empty string**
  * means there is nothing to show and the caller renders no meta row at all (the
- * relative time is already carried by the author line). The reaction segment is a
- * bare total paired with the rings-true glyph; the rest are pluralised labels via
- * {@link countLabel}.
+ * relative time is already carried by the author line).
  */
-export function feedMetaSegments(input: {
+export function feedMetaLine(input: {
   readonly versionCount?: number;
   readonly languageCount?: number;
   readonly reactions?: ReactionCounts;
   readonly commentCount?: number;
-}): readonly FeedMetaSegment[] {
-  const segments: FeedMetaSegment[] = [];
+}): string {
+  const segments: string[] = [];
 
   const versions = input.versionCount ?? 0;
   if (versions > 0) {
-    const label = countLabel(versions, 'version', 'versions');
-    segments.push({ accessibilityLabel: label, key: 'versions', label, withGlyph: false });
+    segments.push(countLabel(versions, 'version', 'versions'));
   }
 
   const languages = input.languageCount ?? 0;
   if (languages > 0) {
-    const label = countLabel(languages, 'language', 'languages');
-    segments.push({ accessibilityLabel: label, key: 'languages', label, withGlyph: false });
+    segments.push(countLabel(languages, 'language', 'languages'));
   }
 
   const reactions = input.reactions === undefined ? 0 : totalReactions(input.reactions);
   if (reactions > 0) {
-    segments.push({
-      accessibilityLabel: countLabel(reactions, 'reaction', 'reactions'),
-      key: 'reactions',
-      label: String(reactions),
-      withGlyph: true,
-    });
+    segments.push(countLabel(reactions, 'reaction', 'reactions'));
   }
 
   const comments = input.commentCount ?? 0;
   if (comments > 0) {
-    const label = countLabel(comments, 'comment', 'comments');
-    segments.push({ accessibilityLabel: label, key: 'comments', label, withGlyph: false });
+    segments.push(countLabel(comments, 'comment', 'comments'));
   }
 
-  return segments;
+  return segments.join(' · ');
 }

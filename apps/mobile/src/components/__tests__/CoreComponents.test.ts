@@ -6,7 +6,7 @@ import FeedEntry from '../FeedEntry';
 import PillarTag from '../PillarTag';
 import RootedBadge from '../RootedBadge';
 import TabBar from '../TabBar';
-import { countLabel, feedMetaSegments, totalReactions } from '../feedEntryMeta';
+import { countLabel, feedMetaLine, totalReactions } from '../feedEntryMeta';
 
 /**
  * These are the hookless components of the KNOT-020b library. The project has no
@@ -42,6 +42,11 @@ jest.mock('phosphor-react-native', () => ({
   User: () => null,
   X: () => null,
 }));
+
+// FeedEntry draws a video preview with react-native-video, which is a native
+// module; stub it to a host component so the direct-call test can render the
+// element (KNOT-020c-fix2).
+jest.mock('react-native-video', () => ({ __esModule: true, default: 'Video' }));
 
 jest.mock('../../config/api', () => ({ API_BASE_URL: 'http://localhost:8080' }));
 
@@ -215,7 +220,7 @@ describe('FeedEntry', () => {
     expect(onOpenAuthor).not.toHaveBeenCalled();
   });
 
-  it('renders an image preview, and a video placeholder with a count badge', () => {
+  it('renders an image preview and a video preview with a count badge', () => {
     expect(
       FeedEntry({
         story: {
@@ -259,12 +264,14 @@ describe('FeedEntry', () => {
   });
 });
 
-describe('feedMetaSegments helper', () => {
+describe('feedMetaLine helper', () => {
   it('pluralises a count', () => {
     expect(countLabel(1, 'version', 'versions')).toBe('1 version');
     expect(countLabel(4, 'version', 'versions')).toBe('4 versions');
     expect(countLabel(1, 'language', 'languages')).toBe('1 language');
     expect(countLabel(2, 'comment', 'comments')).toBe('2 comments');
+    expect(countLabel(1, 'reaction', 'reactions')).toBe('1 reaction');
+    expect(countLabel(2, 'reaction', 'reactions')).toBe('2 reactions');
   });
 
   it('sums the four signals', () => {
@@ -278,43 +285,41 @@ describe('feedMetaSegments helper', () => {
     ).toBe(14);
   });
 
-  it('orders the segments versions, languages, reactions, comments', () => {
-    const segments = feedMetaSegments({
-      versionCount: 4,
-      languageCount: 3,
-      commentCount: 14,
-      reactions: {
-        rings_true: 128,
-        know_it_differently: 19,
-        adds_something_new: 7,
-        needs_a_source: 2,
-      },
-    });
-
-    expect(segments.map((segment) => segment.key)).toEqual([
-      'versions',
-      'languages',
-      'reactions',
-      'comments',
-    ]);
-    expect(segments.map((segment) => segment.label)).toEqual([
-      '4 versions',
-      '3 languages',
-      '156',
-      '14 comments',
-    ]);
-    // Only the reaction segment leads with a glyph, and it spells its number out
-    // for a screen reader rather than reading a bare "156".
-    expect(segments.filter((segment) => segment.withGlyph).map((segment) => segment.key)).toEqual([
-      'reactions',
-    ]);
-    expect(segments[2].accessibilityLabel).toBe('156 reactions');
+  it('renders the counts as one text line, in order', () => {
+    expect(
+      feedMetaLine({
+        versionCount: 4,
+        languageCount: 3,
+        commentCount: 14,
+        reactions: {
+          rings_true: 128,
+          know_it_differently: 19,
+          adds_something_new: 7,
+          needs_a_source: 2,
+        },
+      }),
+    ).toBe('4 versions · 3 languages · 156 reactions · 14 comments');
   });
 
-  it('omits zero counts and shows no row at all when everything is zero', () => {
-    expect(feedMetaSegments({ versionCount: 0, languageCount: 0, commentCount: 0 })).toEqual([]);
-    expect(feedMetaSegments({ versionCount: 1 })).toEqual([
-      { accessibilityLabel: '1 version', key: 'versions', label: '1 version', withGlyph: false },
-    ]);
+  it('spells the reaction count out in words rather than drawing a glyph', () => {
+    expect(
+      feedMetaLine({
+        versionCount: 1,
+        languageCount: 1,
+        commentCount: 1,
+        reactions: {
+          rings_true: 1,
+          know_it_differently: 0,
+          adds_something_new: 0,
+          needs_a_source: 0,
+        },
+      }),
+    ).toBe('1 version · 1 language · 1 reaction · 1 comment');
+  });
+
+  it('omits zero counts and returns an empty line when everything is zero', () => {
+    expect(feedMetaLine({ versionCount: 0, languageCount: 0, commentCount: 0 })).toBe('');
+    expect(feedMetaLine({})).toBe('');
+    expect(feedMetaLine({ versionCount: 1 })).toBe('1 version');
   });
 });

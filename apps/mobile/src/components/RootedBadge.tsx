@@ -8,6 +8,9 @@ import SvgImage from './SvgImage';
 /** The Rooted mark's drawn size, per the design (KNOT-020b-fix). */
 const ROOTED_MARK_SIZE = 14;
 
+/** The diameter of the indigo dot the quiet variant leads with. */
+const QUIET_DOT_SIZE = 5;
+
 /** Display labels for the duration buckets, keyed by the server's values. */
 const DURATION_LABELS: Readonly<Record<string, string>> = {
   lifelong: 'Lifelong',
@@ -17,6 +20,9 @@ const DURATION_LABELS: Readonly<Record<string, string>> = {
   recently: 'Recently',
 };
 
+/** The two presentations a Rooted summary can take. */
+export type RootedBadgeVariant = 'badge' | 'quiet';
+
 type RootedBadgeProps = {
   /** The declared place, at city or region precision. */
   readonly place: string;
@@ -24,6 +30,13 @@ type RootedBadgeProps = {
   readonly durationBucket: string;
   /** Compact form: "Rooted · place" without the duration. */
   readonly compact?: boolean;
+  /**
+   * `badge` (the default) is the brand pill led by the Rooted mark, for an inline
+   * attribution beside a name. `quiet` is an indigo dot followed by tertiary text
+   * with no fill, for a second line under a name where the attribution is a detail
+   * rather than a highlight (KNOT-020c-fix2).
+   */
+  readonly variant?: RootedBadgeVariant;
   /** Test identifier. */
   readonly testID?: string;
 };
@@ -46,6 +59,7 @@ export default function RootedBadge({
   place,
   durationBucket,
   compact = false,
+  variant = 'badge',
   testID,
 }: RootedBadgeProps): React.ReactElement | null {
   // Guarded with typeof: the API response types describe an optimistic wire
@@ -59,13 +73,29 @@ export default function RootedBadge({
   const label = bucket === '' ? undefined : DURATION_LABELS[bucket];
   const showDuration = compact !== true && label !== undefined;
 
+  const accessibleLabel =
+    label === undefined ? `Rooted in ${trimmedPlace}` : `Rooted in ${trimmedPlace}, ${label}`;
+
+  // The quiet presentation is a line of its own: a small indigo dot and tertiary
+  // text, with no surface fill and no mark, so it sits under a name as a detail.
+  if (variant === 'quiet') {
+    return (
+      <View style={styles.quiet} testID={testID} accessibilityLabel={accessibleLabel}>
+        <View style={styles.quietDot} />
+        <Text style={[typeScale.caption, styles.quietText]} numberOfLines={1}>
+          {showDuration && label !== undefined
+            ? `Rooted · ${trimmedPlace} · ${label}`
+            : `Rooted · ${trimmedPlace}`}
+        </Text>
+      </View>
+    );
+  }
+
   return (
     <View
       style={[styles.badge, compact ? styles.compact : null]}
       testID={testID}
-      accessibilityLabel={
-        label === undefined ? `Rooted in ${trimmedPlace}` : `Rooted in ${trimmedPlace}, ${label}`
-      }
+      accessibilityLabel={accessibleLabel}
     >
       <SvgImage source={RootedMark} size={ROOTED_MARK_SIZE} decorative />
       <View style={styles.textRow}>
@@ -101,6 +131,23 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
   },
   place: {
+    flexShrink: 1,
+  },
+  quiet: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    gap: spacing.xs,
+    maxWidth: '100%',
+  },
+  quietDot: {
+    backgroundColor: colors.brand.primary,
+    borderRadius: radius.pill,
+    height: QUIET_DOT_SIZE,
+    width: QUIET_DOT_SIZE,
+  },
+  quietText: {
+    color: colors.text.tertiary,
     flexShrink: 1,
   },
   text: {

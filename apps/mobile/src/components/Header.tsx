@@ -11,11 +11,18 @@ type HeaderProps = {
   /** A trailing node, or a row of them. */
   readonly right?: React.ReactNode;
   /**
-   * The scroll offset of the list beneath the header. When given, the header's
-   * canvas background fades in as the content scrolls under it and a hairline
-   * shadow appears past a small threshold.
+   * The scroll offset of the list beneath the header. When given, a first-level
+   * shadow appears once the content has scrolled past a small threshold, so a
+   * scrolling list reads as passing under a fixed bar.
    */
   readonly scrollY?: Animated.Value;
+  /**
+   * Pins the header: it paints an opaque canvas fill at all times and never fades,
+   * translates, or disappears as the list scrolls (KNOT-020c-fix2). Defaults to
+   * `false`, which leaves the header transparent so it can float over content —
+   * the Story Detail hero is the case that needs that.
+   */
+  readonly pinned?: boolean;
   /** Test identifier. */
   readonly testID?: string;
 };
@@ -29,17 +36,21 @@ const ELEVATION_THRESHOLD = 8;
 /**
  * The screen header: a 56-point bar with a centred title between two slots.
  *
- * It is transparent at rest so the canvas shows through, and fades in the canvas
- * fill (plus a first-level shadow) as content scrolls beneath it, so a scrolling
- * list never collides with the title. The status-bar inset is not applied here:
- * every screen already sits inside the app root's `SafeAreaView`, so adding
- * another inset would double it (KNOT-020b).
+ * A **pinned** header (the Feed's) paints an opaque canvas fill and holds still:
+ * nothing about it changes unless the caller asks for scroll-linked elevation, in
+ * which case only the first-level shadow appears, past an 8-point threshold. It
+ * never fades or translates (KNOT-020c-fix2). An unpinned header (the Story
+ * Detail's) paints nothing, so it floats transparently over hero content.
+ *
+ * The status-bar inset is not applied here: every screen already sits inside the
+ * app root's `SafeAreaView`, so adding another inset would double it (KNOT-020b).
  */
 export default function Header({
   title,
   left,
   right,
   scrollY,
+  pinned = false,
   testID,
 }: HeaderProps): React.ReactElement {
   const [elevated, setElevated] = useState(false);
@@ -56,27 +67,13 @@ export default function Header({
     };
   }, [scrollY]);
 
-  // With no scroll offset the bar stays transparent; with one, it fades to the
-  // canvas colour over the first screenful of scroll.
-  const backgroundOpacity =
-    scrollY === undefined
-      ? 0
-      : scrollY.interpolate({
-          inputRange: [0, HEIGHT],
-          outputRange: [0, 1],
-          extrapolate: 'clamp',
-        });
-
   return (
     <View style={styles.container} testID={testID}>
-      <Animated.View
-        pointerEvents="none"
-        style={[
-          styles.background,
-          elevated ? elevation[1] : null,
-          { backgroundColor: colors.bg.canvas, opacity: backgroundOpacity },
-        ]}
-      />
+      {/* The only scroll-linked change is the shadow lifting past the threshold;
+          the fill itself is constant, so the bar never fades. */}
+      {pinned ? (
+        <View pointerEvents="none" style={[styles.background, elevated ? elevation[1] : null]} />
+      ) : null}
       <View style={styles.row}>
         <View style={styles.side}>{left}</View>
         {title !== undefined ? (
@@ -95,6 +92,7 @@ export default function Header({
 const styles = StyleSheet.create({
   background: {
     ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.bg.canvas,
   },
   container: {
     height: HEIGHT,
