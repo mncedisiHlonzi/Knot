@@ -243,6 +243,18 @@ imported directly. Values that fall between the documented scale steps stay nume
 example a `paddingVertical: 10`), and `BRAND.md` remains the source of truth for every
 token value.
 
+#### The component library and the redesigned screens (KNOT-020b / KNOT-020c)
+
+The design pass added a component library in `apps/mobile/src/components/` — `Button`,
+`Chip`, `Avatar`, `PillarTag`, `RootedBadge`, `AuthorLine`, `ReactionBar`, `FeedEntry`,
+`Input`, `Header`, `EmptyState`, and `TabBar` — plus the brand SVG components (`Logo`,
+`Logomark`, `Wordmark`, `SvgImage`) from KNOT-020b-fix. The five priority screens (Splash,
+Onboarding, Feed, Story Detail, and Profile) were rebuilt on it in KNOT-020c: they compose
+those components and style with the `typeScale` composites and the semantic colour roles
+(`colors.text.primary`, `colors.bg.canvas`, …), so no redesigned screen sets a raw hex or a
+manual `fontSize`/`lineHeight`/`fontWeight`. The remaining screens still read the deprecated
+legacy aliases until their own tasks migrate them.
+
 ### Author attribution (`AuthorLine`)
 
 Every screen that shows user-generated content attributes it through one component,
@@ -267,11 +279,14 @@ hand-roll the markup on a new screen.
 ### The profile wall (`UserProfileScreen`)
 
 `apps/mobile/src/screens/profile/UserProfileScreen.tsx` shows a user's public wall from
-`GET /users/{id}/profile` (`src/api/profile.ts`): a header (avatar, name, Rooted badge,
-"Joined …") and a `FlatList` of activity cards with pull-to-refresh and cursor paging. Each
-card is labelled by kind (Story / Adaptation / Comment / Bridge) and opens the entity it
-names — a story activity opens the story, a comment opens its thread, and a bridge resolves
-its source comment through `GET /comments/{id}` first.
+`GET /users/{id}/profile` (`src/api/profile.ts`): a centred header (avatar, name, Rooted badge,
+"Joined …", and a stories/versions/answers stats line) above six activity tabs and a compact
+activity list, with pull-to-refresh and cursor paging. Each row shows a kind icon, a headline,
+and a relative time, and opens the entity it names — a story activity opens the story, a
+comment opens its thread, and a bridge resolves its source comment through `GET /comments/{id}`
+first. The stats line and the per-tab filtering are reduced from the activities loaded so far
+(`src/screens/profile/profileActivity.ts`), because the endpoint returns one page and no totals;
+both grow as the wall is paged (KNOT-020c).
 
 The same screen serves the owner: `isOwnProfile` adds the avatar upload, the Set Rooted
 shortcut, and sign-out, so tapping your own author line opens your wall. `AuthorLine`'s

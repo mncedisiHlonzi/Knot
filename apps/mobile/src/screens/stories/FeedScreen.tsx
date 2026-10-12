@@ -1,55 +1,94 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Animated,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { Bell, MagnifyingGlass } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { notificationsApi } from '../../api/notifications';
-import { FEED_PAGE_SIZE, Story, storiesApi } from '../../api/stories';
-import AuthorLine from '../../components/AuthorLine';
-import { languageName } from '../../data/languages';
-import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
+import { FEED_PAGE_SIZE, type Story, storiesApi } from '../../api/stories';
+import EmptyState from '../../components/EmptyState';
+import FeedEntry from '../../components/FeedEntry';
+import Header from '../../components/Header';
+import Logomark from '../../components/Logomark';
+import { API_BASE_URL } from '../../config/api';
+import { colors, layout, radius, spacing, tabularNums, typeScale } from '../../theme';
+
+/** The logomark's size in the feed header. */
+const LOGOMARK_SIZE = 32;
+
+/** The header icon size. */
+const ICON_SIZE = 24;
+
+/** The text tabs above the feed. They are a local selection until the API grows a filter. */
+const FEED_TABS = ['For you', 'Wonder', 'Heritage', 'Nearby'] as const;
 
 type FeedScreenProps = {
-  /** The signed-in account's email, shown so the session is obvious. */
-  readonly email: string;
-  /** The signed-in user's access token, needed to read the unread count. */
+  /** The signed-in user's access token, needed to read the unread count and the feed. */
   readonly token: string;
   /** Called when a story is tapped. */
   readonly onOpenStory: (id: string) => void;
   /** Called when a story's author is tapped, to open their profile. */
   readonly onOpenUserProfile: (userId: string) => void;
-  /** Called when the person wants to publish a story. */
-  readonly onCreateStory: () => void;
   /** Called when the person opens their notifications. */
   readonly onOpenNotifications: () => void;
   /** Called when the person opens search. */
   readonly onOpenSearch: () => void;
-  /** Called when the person signs out. */
-  readonly onSignOut: () => void;
 };
 
 /**
- * The public story feed, newest first.
+ * Resolves a story's feed media preview to a full URL, or null.
+ *
+ * The feed carries at most one preview item; its `url` is a relative path, so it
+ * is joined to the API base. A missing or blank preview resolves to null and the
+ * entry draws no image.
+ */
+function mediaPreviewUrl(story: Story): string | null {
+  const first = story.media !== undefined ? story.media[0] : undefined;
+  if (first === undefined) {
+    return null;
+  }
+  const path = typeof first.url === 'string' ? first.url.trim() : '';
+  return path === '' ? null : `${API_BASE_URL}${path}`;
+}
+
+/**
+ * The public story feed, newest first, as a continuous hairline-separated column.
  *
  * Paging is keyset-based: each page returns an opaque `next_cursor` that is sent
- * back verbatim to fetch the following page. An empty cursor means the end of
- * the feed, which is what stops the list asking for more.
+ * back verbatim to fetch the following page; an empty cursor ends the list. The
+ * header and the text tabs sit above the scrolling list; the header fades in the
+ * canvas fill and lifts as the list scrolls beneath it. The four text tabs are a
+ * local selection only — the feed endpoint has no pillar filter yet, so they do
+ * not change the query (KNOT-020c disclosure).
  */
 export default function FeedScreen({
-  email,
   token,
   onOpenStory,
   onOpenUserProfile,
-  onCreateStory,
   onOpenNotifications,
   onOpenSearch,
-  onSignOut,
 }: FeedScreenProps): React.ReactElement {
   const [stories, setStories] = useState<readonly Story[]>([]);
   const [nextCursor, setNextCursor] = useState('');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [unreadCount, setUnreadCount] = useState(0);
+  const [activeTab, setActiveTab] = useState<string>(FEED_TABS[0]);
+
+  // Drives the header's scroll-linked elevation. Held in a ref so it survives
+  // re-renders without being re-created.
+  const scrollY = useRef(new Animated.Value(0)).current;
 
   const loadFirstPage = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -92,16 +131,21 @@ export default function FeedScreen({
     void refreshUnreadCount();
   }, [refreshUnreadCount]);
 
-  /**
-   * Opens the inbox and re-reads the badge.
-   *
-   * The badge is refreshed before navigating so a tap always shows the current
-   * number even when the person comes straight back.
-   */
-  const handleOpenNotifications = useCallback((): void => {
-    onOpenNotifications();
-    void refreshUnreadCount();
-  }, [onOpenNotifications, refreshUnreadCount]);
+  /** Pull-to-refresh: reload the first page from the top. */
+  const refresh = useCallback(async (): Promise<void> => {
+    setRefreshing(true);
+    setError(undefined);
+
+    try {
+      const page = await storiesApi.listStories({ limit: FEED_PAGE_SIZE }, token);
+      setStories(page.stories);
+      setNextCursor(page.next_cursor);
+    } catch (caught) {
+      setError(describeError(caught));
+    } finally {
+      setRefreshing(false);
+    }
+  }, [token]);
 
   const loadMore = useCallback(async (): Promise<void> => {
     if (nextCursor === '' || loadingMore) {
@@ -127,236 +171,206 @@ export default function FeedScreen({
     }
   }, [loadingMore, nextCursor, token]);
 
+  /** Opens the inbox and re-reads the badge, so a tap always shows the current count. */
+  const handleOpenNotifications = useCallback((): void => {
+    onOpenNotifications();
+    void refreshUnreadCount();
+  }, [onOpenNotifications, refreshUnreadCount]);
+
+  const bellLabel =
+    unreadCount === 0 ? 'Notifications, none unread' : `Notifications, ${unreadCount} unread`;
+
   return (
-    <FlatList
-      data={stories}
-      keyExtractor={(story) => story.id}
-      contentContainerStyle={styles.content}
-      ListHeaderComponent={
-        <View>
-          <View style={styles.titleRow}>
-            <Text style={styles.title}>Knot</Text>
-            <View style={styles.headerActions}>
-              <Pressable
-                style={styles.searchButton}
-                onPress={onOpenSearch}
-                accessibilityRole="button"
-                accessibilityLabel="Search stories, versions, and questions"
-              >
-                <Text style={styles.searchIcon}>🔍</Text>
-              </Pressable>
-              <Pressable
-                style={styles.bellButton}
-                onPress={handleOpenNotifications}
-                accessibilityRole="button"
-                accessibilityLabel={
-                  unreadCount === 0
-                    ? 'Notifications, none unread'
-                    : `Notifications, ${unreadCount} unread`
-                }
-              >
-                <Text style={styles.bellIcon}>🔔</Text>
-                {unreadCount > 0 ? (
-                  <View style={styles.badge}>
-                    <Text style={styles.badgeText}>
-                      {unreadCount > 99 ? '99+' : String(unreadCount)}
-                    </Text>
-                  </View>
-                ) : null}
-              </Pressable>
-            </View>
-          </View>
-          <Text style={styles.session}>Signed in as {email}</Text>
-
-          <View style={styles.actions}>
-            <Pressable style={styles.primaryButton} onPress={onCreateStory}>
-              <Text style={styles.primaryButtonText}>Tell a story</Text>
+    <View style={styles.container}>
+      <Header
+        scrollY={scrollY}
+        left={<Logomark size={LOGOMARK_SIZE} />}
+        right={
+          <View style={styles.headerActions}>
+            <Pressable
+              style={styles.iconButton}
+              onPress={onOpenSearch}
+              accessibilityRole="button"
+              accessibilityLabel="Search stories, versions, and questions"
+            >
+              <MagnifyingGlass color={colors.text.tertiary} size={ICON_SIZE} />
             </Pressable>
-            <Pressable style={styles.secondaryButton} onPress={onSignOut}>
-              <Text style={styles.secondaryButtonText}>Sign out</Text>
+            <Pressable
+              style={styles.iconButton}
+              onPress={handleOpenNotifications}
+              accessibilityRole="button"
+              accessibilityLabel={bellLabel}
+            >
+              <Bell color={colors.text.tertiary} size={ICON_SIZE} />
+              {unreadCount > 0 ? (
+                <View style={styles.badge}>
+                  <Text style={[typeScale.caption, tabularNums, styles.badgeText]}>
+                    {unreadCount > 99 ? '99+' : String(unreadCount)}
+                  </Text>
+                </View>
+              ) : null}
             </Pressable>
           </View>
+        }
+      />
 
-          <Text style={styles.sectionTitle}>Stories</Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.tabs}
+        contentContainerStyle={styles.tabsContent}
+      >
+        {FEED_TABS.map((label) => {
+          const active = label === activeTab;
+          return (
+            <Pressable
+              key={label}
+              style={[styles.tab, active ? styles.tabActive : null]}
+              onPress={() => setActiveTab(label)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={label}
+            >
+              <Text
+                style={[typeScale.button, styles.tabLabel, active ? styles.tabLabelActive : null]}
+              >
+                {label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </ScrollView>
 
-          {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
-          {loading ? <ActivityIndicator style={styles.spinner} /> : null}
-          {!loading && stories.length === 0 && error === undefined ? (
-            <Text style={styles.empty}>No stories yet. Be the first to tell one.</Text>
-          ) : null}
-        </View>
-      }
-      renderItem={({ item }) => {
-        // A story whose author fields are both absent falls back to the card's
-        // previous look: no AuthorLine, rather than a line with nothing in it.
-        const hasAuthor =
-          item.author_display_name !== undefined || item.author_avatar_url !== undefined;
-
-        return (
-          <Pressable style={styles.card} onPress={() => onOpenStory(item.id)}>
-            <Text style={styles.cardTitle}>{item.title}</Text>
-            {hasAuthor ? (
-              <View style={styles.cardAuthor}>
-                <AuthorLine
-                  displayName={item.author_display_name}
-                  avatarUrl={item.author_avatar_url}
-                  createdAt={item.created_at}
-                  rooted={item.author_rooted}
-                  size="small"
-                  onPress={() => onOpenUserProfile(item.author_id)}
-                />
-              </View>
-            ) : null}
-            <Text style={styles.cardMeta}>
-              {item.pillar} · {languageName(item.language)}
-              {item.sensitive ? ' · sensitive' : ''}
-            </Text>
-            {item.approximate_location !== '' ? (
-              <Text style={styles.cardMeta}>{item.approximate_location}</Text>
-            ) : null}
-          </Pressable>
-        );
-      }}
-      ListFooterComponent={
-        nextCursor !== '' ? (
-          <Pressable
-            style={[styles.secondaryButton, loadingMore ? styles.buttonDisabled : null]}
-            onPress={loadMore}
-            disabled={loadingMore}
-          >
-            <Text style={styles.secondaryButtonText}>{loadingMore ? 'Loading…' : 'Load more'}</Text>
-          </Pressable>
-        ) : null
-      }
-    />
+      <FlatList
+        data={stories}
+        keyExtractor={(story) => story.id}
+        contentContainerStyle={styles.listContent}
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
+          useNativeDriver: false,
+        })}
+        scrollEventThrottle={16}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={refresh}
+            tintColor={colors.text.secondary}
+          />
+        }
+        onEndReached={() => {
+          void loadMore();
+        }}
+        onEndReachedThreshold={0.5}
+        renderItem={({ item }) => (
+          <FeedEntry
+            story={{
+              author_avatar_url: item.author_avatar_url,
+              author_display_name: item.author_display_name,
+              author_rooted: item.author_rooted ?? null,
+              created_at: item.created_at,
+              id: item.id,
+              language: item.language,
+              media_preview_url: mediaPreviewUrl(item),
+              pillar: item.pillar,
+              place: item.approximate_location,
+              preview: item.body,
+              reactions: item.reactions,
+              title: item.title,
+            }}
+            onPress={() => onOpenStory(item.id)}
+            onOpenAuthor={() => onOpenUserProfile(item.author_id)}
+          />
+        )}
+        ListEmptyComponent={
+          loading ? (
+            <ActivityIndicator style={styles.spinner} />
+          ) : error !== undefined ? (
+            <Text style={styles.error}>{error}</Text>
+          ) : (
+            <EmptyState
+              illustrationName="no-stories"
+              headline="Stories will gather here."
+              body="Choose the languages you read and we'll start there."
+            />
+          )
+        }
+        ListFooterComponent={
+          loadingMore ? (
+            <ActivityIndicator style={styles.footerSpinner} />
+          ) : error !== undefined && stories.length > 0 ? (
+            <Text style={styles.error}>{error}</Text>
+          ) : null
+        }
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  actions: {
-    flexDirection: 'row',
-    gap: spacing.md,
-    marginTop: spacing.lg,
-  },
   badge: {
     alignItems: 'center',
-    backgroundColor: colors.brand.magenta,
+    backgroundColor: colors.brand.primary,
     borderRadius: radius.pill,
     justifyContent: 'center',
-    left: 26,
-    minWidth: 20,
+    minWidth: 18,
     paddingHorizontal: spacing.xs,
     position: 'absolute',
-    top: -4,
+    right: 6,
+    top: 6,
   },
   badgeText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.xs,
-    fontWeight: fontWeights.bold,
+    color: colors.text.onBrand,
   },
-  bellButton: {
-    padding: spacing.sm,
-  },
-  bellIcon: {
-    fontSize: fontSizes.lg,
-  },
-  buttonDisabled: {
-    opacity: 0.5,
-  },
-  card: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.subtle,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginTop: spacing.md,
-    padding: spacing.lg,
-  },
-  cardAuthor: {
-    marginTop: spacing.xs,
-  },
-  cardMeta: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    marginTop: spacing.xs,
-  },
-  cardTitle: {
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    fontWeight: fontWeights.semiBold,
-  },
-  content: {
-    backgroundColor: colors.bg.primary,
-    padding: spacing.xl,
-    paddingBottom: spacing['3xl'],
-  },
-  empty: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.base,
-    marginTop: spacing.lg,
+  container: {
+    backgroundColor: colors.bg.canvas,
+    flex: 1,
   },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.base,
-    marginTop: spacing.lg,
+    color: colors.state.danger,
+    paddingHorizontal: layout.screenPaddingFeed,
+    paddingVertical: spacing.md,
+    textAlign: 'center',
+  },
+  footerSpinner: {
+    marginVertical: spacing.xl,
   },
   headerActions: {
     alignItems: 'center',
     flexDirection: 'row',
   },
-  primaryButton: {
+  iconButton: {
     alignItems: 'center',
-    backgroundColor: colors.brand.purple,
-    borderRadius: radius.md,
-    flexGrow: 1,
-    paddingVertical: spacing.md,
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
   },
-  primaryButtonText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
-  },
-  secondaryButton: {
-    alignItems: 'center',
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginTop: spacing.md,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-  },
-  secondaryButtonText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
-  },
-  searchButton: {
-    padding: spacing.sm,
-  },
-  searchIcon: {
-    fontSize: fontSizes.lg,
-  },
-  sectionTitle: {
-    color: colors.text.primary,
-    fontSize: fontSizes.lg,
-    fontWeight: fontWeights.bold,
-    marginTop: 28,
-  },
-  session: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.base,
-    marginTop: spacing.xs,
+  listContent: {
+    paddingBottom: spacing.xxxl,
   },
   spinner: {
     marginTop: spacing.xl,
   },
-  title: {
-    color: colors.text.primary,
-    fontSize: fontSizes.xl,
-    fontWeight: fontWeights.bold,
+  tab: {
+    borderBottomColor: 'transparent',
+    borderBottomWidth: 2,
+    paddingBottom: spacing.sm,
+    paddingTop: spacing.md,
   },
-  titleRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  tabActive: {
+    borderBottomColor: colors.brand.primary,
+  },
+  tabLabel: {
+    color: colors.text.tertiary,
+  },
+  tabLabelActive: {
+    color: colors.text.primary,
+  },
+  tabs: {
+    borderBottomColor: colors.border.hairline,
+    borderBottomWidth: 1,
+    flexGrow: 0,
+  },
+  tabsContent: {
+    gap: spacing.xl,
+    paddingHorizontal: layout.screenPaddingFeed,
   },
 });

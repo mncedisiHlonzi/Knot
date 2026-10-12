@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, BackHandler, SafeAreaView, StyleSheet, View } from 'react-native';
+import { BackHandler, SafeAreaView, StyleSheet, View } from 'react-native';
 
 import type { AuthResponse, User } from './src/api/client';
 import { conversationsApi, type Comment } from './src/api/conversations';
@@ -18,6 +18,7 @@ import {
   replaceOverlay,
   topOverlay,
 } from './src/navigation/overlayStack';
+import { hasSeenOnboarding, markOnboardingSeen } from './src/session/onboarding';
 import { clearSession, loadSession, saveSession, Session } from './src/session/session';
 import LoginScreen from './src/screens/auth/LoginScreen';
 import RegisterScreen from './src/screens/auth/RegisterScreen';
@@ -29,9 +30,12 @@ import AskInquiryScreen from './src/screens/inquiries/AskInquiryScreen';
 import InquiryDetailScreen from './src/screens/inquiries/InquiryDetailScreen';
 import InquiryListScreen from './src/screens/inquiries/InquiryListScreen';
 import NotificationsScreen from './src/screens/notifications/NotificationsScreen';
+import OnboardingScreen from './src/screens/onboarding/OnboardingScreen';
 import RootedSetupScreen from './src/screens/profile/RootedSetupScreen';
 import UserProfileScreen from './src/screens/profile/UserProfileScreen';
 import SearchScreen from './src/screens/search/SearchScreen';
+import SplashScreen from './src/screens/splash/SplashScreen';
+import { SPLASH_DURATION_MS, postSplashDestination } from './src/screens/splash/splash';
 import AdaptStoryScreen from './src/screens/stories/AdaptStoryScreen';
 import CreateStoryScreen from './src/screens/stories/CreateStoryScreen';
 import FeedScreen from './src/screens/stories/FeedScreen';
@@ -70,6 +74,9 @@ type Overlay =
 /** The two auth screens, shown before there is a session. Login is the default. */
 type AuthMode = 'login' | 'register';
 
+/** The boot flow: the splash, the first-run onboarding, then the app proper. */
+type BootPhase = 'splash' | 'onboarding' | 'app';
+
 /**
  * The first preferred language tag that is a canonical ISO 639-3 code, or
  * undefined when the profile names none the app knows. A legacy or malformed tag
@@ -102,33 +109,59 @@ function preferredLanguage(user: User): string {
  */
 export default function App(): React.ReactElement {
   const [session, setSession] = useState<Session | null>(null);
-  // True until the stored session has been read once, so a returning user does
-  // not see the login screen flash before their session is restored.
-  const [restoring, setRestoring] = useState(true);
   const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [tab, setTab] = useState<TabName>('feed');
   const [overlays, setOverlays] = useState<readonly Overlay[]>([]);
+  // The boot flow. It starts on the splash, which is held while the stored session
+  // and the first-run flag are read and for a short minimum, then hands off.
+  const [bootPhase, setBootPhase] = useState<BootPhase>('splash');
+  const [sessionLoaded, setSessionLoaded] = useState(false);
+  const [onboardingLoaded, setOnboardingLoaded] = useState(false);
+  const [onboarded, setOnboarded] = useState(false);
 
-  // Restore a stored session on first mount. loadSession never throws: a missing
-  // or corrupted value resolves to null, which just means "show the login".
+  // Read the stored session and the first-run flag on first mount, in parallel.
+  // Neither read throws: a missing or corrupted value resolves to "not signed in"
+  // / "not onboarded", which is the safe default (KNOT-ADR-024).
   useEffect(() => {
     let active = true;
 
     void (async () => {
-      const stored = await loadSession();
+      const [stored, seen] = await Promise.all([loadSession(), hasSeenOnboarding()]);
       if (!active) {
         return;
       }
       if (stored !== null) {
         setSession(stored);
       }
-      setRestoring(false);
+      setOnboarded(seen);
+      setSessionLoaded(true);
+      setOnboardingLoaded(true);
     })();
 
     return () => {
       active = false;
     };
   }, []);
+
+  // Hold the splash until both reads have resolved and the minimum time has
+  // elapsed, then hand off to onboarding or the app. A session always wins:
+  // onboarding ends at the auth screens, so a signed-in user has seen it.
+  useEffect(() => {
+    if (bootPhase !== 'splash' || !sessionLoaded || !onboardingLoaded) {
+      return undefined;
+    }
+    const timer = setTimeout(() => {
+      setBootPhase(postSplashDestination(session !== null, onboarded));
+    }, SPLASH_DURATION_MS);
+    return () => clearTimeout(timer);
+  }, [bootPhase, onboarded, onboardingLoaded, session, sessionLoaded]);
+
+  /** Leaves onboarding for the auth screens, recording that it has been seen. */
+  function handleOnboardingDone(): void {
+    void markOnboardingSeen();
+    setOnboarded(true);
+    setBootPhase('app');
+  }
 
   // Android hardware back pops the overlay stack and falls through to the OS
   // (background the app) only when there is nothing to pop. BackHandler exists on
@@ -260,18 +293,15 @@ export default function App(): React.ReactElement {
       default:
         return (
           <FeedScreen
-            email={current.user.email}
             token={current.accessToken}
             onOpenStory={(id) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId: id }))
             }
-            onCreateStory={() => setTab('createStory')}
             onOpenNotifications={() =>
               setOverlays((stack) => pushOverlay(stack, { name: 'notifications' }))
             }
             onOpenSearch={() => setOverlays((stack) => pushOverlay(stack, { name: 'search' }))}
             onOpenUserProfile={openUserProfile}
-            onSignOut={handleSignOut}
           />
         );
     }
@@ -548,10 +578,18 @@ export default function App(): React.ReactElement {
     }
   }
 
-  if (restoring) {
+  if (bootPhase === 'splash') {
     return (
-      <SafeAreaView style={styles.loadingContainer}>
-        <ActivityIndicator color={colors.brand.purple} size="large" />
+      <SafeAreaView style={styles.bootContainer}>
+        <SplashScreen />
+      </SafeAreaView>
+    );
+  }
+
+  if (bootPhase === 'onboarding') {
+    return (
+      <SafeAreaView style={styles.bootContainer}>
+        <OnboardingScreen onDone={handleOnboardingDone} />
       </SafeAreaView>
     );
   }
@@ -584,7 +622,7 @@ export default function App(): React.ReactElement {
 
 const styles = StyleSheet.create({
   authContainer: {
-    backgroundColor: colors.bg.primary,
+    backgroundColor: colors.bg.canvas,
     flex: 1,
     justifyContent: 'center',
     paddingHorizontal: spacing.xl,
@@ -592,14 +630,12 @@ const styles = StyleSheet.create({
   body: {
     flex: 1,
   },
-  loadingContainer: {
-    alignItems: 'center',
-    backgroundColor: colors.bg.primary,
+  bootContainer: {
+    backgroundColor: colors.bg.canvas,
     flex: 1,
-    justifyContent: 'center',
   },
   storyContainer: {
-    backgroundColor: colors.bg.primary,
+    backgroundColor: colors.bg.canvas,
     flex: 1,
   },
 });

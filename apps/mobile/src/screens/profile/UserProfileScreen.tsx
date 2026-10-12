@@ -3,26 +3,53 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
-  Image,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import {
+  ArrowLeft,
+  ArrowsLeftRight,
+  Books,
+  ChatCircle,
+  CheckCircle,
+  DotsThree,
+  LinkSimple,
+  Question,
+  type Icon,
+} from 'phosphor-react-native';
 
 import { User, describeError } from '../../api/client';
 import { conversationsApi } from '../../api/conversations';
 import { BlockedUser, blocksApi, describeModerationError } from '../../api/moderation';
-import { Activity, PROFILE_PAGE_SIZE, ProfileUser, profileApi } from '../../api/profile';
+import {
+  Activity,
+  ActivityKind,
+  PROFILE_PAGE_SIZE,
+  ProfileUser,
+  profileApi,
+} from '../../api/profile';
 import { uploadAvatar } from '../../api/users';
+import Avatar from '../../components/Avatar';
+import Button from '../../components/Button';
+import EmptyState from '../../components/EmptyState';
+import Header from '../../components/Header';
 import MediaPickerSheet, { PickedMedia } from '../../components/MediaPickerSheet';
 import RootedBadge from '../../components/RootedBadge';
 import { API_BASE_URL } from '../../config/api';
 import { languageName } from '../../data/languages';
-import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
-import { getInitials } from '../../utils/initials';
+import { colors, layout, spacing, tabularNums, typeScale } from '../../theme';
 import { formatRelativeTime } from '../../utils/time';
+import {
+  DEFAULT_PROFILE_TAB,
+  PROFILE_TABS,
+  filterActivities,
+  profileStats,
+  statsLine,
+} from './profileActivity';
 
 type UserProfileScreenProps = {
   /** The user whose wall to show. */
@@ -54,22 +81,22 @@ type UserProfileScreenProps = {
    */
   readonly onBack?: () => void;
   /**
-   * Whether to show the "← Back" link. Defaults to true.
+   * Whether to show the back control. Defaults to true.
    *
-   * The link is only rendered when `onBack` is given, so the Profile tab, which
+   * The control is only rendered when `onBack` is given, so the Profile tab, which
    * is a destination rather than a pushed screen, shows no way back.
    */
   readonly showBackButton?: boolean;
 };
 
-/** The label a wall card shows for each activity kind. */
-const KIND_LABELS: Readonly<Record<Activity['kind'], string>> = {
-  story: 'Story',
-  version: 'Adaptation',
-  comment: 'Comment',
-  bridge: 'Bridge',
-  inquiry: 'Question',
-  inquiry_answer: 'Answer',
+/** The Phosphor icon that marks each activity kind in the wall. */
+const KIND_ICONS: Readonly<Record<ActivityKind, Icon>> = {
+  story: Books,
+  version: ArrowsLeftRight,
+  comment: ChatCircle,
+  bridge: LinkSimple,
+  inquiry: Question,
+  inquiry_answer: CheckCircle,
 };
 
 /** The headline for one activity: the most useful single line of its payload. */
@@ -92,43 +119,27 @@ function activityHeadline(activity: Activity): string {
   }
 }
 
-/** The secondary line for one activity, or "" when the payload names nothing more. */
-function activityMeta(activity: Activity): string {
-  switch (activity.kind) {
-    case 'story':
-      return `${activity.payload.pillar} · ${languageName(activity.payload.language)}`;
-    case 'version':
-      return `Adapted into ${languageName(activity.payload.language)}`;
-    case 'comment':
-      return 'On a version';
-    case 'bridge':
-      return 'From a comment';
-    case 'inquiry':
-      // A place-less question is ordinary, so it reads as a statement rather than
-      // as a missing value.
-      return activity.payload.place === undefined || activity.payload.place === ''
-        ? 'No place named'
-        : `About ${activity.payload.place}`;
-    case 'inquiry_answer':
-      return `Answered: ${activity.payload.body_preview}`;
-    default:
-      return '';
-  }
-}
-
 /**
- * One user's public wall: who they are, and everything they have authored —
- * stories, adaptations, comments, and bridges — newest first.
+ * One person's wall: who they are, and everything they have authored —
+ * stories, adaptations, comments, bridges, questions, and answers — newest first.
+ *
+ * The header block is centred: avatar, name, the Rooted badge when there is one,
+ * when they joined, and a stats line. The owner sees "Edit profile" and an
+ * overflow control carrying Set Rooted, their blocked-users list, and sign-out; a
+ * visitor sees Block instead. Below the block, six tabs filter the wall, each
+ * activity shown as a compact row (kind icon, headline, relative time).
+ *
+ * The stats and the per-tab lists are computed over the activities loaded so far
+ * — the profile API returns no totals and no per-kind filter, so both grow as the
+ * wall is paged (KNOT-020c disclosure).
  *
  * It is the public variant of the profile: it reads `GET /users/{id}/profile`,
  * which needs no token, and the owner's variant adds only the avatar upload,
- * Set Rooted, and sign-out controls. A non-owner sees exactly the same wall
- * without them.
+ * Set Rooted, and sign-out controls.
  *
  * The same screen is both the Profile tab (KNOT-ADR-044) and a pushed overlay:
- * the Profile tab renders it without a back link, because a tab is a destination
- * rather than something to return from. One screen means the owner's own wall and
- * the wall everyone else sees can never drift apart.
+ * the tab renders it without a back control, because a tab is a destination
+ * rather than something to return from.
  */
 export default function UserProfileScreen({
   userId,
@@ -150,6 +161,8 @@ export default function UserProfileScreen({
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  const [activeTab, setActiveTab] = useState<ActivityKind>(DEFAULT_PROFILE_TAB);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const [pickerVisible, setPickerVisible] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -351,7 +364,7 @@ export default function UserProfileScreen({
           return;
       }
     },
-    [onOpenComment, onOpenInquiry, onOpenStory],
+    [onOpenComment, onOpenInquiry, onOpenStory, token],
   );
 
   const avatarUri =
@@ -359,322 +372,368 @@ export default function UserProfileScreen({
       ? undefined
       : `${API_BASE_URL}${profile.avatar_url}`;
 
+  const visible = filterActivities(activities, activeTab);
+
   return (
-    <FlatList
-      data={activities}
-      keyExtractor={(activity) => activity.id}
-      contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={refresh}
-          tintColor={colors.text.secondary}
-        />
-      }
-      ListHeaderComponent={
-        <View>
-          {showBackButton && onBack !== undefined ? (
-            <Pressable style={styles.link} onPress={onBack}>
-              <Text style={styles.linkText}>← Back</Text>
+    <View style={styles.container}>
+      <Header
+        title="Profile"
+        left={
+          showBackButton && onBack !== undefined ? (
+            <Pressable
+              style={styles.iconButton}
+              onPress={onBack}
+              accessibilityRole="button"
+              accessibilityLabel="Back"
+            >
+              <ArrowLeft color={colors.text.primary} size={24} />
             </Pressable>
-          ) : null}
-
-          {loading ? <ActivityIndicator style={styles.spinner} /> : null}
-          {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
-
-          {profile !== undefined ? (
-            <View style={styles.header}>
-              {avatarUri === undefined ? (
-                <View style={styles.avatarFallback}>
-                  <Text style={styles.avatarInitials}>{getInitials(profile.display_name)}</Text>
-                </View>
-              ) : (
-                <Image
-                  style={styles.avatar}
-                  source={{ uri: avatarUri }}
-                  accessibilityLabel={`${profile.display_name}'s profile picture`}
-                />
-              )}
-
-              <Text style={styles.name}>{profile.display_name}</Text>
-
-              {profile.rooted !== null && profile.rooted !== undefined ? (
-                <View style={styles.rootedRow}>
-                  <RootedBadge
-                    place={profile.rooted.place}
-                    durationBucket={profile.rooted.duration_bucket}
-                  />
-                </View>
-              ) : null}
-
-              <Text style={styles.joined}>Joined {formatRelativeTime(profile.joined_at)}</Text>
-
-              {isOwnProfile ? (
-                <View style={styles.ownerButtons}>
-                  <Pressable
-                    style={[styles.primaryButton, uploadingAvatar ? styles.disabled : null]}
-                    onPress={() => {
-                      setAvatarError(undefined);
-                      setPickerVisible(true);
-                    }}
-                    disabled={uploadingAvatar}
-                  >
-                    <Text style={styles.primaryButtonText}>
-                      {uploadingAvatar ? 'Uploading…' : 'Edit avatar'}
-                    </Text>
-                  </Pressable>
-                  <Pressable style={styles.secondaryButton} onPress={onSetRooted}>
-                    <Text style={styles.secondaryButtonText}>Set Rooted</Text>
-                  </Pressable>
-                  <Pressable style={styles.secondaryButton} onPress={onSignOut}>
-                    <Text style={styles.secondaryButtonText}>Sign out</Text>
-                  </Pressable>
-                </View>
-              ) : null}
-
-              {!isOwnProfile ? (
-                <View style={styles.ownerButtons}>
-                  <Pressable
-                    style={[styles.secondaryButton, blocking ? styles.disabled : null]}
-                    onPress={handleBlock}
-                    disabled={blocking}
-                    accessibilityRole="button"
-                    accessibilityLabel="Block this user"
-                  >
-                    <Text style={styles.secondaryButtonText}>
-                      {blocking ? 'Blocking…' : 'Block'}
-                    </Text>
-                  </Pressable>
-                </View>
-              ) : null}
-
-              {isOwnProfile ? (
-                <View style={styles.ownerButtons}>
-                  <Pressable style={styles.secondaryButton} onPress={toggleBlockedUsers}>
-                    <Text style={styles.secondaryButtonText}>
-                      {showBlocked ? 'Hide blocked users' : 'Blocked users'}
-                    </Text>
-                  </Pressable>
-                </View>
-              ) : null}
-
-              {isOwnProfile && showBlocked ? (
-                <View style={styles.blockedList}>
-                  {blockedLoading ? <ActivityIndicator /> : null}
-                  {blockedUsers.map((user) => (
-                    <View key={user.id} style={styles.blockedRow}>
-                      <Text style={styles.blockedName}>{user.display_name}</Text>
-                      <Pressable
-                        style={styles.secondaryButton}
-                        onPress={() => {
-                          void handleUnblock(user.id);
-                        }}
-                        accessibilityRole="button"
-                        accessibilityLabel={`Unblock ${user.display_name}`}
-                      >
-                        <Text style={styles.secondaryButtonText}>Unblock</Text>
-                      </Pressable>
-                    </View>
-                  ))}
-                  {!blockedLoading && blockedUsers.length === 0 ? (
-                    <Text style={styles.hint}>You have not blocked anyone.</Text>
-                  ) : null}
-                </View>
-              ) : null}
-
-              {blockError !== undefined ? <Text style={styles.error}>{blockError}</Text> : null}
-
-              {avatarError !== undefined ? <Text style={styles.error}>{avatarError}</Text> : null}
-
-              <MediaPickerSheet
-                visible={pickerVisible}
-                allowVideo={false}
-                onClose={() => setPickerVisible(false)}
-                onPicked={(picked) => {
-                  // An avatar is a single image, so only the first is used.
-                  const first = picked[0];
-                  if (first !== undefined) {
-                    void handleAvatarPicked(first);
-                  }
-                }}
-                onError={setAvatarError}
-              />
-
-              <Text style={styles.sectionTitle}>Activity</Text>
-            </View>
-          ) : null}
-        </View>
-      }
-      renderItem={({ item }) => (
-        <Pressable style={styles.card} onPress={() => handleOpenActivity(item)}>
-          <Text style={styles.cardKind}>{KIND_LABELS[item.kind]}</Text>
-          <Text style={styles.cardHeadline}>{activityHeadline(item)}</Text>
-          <Text style={styles.cardMeta}>
-            {activityMeta(item)} · {formatRelativeTime(item.created_at)}
-          </Text>
-        </Pressable>
-      )}
-      ListEmptyComponent={
-        !loading && error === undefined ? <Text style={styles.hint}>Nothing here yet.</Text> : null
-      }
-      ListFooterComponent={
-        nextCursor !== '' ? (
+          ) : undefined
+        }
+        right={
           <Pressable
-            style={[styles.secondaryButton, loadingMore ? styles.disabled : null]}
-            onPress={loadMore}
-            disabled={loadingMore}
+            style={styles.iconButton}
+            onPress={() => setMenuOpen((current) => !current)}
+            accessibilityRole="button"
+            accessibilityLabel="Profile options"
           >
-            <Text style={styles.secondaryButtonText}>{loadingMore ? 'Loading…' : 'Load more'}</Text>
+            <DotsThree color={colors.text.primary} size={24} weight="bold" />
           </Pressable>
-        ) : null
-      }
-    />
+        }
+      />
+
+      <FlatList
+        data={visible}
+        keyExtractor={(activity) => activity.id}
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={refresh}
+            tintColor={colors.text.secondary}
+          />
+        }
+        onEndReached={() => {
+          void loadMore();
+        }}
+        onEndReachedThreshold={0.5}
+        ListHeaderComponent={
+          <View>
+            {loading ? <ActivityIndicator style={styles.spinner} /> : null}
+            {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
+
+            {profile !== undefined ? (
+              <View style={styles.profileBlock}>
+                <View style={styles.avatarWrap}>
+                  <Avatar uri={avatarUri} displayName={profile.display_name} size="xl" />
+                </View>
+
+                <Text style={[typeScale.h1, styles.name]}>{profile.display_name}</Text>
+
+                {profile.rooted !== null && profile.rooted !== undefined ? (
+                  <View style={styles.rootedRow}>
+                    <RootedBadge
+                      place={profile.rooted.place}
+                      durationBucket={profile.rooted.duration_bucket}
+                    />
+                  </View>
+                ) : null}
+
+                <Text style={[typeScale.caption, styles.joined]}>
+                  {`Joined ${formatRelativeTime(profile.joined_at)}`}
+                </Text>
+
+                <Text style={[typeScale.caption, tabularNums, styles.stats]}>
+                  {statsLine(profileStats(activities))}
+                </Text>
+
+                {isOwnProfile ? (
+                  <View style={styles.editProfile}>
+                    <Button
+                      variant="secondary"
+                      fullWidth
+                      label="Edit profile"
+                      loading={uploadingAvatar}
+                      onPress={() => {
+                        setAvatarError(undefined);
+                        setPickerVisible(true);
+                      }}
+                    />
+                  </View>
+                ) : null}
+
+                {menuOpen ? (
+                  <View style={styles.menu}>
+                    {isOwnProfile ? (
+                      <>
+                        <Button
+                          variant="secondary"
+                          fullWidth
+                          label="Set Rooted"
+                          onPress={() => {
+                            setMenuOpen(false);
+                            onSetRooted();
+                          }}
+                        />
+                        <View style={styles.menuGap} />
+                        <Button
+                          variant="secondary"
+                          fullWidth
+                          label={showBlocked ? 'Hide blocked users' : 'Blocked users'}
+                          onPress={toggleBlockedUsers}
+                        />
+                        <View style={styles.menuGap} />
+                        <Button variant="ghost" fullWidth label="Sign out" onPress={onSignOut} />
+                      </>
+                    ) : (
+                      <Button
+                        variant="danger"
+                        fullWidth
+                        label="Block"
+                        loading={blocking}
+                        onPress={handleBlock}
+                      />
+                    )}
+                  </View>
+                ) : null}
+
+                {blockError !== undefined ? <Text style={styles.error}>{blockError}</Text> : null}
+                {avatarError !== undefined ? <Text style={styles.error}>{avatarError}</Text> : null}
+
+                {isOwnProfile && showBlocked ? (
+                  <View style={styles.blockedList}>
+                    {blockedLoading ? <ActivityIndicator /> : null}
+                    {blockedUsers.map((user) => (
+                      <View key={user.id} style={styles.blockedRow}>
+                        <Text style={styles.blockedName} numberOfLines={1}>
+                          {user.display_name}
+                        </Text>
+                        <Button
+                          variant="secondary"
+                          label="Unblock"
+                          onPress={() => {
+                            void handleUnblock(user.id);
+                          }}
+                        />
+                      </View>
+                    ))}
+                    {!blockedLoading && blockedUsers.length === 0 ? (
+                      <Text style={styles.hint}>You have not blocked anyone.</Text>
+                    ) : null}
+                  </View>
+                ) : null}
+
+                <MediaPickerSheet
+                  visible={pickerVisible}
+                  allowVideo={false}
+                  onClose={() => setPickerVisible(false)}
+                  onPicked={(picked) => {
+                    // An avatar is a single image, so only the first is used.
+                    const first = picked[0];
+                    if (first !== undefined) {
+                      void handleAvatarPicked(first);
+                    }
+                  }}
+                  onError={setAvatarError}
+                />
+              </View>
+            ) : null}
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.tabs}
+              contentContainerStyle={styles.tabsContent}
+            >
+              {PROFILE_TABS.map((tab) => {
+                const active = tab.kind === activeTab;
+                return (
+                  <Pressable
+                    key={tab.kind}
+                    style={[styles.tab, active ? styles.tabActive : null]}
+                    onPress={() => setActiveTab(tab.kind)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: active }}
+                    accessibilityLabel={tab.label}
+                  >
+                    <Text
+                      style={[
+                        typeScale.button,
+                        styles.tabLabel,
+                        active ? styles.tabLabelActive : null,
+                      ]}
+                    >
+                      {tab.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
+          </View>
+        }
+        renderItem={({ item }) => {
+          const IconComponent = KIND_ICONS[item.kind];
+          const headline = activityHeadline(item);
+          return (
+            <Pressable
+              style={styles.row}
+              onPress={() => handleOpenActivity(item)}
+              accessibilityRole="button"
+              accessibilityLabel={headline}
+            >
+              <IconComponent color={colors.text.tertiary} size={20} />
+              <View style={styles.rowText}>
+                <Text style={[typeScale.bodyS, styles.rowTitle]} numberOfLines={2}>
+                  {headline}
+                </Text>
+                <Text style={[typeScale.caption, styles.rowTime]}>
+                  {formatRelativeTime(item.created_at)}
+                </Text>
+              </View>
+              <View style={styles.rowHairline} />
+            </Pressable>
+          );
+        }}
+        ListEmptyComponent={
+          !loading && error === undefined ? (
+            <EmptyState illustrationName="no-stories" headline="Nothing here yet." />
+          ) : null
+        }
+        ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.spinner} /> : null}
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  avatar: {
-    borderColor: colors.border.default,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    height: 96,
-    width: 96,
-  },
-  avatarFallback: {
+  avatarWrap: {
     alignItems: 'center',
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    height: 96,
     justifyContent: 'center',
-    width: 96,
-  },
-  avatarInitials: {
-    color: colors.text.primary,
-    fontSize: fontSizes.xl,
-    fontWeight: fontWeights.bold,
   },
   blockedList: {
-    marginTop: spacing.sm,
+    marginTop: spacing.md,
     width: '100%',
   },
   blockedName: {
     color: colors.text.primary,
     flex: 1,
-    fontSize: fontSizes.md,
+    marginRight: spacing.md,
   },
   blockedRow: {
     alignItems: 'center',
-    borderColor: colors.border.subtle,
+    borderTopColor: colors.border.hairline,
     borderTopWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingVertical: spacing.sm,
   },
-  card: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.subtle,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginTop: spacing.md,
-    padding: spacing.lg,
-  },
-  cardHeadline: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    lineHeight: lineHeights.base,
-    marginTop: spacing.xs,
-  },
-  cardKind: {
-    color: colors.text.brand,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.semiBold,
-  },
-  cardMeta: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    marginTop: spacing.xs,
+  container: {
+    backgroundColor: colors.bg.canvas,
+    flex: 1,
   },
   content: {
-    backgroundColor: colors.bg.primary,
-    padding: spacing.xl,
-    paddingBottom: spacing['3xl'],
+    paddingBottom: spacing.xxxl,
   },
-  disabled: {
-    opacity: 0.5,
+  editProfile: {
+    alignSelf: 'stretch',
+    marginTop: spacing.xl,
   },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.base,
+    color: colors.state.danger,
     marginTop: spacing.lg,
-  },
-  header: {
-    alignItems: 'center',
+    paddingHorizontal: layout.screenPaddingFeed,
+    textAlign: 'center',
   },
   hint: {
     color: colors.text.secondary,
-    fontSize: fontSizes.base,
-    marginTop: spacing.lg,
+    marginTop: spacing.md,
+    textAlign: 'center',
+  },
+  iconButton: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
   },
   joined: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    marginTop: spacing.sm,
+    color: colors.text.tertiary,
+    marginTop: spacing.md,
   },
-  link: {
-    alignSelf: 'flex-start',
-    marginBottom: spacing.md,
+  menu: {
+    alignSelf: 'stretch',
+    marginTop: spacing.lg,
   },
-  linkText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.base,
+  menuGap: {
+    height: spacing.sm,
   },
   name: {
     color: colors.text.primary,
-    fontSize: fontSizes.xl,
-    fontWeight: fontWeights.bold,
-    marginTop: spacing.md,
-  },
-  ownerButtons: {
     marginTop: spacing.lg,
-    width: '100%',
+    textAlign: 'center',
   },
-  primaryButton: {
+  profileBlock: {
     alignItems: 'center',
-    backgroundColor: colors.brand.purple,
-    borderRadius: radius.md,
-    paddingVertical: spacing.md,
-  },
-  primaryButtonText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
+    paddingHorizontal: layout.screenPaddingFeed,
+    paddingTop: spacing.md,
   },
   rootedRow: {
     marginTop: spacing.sm,
   },
-  secondaryButton: {
+  row: {
     alignItems: 'center',
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginTop: spacing.md,
-    paddingVertical: spacing.md,
+    flexDirection: 'row',
+    gap: spacing.md,
+    paddingHorizontal: layout.screenPaddingFeed,
+    paddingVertical: spacing.lg,
   },
-  secondaryButtonText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
+  rowHairline: {
+    backgroundColor: colors.border.hairline,
+    bottom: 0,
+    height: 1,
+    left: layout.screenPaddingFeed,
+    position: 'absolute',
+    right: layout.screenPaddingFeed,
   },
-  sectionTitle: {
-    alignSelf: 'flex-start',
+  rowText: {
+    flex: 1,
+  },
+  rowTime: {
+    color: colors.text.tertiary,
+    marginTop: spacing.xs,
+  },
+  rowTitle: {
     color: colors.text.primary,
-    fontSize: fontSizes.lg,
-    fontWeight: fontWeights.bold,
-    marginTop: spacing.xl,
   },
   spinner: {
+    marginVertical: spacing.xl,
+  },
+  stats: {
+    color: colors.text.secondary,
+    marginTop: spacing.sm,
+  },
+  tab: {
+    borderBottomColor: 'transparent',
+    borderBottomWidth: 2,
+    paddingBottom: spacing.sm,
+    paddingTop: spacing.md,
+  },
+  tabActive: {
+    borderBottomColor: colors.brand.primary,
+  },
+  tabLabel: {
+    color: colors.text.tertiary,
+  },
+  tabLabelActive: {
+    color: colors.text.primary,
+  },
+  tabs: {
+    borderBottomColor: colors.border.hairline,
+    borderBottomWidth: 1,
+    flexGrow: 0,
     marginTop: spacing.xl,
+  },
+  tabsContent: {
+    gap: spacing.xl,
+    paddingHorizontal: layout.screenPaddingFeed,
   },
 });

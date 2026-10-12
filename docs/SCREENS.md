@@ -13,25 +13,26 @@ Discovery Map, Curious Inquiries, notifications. **Post-MVP** — everything aft
 
 | Screen | Category | Phase | Status | Task | Description |
 | --- | --- | --- | --- | --- | --- |
+| Splash | Onboarding | Phase 1 | Shipped | KNOT-020c | The cold-start screen: the Knot logo and tagline on a white canvas while the stored session and the first-run flag are read. Auto-advances; no controls. |
+| Onboarding | Onboarding | Phase 1 | Shipped | KNOT-020c | Three first-run slides (Skip, and Continue → Get started on the last) explaining the loop, ending at the auth screens. Shown once; the flag is persisted in AsyncStorage. |
 | Register | Auth | Phase 1 | Shipped | KNOT-003 | Create an account and receive a session. |
 | Login | Auth | Phase 1 | Shipped | KNOT-003 | Sign in and receive a session. |
-| Feed | Stories | Phase 1 | Shipped | KNOT-004 | Browse the public story feed, newest first, with keyset paging. |
-| StoryDetail | Stories | Phase 1 | Shipped | KNOT-004 | Read one story in full, with entry points to adapt it, view its tree, and open its conversation. Extended by KNOT-005 and KNOT-006. |
+| Feed | Stories | Phase 1 | Shipped | KNOT-004 | Browse the public story feed, newest first, as a continuous hairline-separated column with pull-to-refresh and keyset paging. Redesigned by KNOT-020c. |
+| StoryDetail | Stories | Phase 1 | Shipped | KNOT-004 | Read one story in full as an edge-to-edge reading flow (hero, pillar tag, author line, language row, body, signals), with entry points to adapt it, view its tree, and open its conversation. Redesigned by KNOT-020c. Extended by KNOT-005 and KNOT-006. |
 | CreateStory | Stories | Phase 1 | Shipped | KNOT-004 | Publish a story: pillar, language, title, body, coarse place, one media link, and a sensitive flag. |
 | AdaptStory | Tell My People | Phase 1 | Shipped | KNOT-005 | Retell an existing version in another language, prefilled from the version being adapted. |
 | LanguageTree | Tell My People | Phase 1 | Shipped | KNOT-005 | See every version of a story as an indented list, by depth, with language badges. |
 | CommentThread | Conversations | Phase 1 | Shipped | KNOT-006 | Read a version's comments newest-first and post a new one. Replies expand inline, collapsed by default, and a composer language chip — added by KNOT-015e and reworked by KNOT-015e-fix. |
 | Bridge | Conversations | Phase 1 | Shipped | KNOT-006 | Bridge a comment into another language, joining two conversations. |
+| Profile (own) | Profile | Phase 1 | Shipped | KNOT-020c | The signed-in user's wall: a centred header (avatar, name, Rooted badge, joined date, stories/versions/answers stats) above six activity tabs and a compact activity list. A redesign of the wall shipped in KNOT-015c / KNOT-015d. |
 
-Nine screens shipped; the same list is visible in the `ScreenName` state machine in
+Twelve screens shipped; the same list is visible in the `ScreenName` state machine in
 `apps/mobile/App.tsx`, which is documented in [`docs/NAVIGATION.md`](NAVIGATION.md).
 
 ## Concept and planned screens
 
 | Screen | Category | Phase | Status | Task | Description |
 | --- | --- | --- | --- | --- | --- |
-| Splash | Onboarding | Phase 1 | Concept | — | Branded launch screen: logomark and primary tagline while the app loads. |
-| Onboarding | Onboarding | Phase 1 | Concept | — | First-run panels explaining the loop, ending at Register or Login. |
 | Cultural Profile | Profile | Phase 1 | Planned | — | A person's languages, places, and heritage, as a page others can visit. |
 | Discovery Map | Discovery | Phase 2 | Planned | — | Browse stories and languages by place. Confirmed for Phase 2 in the roadmap. |
 | Rooted | Community | Phase 2 | Concept | — | Trust and standing signals for contributors. |
