@@ -47,6 +47,13 @@ export const colors = {
     secondary: active.ink700,
     tertiary: active.ink500,
     disabled: active.ink400,
+    /**
+     * Text (or an icon) drawn on top of a `brand.primary` fill — a primary
+     * button, the elevated Create tab. It is the canvas colour so it reads as
+     * white while the app is light-first (KNOT-020b); it is a semantic role, not
+     * a raw hex, so the no-hardcoded-hex rule holds.
+     */
+    onBrand: active.canvas,
     /** @deprecated use `text.primary`. */
     inverse: active.ink900,
     /** @deprecated use `brand.primary`. */

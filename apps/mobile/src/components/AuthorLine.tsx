@@ -1,15 +1,25 @@
 import React from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { AuthorRooted } from '../api/rooted';
 import { API_BASE_URL } from '../config/api';
-import { colors, fontSizes, fontWeights, radius, spacing } from '../theme';
-import { getInitials } from '../utils/initials';
+import { colors, spacing, typeScale } from '../theme';
 import { formatRelativeTime } from '../utils/time';
+import Avatar from './Avatar';
 import RootedBadge from './RootedBadge';
 
 /** The three sizes AuthorLine offers. */
 export type AuthorLineSize = 'small' | 'medium' | 'large';
+
+/**
+ * The inline Rooted summary AuthorLine renders. It is typed as plain strings (not
+ * the API's `AuthorRooted`) on purpose: the response types describe an optimistic
+ * wire format, so the component takes the loosest shape its caller can supply and
+ * validates the values at runtime.
+ */
+export type AuthorRootedSummary = {
+  readonly place: string;
+  readonly duration_bucket: string;
+};
 
 type AuthorLineProps = {
   /**
@@ -23,7 +33,7 @@ type AuthorLineProps = {
   /** The content's ISO-8601 timestamp, rendered relative to now. */
   readonly createdAt?: string | null;
   /** The author's inline Rooted summary, or null when they have none. */
-  readonly rooted?: AuthorRooted | null;
+  readonly rooted?: AuthorRootedSummary | null;
   /** Controls the avatar diameter and text weight. Defaults to "small". */
   readonly size?: AuthorLineSize;
   /**
@@ -34,34 +44,18 @@ type AuthorLineProps = {
    * line in a card that opens something else.
    */
   readonly onPress?: () => void;
+  /** Test identifier. */
+  readonly testID?: string;
 };
 
-/** Avatar diameter per size, in points. */
-const AVATAR_DIAMETER: Readonly<Record<AuthorLineSize, number>> = {
-  small: 24,
-  medium: 32,
-  large: 48,
-};
-
-/** Initials font size per size, in points. */
-const INITIALS_SIZE: Readonly<Record<AuthorLineSize, number>> = {
-  small: fontSizes.xs,
-  medium: fontSizes.sm,
-  large: fontSizes.base,
-};
-
-/** Name font size per size, in points. */
-const NAME_SIZE: Readonly<Record<AuthorLineSize, number>> = {
-  small: fontSizes.sm,
-  medium: fontSizes.base,
-  large: fontSizes.md,
-};
-
-/** Timestamp font size per size, in points. */
-const TIME_SIZE: Readonly<Record<AuthorLineSize, number>> = {
-  small: fontSizes.xs,
-  medium: fontSizes.sm,
-  large: fontSizes.sm,
+/**
+ * The Avatar size that pairs with each AuthorLine size. The two scales agree on
+ * their diameters (24 / 32 / 48), so the mapping is by name only.
+ */
+const AVATAR_SIZE: Readonly<Record<AuthorLineSize, 'sm' | 'md' | 'lg'>> = {
+  small: 'sm',
+  medium: 'md',
+  large: 'lg',
 };
 
 /**
@@ -71,12 +65,13 @@ const TIME_SIZE: Readonly<Record<AuthorLineSize, number>> = {
  * It is the one place attribution is rendered, so a story, a version, a comment,
  * and a bridge all read the same way. Every segment is optional: a missing name or
  * timestamp is omitted rather than shown empty, and an author with no avatar gets
- * their initials in a coloured circle instead.
+ * their initials in a circle instead (drawn by `Avatar`).
  *
  * Every field is validated as a string before it is used. The API response types
  * describe an optimistic wire format, so a response that omits an author field
  * delivers `undefined` at runtime; reading it must not crash the screen
- * (KNOT-015b-fix).
+ * (KNOT-015b-fix). A line with nothing at all to show renders `null` rather than an
+ * empty row.
  *
  * When `onPress` is given, the avatar and name become a tap target for the
  * author's profile: a nested `Pressable` takes the touch itself, so the parent
@@ -89,9 +84,9 @@ export default function AuthorLine({
   rooted,
   size = 'small',
   onPress,
+  testID,
 }: AuthorLineProps): React.ReactElement | null {
   const name = typeof displayName === 'string' ? displayName.trim() : '';
-  const diameter = AVATAR_DIAMETER[size];
 
   const path = typeof avatarUrl === 'string' ? avatarUrl.trim() : '';
   const avatarUri = path === '' ? undefined : `${API_BASE_URL}${path}`;
@@ -99,11 +94,12 @@ export default function AuthorLine({
   const relative =
     typeof createdAt === 'string' && createdAt !== '' ? formatRelativeTime(createdAt) : '';
 
-  const hasRooted =
-    rooted !== null &&
-    rooted !== undefined &&
-    typeof rooted.place === 'string' &&
-    rooted.place.trim() !== '';
+  const hasRootedObject = rooted !== null && rooted !== undefined;
+  const rootedPlace =
+    hasRootedObject && typeof rooted.place === 'string' ? rooted.place.trim() : '';
+  const durationBucket =
+    hasRootedObject && typeof rooted.duration_bucket === 'string' ? rooted.duration_bucket : '';
+  const hasRooted = rootedPlace !== '';
 
   // Nothing to show: render no row at all rather than an empty one. A row that
   // carries only a Rooted badge is still something, so it renders.
@@ -113,39 +109,27 @@ export default function AuthorLine({
 
   const hasLeadingSegment = name !== '' || hasRooted;
 
-  const avatar =
-    avatarUri === undefined ? (
-      <View style={[styles.avatarFallback, { height: diameter, width: diameter }]}>
-        <Text style={[styles.initials, { fontSize: INITIALS_SIZE[size] }]}>
-          {getInitials(displayName)}
-        </Text>
-      </View>
-    ) : (
-      <Image
-        style={[styles.avatar, { height: diameter, width: diameter }]}
-        source={{ uri: avatarUri }}
-        accessibilityLabel={name === '' ? 'profile picture' : `${name}'s profile picture`}
+  const identity = (
+    <>
+      <Avatar
+        uri={avatarUri}
+        displayName={typeof displayName === 'string' ? displayName : ''}
+        size={AVATAR_SIZE[size]}
+        accessibilityLabel={name === '' ? 'Profile picture' : `${name}'s profile picture`}
       />
-    );
-
-  const nameText =
-    name !== '' ? (
-      <Text
-        style={[
-          styles.name,
-          {
-            fontSize: NAME_SIZE[size],
-            fontWeight: size === 'small' ? fontWeights.medium : fontWeights.semiBold,
-          },
-        ]}
-        numberOfLines={1}
-      >
-        {name}
-      </Text>
-    ) : null;
+      {name !== '' ? (
+        <Text
+          style={[size === 'large' ? typeScale.h3 : typeScale.label, styles.name]}
+          numberOfLines={1}
+        >
+          {name}
+        </Text>
+      ) : null}
+    </>
+  );
 
   return (
-    <View style={styles.row}>
+    <View style={styles.row} testID={testID}>
       {onPress !== undefined ? (
         <Pressable
           style={styles.identity}
@@ -153,26 +137,22 @@ export default function AuthorLine({
           accessibilityRole="button"
           accessibilityLabel={name === '' ? 'Open profile' : `Open ${name}'s profile`}
         >
-          {avatar}
-          {nameText}
+          {identity}
         </Pressable>
       ) : (
-        <>
-          {avatar}
-          {nameText}
-        </>
+        <View style={styles.identity}>{identity}</View>
       )}
 
       {hasRooted ? (
         <RootedBadge
-          place={rooted.place}
-          durationBucket={rooted.duration_bucket}
+          place={rootedPlace}
+          durationBucket={durationBucket}
           compact={size === 'small'}
         />
       ) : null}
 
       {relative !== '' ? (
-        <Text style={[styles.time, { fontSize: TIME_SIZE[size] }]}>
+        <Text style={[typeScale.caption, styles.time]}>
           {hasLeadingSegment ? `· ${relative}` : relative}
         </Text>
       ) : null}
@@ -181,24 +161,11 @@ export default function AuthorLine({
 }
 
 const styles = StyleSheet.create({
-  avatar: {
-    backgroundColor: colors.bg.secondary,
-    borderRadius: radius.pill,
-  },
-  avatarFallback: {
-    alignItems: 'center',
-    backgroundColor: colors.brand.purple,
-    borderRadius: radius.pill,
-    justifyContent: 'center',
-  },
   identity: {
     alignItems: 'center',
     flexDirection: 'row',
+    flexShrink: 1,
     gap: spacing.sm,
-  },
-  initials: {
-    color: colors.text.primary,
-    fontWeight: fontWeights.semiBold,
   },
   name: {
     color: colors.text.primary,
@@ -211,6 +178,6 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   time: {
-    color: colors.text.secondary,
+    color: colors.text.tertiary,
   },
 });

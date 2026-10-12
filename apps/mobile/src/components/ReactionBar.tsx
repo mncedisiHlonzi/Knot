@@ -1,21 +1,24 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { CirclesThree, LinkSimple, PlusCircle, Target, type Icon } from 'phosphor-react-native';
 
 import { describeError } from '../api/client';
 import {
   ReactionCounts,
-  ReactionEntityType,
   ReactionType,
-  REACTION_EMOJI,
   REACTION_LABELS,
   REACTION_TYPES,
   reactionsApi,
 } from '../api/reactions';
-import { colors, fontSizes, fontWeights, radius, spacing } from '../theme';
+import { colors, radius, spacing, tabularNums, typeScale } from '../theme';
+import { applyReactionToggle, asReactionTypes, holdsReaction } from './reactionToggle';
+
+/** The content kinds a reaction can target that the app exposes today. */
+export type ReactionBarEntityType = 'story' | 'version' | 'inquiry';
 
 type ReactionBarProps = {
   /** The kind of content being reacted to. */
-  readonly entityType: ReactionEntityType;
+  readonly entityType: ReactionBarEntityType;
   /** The id of that content. */
   readonly entityId: string;
   /** The counts the server last reported, or the empty summary. */
@@ -29,25 +32,38 @@ type ReactionBarProps = {
    * signals, so the parent keeps its copy in step across a re-render.
    */
   readonly onChange: (counts: ReactionCounts, myReactions: readonly ReactionType[]) => void;
-  /** When true, only the emoji and count are drawn (for dense list rows). */
+  /** When true, only the icon and count are drawn (for dense list rows). */
   readonly compact?: boolean;
 };
 
-/** Reports whether the reader holds one signal. */
-function holds(mine: readonly string[], type: ReactionType): boolean {
-  return mine.includes(type);
-}
+/**
+ * The Phosphor icon each signal is drawn with. The brand's four custom glyphs ship
+ * later, so these are the closest standard approximations (KNOT-020b):
+ *
+ *   rings_true          Target        — a thing aimed at and hit
+ *   know_it_differently  CirclesThree  — overlapping circles, alternative tellings
+ *   adds_something_new   PlusCircle    — something added
+ *   needs_a_source       LinkSimple    — an unbacked claim wants a link
+ */
+const REACTION_ICONS: Readonly<Record<ReactionType, Icon>> = {
+  rings_true: Target,
+  know_it_differently: CirclesThree,
+  adds_something_new: PlusCircle,
+  needs_a_source: LinkSimple,
+};
+
+/** The icon size drawn in each column. */
+const ICON_SIZE = 22;
 
 /**
- * The four perspective signals on one piece of content, as a row of tappable
- * chips.
+ * The four perspective signals on one piece of content, as a row of equal columns.
  *
- * A chip reads `[emoji] [label] [count]` — the count is hidden while it is zero,
- * and the label is hidden in the compact variant. A signal the reader holds is
- * highlighted. Tapping toggles it: the change is applied optimistically and
- * reverted if the server refuses.
+ * Each column reads `[icon] [label] [count]` — the count is hidden while it is
+ * zero, and the label is hidden in the compact variant. A signal the reader holds
+ * is highlighted (brand tint fill, brand icon and text). Tapping toggles it: the
+ * change is applied optimistically and reverted if the server refuses.
  *
- * The bar is a perspective, not a like: the four chips never compete, and a
+ * The bar is a perspective, not a like: the four columns never compete, and a
  * reader may hold any combination (KNOT-ADR-050). Signed-out readers are invited
  * to sign in rather than shown a control that cannot work.
  */
@@ -61,7 +77,9 @@ export default function ReactionBar({
   compact = false,
 }: ReactionBarProps): React.ReactElement {
   const [localCounts, setLocalCounts] = useState<ReactionCounts>(counts);
-  const [localMine, setLocalMine] = useState<readonly string[]>(myReactions);
+  const [localMine, setLocalMine] = useState<readonly ReactionType[]>(() =>
+    asReactionTypes(myReactions),
+  );
   const [busy, setBusy] = useState(false);
 
   // Re-seed from the server whenever the parent's copy changes, so a refresh or a
@@ -69,7 +87,7 @@ export default function ReactionBar({
   // stale optimistic value.
   useEffect(() => {
     setLocalCounts(counts);
-    setLocalMine(myReactions);
+    setLocalMine(asReactionTypes(myReactions));
   }, [counts, myReactions]);
 
   const toggle = useCallback(
@@ -82,30 +100,22 @@ export default function ReactionBar({
         return;
       }
 
-      const had = holds(localMine, type);
-      const nextMine: ReactionType[] = had
-        ? (localMine.filter((tag) => tag !== type) as ReactionType[])
-        : [...(localMine as ReactionType[]), type];
-      const nextCounts: ReactionCounts = {
-        ...localCounts,
-        [type]: Math.max(0, localCounts[type] + (had ? -1 : 1)),
-      };
-
       // Optimistic: show the change at once.
-      setLocalCounts(nextCounts);
-      setLocalMine(nextMine);
-      onChange(nextCounts, nextMine);
+      const optimistic = applyReactionToggle(localMine, localCounts, type);
+      setLocalCounts(optimistic.counts);
+      setLocalMine(optimistic.myReactions);
+      onChange(optimistic.counts, optimistic.myReactions);
       setBusy(true);
 
       try {
         const result = await reactionsApi.toggleReaction(entityType, entityId, type, token);
         setLocalCounts(result.reactions);
-        onChange(result.reactions, nextMine);
+        onChange(result.reactions, optimistic.myReactions);
       } catch (caught) {
         // Revert to what we had before the tap.
         setLocalCounts(localCounts);
         setLocalMine(localMine);
-        onChange(localCounts, localMine as ReactionType[]);
+        onChange(localCounts, localMine);
         Alert.alert('Could not react', describeError(caught));
       } finally {
         setBusy(false);
@@ -117,17 +127,15 @@ export default function ReactionBar({
   return (
     <View style={styles.bar}>
       {REACTION_TYPES.map((type) => {
-        const active = holds(localMine, type);
+        const active = holdsReaction(localMine, type);
         const count = localCounts[type];
+        const IconComponent = REACTION_ICONS[type];
+        const tint = active ? colors.brand.primary : colors.text.tertiary;
 
         return (
           <Pressable
             key={type}
-            style={[
-              styles.chip,
-              compact ? styles.chipCompact : null,
-              active ? styles.chipActive : null,
-            ]}
+            style={[styles.column, active ? styles.columnActive : null]}
             onPress={() => {
               void toggle(type);
             }}
@@ -135,14 +143,26 @@ export default function ReactionBar({
             accessibilityState={{ selected: active }}
             accessibilityLabel={`${REACTION_LABELS[type]}${count > 0 ? `, ${count}` : ''}`}
           >
-            <Text style={styles.emoji}>{REACTION_EMOJI[type]}</Text>
+            <IconComponent color={tint} size={ICON_SIZE} weight={active ? 'fill' : 'regular'} />
             {compact ? null : (
-              <Text style={[styles.label, active ? styles.activeText : null]}>
+              <Text
+                style={[typeScale.caption, styles.label, active ? styles.activeText : null]}
+                numberOfLines={2}
+              >
                 {REACTION_LABELS[type]}
               </Text>
             )}
             {count > 0 ? (
-              <Text style={[styles.count, active ? styles.activeText : null]}>{count}</Text>
+              <Text
+                style={[
+                  typeScale.caption,
+                  tabularNums,
+                  styles.count,
+                  active ? styles.activeText : null,
+                ]}
+              >
+                {count}
+              </Text>
             ) : null}
           </Pressable>
         );
@@ -153,44 +173,30 @@ export default function ReactionBar({
 
 const styles = StyleSheet.create({
   activeText: {
-    color: colors.text.primary,
+    color: colors.brand.primary,
   },
   bar: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
     marginTop: spacing.md,
   },
-  chip: {
+  column: {
     alignItems: 'center',
-    backgroundColor: colors.bg.primary,
-    borderColor: colors.border.default,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    flexDirection: 'row',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
+    borderRadius: radius.lg,
+    flex: 1,
+    gap: spacing.xs,
+    justifyContent: 'flex-start',
+    minHeight: 44,
+    paddingHorizontal: spacing.xs,
+    paddingVertical: spacing.sm,
   },
-  chipActive: {
-    backgroundColor: colors.brand.purple,
-    borderColor: colors.brand.purple,
-  },
-  chipCompact: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
+  columnActive: {
+    backgroundColor: colors.brand.tint,
   },
   count: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.semiBold,
-    marginLeft: spacing.xs,
-  },
-  emoji: {
-    fontSize: fontSizes.sm,
+    color: colors.text.tertiary,
   },
   label: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    marginLeft: spacing.xs,
+    color: colors.text.tertiary,
+    textAlign: 'center',
   },
 });
