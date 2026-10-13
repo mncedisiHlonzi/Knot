@@ -486,6 +486,69 @@ func TestStoryFeedBatchesAuthorAttributionOnce(t *testing.T) {
 	}
 }
 
+func TestStoryFeedAttachesAuthorRooted(t *testing.T) {
+	feed := []stories.Story{
+		storyFixture("11111111-1111-4111-8111-111111111111", authorA),
+		storyFixture("22222222-2222-4222-8222-222222222222", authorB),
+	}
+	service := &fakeRootedService{batchResult: rootedSignals(map[string]string{authorA: "Cape Town"})}
+	handler := newRouterWithRooted(t, discardLogger(), service,
+		&fakeStoriesService{listResult: feed}, &fakeVersionsService{}, &fakeConversationsService{})
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories", "", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body listStoriesResponse
+	decodeBody(t, recorder, &body)
+
+	if len(body.Stories) != 2 {
+		t.Fatalf("stories = %d, want 2", len(body.Stories))
+	}
+	if body.Stories[0].AuthorRooted == nil {
+		t.Fatal("story 0 author_rooted = nil, want the author's inline summary")
+	}
+	if body.Stories[0].AuthorRooted.Place != "Cape Town" {
+		t.Errorf("story 0 place = %q, want %q", body.Stories[0].AuthorRooted.Place, "Cape Town")
+	}
+	if body.Stories[0].AuthorRooted.DurationBucket != rooted.DurationLifelong {
+		t.Errorf("story 0 duration_bucket = %q, want %q", body.Stories[0].AuthorRooted.DurationBucket, rooted.DurationLifelong)
+	}
+	if body.Stories[1].AuthorRooted != nil {
+		t.Errorf("story 1 author_rooted = %+v, want null for an author with no signal", body.Stories[1].AuthorRooted)
+	}
+
+	if service.batchCalls != 1 {
+		t.Errorf("batch calls = %d, want exactly 1 for the whole feed page", service.batchCalls)
+	}
+	if len(service.gotBatchIDs) != 2 {
+		t.Errorf("batched ids = %v, want the 2 distinct authors", service.gotBatchIDs)
+	}
+}
+
+func TestStoryFeedWithoutSignalIsNull(t *testing.T) {
+	service := &fakeRootedService{}
+	handler := newRouterWithRooted(t, discardLogger(), service,
+		&fakeStoriesService{listResult: []stories.Story{
+			storyFixture("11111111-1111-4111-8111-111111111111", authorA),
+		}},
+		&fakeVersionsService{}, &fakeConversationsService{})
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories", "", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if !strings.Contains(recorder.Body.String(), `"author_rooted":null`) {
+		t.Errorf("body = %s, want author_rooted null for an author with no signal", recorder.Body.String())
+	}
+	if service.batchCalls != 1 {
+		t.Errorf("batch calls = %d, want exactly 1", service.batchCalls)
+	}
+}
+
 func TestLanguageTreeAttachesAuthorAttribution(t *testing.T) {
 	tree := []versions.StoryVersion{versionFixture("11111111-1111-4111-8111-111111111111", authorA)}
 	service := &fakeRootedService{users: map[string]*identity.User{

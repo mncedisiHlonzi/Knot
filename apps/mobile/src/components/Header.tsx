@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { Animated, StyleSheet, Text, View } from 'react-native';
+import React from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 
-import { colors, elevation, spacing, typeScale } from '../theme';
+import { colors, spacing, typeScale } from '../theme';
 
 type HeaderProps = {
   /** A centred title. When omitted, the middle stays empty. */
@@ -11,16 +11,10 @@ type HeaderProps = {
   /** A trailing node, or a row of them. */
   readonly right?: React.ReactNode;
   /**
-   * The scroll offset of the list beneath the header. When given, a first-level
-   * shadow appears once the content has scrolled past a small threshold, so a
-   * scrolling list reads as passing under a fixed bar.
-   */
-  readonly scrollY?: Animated.Value;
-  /**
-   * Pins the header: it paints an opaque canvas fill at all times and never fades,
-   * translates, or disappears as the list scrolls (KNOT-020c-fix2). Defaults to
-   * `false`, which leaves the header transparent so it can float over content —
-   * the Story Detail hero is the case that needs that.
+   * Pins the header: it paints a constant opaque canvas fill, so scrolled content
+   * can never show through behind its icons. Defaults to `false`, which leaves the
+   * header transparent so it can float over content — the Story Detail hero is
+   * the case that needs that.
    */
   readonly pinned?: boolean;
   /** Test identifier. */
@@ -30,17 +24,15 @@ type HeaderProps = {
 /** The header's height below the status bar. */
 const HEIGHT = 56;
 
-/** The scroll offset past which the header lifts off the canvas. */
-const ELEVATION_THRESHOLD = 8;
-
 /**
  * The screen header: a 56-point bar with a centred title between two slots.
  *
- * A **pinned** header (the Feed's) paints an opaque canvas fill and holds still:
- * nothing about it changes unless the caller asks for scroll-linked elevation, in
- * which case only the first-level shadow appears, past an 8-point threshold. It
- * never fades or translates (KNOT-020c-fix2). An unpinned header (the Story
- * Detail's) paints nothing, so it floats transparently over hero content.
+ * It is deliberately **static**: nothing about it is tied to the scroll offset —
+ * it never fades, shifts, or casts a scroll-linked shadow — so it always reads at
+ * full strength (KNOT-020c-fix4). A **pinned** header (the Feed's) paints a
+ * constant opaque canvas fill so content scrolls under it cleanly; an unpinned
+ * header (the Story Detail's) paints nothing, so it floats transparently over
+ * hero content.
  *
  * The status-bar inset is not applied here: every screen already sits inside the
  * app root's `SafeAreaView`, so adding another inset would double it (KNOT-020b).
@@ -49,31 +41,14 @@ export default function Header({
   title,
   left,
   right,
-  scrollY,
   pinned = false,
   testID,
 }: HeaderProps): React.ReactElement {
-  const [elevated, setElevated] = useState(false);
-
-  useEffect(() => {
-    if (scrollY === undefined) {
-      return undefined;
-    }
-    const id = scrollY.addListener(({ value }) => {
-      setElevated(value > ELEVATION_THRESHOLD);
-    });
-    return () => {
-      scrollY.removeListener(id);
-    };
-  }, [scrollY]);
-
   return (
     <View style={styles.container} testID={testID}>
-      {/* The only scroll-linked change is the shadow lifting past the threshold;
-          the fill itself is constant, so the bar never fades. */}
-      {pinned ? (
-        <View pointerEvents="none" style={[styles.background, elevated ? elevation[1] : null]} />
-      ) : null}
+      {/* A constant opaque fill: the bar never fades, so no scroll offset is
+          needed here at all. */}
+      {pinned ? <View pointerEvents="none" style={styles.background} /> : null}
       <View style={styles.row}>
         <View style={styles.side}>{left}</View>
         {title !== undefined ? (

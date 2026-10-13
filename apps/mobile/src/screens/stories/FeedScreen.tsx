@@ -1,7 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Animated,
   FlatList,
   Pressable,
   RefreshControl,
@@ -59,7 +58,7 @@ type FeedScreenProps = {
  *
  * The layout pins everything but the list: the header and the four text tabs are
  * fixed siblings ABOVE the FlatList, so only the feed entries scroll beneath them
- * (the scroll offset still drives the header's scroll-linked elevation). The tab
+ * (the header is opaque and static — nothing about it is scroll-linked). The tab
  * row is a plain flex row of four equal-width tabs rather than a horizontal
  * scroller, so the labels are centred, never clipped, and never slide sideways.
  * The tabs are a local selection only — the feed endpoint has no pillar filter
@@ -103,10 +102,6 @@ export default function FeedScreen({
   const toggleMute = useCallback((): void => {
     setIsMuted((current) => !current);
   }, []);
-
-  // Drives the header's scroll-linked elevation. Held in a ref so it survives
-  // re-renders without being re-created.
-  const scrollY = useRef(new Animated.Value(0)).current;
 
   const loadFirstPage = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -205,7 +200,6 @@ export default function FeedScreen({
       <View style={styles.topBar}>
         <Header
           pinned
-          scrollY={scrollY}
           left={<Logomark size={LOGOMARK_SIZE} />}
           right={
             <View style={styles.headerActions}>
@@ -271,10 +265,6 @@ export default function FeedScreen({
         contentContainerStyle={styles.listContent}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
-        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], {
-          useNativeDriver: false,
-        })}
-        scrollEventThrottle={16}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}

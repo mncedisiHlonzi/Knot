@@ -1,4 +1,5 @@
 import Avatar from '../Avatar';
+import AuthorLine from '../AuthorLine';
 import Button from '../Button';
 import Chip from '../Chip';
 import EmptyState from '../EmptyState';
@@ -217,6 +218,38 @@ function elementTypes(node: unknown, found: unknown[] = []): unknown[] {
   return found;
 }
 
+/**
+ * Finds the first element of the given component type in a directly-called
+ * component's element tree, so a parent's choice of child props can be asserted
+ * without a renderer (KNOT-020c-fix4).
+ */
+function findElementByType(
+  node: unknown,
+  type: unknown,
+): { props?: Record<string, unknown> } | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findElementByType(child, type);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+  if (node === null || node === undefined || typeof node !== 'object') {
+    return undefined;
+  }
+
+  const element = node as { type?: unknown; props?: { children?: unknown } };
+  if (element.type === type) {
+    return element as { props?: Record<string, unknown> };
+  }
+  if (element.props !== undefined) {
+    return findElementByType(element.props.children, type);
+  }
+  return undefined;
+}
+
 describe('FeedEntry', () => {
   const story = {
     id: 'story-1',
@@ -322,6 +355,27 @@ describe('FeedEntry', () => {
         onPress: () => undefined,
       }),
     ).toBeTruthy();
+  });
+
+  // The feed's Rooted line (KNOT-020c-fix4): the story's author_rooted is handed
+  // to AuthorLine, which draws the quiet second line.
+  it('passes the author Rooted summary to AuthorLine for the quiet second line', () => {
+    const element = FeedEntry({ story, onPress: () => undefined });
+    const authorLine = findElementByType(element, AuthorLine);
+
+    expect(authorLine).toBeDefined();
+    expect(authorLine?.props?.rooted).toEqual({ place: 'Oaxaca', duration_bucket: 'many_years' });
+    expect(authorLine?.props?.showRootedOnNewLine).toBe(true);
+  });
+
+  it('passes a null Rooted summary when the author has no signal', () => {
+    const element = FeedEntry({
+      story: { ...story, author_rooted: null },
+      onPress: () => undefined,
+    });
+    const authorLine = findElementByType(element, AuthorLine);
+
+    expect(authorLine?.props?.rooted).toBeNull();
   });
 });
 

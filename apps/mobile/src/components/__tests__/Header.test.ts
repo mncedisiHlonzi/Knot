@@ -2,32 +2,30 @@ import Header from '../Header';
 
 // Header renders React Native views; stub them so the Flow source is not parsed.
 jest.mock('react-native', () => ({
-  Animated: { View: 'Animated.View', Value: class AnimatedValue {} },
   StyleSheet: { create: (styles: unknown) => styles, absoluteFillObject: {} },
   Text: 'Text',
   View: 'View',
 }));
 
-// Header is stateful (a scroll listener tracks whether it is lifted). There is no
-// renderer in this project, so the hooks are stubbed to their initial values and
-// the component is called directly to prove it renders without throwing
-// (KNOT-020b).
-jest.mock('react', () => {
-  const actual = jest.requireActual('react');
-  return {
-    ...actual,
-    useEffect: () => undefined,
-    useState: (initial: unknown) => [initial, () => undefined],
-  };
-});
-
 describe('Header', () => {
-  it('renders a title with no scroll offset', () => {
+  it('renders a title', () => {
     expect(Header({ title: 'Comments' })).toBeTruthy();
   });
 
   it('renders left and right slots and a title-less bar', () => {
     expect(Header({ title: 'x', left: null, right: null })).toBeTruthy();
     expect(Header({})).toBeTruthy();
+  });
+
+  // Header is static (KNOT-020c-fix4): the pinned form paints an opaque canvas
+  // fill and nothing about it is scroll-linked, so calling it directly proves the
+  // composition without a renderer. children[0] is the fill; it is null when the
+  // header is floating over content.
+  it('paints an opaque fill when pinned and nothing when floating', () => {
+    const pinned = Header({ pinned: true });
+    expect(pinned.props.children[0]).not.toBeNull();
+
+    const floating = Header({ title: 'Comments' });
+    expect(floating.props.children[0]).toBeNull();
   });
 });

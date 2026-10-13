@@ -971,7 +971,9 @@ is `authorRootedSummaries` in `internal/httpapi/enrich.go`, and the dependency i
 `RootedLookup` interface (one method) rather than the whole Rooted service, so a handler
 test can substitute a lookup that counts its calls. A failure to read Rooted is logged and
 swallowed — enrichment is supplementary, so a Rooted problem must not make stories
-unreadable — and a user with no public signal simply carries `null`.
+unreadable — and a user with no public signal simply carries `null`. The stories handler's
+`List` route (the feed) attaches it to every story on a page in that same single batch,
+reversing the earlier decision to leave the feed unenriched (KNOT-020c-fix4).
 
 ```sql
 SELECT id, user_id, place, duration_bucket, is_public, is_primary, created_at, updated_at

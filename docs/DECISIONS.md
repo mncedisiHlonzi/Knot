@@ -381,7 +381,8 @@ in this decision still holds.
 
 **Decision ID:** KNOT-ADR-017
 **Date:** 2026-10-08
-**Status:** Accepted
+**Status:** Accepted. Extended by the scope note at the end of this file (KNOT-020c-fix4):
+`GET /stories` now carries `author_rooted` as well.
 
 **Context:** A Rooted signal is a person's declared connection to a place, so it is simultaneously the thing that makes a stranger legible and the thing that could expose them. The task had to decide (a) whether a signal is visible by default, (b) how a person hides one, and (c) how much of a signal leaves the Rooted endpoints when it is attached to a story, a version, a comment, or a bridge for inline display.
 
@@ -2061,3 +2062,32 @@ duration badge is formatted by the pure `formatDuration`. Because the video star
 there is no centre play button to advertise it, so the duration badge and the "Video" tag carry
 that job. No poster frame is stored, so a grey fill covers the moment before the first frame
 decodes.
+
+---
+
+## Scope note — the Feed is now `author_rooted`-enriched (KNOT-020c-fix4)
+
+**Not a new ADR.** This reverses the feed half of the KNOT-015b scope decision, which
+KNOT-ADR-017 recorded as: "`GET /stories` (the feed) and `POST /stories` do not populate
+the field; extending the enrichment to the feed is a small, additive change for whichever
+task first renders a badge there." That task is this one.
+
+**Decision.** `GET /stories` now attaches the author's inline Rooted summary to **every
+story on the page in one batched read** — the same `authorRootedSummaries` helper, and the
+same `{ place, duration_bucket } | null` shape, that the detail, version, comment, and
+bridge responses already carry. There is no per-row query and no second request from the
+client. `POST /stories` still returns `author_rooted: null`; the client reads the story
+detail after creating it, so nothing depends on the create response carrying it.
+
+**Why.** Leaving the feed unenriched meant the same author read differently depending on
+which screen showed them: a profile and a story detail drew the Rooted attribution, a feed
+card did not, because the story list response simply had no `author_rooted` to draw. The
+enrichment was already one batched read with a shape both the detail and the feed can share,
+so the change is the additive one KNOT-ADR-017 anticipated.
+
+**How it renders.** The Feed shows the **quiet** line — `Rooted · {place} · {duration}` in
+`typeScale.caption` / `colors.text.tertiary`, with **no pill, no dot, and no mark** — as a
+second line beneath the author's name and time, matching
+`docs/design-reference/light/05-home-feed.html`. The Profile keeps the filled badge. The
+enrichment stays supplementary: a lookup failure is logged and swallowed, and the feed
+returns with `author_rooted: null` rather than failing (KNOT-ADR-017).

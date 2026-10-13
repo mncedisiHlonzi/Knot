@@ -230,6 +230,11 @@ func (h *StoriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // List handles GET /stories. The route is public.
+//
+// Each page is enriched in one batched read per lookup — author attribution,
+// the author's inline Rooted summary, the media preview, the aggregate counts,
+// and the reactions — so a page of stories is a fixed number of queries rather
+// than one per row.
 func (h *StoriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
@@ -260,6 +265,15 @@ func (h *StoriesHandler) List(w http.ResponseWriter, r *http.Request) {
 		attribution := attributions[items[i].AuthorID]
 		items[i].AuthorDisplayName = attribution.DisplayName
 		items[i].AuthorAvatarURL = optionalString(attribution.AvatarURL)
+	}
+
+	// One batched read attaches the author's inline Rooted summary to every story
+	// on the page, the same enrichment the detail and version routes carry. The
+	// feed was deliberately left out of this once (KNOT-015b); KNOT-020c-fix4
+	// reverses that, so a feed card can show the quiet Rooted line.
+	rootedSummaries := authorRootedSummaries(r.Context(), h.rooted, h.logger, authorIDs)
+	for i := range items {
+		items[i].AuthorRooted = rootedSummaries[items[i].AuthorID]
 	}
 
 	previews := storyMediaPreviews(r.Context(), h.media, h.logger, ids)

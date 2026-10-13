@@ -356,8 +356,9 @@ API that serves the first media item's bytes — or both are `null` when the sto
 media. They let the feed draw a preview (an image, or a placeholder for a video, since no
 poster frame is stored yet) without reading the `media` array (KNOT-020c-fix).
 
-`GET /stories/{id}` also carries `author_rooted`, the author's inline Rooted summary, or
-`null`. See [`author_rooted` on content responses](#author_rooted-on-content-responses).
+Both the feed (`GET /stories`, on every story in the page) and the detail
+(`GET /stories/{id}`) carry `author_rooted`, the author's inline Rooted summary, or `null`.
+See [`author_rooted` on content responses](#author_rooted-on-content-responses).
 
 `author_display_name` is the author's name, and `author_avatar_url` is a path on this API
 (`/users/{id}/avatar`) that resolves to their avatar — or `null` when they have no avatar,
@@ -442,7 +443,10 @@ Returns **200** with one page of the feed, newest first:
 any other value is an opaque token to send back as `cursor` to fetch the next page.
 Treat it as opaque: it encodes the sort position, and its format may change.
 
-`stories` is always an array, never `null`, so an empty feed is `"stories": []`.
+`stories` is always an array, never `null`, so an empty feed is `"stories": []`. Each story
+is the [story object](#the-story-object), including the inline `author_rooted` summary and
+the `author_display_name` / `author_avatar_url` attribution, so a feed card needs no
+follow-up request.
 
 Paging is keyset-based rather than offset-based, so a page is selected by the sort
 position rather than by counting rows. A story published between two requests does not
@@ -990,7 +994,7 @@ declared nothing public" rather than "no such user". An id that is not a UUID al
 
 ### `author_rooted` on content responses
 
-The story detail, version, comment, and bridge responses carry an `author_rooted` field:
+The feed, story detail, version, comment, and bridge responses carry an `author_rooted` field:
 
 ```json
 { "author_rooted": { "place": "Cape Town", "duration_bucket": "lifelong" } }
@@ -1004,13 +1008,15 @@ in a response, never one query per row.
 
 | Response                                                                             | `author_rooted` describes            |
 | ------------------------------------------------------------------------------------ | ------------------------------------- |
-| `GET /stories/{id}`                                                                    | the story's author                     |
+| `GET /stories`, `GET /stories/{id}`                                                    | the story's author                     |
 | `POST /stories/{id}/adapt`, `GET /stories/{id}/tree`, `GET /versions/{id}`             | each version's author                  |
 | `POST /versions/{id}/comments`, `GET /versions/{id}/comments`, `GET /comments/{id}`     | each comment's author                  |
 | `POST /comments/{id}/bridges`, `GET /comments/{id}/bridges`, `GET /bridges/{id}`       | each bridge's author (and, on create, both comments' authors) |
 
-`GET /stories` (the feed) and `POST /stories` do not populate the field: it is present
-there but always `null`.
+The feed attaches it to every story on the page in one batched read (KNOT-020c-fix4,
+reversing the earlier decision to leave the feed unenriched: KNOT-015b). `POST /stories`
+still does not populate the field — the client reads the story detail after creating it —
+so it is present there but always `null`.
 
 ### Author attribution
 
