@@ -258,6 +258,13 @@ now opens with the shared `Header`, uses `Button`/`Input`/`EmptyState` instead o
 controls, and reads `typeScale.*` and the semantic tokens throughout. The remaining screens
 still read the deprecated legacy aliases until their own tasks migrate them.
 
+**KNOT-020d-fix** added `StoryVersionScreen` — the per-version detail view a Language Tree row
+opens onto — and refined the two list surfaces. The Language Tree row and a Comment Thread row
+both drop the inline `RootedBadge`; the version's reactions moved off the tree row and onto the
+version's own screen. `StoryVersionScreen` mirrors `StoryDetailScreen`'s reading column and
+fetches through the same `versionsApi.getVersion` client, and it is reached from a Language Tree
+row (an `onOpenVersion` callback) through a `storyVersion` overlay in `App.tsx`.
+
 The `typeScale` **weights** are one step heavier than the reference snapshot for every token but
 the three body styles (`reading`, `body`, `bodyS`), which stay at 400 so prose keeps its
 readability — a deliberate divergence from `docs/design-reference/tokens.json` requested by the
@@ -290,6 +297,12 @@ The fields come from the API — `author_display_name` and `author_avatar_url` o
 versions, comments, and bridges (KNOT-ADR-041) — so a screen never has to call the identity
 service for a name. Render attribution by passing an entity's fields to `AuthorLine`; do not
 hand-roll the markup on a new screen.
+
+**Where the Rooted badge shows.** The badge belongs to **detail views** — Feed, Story Detail,
+Profile, and the version detail (`StoryVersionScreen`) — where attribution is the point. **List
+rows drop it**: a Language Tree row and a Comment Thread row pass `rooted={null}`, because a row
+is about the version, or the discussion, and not the author's rootedness (KNOT-020d-fix, see the
+scope note at the end of [`docs/DECISIONS.md`](DECISIONS.md)).
 
 ### The profile wall (`UserProfileScreen`)
 

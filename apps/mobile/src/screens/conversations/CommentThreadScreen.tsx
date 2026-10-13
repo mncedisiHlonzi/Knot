@@ -362,11 +362,13 @@ export default function CommentThreadScreen({
           return (
             <View style={styles.comment}>
               <View style={styles.commentHead}>
+                {/* A comment row drops the Rooted badge: the thread is about the
+                    discussion, not the author's rootedness. */}
                 <AuthorLine
                   displayName={item.author_display_name}
                   avatarUrl={item.author_avatar_url}
                   createdAt={item.created_at}
-                  rooted={item.author_rooted}
+                  rooted={null}
                   size="medium"
                   onPress={() => onOpenUserProfile(item.author_id)}
                 />
@@ -408,7 +410,7 @@ export default function CommentThreadScreen({
                     displayName={reply.author_display_name}
                     avatarUrl={reply.author_avatar_url}
                     createdAt={reply.created_at}
-                    rooted={reply.author_rooted}
+                    rooted={null}
                     size="small"
                     onPress={() => onOpenUserProfile(reply.author_id)}
                   />

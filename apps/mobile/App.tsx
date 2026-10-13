@@ -41,6 +41,7 @@ import CreateStoryScreen from './src/screens/stories/CreateStoryScreen';
 import FeedScreen from './src/screens/stories/FeedScreen';
 import LanguageTreeScreen from './src/screens/stories/LanguageTreeScreen';
 import StoryDetailScreen from './src/screens/stories/StoryDetailScreen';
+import StoryVersionScreen from './src/screens/stories/StoryVersionScreen';
 
 /**
  * A non-tab screen, pushed over the tab bar.
@@ -56,6 +57,7 @@ type Overlay =
   | { readonly name: 'detail'; readonly storyId: string }
   | { readonly name: 'adapt'; readonly storyId: string; readonly parentVersionId: string }
   | { readonly name: 'tree'; readonly storyId: string }
+  | { readonly name: 'storyVersion'; readonly versionId: string }
   | { readonly name: 'comments'; readonly storyId: string; readonly versionId: string }
   | {
       readonly name: 'bridge';
@@ -453,12 +455,32 @@ export default function App(): React.ReactElement {
             storyId={overlay.storyId}
             token={current.accessToken}
             onOpenUserProfile={openUserProfile}
+            onOpenVersion={(versionId) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'storyVersion', versionId }))
+            }
             onTellStory={(parentVersionId) =>
               setOverlays((stack) =>
                 pushOverlay(stack, { name: 'adapt', storyId: overlay.storyId, parentVersionId }),
               )
             }
             onBack={handleBack}
+          />
+        );
+      case 'storyVersion':
+        return (
+          <StoryVersionScreen
+            versionId={overlay.versionId}
+            token={current.accessToken}
+            onBack={handleBack}
+            onAdapt={(storyId, parentVersionId) =>
+              setOverlays((stack) =>
+                pushOverlay(stack, { name: 'adapt', storyId, parentVersionId }),
+              )
+            }
+            onOpenStory={(storyId) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId }))
+            }
+            onOpenUserProfile={openUserProfile}
           />
         );
       case 'comments':

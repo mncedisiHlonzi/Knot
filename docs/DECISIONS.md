@@ -2091,3 +2091,31 @@ second line beneath the author's name and time, matching
 `docs/design-reference/light/05-home-feed.html`. The Profile keeps the filled badge. The
 enrichment stays supplementary: a lookup failure is logged and swallowed, and the feed
 returns with `author_rooted: null` rather than failing (KNOT-ADR-017).
+
+---
+
+## Scope note — the Rooted badge is a detail-view signal (KNOT-020d-fix)
+
+**Not a new ADR.** This records a display rule for the inline Rooted badge, not a change to the
+Rooted model (KNOT-ADR-016, KNOT-ADR-017).
+
+**Decision.** The inline `RootedBadge` is drawn only on **detail views** — the Feed, Story Detail,
+Profile, and the new version detail (`StoryVersionScreen`). It is **removed from list rows**: a
+Language Tree row and a Comment Thread row pass `rooted={null}` to `AuthorLine` and show the
+author's avatar, name, and time alone. The rule is about what the surface is *for*: a detail view
+is where attribution is the point, while a list row is about the version that was told, or the
+discussion being had, and not about the author's rootedness. A third view — the Story Detail's
+language row — does not render attribution at all, so the rule does not reach it.
+
+**Why now.** On-device review of KNOT-020d found the badge competing with the row's own content:
+in the Language Tree it sat beside a version whose point is *which language* it is told in, and in
+the Comment Thread beside a comment whose point is what was said. The badge is not wrong on
+either screen; it is a detail that belongs one tap deeper, and the new `StoryVersionScreen`
+(KNOT-020d-fix) is where the version's author is now attributed in full.
+
+**Consequences.** The enrichment is unchanged — `author_rooted` is still attached to every
+version and comment response (KNOT-ADR-017, KNOT-ADR-041); the rule is purely which client
+surface draws it. `AuthorLine` keeps rendering the badge whenever a caller passes a `rooted`
+summary, so a future list surface that wants it need only pass the value rather than change the
+component. The Feed's quiet second-line variant (KNOT-020c-fix5) is unaffected: the Feed is a
+detail surface for this rule.

@@ -3,13 +3,11 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { ArrowLeft } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
-import { EMPTY_REACTION_COUNTS } from '../../api/reactions';
 import { StoryVersion, versionsApi } from '../../api/versions';
 import AuthorLine from '../../components/AuthorLine';
 import Button from '../../components/Button';
 import EmptyState from '../../components/EmptyState';
 import Header from '../../components/Header';
-import ReactionBar from '../../components/ReactionBar';
 import { languageName } from '../../data/languages';
 import { colors, layout, radius, spacing, typeScale } from '../../theme';
 import { adaptCountLabel, treeRows, treeSummary } from './versionTree';
@@ -24,6 +22,12 @@ type LanguageTreeScreenProps = {
   readonly token?: string;
   /** Called when a version's author is tapped, to open their profile. */
   readonly onOpenUserProfile: (userId: string) => void;
+  /**
+   * Called when a version row is tapped, to open that version's own detail. The
+   * tree lists each version compactly; the detail is where its full body, note,
+   * and reactions live.
+   */
+  readonly onOpenVersion: (versionId: string) => void;
   /**
    * Called when the reader wants to tell the story in their own language. It is
    * given the version to adapt from — the story's root. Omitted by a caller that
@@ -56,6 +60,7 @@ export default function LanguageTreeScreen({
   storyId,
   token,
   onOpenUserProfile,
+  onOpenVersion,
   onTellStory,
   onBack,
 }: LanguageTreeScreenProps): React.ReactElement {
@@ -130,7 +135,13 @@ export default function LanguageTreeScreen({
           const hasChildren = adaptCount > 0;
 
           return (
-            <View key={item.id} style={styles.row}>
+            <Pressable
+              key={item.id}
+              style={styles.row}
+              onPress={() => onOpenVersion(item.id)}
+              accessibilityRole="button"
+              accessibilityLabel={`${languageName(item.language)} version`}
+            >
               {/* The tree's gutter: a spine, an elbow, and the marker. */}
               <View style={[styles.gutter, { width: indent + DOT_SIZE + spacing.md }]}>
                 {isRoot ? null : <View style={[styles.spineAbove, { left: indent - ELBOW }]} />}
@@ -152,11 +163,13 @@ export default function LanguageTreeScreen({
                 </View>
 
                 <View style={styles.metaRow}>
+                  {/* A list row drops the Rooted badge: the tree is about
+                      versions, not authorship. Detail views keep it. */}
                   <AuthorLine
                     displayName={item.author_display_name}
                     avatarUrl={item.author_avatar_url}
                     createdAt={item.created_at}
-                    rooted={item.author_rooted}
+                    rooted={null}
                     size="small"
                     onPress={() => onOpenUserProfile(item.author_id)}
                   />
@@ -168,28 +181,8 @@ export default function LanguageTreeScreen({
                 {item.adaptation_note !== null && item.adaptation_note !== '' ? (
                   <Text style={[typeScale.bodyS, styles.note]}>{item.adaptation_note}</Text>
                 ) : null}
-
-                <View style={styles.reactions}>
-                  <ReactionBar
-                    entityType="version"
-                    entityId={item.id}
-                    counts={item.reactions ?? EMPTY_REACTION_COUNTS}
-                    myReactions={item.my_reactions ?? []}
-                    token={token}
-                    compact
-                    onChange={(counts, mine) =>
-                      setVersions((previous) =>
-                        previous.map((candidate) =>
-                          candidate.id === item.id
-                            ? { ...candidate, reactions: counts, my_reactions: mine }
-                            : candidate,
-                        ),
-                      )
-                    }
-                  />
-                </View>
               </View>
-            </View>
+            </Pressable>
           );
         })}
 
@@ -300,9 +293,6 @@ const styles = StyleSheet.create({
   note: {
     color: colors.text.secondary,
     fontStyle: 'italic',
-    marginTop: spacing.sm,
-  },
-  reactions: {
     marginTop: spacing.sm,
   },
   retry: {
