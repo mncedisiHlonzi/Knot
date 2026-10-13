@@ -10,6 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { ArrowLeft } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import {
@@ -20,10 +21,13 @@ import {
 } from '../../api/conversations';
 import { versionsApi } from '../../api/versions';
 import AuthorLine from '../../components/AuthorLine';
+import Button from '../../components/Button';
+import EmptyState from '../../components/EmptyState';
+import Header from '../../components/Header';
 import LanguagePicker from '../../components/LanguagePicker';
 import ReportAction from '../../components/ReportAction';
-import { isLanguageCode, languageName } from '../../data/languages';
-import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
+import { isLanguageCode } from '../../data/languages';
+import { colors, layout, radius, spacing, typeScale } from '../../theme';
 import {
   DEFAULT_COMPOSE_LANGUAGE,
   REPLIES_PREVIEW_COUNT,
@@ -317,16 +321,23 @@ export default function CommentThreadScreen({
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Pressable style={styles.link} onPress={onBack}>
-          <Text style={styles.linkText}>← Back</Text>
-        </Pressable>
-        <Text style={styles.title}>Conversation</Text>
-        <Text style={styles.hint}>
-          {comments.length} {comments.length === 1 ? 'comment' : 'comments'}
-        </Text>
-        {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
-      </View>
+      <Header
+        title={`Comments · ${comments.length}`}
+        left={
+          <Pressable
+            style={styles.iconButton}
+            onPress={onBack}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+          >
+            <ArrowLeft color={colors.text.primary} size={24} />
+          </Pressable>
+        }
+      />
+
+      {error !== undefined ? (
+        <Text style={[typeScale.bodyS, styles.listError]}>{error}</Text>
+      ) : null}
 
       {loading ? <ActivityIndicator style={styles.spinner} /> : null}
 
@@ -349,9 +360,8 @@ export default function CommentThreadScreen({
             : [];
 
           return (
-            <View style={styles.card}>
-              <View style={styles.cardMeta}>
-                <Text style={styles.badge}>{languageName(item.language)}</Text>
+            <View style={styles.comment}>
+              <View style={styles.commentHead}>
                 <AuthorLine
                   displayName={item.author_display_name}
                   avatarUrl={item.author_avatar_url}
@@ -360,28 +370,40 @@ export default function CommentThreadScreen({
                   size="medium"
                   onPress={() => onOpenUserProfile(item.author_id)}
                 />
+                <Text style={[typeScale.caption, styles.languageCode]}>{item.language}</Text>
               </View>
-              <Text style={styles.body}>{item.body}</Text>
-              {linkLabel !== null ? (
+
+              <Text style={[typeScale.body, styles.commentBody]}>{item.body}</Text>
+
+              <View style={styles.actions}>
                 <Pressable
-                  style={styles.repliesLink}
-                  onPress={() => handleRepliesLinkPress(item.id, replies.length)}
+                  style={styles.action}
+                  onPress={() => handleReplyPress(item)}
                   accessibilityRole="button"
                 >
-                  <Text style={styles.repliesLinkText}>{linkLabel}</Text>
+                  <Text style={[typeScale.button, styles.actionText]}>Reply</Text>
                 </Pressable>
-              ) : null}
-              <View style={styles.cardActions}>
-                <Pressable style={styles.action} onPress={() => handleReplyPress(item)}>
-                  <Text style={styles.actionText}>Reply</Text>
+                <Pressable
+                  style={styles.action}
+                  onPress={() => onBridge(item)}
+                  accessibilityRole="button"
+                >
+                  <Text style={[typeScale.button, styles.actionText]}>Bridge</Text>
                 </Pressable>
-                <Pressable style={styles.action} onPress={() => onBridge(item)}>
-                  <Text style={styles.actionText}>Bridge to another language</Text>
-                </Pressable>
+                {linkLabel !== null ? (
+                  <Pressable
+                    style={styles.action}
+                    onPress={() => handleRepliesLinkPress(item.id, replies.length)}
+                    accessibilityRole="button"
+                  >
+                    <Text style={[typeScale.button, styles.linkText]}>{linkLabel}</Text>
+                  </Pressable>
+                ) : null}
                 <ReportAction token={token} entityType="comment" entityId={item.id} />
               </View>
+
               {visibleReplies.map((reply) => (
-                <View key={reply.id} style={styles.replyRow}>
+                <View key={reply.id} style={styles.reply}>
                   <AuthorLine
                     displayName={reply.author_display_name}
                     avatarUrl={reply.author_avatar_url}
@@ -390,37 +412,51 @@ export default function CommentThreadScreen({
                     size="small"
                     onPress={() => onOpenUserProfile(reply.author_id)}
                   />
-                  <Text style={styles.replyBody}>{reply.body}</Text>
-                  <View style={styles.replyActions}>
-                    <Pressable style={styles.replyAction} onPress={() => handleReplyPress(reply)}>
-                      <Text style={styles.actionText}>Reply</Text>
+                  <Text style={[typeScale.body, styles.replyBody]}>{reply.body}</Text>
+                  <View style={styles.actions}>
+                    <Pressable
+                      style={styles.action}
+                      onPress={() => handleReplyPress(reply)}
+                      accessibilityRole="button"
+                    >
+                      <Text style={[typeScale.button, styles.actionText]}>Reply</Text>
                     </Pressable>
-                    <Pressable style={styles.replyAction} onPress={() => onBridge(reply)}>
-                      <Text style={styles.actionText}>Bridge to another language</Text>
+                    <Pressable
+                      style={styles.action}
+                      onPress={() => onBridge(reply)}
+                      accessibilityRole="button"
+                    >
+                      <Text style={[typeScale.button, styles.actionText]}>Bridge</Text>
                     </Pressable>
                     <ReportAction token={token} entityType="comment" entityId={reply.id} />
                   </View>
                 </View>
               ))}
+
+              <View style={styles.separator} />
             </View>
           );
         }}
         ListEmptyComponent={
           !loading && error === undefined ? (
-            <Text style={styles.hint}>No comments yet. Start the conversation.</Text>
+            <EmptyState
+              illustrationName="no-results"
+              headline="No comments yet."
+              body="Start the conversation."
+            />
           ) : null
         }
         ListFooterComponent={
           nextCursor !== '' ? (
-            <Pressable
-              style={[styles.secondaryButton, loadingMore ? styles.disabled : null]}
-              onPress={loadMore}
-              disabled={loadingMore}
-            >
-              <Text style={styles.secondaryButtonText}>
-                {loadingMore ? 'Loading…' : 'Load more'}
-              </Text>
-            </Pressable>
+            <View style={styles.loadMore}>
+              <Button
+                label="Load more"
+                variant="secondary"
+                loading={loadingMore}
+                onPress={() => void loadMore()}
+                fullWidth
+              />
+            </View>
           ) : null
         }
       />
@@ -428,7 +464,7 @@ export default function CommentThreadScreen({
       <View style={styles.composer}>
         {replyTo !== undefined ? (
           <View style={styles.replyBanner}>
-            <Text style={styles.replyBannerText} numberOfLines={1}>
+            <Text style={[typeScale.caption, styles.replyBannerText]} numberOfLines={1}>
               Replying to {replyToName === '' ? 'this commenter' : replyToName}
             </Text>
             <Pressable
@@ -437,21 +473,23 @@ export default function CommentThreadScreen({
               accessibilityLabel="Cancel the reply"
               accessibilityRole="button"
             >
-              <Text style={styles.replyBannerCancelText}>✕</Text>
+              <Text style={[typeScale.body, styles.replyBannerCancelText]}>✕</Text>
             </Pressable>
           </View>
         ) : null}
+
         <TextInput
           ref={composerRef}
-          style={styles.composerInput}
+          style={[typeScale.body, styles.composerInput]}
           value={body}
           onChangeText={setBody}
           placeholder={replyTo === undefined ? 'Add a comment' : 'Write a reply'}
-          placeholderTextColor={colors.text.secondary}
+          placeholderTextColor={colors.text.disabled}
           multiline
           numberOfLines={3}
           textAlignVertical="top"
         />
+
         <View style={styles.composerRow}>
           <Pressable
             style={styles.languageChip}
@@ -459,22 +497,24 @@ export default function CommentThreadScreen({
             accessibilityRole="button"
             accessibilityLabel="Comment language"
           >
-            <Text style={styles.languageChipText} numberOfLines={1}>
+            <Text style={[typeScale.caption, styles.languageChipText]} numberOfLines={1}>
               {chipLabel === '' ? 'Choose a language' : chipLabel}
             </Text>
-            <Text style={styles.languageChipChevron}>▾</Text>
+            <Text style={[typeScale.caption, styles.languageChipChevron]}>▾</Text>
           </Pressable>
-          <Pressable
-            style={[styles.postButton, posting ? styles.disabled : null]}
-            onPress={handlePost}
-            disabled={posting}
-          >
-            <Text style={styles.postButtonText}>
-              {posting ? 'Posting…' : replyTo === undefined ? 'Post' : 'Reply'}
-            </Text>
-          </Pressable>
+          <View style={styles.postAction}>
+            <Button
+              label={replyTo === undefined ? 'Post' : 'Reply'}
+              loading={posting}
+              onPress={() => void handlePost()}
+              fullWidth
+            />
+          </View>
         </View>
-        {composeError !== undefined ? <Text style={styles.error}>{composeError}</Text> : null}
+
+        {composeError !== undefined ? (
+          <Text style={[typeScale.bodyS, styles.error]}>{composeError}</Text>
+        ) : null}
       </View>
 
       <Modal
@@ -487,17 +527,17 @@ export default function CommentThreadScreen({
           {/* The sheet swallows taps so pressing inside it cannot dismiss it. */}
           <Pressable style={styles.modalSheet} onPress={() => undefined}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Comment language</Text>
+              <Text style={[typeScale.h3, styles.modalTitle]}>Comment language</Text>
               <Pressable
                 style={styles.modalDone}
                 onPress={() => setPickerOpen(false)}
                 accessibilityRole="button"
                 accessibilityLabel="Close the language picker"
               >
-                <Text style={styles.linkText}>Done</Text>
+                <Text style={[typeScale.button, styles.linkText]}>Done</Text>
               </Pressable>
             </View>
-            <Text style={styles.hint}>
+            <Text style={[typeScale.bodyS, styles.hint]}>
               This only changes the language of this comment, not your profile.
             </Text>
             <LanguagePicker
@@ -518,121 +558,112 @@ export default function CommentThreadScreen({
 }
 
 const styles = StyleSheet.create({
-  badge: {
-    backgroundColor: colors.border.subtle,
-    borderRadius: radius.sm,
-    color: colors.text.primary,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.semiBold,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-  },
-  body: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    lineHeight: lineHeights.base,
-    marginTop: spacing.sm,
-  },
   action: {
     marginRight: spacing.lg,
-    marginTop: 10,
   },
   actionText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.base,
+    color: colors.text.secondary,
   },
-  cardActions: {
+  actions: {
+    alignItems: 'center',
     flexDirection: 'row',
     flexWrap: 'wrap',
+    marginTop: spacing.sm,
   },
-  card: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.subtle,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginTop: spacing.md,
-    padding: spacing.lg,
+  // A comment is a flat block on the canvas with a hairline between entries, the
+  // same reading as the feed — no card (KNOT-020d).
+  comment: {
+    paddingHorizontal: layout.screenPaddingReading,
+    paddingTop: spacing.lg,
   },
-  cardMeta: {
+  commentBody: {
+    color: colors.text.secondary,
+    marginTop: spacing.sm,
+  },
+  commentHead: {
     alignItems: 'center',
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
   },
   composer: {
-    borderTopColor: colors.border.default,
+    borderTopColor: colors.border.hairline,
     borderTopWidth: 1,
-    padding: spacing.lg,
+    paddingBottom: spacing.xl,
+    paddingHorizontal: layout.screenPaddingReading,
+    paddingTop: spacing.md,
   },
   composerInput: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
+    borderColor: colors.border.hairline,
+    borderRadius: radius.lg,
     borderWidth: 1,
     color: colors.text.primary,
-    fontSize: fontSizes.base,
-    minHeight: 64,
+    minHeight: 44,
     paddingHorizontal: spacing.md,
-    paddingVertical: 10,
+    paddingVertical: spacing.sm,
   },
   composerRow: {
+    alignItems: 'center',
     flexDirection: 'row',
-    marginTop: 10,
+    gap: spacing.md,
+    marginTop: spacing.md,
   },
   container: {
-    backgroundColor: colors.bg.primary,
+    backgroundColor: colors.bg.canvas,
     flex: 1,
   },
-  disabled: {
-    opacity: 0.5,
-  },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.base,
-    marginTop: 10,
+    color: colors.state.danger,
+    marginTop: spacing.sm,
   },
-  header: {
-    padding: spacing.xl,
-    paddingBottom: 0,
-  },
+  // The modal's supporting line, under its title.
   hint: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    marginTop: 6,
+    color: colors.text.tertiary,
+    marginTop: spacing.sm,
+  },
+  iconButton: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  // The comment's ISO 639-3 code, shown beside the author.
+  languageCode: {
+    color: colors.text.tertiary,
   },
   languageChip: {
     alignItems: 'center',
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
-    borderRadius: radius.pill,
-    borderWidth: 1,
+    backgroundColor: colors.brand.tint,
+    borderRadius: radius.md,
     flexDirection: 'row',
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
+    gap: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
   },
   languageChipChevron: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    marginLeft: 6,
+    color: colors.brand.primary,
   },
   languageChipText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
+    color: colors.brand.primary,
     maxWidth: 140,
   },
-  link: {
-    marginBottom: spacing.md,
-  },
   linkText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.base,
+    color: colors.brand.primary,
   },
   list: {
-    paddingHorizontal: spacing.xl,
     paddingBottom: spacing.xl,
   },
+  listError: {
+    color: colors.state.danger,
+    paddingHorizontal: layout.screenPaddingReading,
+    paddingTop: spacing.md,
+  },
+  loadMore: {
+    marginTop: spacing.lg,
+    paddingHorizontal: layout.screenPaddingReading,
+  },
   modalBackdrop: {
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    backgroundColor: colors.scrim.overlay,
     flex: 1,
     justifyContent: 'flex-end',
   },
@@ -645,103 +676,56 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   modalSheet: {
-    backgroundColor: colors.bg.primary,
-    borderTopLeftRadius: radius.xl,
-    borderTopRightRadius: radius.xl,
+    backgroundColor: colors.bg.canvas,
+    borderTopLeftRadius: radius.xxl,
+    borderTopRightRadius: radius.xxl,
     maxHeight: '80%',
     padding: spacing.xl,
   },
   modalTitle: {
     color: colors.text.primary,
-    fontSize: fontSizes.lg,
-    fontWeight: fontWeights.bold,
   },
-  postButton: {
-    alignItems: 'center',
-    backgroundColor: colors.brand.purple,
-    borderRadius: radius.md,
-    flexGrow: 1,
-    justifyContent: 'center',
-    marginLeft: 10,
-    paddingVertical: spacing.md,
+  // The Post action takes the rest of the composer row.
+  postAction: {
+    flex: 1,
   },
-  postButtonText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
+  // A reply hangs off its parent with a hairline spine, indented so the thread
+  // reads as one unit (KNOT-ADR-049).
+  reply: {
+    borderLeftColor: colors.brand.tint,
+    borderLeftWidth: 1.5,
+    marginLeft: spacing.sm,
+    marginTop: spacing.md,
+    paddingLeft: spacing.lg,
   },
   replyBanner: {
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 10,
+    marginBottom: spacing.sm,
   },
   replyBannerCancel: {
     paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
+    paddingVertical: spacing.xs,
   },
   replyBannerCancelText: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.base,
+    color: colors.text.tertiary,
   },
   replyBannerText: {
-    color: colors.text.secondary,
+    color: colors.text.tertiary,
     flexShrink: 1,
-    fontSize: fontSizes.sm,
-  },
-  // A reply sits inside its parent's card, indented to show the hierarchy. The
-  // indent is inside the card, so the thread reads as one unit and the reply is
-  // shallower than the old nested card (KNOT-ADR-049).
-  replyRow: {
-    borderTopColor: colors.border.subtle,
-    borderTopWidth: 1,
-    marginLeft: spacing.xl,
-    marginTop: spacing.md,
-    paddingTop: spacing.md,
   },
   replyBody: {
-    color: colors.text.primary,
-    fontSize: fontSizes.sm,
-    lineHeight: lineHeights.sm,
+    color: colors.text.secondary,
     marginTop: spacing.xs,
   },
-  replyActions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  replyAction: {
-    marginRight: spacing.lg,
-    marginTop: spacing.sm,
-  },
-  // The expand/collapse link sits above the action buttons, so the replies it
-  // reveals appear below the actions that address the comment itself.
-  repliesLink: {
-    marginTop: spacing.sm,
-  },
-  repliesLinkText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.medium,
-  },
-  secondaryButton: {
-    alignItems: 'center',
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginTop: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  secondaryButtonText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
+  // The hairline that separates one comment from the next.
+  separator: {
+    backgroundColor: colors.border.hairline,
+    height: 1,
+    marginTop: spacing.lg,
   },
   spinner: {
     marginTop: spacing.xl,
-  },
-  title: {
-    color: colors.text.primary,
-    fontSize: fontSizes.xl,
-    fontWeight: fontWeights.bold,
   },
 });

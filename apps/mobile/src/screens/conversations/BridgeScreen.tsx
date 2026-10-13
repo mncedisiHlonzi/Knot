@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ArrowLeft } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { Comment, CreateBridgePayload, conversationsApi } from '../../api/conversations';
 import AuthorLine from '../../components/AuthorLine';
+import Button from '../../components/Button';
+import Header from '../../components/Header';
+import Input from '../../components/Input';
 import LanguagePicker from '../../components/LanguagePicker';
 import { isLanguageCode, languageName } from '../../data/languages';
-import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
+import { colors, layout, spacing, typeScale } from '../../theme';
 
 type BridgeScreenProps = {
   /**
@@ -127,156 +131,131 @@ export default function BridgeScreen({
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <Pressable style={styles.link} onPress={onCancel}>
-        <Text style={styles.linkText}>← Back</Text>
-      </Pressable>
-
-      <Text style={styles.title}>Bridge to another language</Text>
-      <Text style={styles.hint}>
-        Your comment is added to the conversation in the language you choose, joined to the one you
-        are bridging. The story must already have a version in that language, and the original
-        comment stays as it is.
-      </Text>
-
-      <Text style={styles.label}>You are bridging</Text>
-      <View style={styles.sourceMetaRow}>
-        <Text style={styles.sourceLanguage}>{languageName(sourceComment.language)}</Text>
-        <AuthorLine
-          displayName={sourceComment.author_display_name}
-          avatarUrl={sourceComment.author_avatar_url}
-          createdAt={sourceComment.created_at}
-          rooted={sourceComment.author_rooted}
-          size="small"
-          onPress={() => onOpenUserProfile(sourceComment.author_id)}
-        />
-      </View>
-      <Text style={styles.sourceBody}>{sourceComment.body}</Text>
-
-      <Text style={styles.label}>Target language</Text>
-      <LanguagePicker
-        mode="single"
-        selected={targetLanguage}
-        onSelect={(chosen) => setTargetLanguage(chosen.code)}
-        onClear={() => setTargetLanguage('')}
-        placeholder="Search, e.g. French or fra"
+    <View style={styles.container}>
+      <Header
+        title="Bridge this comment"
+        left={
+          <Pressable
+            style={styles.iconButton}
+            onPress={onCancel}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+          >
+            <ArrowLeft color={colors.text.primary} size={24} />
+          </Pressable>
+        }
       />
 
-      <Text style={styles.label}>Your comment</Text>
-      <TextInput
-        style={[styles.input, styles.multiline]}
-        value={body}
-        onChangeText={setBody}
-        placeholder="Say it in the other language"
-        placeholderTextColor={colors.text.secondary}
-        multiline
-        numberOfLines={6}
-        textAlignVertical="top"
-      />
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        {/* The comment being bridged, quiet and hairline-framed. */}
+        <View style={styles.sourceBlock}>
+          <AuthorLine
+            displayName={sourceComment.author_display_name}
+            avatarUrl={sourceComment.author_avatar_url}
+            createdAt={sourceComment.created_at}
+            rooted={sourceComment.author_rooted}
+            size="large"
+            onPress={() => onOpenUserProfile(sourceComment.author_id)}
+          />
+          <Text style={[typeScale.caption, styles.sourceLanguage]}>
+            {languageName(sourceComment.language)} · {sourceComment.language}
+          </Text>
+          <Text style={[typeScale.body, styles.sourceBody]}>{sourceComment.body}</Text>
+        </View>
 
-      <Text style={styles.label}>Note for readers (optional)</Text>
-      <TextInput
-        style={[styles.input, styles.multiline]}
-        value={note}
-        onChangeText={setNote}
-        placeholder="What changed, and why?"
-        placeholderTextColor={colors.text.secondary}
-        multiline
-        numberOfLines={3}
-        textAlignVertical="top"
-      />
+        <View>
+          <Text style={[typeScale.label, styles.fieldLabel]}>Bridge into</Text>
+          <LanguagePicker
+            mode="single"
+            selected={targetLanguage}
+            onSelect={(chosen) => setTargetLanguage(chosen.code)}
+            onClear={() => setTargetLanguage('')}
+            placeholder="Search, e.g. French or fra"
+          />
 
-      {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
+          <View style={styles.field}>
+            <Input
+              label="Write it the way you would say it"
+              value={body}
+              onChangeText={setBody}
+              placeholder="Say it in the other language"
+              helper="Stay close to the meaning. A note can explain a word with no match."
+              multiline
+            />
+          </View>
 
-      <Pressable
-        style={[styles.button, submitting ? styles.disabled : null]}
-        onPress={handleSubmit}
-        disabled={submitting}
-      >
-        <Text style={styles.buttonText}>{submitting ? 'Adding…' : 'Add my bridge'}</Text>
-      </Pressable>
-    </ScrollView>
+          <View style={styles.field}>
+            <Input
+              label="Note (optional)"
+              value={note}
+              onChangeText={setNote}
+              placeholder="Add a note"
+              helper="Explain a choice you made, so readers can trust it."
+              multiline
+            />
+          </View>
+
+          {error !== undefined ? (
+            <Text style={[typeScale.bodyS, styles.error]}>{error}</Text>
+          ) : null}
+
+          <View style={styles.submit}>
+            <Button
+              label="Bridge comment"
+              onPress={() => void handleSubmit()}
+              loading={submitting}
+              fullWidth
+            />
+          </View>
+        </View>
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  button: {
-    alignItems: 'center',
-    backgroundColor: colors.brand.purple,
-    borderRadius: radius.md,
-    marginTop: spacing.xl,
-    paddingVertical: 14,
-  },
-  buttonText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    fontWeight: fontWeights.semiBold,
+  container: {
+    backgroundColor: colors.bg.canvas,
+    flex: 1,
   },
   content: {
-    backgroundColor: colors.bg.primary,
-    padding: spacing.xl,
-    paddingBottom: spacing['3xl'],
-  },
-  disabled: {
-    opacity: 0.5,
+    paddingBottom: spacing.xxxl,
+    paddingHorizontal: layout.screenPaddingReading,
   },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.base,
+    color: colors.state.danger,
     marginTop: spacing.lg,
   },
-  hint: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    marginTop: spacing.sm,
+  field: {
+    marginTop: spacing.lg,
   },
-  input: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    marginTop: 6,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
+  fieldLabel: {
+    color: colors.text.tertiary,
+    marginBottom: spacing.sm,
+    marginTop: spacing.xl,
   },
-  label: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
-    marginTop: 20,
+  iconButton: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
   },
-  link: {
-    marginBottom: spacing.md,
-  },
-  linkText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.base,
-  },
-  multiline: {
-    minHeight: 100,
+  // The source comment is framed by a hairline on its left, per the reference.
+  sourceBlock: {
+    borderLeftColor: colors.brand.tint,
+    borderLeftWidth: 2,
+    marginTop: spacing.lg,
+    paddingLeft: spacing.md,
   },
   sourceBody: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    lineHeight: lineHeights.base,
-    marginTop: 6,
+    color: colors.text.secondary,
+    marginTop: spacing.sm,
   },
   sourceLanguage: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
+    color: colors.text.tertiary,
+    marginTop: spacing.xs,
   },
-  sourceMetaRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-    marginTop: 6,
-  },
-  title: {
-    color: colors.text.primary,
-    fontSize: fontSizes.xl,
-    fontWeight: fontWeights.bold,
+  submit: {
+    marginTop: spacing.xl,
   },
 });

@@ -1,19 +1,16 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-} from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ArrowLeft } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { CreateAdaptationPayload, StoryVersion, versionsApi } from '../../api/versions';
 import { DEFAULT_LANGUAGE_CODE } from '../../config/language';
+import Button from '../../components/Button';
+import Header from '../../components/Header';
+import Input from '../../components/Input';
 import LanguagePicker from '../../components/LanguagePicker';
 import { isLanguageCode, languageName } from '../../data/languages';
-import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
+import { colors, layout, radius, spacing, typeScale } from '../../theme';
 
 type AdaptStoryScreenProps = {
   /** The story the new version belongs to. */
@@ -148,171 +145,212 @@ export default function AdaptStoryScreen({
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <Pressable style={styles.link} onPress={onCancel}>
-        <Text style={styles.linkText}>← Back</Text>
-      </Pressable>
-
-      <Text style={styles.title}>Adapt for my people</Text>
-      <Text style={styles.hint}>
-        Tell this story the way your people would tell it. Your version is added to the language
-        tree beside the one it comes from.
-      </Text>
-
-      {loading ? <ActivityIndicator style={styles.spinner} /> : null}
-      {loadError !== undefined ? <Text style={styles.error}>{loadError}</Text> : null}
-
-      {!loading && parent !== undefined ? (
-        <>
-          <Text style={styles.parentSummary}>
-            Adapting the {languageName(parent.language)} version: {parent.title}
-          </Text>
-
-          <Text style={styles.label}>Language</Text>
-          <LanguagePicker
-            mode="single"
-            selected={language}
-            onSelect={(chosen) => setLanguage(chosen.code)}
-            onClear={() => setLanguage('')}
-            placeholder="Search, e.g. French or fra"
-          />
-
-          <Text style={styles.label}>Title</Text>
-          <TextInput
-            style={styles.input}
-            value={title}
-            onChangeText={setTitle}
-            placeholder="A short headline"
-            placeholderTextColor={colors.text.secondary}
-          />
-
-          <Text style={styles.label}>Story</Text>
-          <TextInput
-            style={[styles.input, styles.multiline]}
-            value={body}
-            onChangeText={setBody}
-            placeholder="Tell it the way you would tell it out loud"
-            placeholderTextColor={colors.text.secondary}
-            multiline
-            numberOfLines={8}
-            textAlignVertical="top"
-          />
-
-          <Text style={styles.label}>Note for readers (optional)</Text>
-          <TextInput
-            style={[styles.input, styles.multiline]}
-            value={note}
-            onChangeText={setNote}
-            placeholder="What changed, and why?"
-            placeholderTextColor={colors.text.secondary}
-            multiline
-            numberOfLines={3}
-            textAlignVertical="top"
-          />
-
-          {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
-
+    <View style={styles.container}>
+      <Header
+        title="Tell My People"
+        left={
           <Pressable
-            style={[styles.button, submitting ? styles.buttonDisabled : null]}
-            onPress={handleSubmit}
-            disabled={submitting}
+            style={styles.iconButton}
+            onPress={onCancel}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
           >
-            <Text style={styles.buttonText}>{submitting ? 'Adding…' : 'Add my version'}</Text>
+            <ArrowLeft color={colors.text.primary} size={24} />
           </Pressable>
-        </>
-      ) : null}
+        }
+      />
 
-      {!loading && parent === undefined && loadError !== undefined ? (
-        <Pressable style={styles.secondaryButton} onPress={load}>
-          <Text style={styles.secondaryButtonText}>Try again</Text>
-        </Pressable>
-      ) : null}
-    </ScrollView>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        {loading ? <ActivityIndicator style={styles.spinner} /> : null}
+        {loadError !== undefined ? (
+          <Text style={[typeScale.bodyS, styles.error]}>{loadError}</Text>
+        ) : null}
+
+        {!loading && parent !== undefined ? (
+          <>
+            {/* The version being adapted, as the tree draws it: a marker on the
+                spine, then the quiet source line. */}
+            <View style={styles.spineRow}>
+              <View style={styles.spineGutter}>
+                <View style={[styles.marker, styles.markerFilled]} />
+                <View style={styles.spine} />
+              </View>
+              <View style={styles.spineBody}>
+                <Text style={[typeScale.title, styles.sourceTitle]} numberOfLines={2}>
+                  {parent.title}
+                </Text>
+                <Text style={[typeScale.caption, styles.sourceMeta]}>
+                  {languageName(parent.language)} · {parent.language}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.spineRow}>
+              <View style={styles.spineGutter}>
+                <View style={[styles.marker, styles.markerHollow]} />
+              </View>
+              <Text style={[typeScale.label, styles.sectionHeading]}>
+                Telling it to your people
+              </Text>
+            </View>
+
+            <View style={styles.form}>
+              <Text style={[typeScale.label, styles.fieldLabel]}>Language</Text>
+              <LanguagePicker
+                mode="single"
+                selected={language}
+                onSelect={(chosen) => setLanguage(chosen.code)}
+                onClear={() => setLanguage('')}
+                placeholder="Search, e.g. French or fra"
+              />
+
+              <View style={styles.field}>
+                <Input
+                  label="Title in your language"
+                  value={title}
+                  onChangeText={setTitle}
+                  placeholder="A short headline"
+                />
+              </View>
+
+              <View style={styles.field}>
+                <Input
+                  label="Tell it the way your people would"
+                  value={body}
+                  onChangeText={setBody}
+                  placeholder="Tell it the way you would tell it out loud"
+                  multiline
+                />
+              </View>
+
+              <View style={styles.noteBlock}>
+                <Input
+                  label="Adaptation note (optional)"
+                  value={note}
+                  onChangeText={setNote}
+                  placeholder="Add a note"
+                  helper="Explain a choice you made, so readers can trust it."
+                  multiline
+                />
+              </View>
+
+              {error !== undefined ? (
+                <Text style={[typeScale.bodyS, styles.error]}>{error}</Text>
+              ) : null}
+
+              <View style={styles.submit}>
+                <Button
+                  label="Publish for my people"
+                  onPress={() => void handleSubmit()}
+                  loading={submitting}
+                  fullWidth
+                />
+              </View>
+            </View>
+          </>
+        ) : null}
+
+        {!loading && parent === undefined && loadError !== undefined ? (
+          <View style={styles.submit}>
+            <Button label="Try again" variant="secondary" onPress={() => void load()} fullWidth />
+          </View>
+        ) : null}
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  button: {
-    alignItems: 'center',
-    backgroundColor: colors.brand.purple,
-    borderRadius: radius.md,
-    marginTop: spacing.xl,
-    paddingVertical: 14,
-  },
-  buttonDisabled: {
-    opacity: 0.5,
-  },
-  buttonText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    fontWeight: fontWeights.semiBold,
+  container: {
+    backgroundColor: colors.bg.canvas,
+    flex: 1,
   },
   content: {
-    backgroundColor: colors.bg.primary,
-    padding: spacing.xl,
-    paddingBottom: spacing['3xl'],
+    paddingBottom: spacing.xxxl,
+    paddingHorizontal: layout.screenPaddingReading,
   },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.base,
+    color: colors.state.danger,
     marginTop: spacing.lg,
   },
-  hint: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    marginTop: spacing.sm,
-  },
-  input: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    marginTop: 6,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-  },
-  label: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
-    marginTop: 20,
-  },
-  link: {
-    marginBottom: spacing.md,
-  },
-  linkText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.base,
-  },
-  multiline: {
-    minHeight: 120,
-  },
-  parentSummary: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.base,
+  field: {
     marginTop: spacing.lg,
   },
-  secondaryButton: {
+  fieldLabel: {
+    color: colors.text.tertiary,
+    marginBottom: spacing.sm,
+  },
+  // The form sits under the source's text column, matching the reference's indent.
+  form: {
+    marginLeft: spacing.xxl,
+  },
+  iconButton: {
     alignItems: 'center',
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginTop: 20,
-    paddingVertical: spacing.md,
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
   },
-  secondaryButtonText: {
+  marker: {
+    borderRadius: radius.pill,
+    borderWidth: 2,
+    height: 12,
+    left: 0,
+    position: 'absolute',
+    top: 4,
+    width: 12,
+  },
+  markerFilled: {
+    backgroundColor: colors.brand.primary,
+    borderColor: colors.brand.primary,
+  },
+  markerHollow: {
+    backgroundColor: colors.bg.canvas,
+    borderColor: colors.brand.primary,
+  },
+  noteBlock: {
+    borderTopColor: colors.border.hairline,
+    borderTopWidth: 1,
+    marginTop: spacing.lg,
+    paddingTop: spacing.lg,
+  },
+  sectionHeading: {
+    color: colors.brand.primary,
+    marginBottom: spacing.sm,
+    marginTop: spacing.md,
+  },
+  sourceMeta: {
+    color: colors.text.tertiary,
+    marginTop: spacing.xs,
+  },
+  sourceTitle: {
     color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
+  },
+  // A row of the tree: a marker on a spine, then the text column.
+  spineBody: {
+    flexShrink: 1,
+    paddingBottom: spacing.xl,
+  },
+  spineGutter: {
+    marginRight: spacing.md,
+    width: 12,
+  },
+  spineRow: {
+    flexDirection: 'row',
+    paddingTop: spacing.lg,
+  },
+  // The spine drops from the marker down through the block.
+  spine: {
+    borderLeftColor: colors.brand.tint,
+    borderLeftWidth: 1.5,
+    bottom: 0,
+    left: 5,
+    position: 'absolute',
+    top: 16,
   },
   spinner: {
     marginTop: spacing.xl,
   },
-  title: {
-    color: colors.text.primary,
-    fontSize: fontSizes.xl,
-    fontWeight: fontWeights.bold,
+  submit: {
+    marginTop: spacing.xl,
   },
 });

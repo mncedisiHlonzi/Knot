@@ -453,6 +453,11 @@ export default function App(): React.ReactElement {
             storyId={overlay.storyId}
             token={current.accessToken}
             onOpenUserProfile={openUserProfile}
+            onTellStory={(parentVersionId) =>
+              setOverlays((stack) =>
+                pushOverlay(stack, { name: 'adapt', storyId: overlay.storyId, parentVersionId }),
+              )
+            }
             onBack={handleBack}
           />
         );

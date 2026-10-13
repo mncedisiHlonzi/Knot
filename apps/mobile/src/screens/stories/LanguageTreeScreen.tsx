@@ -1,13 +1,18 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ArrowLeft } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { EMPTY_REACTION_COUNTS } from '../../api/reactions';
-import { StoryVersion, versionDepths, versionsApi } from '../../api/versions';
+import { StoryVersion, versionsApi } from '../../api/versions';
 import AuthorLine from '../../components/AuthorLine';
+import Button from '../../components/Button';
+import EmptyState from '../../components/EmptyState';
+import Header from '../../components/Header';
 import ReactionBar from '../../components/ReactionBar';
 import { languageName } from '../../data/languages';
-import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
+import { colors, layout, radius, spacing, typeScale } from '../../theme';
+import { adaptCountLabel, treeRows, treeSummary } from './versionTree';
 
 type LanguageTreeScreenProps = {
   /** The story whose language tree to show. */
@@ -19,12 +24,25 @@ type LanguageTreeScreenProps = {
   readonly token?: string;
   /** Called when a version's author is tapped, to open their profile. */
   readonly onOpenUserProfile: (userId: string) => void;
+  /**
+   * Called when the reader wants to tell the story in their own language. It is
+   * given the version to adapt from — the story's root. Omitted by a caller that
+   * has nowhere to send the reader, in which case the action is not drawn.
+   */
+  readonly onTellStory?: (parentVersionId: string) => void;
   /** Called when the person returns to the story. */
   readonly onBack: () => void;
 };
 
 /** How far each level of the tree is indented, in points. */
-const INDENT_PER_LEVEL = spacing.lg;
+const INDENT = spacing.xl;
+
+/** The tree's connector line width and the diameter of its markers. */
+const TREE_LINE = 1.5;
+const DOT_SIZE = 12;
+
+/** The elbow's reach: how far a child's connector curves out from its parent. */
+const ELBOW = spacing.lg;
 
 /**
  * The Language Tree: every version of a story, indented by how far it sits from
@@ -38,6 +56,7 @@ export default function LanguageTreeScreen({
   storyId,
   token,
   onOpenUserProfile,
+  onTellStory,
   onBack,
 }: LanguageTreeScreenProps): React.ReactElement {
   const [versions, setVersions] = useState<readonly StoryVersion[]>([]);
@@ -62,163 +81,272 @@ export default function LanguageTreeScreen({
     void load();
   }, [load]);
 
-  const depths = versionDepths(versions);
+  const rows = useMemo(() => treeRows(versions), [versions]);
+  const summary = useMemo(() => treeSummary(rows), [rows]);
+  const rootId = rows.find((row) => row.depth === 0)?.version.id;
+  const tellStory = onTellStory;
 
   return (
-    <ScrollView contentContainerStyle={styles.content}>
-      <Pressable style={styles.link} onPress={onBack}>
-        <Text style={styles.linkText}>← Back</Text>
-      </Pressable>
+    <View style={styles.container}>
+      <Header
+        title="Versions"
+        left={
+          <Pressable
+            style={styles.iconButton}
+            onPress={onBack}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+          >
+            <ArrowLeft color={colors.text.primary} size={24} />
+          </Pressable>
+        }
+      />
 
-      <Text style={styles.title}>Language tree</Text>
-      <Text style={styles.hint}>
-        {versions.length} {versions.length === 1 ? 'version' : 'versions'} of this story
-      </Text>
+      <View style={styles.summaryBlock}>
+        <Text style={[typeScale.h3, styles.summaryTitle]} numberOfLines={2}>
+          {summary.title}
+        </Text>
+        <Text style={[typeScale.bodyS, styles.summaryMeta]}>
+          {summary.versionCount} {summary.versionCount === 1 ? 'version' : 'versions'} ·{' '}
+          {summary.languageCount} {summary.languageCount === 1 ? 'language' : 'languages'}
+        </Text>
+      </View>
 
-      {loading ? <ActivityIndicator style={styles.spinner} /> : null}
-      {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
+      <ScrollView contentContainerStyle={styles.content}>
+        {loading ? <ActivityIndicator style={styles.spinner} /> : null}
+        {error !== undefined ? <Text style={[typeScale.bodyS, styles.error]}>{error}</Text> : null}
 
-      {!loading && versions.length === 0 && error === undefined ? (
-        <Text style={styles.hint}>This story has no versions yet.</Text>
-      ) : null}
-
-      {versions.map((version) => (
-        <View
-          key={version.id}
-          style={[styles.row, { marginLeft: (depths.get(version.id) ?? 0) * INDENT_PER_LEVEL }]}
-        >
-          <Text style={styles.rowTitle}>{version.title}</Text>
-          <View style={styles.rowMeta}>
-            <Text style={styles.badge}>{languageName(version.language)}</Text>
-            {version.parent_version_id === null ? <Text style={styles.rootTag}>root</Text> : null}
-          </View>
-          <View style={styles.rowAuthor}>
-            <AuthorLine
-              displayName={version.author_display_name}
-              avatarUrl={version.author_avatar_url}
-              createdAt={version.created_at}
-              rooted={version.author_rooted}
-              size="small"
-              onPress={() => onOpenUserProfile(version.author_id)}
-            />
-          </View>
-          {/* A compact bar: emoji and count only, to keep the tree dense. */}
-          <ReactionBar
-            entityType="version"
-            entityId={version.id}
-            counts={version.reactions ?? EMPTY_REACTION_COUNTS}
-            myReactions={version.my_reactions ?? []}
-            token={token}
-            compact
-            onChange={(counts, mine) =>
-              setVersions((previous) =>
-                previous.map((item) =>
-                  item.id === version.id
-                    ? { ...item, reactions: counts, my_reactions: mine }
-                    : item,
-                ),
-              )
-            }
+        {!loading && rows.length === 0 && error === undefined ? (
+          <EmptyState
+            illustrationName="no-stories"
+            headline="No versions yet."
+            body="Tell this story in your language and it will appear here beside the one it came from."
           />
-          {version.adaptation_note !== null && version.adaptation_note !== '' ? (
-            <Text style={styles.note}>{version.adaptation_note}</Text>
-          ) : null}
-        </View>
-      ))}
+        ) : null}
 
-      {!loading && error !== undefined ? (
-        <Pressable style={styles.secondaryButton} onPress={load}>
-          <Text style={styles.secondaryButtonText}>Try again</Text>
-        </Pressable>
+        {rows.map(({ version: item, depth, adaptCount }) => {
+          const isRoot = depth === 0;
+          const indent = depth * INDENT;
+          const hasChildren = adaptCount > 0;
+
+          return (
+            <View key={item.id} style={styles.row}>
+              {/* The tree's gutter: a spine, an elbow, and the marker. */}
+              <View style={[styles.gutter, { width: indent + DOT_SIZE + spacing.md }]}>
+                {isRoot ? null : <View style={[styles.spineAbove, { left: indent - ELBOW }]} />}
+                {isRoot ? null : <View style={[styles.elbow, { left: indent - ELBOW }]} />}
+                {hasChildren ? (
+                  <View style={[styles.spineBelow, { left: indent + DOT_SIZE / 2 }]} />
+                ) : null}
+                <View
+                  style={[styles.dot, isRoot ? styles.dotRoot : styles.dotChild, { left: indent }]}
+                />
+              </View>
+
+              <View style={styles.rowBody}>
+                <View style={styles.languageRow}>
+                  <Text style={[typeScale.button, styles.languageName]} numberOfLines={1}>
+                    {languageName(item.language)}
+                  </Text>
+                  <Text style={[typeScale.caption, styles.languageCode]}>{item.language}</Text>
+                </View>
+
+                <View style={styles.metaRow}>
+                  <AuthorLine
+                    displayName={item.author_display_name}
+                    avatarUrl={item.author_avatar_url}
+                    createdAt={item.created_at}
+                    rooted={item.author_rooted}
+                    size="small"
+                    onPress={() => onOpenUserProfile(item.author_id)}
+                  />
+                  <Text style={[typeScale.caption, styles.adaptCount]}>
+                    {adaptCountLabel(adaptCount)}
+                  </Text>
+                </View>
+
+                {item.adaptation_note !== null && item.adaptation_note !== '' ? (
+                  <Text style={[typeScale.bodyS, styles.note]}>{item.adaptation_note}</Text>
+                ) : null}
+
+                <View style={styles.reactions}>
+                  <ReactionBar
+                    entityType="version"
+                    entityId={item.id}
+                    counts={item.reactions ?? EMPTY_REACTION_COUNTS}
+                    myReactions={item.my_reactions ?? []}
+                    token={token}
+                    compact
+                    onChange={(counts, mine) =>
+                      setVersions((previous) =>
+                        previous.map((candidate) =>
+                          candidate.id === item.id
+                            ? { ...candidate, reactions: counts, my_reactions: mine }
+                            : candidate,
+                        ),
+                      )
+                    }
+                  />
+                </View>
+              </View>
+            </View>
+          );
+        })}
+
+        {!loading && error !== undefined ? (
+          <View style={styles.retry}>
+            <Button label="Try again" variant="secondary" onPress={() => void load()} fullWidth />
+          </View>
+        ) : null}
+      </ScrollView>
+
+      {tellStory !== undefined && rootId !== undefined ? (
+        <View style={styles.footer}>
+          <Button
+            label="Tell this story in your language"
+            variant="secondary"
+            fullWidth
+            onPress={() => tellStory(rootId)}
+          />
+        </View>
       ) : null}
-    </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  badge: {
-    backgroundColor: colors.border.subtle,
-    borderRadius: radius.sm,
-    color: colors.text.primary,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.semiBold,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
+  adaptCount: {
+    color: colors.text.tertiary,
+  },
+  container: {
+    backgroundColor: colors.bg.canvas,
+    flex: 1,
   },
   content: {
-    backgroundColor: colors.bg.primary,
-    padding: spacing.xl,
-    paddingBottom: spacing['3xl'],
+    paddingBottom: spacing.xxxl,
+    paddingHorizontal: layout.screenPaddingReading,
+  },
+  // The marker, hollow for a child and filled for the story's root.
+  dot: {
+    borderRadius: radius.pill,
+    borderWidth: 2,
+    height: DOT_SIZE,
+    marginTop: -DOT_SIZE / 2,
+    position: 'absolute',
+    top: '50%',
+    width: DOT_SIZE,
+  },
+  dotChild: {
+    backgroundColor: colors.bg.canvas,
+    borderColor: colors.brand.primary,
+  },
+  dotRoot: {
+    backgroundColor: colors.brand.primary,
+    borderColor: colors.brand.primary,
+  },
+  // The curved corner that joins a child to its parent's spine.
+  elbow: {
+    borderBottomColor: colors.brand.tint,
+    borderBottomLeftRadius: radius.lg,
+    borderBottomWidth: TREE_LINE,
+    borderLeftColor: colors.brand.tint,
+    borderLeftWidth: TREE_LINE,
+    height: ELBOW,
+    marginTop: -ELBOW,
+    position: 'absolute',
+    top: '50%',
+    width: ELBOW,
   },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.base,
+    color: colors.state.danger,
     marginTop: spacing.lg,
   },
-  hint: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    marginTop: 6,
+  footer: {
+    backgroundColor: colors.bg.canvas,
+    borderTopColor: colors.border.hairline,
+    borderTopWidth: 1,
+    paddingBottom: spacing.xl,
+    paddingHorizontal: layout.screenPaddingReading,
+    paddingTop: spacing.md,
   },
-  link: {
-    marginBottom: spacing.md,
+  gutter: {
+    flexShrink: 0,
   },
-  linkText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.base,
+  iconButton: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  languageCode: {
+    color: colors.text.tertiary,
+  },
+  languageName: {
+    color: colors.text.primary,
+    flexShrink: 1,
+  },
+  languageRow: {
+    alignItems: 'baseline',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  metaRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.xs,
   },
   note: {
     color: colors.text.secondary,
-    fontSize: fontSizes.sm,
     fontStyle: 'italic',
-    marginTop: 6,
+    marginTop: spacing.sm,
   },
-  rootTag: {
-    color: colors.text.brand,
-    fontSize: fontSizes.sm,
-    marginLeft: spacing.sm,
+  reactions: {
+    marginTop: spacing.sm,
+  },
+  retry: {
+    marginTop: spacing.lg,
   },
   row: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.subtle,
-    borderLeftWidth: 3,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginTop: spacing.md,
-    padding: spacing.lg,
-  },
-  rowAuthor: {
-    marginTop: 6,
-  },
-  rowMeta: {
-    alignItems: 'center',
     flexDirection: 'row',
-    marginTop: 6,
+    paddingTop: spacing.lg,
   },
-  rowTitle: {
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    fontWeight: fontWeights.semiBold,
+  rowBody: {
+    flexShrink: 1,
+    paddingBottom: spacing.lg,
   },
-  secondaryButton: {
-    alignItems: 'center',
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginTop: 20,
-    paddingVertical: spacing.md,
+  // The spine that drops from above into a child's elbow.
+  spineAbove: {
+    borderLeftColor: colors.brand.tint,
+    borderLeftWidth: TREE_LINE,
+    height: '50%',
+    position: 'absolute',
+    top: 0,
   },
-  secondaryButtonText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
+  // The spine that continues below a version that drew adaptations.
+  spineBelow: {
+    borderLeftColor: colors.brand.tint,
+    borderLeftWidth: TREE_LINE,
+    bottom: 0,
+    position: 'absolute',
+    top: '50%',
   },
   spinner: {
     marginTop: spacing.xl,
   },
-  title: {
+  summaryBlock: {
+    borderBottomColor: colors.border.hairline,
+    borderBottomWidth: 1,
+    paddingBottom: spacing.lg,
+    paddingHorizontal: layout.screenPaddingReading,
+    paddingTop: spacing.sm,
+  },
+  summaryMeta: {
+    color: colors.text.tertiary,
+    marginTop: spacing.xs,
+  },
+  summaryTitle: {
     color: colors.text.primary,
-    fontSize: fontSizes.xl,
-    fontWeight: fontWeights.bold,
   },
 });

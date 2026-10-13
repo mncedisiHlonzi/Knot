@@ -252,8 +252,17 @@ The design pass added a component library in `apps/mobile/src/components/` — `
 Onboarding, Feed, Story Detail, and Profile) were rebuilt on it in KNOT-020c: they compose
 those components and style with the `typeScale` composites and the semantic colour roles
 (`colors.text.primary`, `colors.bg.canvas`, …), so no redesigned screen sets a raw hex or a
-manual `fontSize`/`lineHeight`/`fontWeight`. The remaining screens still read the deprecated
-legacy aliases until their own tasks migrate them.
+manual `fontSize`/`lineHeight`/`fontWeight`. The four content screens — Adapt Story, Language
+Tree, Comment Thread, and the Bridge Flow — were migrated the same way in **KNOT-020d**: each
+now opens with the shared `Header`, uses `Button`/`Input`/`EmptyState` instead of hand-rolled
+controls, and reads `typeScale.*` and the semantic tokens throughout. The remaining screens
+still read the deprecated legacy aliases until their own tasks migrate them.
+
+The `typeScale` **weights** are one step heavier than the reference snapshot for every token but
+the three body styles (`reading`, `body`, `bodyS`), which stay at 400 so prose keeps its
+readability — a deliberate divergence from `docs/design-reference/tokens.json` requested by the
+founder so the app reads with more dignity (KNOT-020c-fix6). See
+[DESIGN_SYSTEM.md](DESIGN_SYSTEM.md) for the reference-vs-mobile table.
 
 The Feed's video preview is the one stateful piece of that library: `FeedVideo` (KNOT-020c-fix3)
 plays a clip automatically, muted, once its entry is the one the list judges to be at least 60%
