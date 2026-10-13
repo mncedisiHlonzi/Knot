@@ -129,6 +129,21 @@ describe('PillarTag', () => {
     expect(PillarTag({ pillar: 'heritage', place: 'Oaxaca, Mexico' })).toBeTruthy();
     expect(PillarTag({ pillar: 'wonder', place: '   ' })).toBeTruthy();
   });
+
+  // Item 1 (KNOT-020c-fix6): the plain variant must reset the pill's horizontal
+  // padding, so the tag sits flush with the avatar and the story text rather than
+  // starting a step in. There is no renderer, so the style array is inspected
+  // directly: the base style carries the pill's padding and the plain override
+  // zeroes it.
+  it('resets the horizontal padding in the plain variant', () => {
+    const plain = PillarTag({ pillar: 'wonder', variant: 'plain' }) as unknown as {
+      props: { style: readonly Record<string, unknown>[] };
+    };
+    const applied = plain.props.style;
+
+    expect(applied[0]).toHaveProperty('paddingHorizontal');
+    expect(applied[applied.length - 1]).toMatchObject({ paddingHorizontal: 0 });
+  });
 });
 
 describe('RootedBadge', () => {

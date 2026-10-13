@@ -44,6 +44,13 @@ export const fontWeights = {
  * line-height, weight and letter-spacing together, so a screen applies one
  * object rather than four separate tokens.
  *
+ * The **weights** are deliberately one step heavier than the reference snapshot
+ * for every token but the three body styles (`reading`, `body`, `bodyS`), which
+ * stay at 400 so prose keeps its readability — the app should read with more
+ * dignity and modernity without thick text in a paragraph (KNOT-020c-fix6). The
+ * reference file is a static design snapshot and is not edited; the divergence is
+ * recorded in docs/DESIGN_SYSTEM.md and enforced by the token parity test.
+ *
  * `overline` is upper-cased by definition.
  */
 export const typeScale = {
@@ -58,28 +65,28 @@ export const typeScale = {
     fontFamily: fonts.display,
     fontSize: 26,
     lineHeight: 32,
-    fontWeight: fontWeights.bold,
+    fontWeight: fontWeights.extrabold,
     letterSpacing: -0.39,
   },
   title: {
     fontFamily: fonts.display,
     fontSize: 20,
     lineHeight: 26,
-    fontWeight: fontWeights.bold,
+    fontWeight: fontWeights.extrabold,
     letterSpacing: -0.2,
   },
   h2: {
     fontFamily: fonts.ui,
     fontSize: 20,
     lineHeight: 26,
-    fontWeight: fontWeights.semibold,
+    fontWeight: fontWeights.bold,
     letterSpacing: -0.2,
   },
   h3: {
     fontFamily: fonts.ui,
     fontSize: 17,
     lineHeight: 24,
-    fontWeight: fontWeights.semibold,
+    fontWeight: fontWeights.bold,
     letterSpacing: -0.085,
   },
   reading: {
@@ -107,21 +114,21 @@ export const typeScale = {
     fontFamily: fonts.ui,
     fontSize: 15,
     lineHeight: 20,
-    fontWeight: fontWeights.semibold,
+    fontWeight: fontWeights.bold,
     letterSpacing: 0,
   },
   label: {
     fontFamily: fonts.ui,
     fontSize: 13,
     lineHeight: 16,
-    fontWeight: fontWeights.semibold,
+    fontWeight: fontWeights.bold,
     letterSpacing: 0.13,
   },
   overline: {
     fontFamily: fonts.ui,
     fontSize: 11,
     lineHeight: 14,
-    fontWeight: fontWeights.semibold,
+    fontWeight: fontWeights.bold,
     letterSpacing: 0.88,
     textTransform: 'uppercase',
   },
@@ -129,7 +136,7 @@ export const typeScale = {
     fontFamily: fonts.ui,
     fontSize: 12,
     lineHeight: 16,
-    fontWeight: fontWeights.medium,
+    fontWeight: fontWeights.semibold,
     letterSpacing: 0.06,
   },
 } satisfies Record<string, TextStyle>;

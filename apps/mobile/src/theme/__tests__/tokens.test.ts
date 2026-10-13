@@ -8,6 +8,12 @@ import { colors, elevation, fonts, motion, palette, radius, spacing, typeScale }
  * `docs/design-reference/tokens.json` straight from disk — the single source of
  * truth — and assert every token matches it. If a value drifts here or in the
  * spec, the suite fails, so the two can never silently diverge (KNOT-020a).
+ *
+ * One exception, added deliberately: the type-scale **weights** are one step
+ * heavier than the reference for every token but the three body styles, so the app
+ * reads with more dignity without thickening prose (KNOT-020c-fix6). The reference
+ * is a static design snapshot and is not edited; the expectation is derived from it
+ * below, so the reference and the mobile scale still cannot drift apart.
  */
 type TokensReference = {
   light: Record<string, string>;
@@ -75,6 +81,34 @@ function parseTypeSpec(spec: string): {
     family: match[3] === 'Jakarta' ? 'Plus Jakarta Sans' : 'Inter',
     weight: match[4],
   };
+}
+
+/**
+ * The three body-level styles that keep the reference weight (400), so prose keeps
+ * its readability (KNOT-020c-fix6).
+ */
+const BODY_TOKENS = new Set(['reading', 'body', 'bodyS']);
+
+/**
+ * One step heavier, per the KNOT-020c-fix6 typography bump. The reference file is
+ * a static design snapshot and is deliberately not edited, so the heavier mobile
+ * weight is derived from the reference spec rather than hard-coded per token —
+ * which keeps both sides honest: a change in either the spec or the scale fails the
+ * suite.
+ */
+const ONE_STEP_HEAVIER: Readonly<Record<string, string>> = {
+  '400': '400',
+  '500': '600',
+  '600': '700',
+  '700': '800',
+  '800': '800',
+};
+
+/** The weight the mobile type scale should carry for a reference type token. */
+function expectedMobileWeight(name: string, referenceWeight: string): string {
+  return BODY_TOKENS.has(name)
+    ? referenceWeight
+    : (ONE_STEP_HEAVIER[referenceWeight] ?? referenceWeight);
 }
 
 describe('design tokens match docs/design-reference/tokens.json', () => {
@@ -148,7 +182,7 @@ describe('design tokens match docs/design-reference/tokens.json', () => {
     expect(radius['2xl']).toBe(24);
   });
 
-  it('every type-scale entry matches the reference', () => {
+  it('every type-scale entry matches the reference, bar the heavier weights', () => {
     expect(Object.keys(typeScale).sort()).toEqual(Object.keys(reference.type).sort());
 
     for (const [name, spec] of Object.entries(reference.type)) {
@@ -156,7 +190,9 @@ describe('design tokens match docs/design-reference/tokens.json', () => {
       const actual = typeScale[name as keyof typeof typeScale];
       expect(actual.fontSize).toBe(expected.fontSize);
       expect(actual.lineHeight).toBe(expected.lineHeight);
-      expect(actual.fontWeight).toBe(expected.weight);
+      // The weight is one step heavier than the reference for every token but the
+      // body-level three (KNOT-020c-fix6).
+      expect(actual.fontWeight).toBe(expectedMobileWeight(name, expected.weight));
       expect(actual.fontFamily).toBe(expected.family);
     }
 

@@ -59,6 +59,28 @@ Use a **composite** style from `typeScale` (`display`, `h1`, `title`, `h2`, `h3`
 setting `fontSize`/`lineHeight`/`fontWeight` by hand. `overline` is upper-cased by
 definition.
 
+**Weights are one step heavier than the reference (KNOT-020c-fix6).** The app read
+slightly too light on device, so the founder asked for a bolder, more modern feel
+(the LinkedIn register). Every `typeScale` token's `fontWeight` is now one step
+heavier than the value in `docs/design-reference/tokens.json`, **except** the three
+body-level styles (`reading`, `body`, `bodyS`), which stay at 400 so paragraphs keep
+their readability:
+
+| Token | Reference | Mobile |
+| --- | --- | --- |
+| `display` | 800 | 800 (unchanged) |
+| `h1`, `title` | 700 | **800** |
+| `h2`, `h3`, `button`, `label`, `overline` | 600 | **700** |
+| `caption` | 500 | **600** |
+| `reading`, `body`, `bodyS` | 400 | 400 (unchanged) |
+
+`docs/design-reference/tokens.json` is a **static design snapshot** and is
+intentionally *not* edited; the divergence is declared here and enforced by
+the token parity test in `src/theme/__tests__/tokens.test.ts`, which derives the
+expected mobile weight from the reference spec (one step heavier, body-level
+excepted). The bundled Inter and Plus Jakarta Sans sets already include the 700 and
+800 weights, so no font asset is missing.
+
 **Tabular numerals.** Any number that can change in place — counts, timestamps,
 reaction tallies, progress — gets `tabularNums` so its digits stop jittering:
 `style={[typeScale.caption, tabularNums]}`. Never apply it to prose.

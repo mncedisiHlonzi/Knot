@@ -17,8 +17,9 @@ type PillarTagProps = {
   /**
    * `filled` (the default) is the pill on the pillar's own surface tint — the
    * form the Story Detail and every other screen use today. `plain` drops the
-   * fill, the radius and the padding, leaving upper-cased pillar ink on the
-   * canvas, which is what the feed's design reference asks for (KNOT-020c-fix3).
+   * fill, the radius and the horizontal padding, leaving upper-cased pillar ink on
+   * the canvas, flush with the rest of the Feed entry, which is what the feed's
+   * design reference asks for (KNOT-020c-fix3, KNOT-020c-fix6).
    */
   readonly variant?: PillarTagVariant;
   /** Test identifier. */
@@ -40,9 +41,10 @@ const PILLAR_LABELS: Readonly<Record<Pillar, string>> = {
  * pillar word stays the emphasis.
  *
  * The `filled` variant is a small pill on the pillar's surface tint. The `plain`
- * variant is the same text with no surface at all — no fill, no border, no
- * radius, no padding — so the feed reads as text on the canvas rather than as a
- * chip.
+ * variant is the same text with no surface at all — no fill, no border, no radius
+ * and no horizontal padding — so the feed reads as text on the canvas rather than
+ * as a chip, and its left edge lines up with the avatar and the story text
+ * (KNOT-020c-fix6).
  */
 export default function PillarTag({
   pillar,
@@ -76,10 +78,13 @@ const styles = StyleSheet.create({
   place: {
     color: colors.text.tertiary,
   },
-  // No fill, no border, no radius and no padding: the tag becomes plain text on
-  // the canvas.
+  // No fill, no border, no radius and no horizontal padding: the tag becomes
+  // plain text on the canvas. The horizontal padding must be reset here because
+  // the base style carries the pill's `paddingHorizontal`; without this the tag
+  // starts a step in from the rest of the entry (KNOT-020c-fix6).
   plain: {
     alignSelf: 'flex-start',
+    paddingHorizontal: 0,
   },
   tag: {
     alignSelf: 'flex-start',
