@@ -1,4 +1,5 @@
 import AuthorLine from '../AuthorLine';
+import Avatar from '../Avatar';
 import RootedBadge from '../RootedBadge';
 
 // AuthorLine imports React Native components to render with, but these tests call
@@ -134,6 +135,8 @@ describe('AuthorLine', () => {
     expect(badge?.props?.variant).toBe('quiet');
     expect(badge?.props?.place).toBe('Manguzi');
     expect(badge?.props?.durationBucket).toBe('lifelong');
+    // The Feed drops the duration, so the line reads "Rooted · Manguzi" (fix5).
+    expect(badge?.props?.showDuration).toBe(false);
   });
 
   it('renders no Rooted line when the author has no signal', () => {
@@ -146,5 +149,44 @@ describe('AuthorLine', () => {
     });
 
     expect(findElementByType(element, RootedBadge)).toBeUndefined();
+  });
+
+  // Item 1 (KNOT-020c-fix5): the Feed draws a 48-point avatar, which the existing
+  // `large` size already maps to.
+  it('draws the Feed avatar at the large size', () => {
+    const element = AuthorLine({
+      displayName: 'MaEnzy',
+      avatarUrl: null,
+      createdAt: '2026-10-09T12:00:00.000Z',
+      size: 'large',
+    });
+
+    expect(findElementByType(element, Avatar)?.props?.size).toBe('lg');
+  });
+
+  // Item 2 (KNOT-020c-fix5): the quiet Rooted line lives in the author's text
+  // column, beside the avatar — not as a full-width line under it — so it shares
+  // the name's left edge rather than the avatar's.
+  it('hangs the quiet Rooted line off the text column beside the avatar', () => {
+    const element = AuthorLine({
+      displayName: 'MaEnzy',
+      avatarUrl: null,
+      createdAt: '2026-10-09T12:00:00.000Z',
+      rooted: { place: 'Manguzi', duration_bucket: 'lifelong' },
+      showRootedOnNewLine: true,
+    }) as unknown as { props: { children: readonly unknown[] } };
+
+    // Two children: the avatar slot and the text column.
+    expect(element.props.children).toHaveLength(2);
+    const [avatarSlot, details] = element.props.children as [
+      unknown,
+      { props: { children: readonly unknown[] } },
+    ];
+    expect(findElementByType(avatarSlot, Avatar)).toBeDefined();
+
+    // The column holds the name row, then the Rooted line.
+    const column = details.props.children;
+    expect(findElementByType(column[0], 'Text')).toBeDefined();
+    expect((column[1] as { type: unknown }).type).toBe(RootedBadge);
   });
 });

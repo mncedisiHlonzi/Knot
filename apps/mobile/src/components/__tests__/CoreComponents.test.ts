@@ -113,6 +113,13 @@ describe('Avatar', () => {
     expect(Avatar({ displayName: 'Ada', onPress })).toBeTruthy();
     expect(onPress).not.toHaveBeenCalled();
   });
+
+  it('draws the Feed avatar (lg) at 48 points', () => {
+    // The Feed's author block uses AuthorLine size="large", which maps to the
+    // Avatar's `lg` (KNOT-020c-fix5).
+    const fallback = Avatar({ displayName: 'Ada Lovelace', size: 'lg' }).props.children;
+    expect(fallback.props.style[1]).toEqual({ height: 48, width: 48 });
+  });
 });
 
 describe('PillarTag', () => {
@@ -134,6 +141,22 @@ describe('RootedBadge', () => {
 
   it('renders nothing for a blank place', () => {
     expect(RootedBadge({ place: '   ', durationBucket: 'recently' })).toBeNull();
+  });
+
+  // The Feed's quiet line drops the duration (KNOT-020c-fix5), so it reads
+  // "Rooted · {place}" while the badge keeps the full form.
+  it('renders the quiet line with, and without, the duration', () => {
+    const full = RootedBadge({ place: 'Manguzi', durationBucket: 'lifelong', variant: 'quiet' });
+    const short = RootedBadge({
+      place: 'Manguzi',
+      durationBucket: 'lifelong',
+      variant: 'quiet',
+      showDuration: false,
+    });
+
+    expect(full?.props.children.props.children).toBe('Rooted · Manguzi · Lifelong');
+    expect(short?.props.children.props.children).toBe('Rooted · Manguzi');
+    expect(short?.props.accessibilityLabel).toBe('Rooted in Manguzi');
   });
 
   it('does not throw on a non-string place or bucket', () => {
@@ -366,6 +389,7 @@ describe('FeedEntry', () => {
     expect(authorLine).toBeDefined();
     expect(authorLine?.props?.rooted).toEqual({ place: 'Oaxaca', duration_bucket: 'many_years' });
     expect(authorLine?.props?.showRootedOnNewLine).toBe(true);
+    expect(authorLine?.props?.size).toBe('large');
   });
 
   it('passes a null Rooted summary when the author has no signal', () => {

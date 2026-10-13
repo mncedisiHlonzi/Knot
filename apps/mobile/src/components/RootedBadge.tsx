@@ -28,6 +28,12 @@ type RootedBadgeProps = {
   /** Compact form: "Rooted · place" without the duration. */
   readonly compact?: boolean;
   /**
+   * Whether the duration label is drawn. Defaults to `true`, the full form every
+   * caller but the Feed wants. The Feed passes `false`, so its quiet line reads
+   * `Rooted · {place}` (KNOT-020c-fix5).
+   */
+  readonly showDuration?: boolean;
+  /**
    * `badge` (the default) is the brand pill led by the Rooted mark, for an inline
    * attribution beside a name. `quiet` is an indigo dot followed by tertiary text
    * with no fill, for a second line under a name where the attribution is a detail
@@ -56,6 +62,7 @@ export default function RootedBadge({
   place,
   durationBucket,
   compact = false,
+  showDuration = true,
   variant = 'badge',
   testID,
 }: RootedBadgeProps): React.ReactElement | null {
@@ -68,25 +75,37 @@ export default function RootedBadge({
 
   const bucket = typeof durationBucket === 'string' ? durationBucket : '';
   const label = bucket === '' ? undefined : DURATION_LABELS[bucket];
-  const showDuration = compact !== true && label !== undefined;
+  // The duration is drawn only when the caller wants it and the bucket is known.
+  const durationLabel = showDuration && label !== undefined ? label : undefined;
 
+  // The accessible label follows what is actually drawn, so a shortened line is
+  // not announced with a segment it does not show.
   const accessibleLabel =
     label === undefined ? `Rooted in ${trimmedPlace}` : `Rooted in ${trimmedPlace}, ${label}`;
 
   // The quiet presentation is a line of its own: plain tertiary text, with no
   // dot, no surface fill, no border and no mark, exactly as the design reference
-  // draws it (KNOT-020c-fix3).
+  // draws it (KNOT-020c-fix3). The Feed asks for the place alone, so it reads
+  // "Rooted · {place}" (KNOT-020c-fix5).
   if (variant === 'quiet') {
+    const spoken =
+      durationLabel === undefined
+        ? `Rooted in ${trimmedPlace}`
+        : `Rooted in ${trimmedPlace}, ${durationLabel}`;
+
     return (
-      <View style={styles.quiet} testID={testID} accessibilityLabel={accessibleLabel}>
+      <View style={styles.quiet} testID={testID} accessibilityLabel={spoken}>
         <Text style={[typeScale.caption, styles.quietText]} numberOfLines={1}>
-          {showDuration && label !== undefined
-            ? `Rooted · ${trimmedPlace} · ${label}`
-            : `Rooted · ${trimmedPlace}`}
+          {durationLabel === undefined
+            ? `Rooted · ${trimmedPlace}`
+            : `Rooted · ${trimmedPlace} · ${durationLabel}`}
         </Text>
       </View>
     );
   }
+
+  // The compact badge drops the duration too; otherwise it follows the caller.
+  const badgeDuration = compact ? undefined : durationLabel;
 
   return (
     <View
@@ -102,11 +121,11 @@ export default function RootedBadge({
         <Text style={[typeScale.caption, styles.text, styles.place]} numberOfLines={1}>
           {trimmedPlace}
         </Text>
-        {showDuration && label !== undefined ? (
+        {badgeDuration === undefined ? null : (
           <Text style={[typeScale.caption, styles.text]} numberOfLines={1}>
-            {` · ${label}`}
+            {` · ${badgeDuration}`}
           </Text>
-        ) : null}
+        )}
       </View>
     </View>
   );

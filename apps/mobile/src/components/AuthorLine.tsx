@@ -34,7 +34,11 @@ type AuthorLineProps = {
   readonly createdAt?: string | null;
   /** The author's inline Rooted summary, or null when they have none. */
   readonly rooted?: AuthorRootedSummary | null;
-  /** Controls the avatar diameter and text weight. Defaults to "small". */
+  /**
+   * Controls the avatar diameter and the name's weight. Defaults to `small`
+   * (24pt). `large` pairs the 48pt avatar with `typeScale.h3`, and is the Feed's
+   * size (KNOT-020c-fix5).
+   */
   readonly size?: AuthorLineSize;
   /**
    * Move the Rooted summary onto its own quieter second line, under the name and
@@ -82,6 +86,11 @@ const AVATAR_SIZE: Readonly<Record<AuthorLineSize, 'sm' | 'md' | 'lg'>> = {
  * (KNOT-015b-fix). A line with nothing at all to show renders `null` rather than an
  * empty row.
  *
+ * When `showRootedOnNewLine` is set (the Feed), the line becomes a block: the
+ * avatar stands to the left and the text column — the name with its time, then
+ * the quiet Rooted line — hangs off it, so the avatar's left edge is the visual
+ * guide for both lines. The Feed's Rooted line carries the place alone.
+ *
  * When `onPress` is given, the avatar and name become a tap target for the
  * author's profile: a nested `Pressable` takes the touch itself, so the parent
  * card's own onPress does not fire for it (KNOT-ADR-043).
@@ -117,46 +126,35 @@ export default function AuthorLine({
     return null;
   }
 
-  // The Feed's two-line form: the Rooted summary leaves the identity line and
-  // becomes a quiet line of its own beneath it, so the name and time read as one
-  // clean line (KNOT-020c-fix2).
+  // The Feed's two-line form (KNOT-020c-fix2, refined in KNOT-020c-fix5): the
+  // avatar sits to the left and the author's text column hangs off it, so the
+  // name and the quiet Rooted line share the avatar's right edge as their left
+  // guide.
   const rootedOnNewLine = showRootedOnNewLine === true && hasRooted;
 
   // The separator before the timestamp belongs only when something precedes it on
   // its line, and the Rooted badge no longer does when it has moved down.
   const hasLeadingSegment = name !== '' || (!rootedOnNewLine && hasRooted);
 
-  const identity = (
-    <>
-      <Avatar
-        uri={avatarUri}
-        displayName={typeof displayName === 'string' ? displayName : ''}
-        size={AVATAR_SIZE[size]}
-        accessibilityLabel={name === '' ? 'Profile picture' : `${name}'s profile picture`}
-      />
-      {name !== '' ? (
-        <Text
-          style={[size === 'large' ? typeScale.h3 : typeScale.label, styles.name]}
-          numberOfLines={1}
-        >
-          {name}
-        </Text>
-      ) : null}
-    </>
+  const openProfileLabel = name === '' ? 'Open profile' : `Open ${name}'s profile`;
+
+  const avatarNode = (
+    <Avatar
+      uri={avatarUri}
+      displayName={typeof displayName === 'string' ? displayName : ''}
+      size={AVATAR_SIZE[size]}
+      accessibilityLabel={name === '' ? 'Profile picture' : `${name}'s profile picture`}
+    />
   );
 
-  const identityTarget =
-    onPress !== undefined ? (
-      <Pressable
-        style={styles.identity}
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={name === '' ? 'Open profile' : `Open ${name}'s profile`}
+  const nameNode =
+    name === '' ? null : (
+      <Text
+        style={[size === 'large' ? typeScale.h3 : typeScale.label, styles.name]}
+        numberOfLines={1}
       >
-        {identity}
-      </Pressable>
-    ) : (
-      <View style={styles.identity}>{identity}</View>
+        {name}
+      </Text>
     );
 
   const timeText =
@@ -166,17 +164,73 @@ export default function AuthorLine({
       </Text>
     );
 
+  // The Feed's author block: the avatar, then the text column — the name with its
+  // time, and the quiet Rooted line beneath it, indented to the name's left edge
+  // rather than spanning below the avatar. The Feed drops the duration, so its
+  // line reads "Rooted · {place}" (KNOT-020c-fix5).
   if (rootedOnNewLine) {
     return (
-      <View style={styles.stack} testID={testID}>
-        <View style={styles.row}>
-          {identityTarget}
-          {timeText}
+      <View style={styles.feedRow} testID={testID}>
+        {onPress === undefined ? (
+          avatarNode
+        ) : (
+          <Pressable
+            onPress={onPress}
+            accessibilityRole="button"
+            accessibilityLabel={openProfileLabel}
+          >
+            {avatarNode}
+          </Pressable>
+        )}
+
+        <View style={styles.details}>
+          <View style={styles.nameRow}>
+            {nameNode === null ? null : onPress === undefined ? (
+              nameNode
+            ) : (
+              <Pressable
+                style={styles.nameTarget}
+                onPress={onPress}
+                accessibilityRole="button"
+                accessibilityLabel={openProfileLabel}
+              >
+                {nameNode}
+              </Pressable>
+            )}
+            {timeText}
+          </View>
+
+          <RootedBadge
+            place={rootedPlace}
+            durationBucket={durationBucket}
+            variant="quiet"
+            showDuration={false}
+          />
         </View>
-        <RootedBadge place={rootedPlace} durationBucket={durationBucket} variant="quiet" />
       </View>
     );
   }
+
+  const identity = (
+    <>
+      {avatarNode}
+      {nameNode}
+    </>
+  );
+
+  const identityTarget =
+    onPress !== undefined ? (
+      <Pressable
+        style={styles.identity}
+        onPress={onPress}
+        accessibilityRole="button"
+        accessibilityLabel={openProfileLabel}
+      >
+        {identity}
+      </Pressable>
+    ) : (
+      <View style={styles.identity}>{identity}</View>
+    );
 
   return (
     <View style={styles.row} testID={testID}>
@@ -196,6 +250,17 @@ export default function AuthorLine({
 }
 
 const styles = StyleSheet.create({
+  // The Feed's author block: avatar beside the text column, both centred against
+  // each other so the avatar's left edge guides the name and the Rooted line.
+  details: {
+    flexShrink: 1,
+    gap: spacing.xs,
+  },
+  feedRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
   identity: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -206,14 +271,22 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     flexShrink: 1,
   },
+  // The name and time line inside the Feed's text column.
+  nameRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexShrink: 1,
+    gap: spacing.sm,
+  },
+  // Lets a long name truncate inside its own tap target.
+  nameTarget: {
+    flexShrink: 1,
+  },
   row: {
     alignItems: 'center',
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
-  },
-  stack: {
-    gap: spacing.xs,
   },
   time: {
     color: colors.text.tertiary,

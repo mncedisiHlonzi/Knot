@@ -141,7 +141,7 @@ export default function FeedEntry({
           avatarUrl={story.author_avatar_url}
           createdAt={story.created_at}
           rooted={story.author_rooted ?? null}
-          size="medium"
+          size="large"
           showRootedOnNewLine
           onPress={onOpenAuthor}
         />
