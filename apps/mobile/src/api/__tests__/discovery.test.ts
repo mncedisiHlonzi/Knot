@@ -37,4 +37,20 @@ describe('placeQuery', () => {
       `?country=${PLACE_COUNTRY_ABSENT}&cursor=abc123`,
     );
   });
+
+  it('sends the pillar when a lens is chosen', () => {
+    expect(placeQuery({ pillar: 'wonder' })).toBe('?pillar=wonder');
+    expect(placeQuery({ pillar: 'heritage' })).toBe('?pillar=heritage');
+  });
+
+  it('omits the pillar for the All tab, which sends no filter at all', () => {
+    expect(placeQuery({ pillar: undefined })).toBe('');
+    expect(placeQuery({ pillar: undefined })).not.toContain('pillar');
+  });
+
+  it('combines the pillar with the country, the limit, and the cursor', () => {
+    expect(placeQuery({ country: 'China', cursor: 'abc123', limit: 20, pillar: 'heritage' })).toBe(
+      '?limit=20&country=China&pillar=heritage&cursor=abc123',
+    );
+  });
 });

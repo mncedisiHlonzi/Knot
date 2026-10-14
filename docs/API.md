@@ -1213,6 +1213,7 @@ from `GET /stories` carry identical fields with identical values.
 | Query     | Required | Rules                                                           |
 | --------- | -------- | --------------------------------------------------------------- |
 | `country` | no       | Narrows the page to one country. The literal `null` selects the stories that record **no** country |
+| `pillar`  | no       | `wonder` or `heritage`; keeps only stories filed under that lens. Anything else is a `400` |
 | `cursor`  | no       | A `next_cursor` from a previous page. Omit for the first page  |
 | `limit`   | no       | 1-50. Defaults to 20; a larger value is clamped to 50          |
 
@@ -1224,6 +1225,15 @@ against the stored `place_country`, because a client passes back exactly what a 
 The word `null` is **reserved** to mean "records no country", so a story whose `place_country` is
 `null` is reachable only through it. An unrecognised country is not an error: it matches nothing
 and returns an empty page, exactly as an unknown place does.
+
+`pillar` is a **closed set**, not free text, so it behaves differently from `country`: an unknown
+value is a `400 validation_error` rather than an empty page. Omitting it lists every pillar. It is
+what the place screen's All / Heritage / Wonder tabs send, and it composes with `country` — the
+filters are ANDed (KNOT-020e-fix6). The column is indexed (`stories_pillar_idx`, migration `0002`),
+so the predicate is a plain indexed equality test.
+
+Changing any filter changes the query, so clients must start paging again from the first page: a
+`cursor` issued under one filter is not meaningful under another.
 
 `stories` is always an array, never `null`, and `next_cursor` is always present. Paging is
 keyset, exactly as for the feed. A place with no stories is **200** with `"stories": []`, not

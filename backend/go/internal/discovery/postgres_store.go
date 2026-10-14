@@ -181,14 +181,16 @@ func (s *PostgresStore) ListClusters(ctx context.Context, filter ClusterFilter) 
 // service, so the equality test uses the `stories_approximate_location_lower_idx`
 // index directly. country narrows the page further, to the stories a cluster with
 // that country holds; its zero value lists every story at the place, including
-// the ones from a different country with the same name. The country predicate is
+// the ones from a different country with the same name. pillar narrows the page
+// to one storytelling lens and uses the `stories_pillar_idx` already created by
+// migration 0002; its empty value lists every pillar. Both predicates are
 // appended after the cursor predicate so the cursor keeps its fixed $2/$3
-// placeholders (KNOT-020e-fix2).
+// placeholders (KNOT-020e-fix2, KNOT-020e-fix6).
 //
 // Pagination is keyset, exactly as for the feed: the ORDER BY key is
 // (created_at DESC, id DESC), the page predicate is the matching row comparison,
 // and one extra row is fetched to decide whether more remain.
-func (s *PostgresStore) ListStoriesAtPlace(ctx context.Context, placeLower string, country PlaceCountryFilter, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error) {
+func (s *PostgresStore) ListStoriesAtPlace(ctx context.Context, placeLower string, country PlaceCountryFilter, pillar stories.Pillar, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error) {
 	query := `SELECT ` + storyColumns + storyFrom + ` WHERE s.approximate_location_lower = $1`
 	args := []any{placeLower}
 
@@ -209,6 +211,14 @@ func (s *PostgresStore) ListStoriesAtPlace(ctx context.Context, placeLower strin
 	} else if country.Name != "" {
 		args = append(args, country.Name)
 		query += fmt.Sprintf(` AND s.place_country = $%d`, len(args))
+	}
+
+	// Narrow to one storytelling lens. The pillar is a closed set the database
+	// already enforces with a CHECK constraint and indexes with
+	// `stories_pillar_idx`, so this is a plain equality test on an indexed column.
+	if pillar != "" {
+		args = append(args, string(pillar))
+		query += fmt.Sprintf(` AND s.pillar = $%d`, len(args))
 	}
 
 	// Hide stories authored by anyone on either side of a block with the viewer. It

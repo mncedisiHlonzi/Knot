@@ -25,6 +25,46 @@ const SUMMARY_PILLARS: readonly { readonly key: string; readonly label: string }
 ];
 
 /**
+ * The pillar filter a place page is showing: one of the two lenses, or "all".
+ *
+ * The values are the `?pillar=` wire values, plus "all" for the tab that sends
+ * no filter, so a tab's value is exactly what the API expects once "all" is
+ * dropped (KNOT-020e-fix6).
+ */
+export type PillarFilter = 'all' | 'heritage' | 'wonder';
+
+/**
+ * The place screen's pillar tabs, in the order the design reference draws them
+ * (All, Heritage, Wonder).
+ *
+ * The choice is server-side, not a local view of the loaded page, so a tab means
+ * exactly what the wire filter means.
+ */
+export const PILLAR_TABS: readonly { readonly value: PillarFilter; readonly label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'heritage', label: 'Heritage' },
+  { value: 'wonder', label: 'Wonder' },
+];
+
+/**
+ * The empty state's headline for the active pillar tab.
+ *
+ * A place with nothing in the chosen lens reads differently from a place with
+ * nothing at all, so an empty Wonder tab does not look like a broken page
+ * (KNOT-020e-fix6).
+ */
+export function pillarEmptyHeadline(pillar: PillarFilter): string {
+  switch (pillar) {
+    case 'wonder':
+      return 'No Wonder stories here yet.';
+    case 'heritage':
+      return 'No Heritage stories here yet.';
+    default:
+      return 'No stories here yet.';
+  }
+}
+
+/**
  * The smallest and largest map-marker diameters, in points. A cluster's marker
  * scales between them by how its story count compares with the busiest cluster on
  * screen, so a place with many stories reads larger at a glance.

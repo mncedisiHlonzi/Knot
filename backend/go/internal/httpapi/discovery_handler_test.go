@@ -27,7 +27,7 @@ func (fakeDiscoveryService) ListClusters(context.Context, discovery.ClusterFilte
 	return []discovery.PlaceCluster{}, nil
 }
 
-func (fakeDiscoveryService) ListStoriesAtPlace(context.Context, string, string, string, int) ([]stories.Story, string, error) {
+func (fakeDiscoveryService) ListStoriesAtPlace(context.Context, string, string, string, string, int) ([]stories.Story, string, error) {
 	return []stories.Story{}, "", nil
 }
 
@@ -47,6 +47,7 @@ type memoryDiscoveryStore struct {
 	gotFilter  discovery.ClusterFilter
 	gotPlace   string
 	gotCountry discovery.PlaceCountryFilter
+	gotPillar  stories.Pillar
 	gotCursor  *stories.Cursor
 	gotLimit   int
 	clusterGo  int
@@ -62,10 +63,11 @@ func (m *memoryDiscoveryStore) ListClusters(_ context.Context, filter discovery.
 	return m.clusters, nil
 }
 
-func (m *memoryDiscoveryStore) ListStoriesAtPlace(_ context.Context, placeLower string, country discovery.PlaceCountryFilter, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error) {
+func (m *memoryDiscoveryStore) ListStoriesAtPlace(_ context.Context, placeLower string, country discovery.PlaceCountryFilter, pillar stories.Pillar, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error) {
 	m.listGo++
 	m.gotPlace = placeLower
 	m.gotCountry = country
+	m.gotPillar = pillar
 	m.gotCursor = cursor
 	m.gotLimit = limit
 	if m.listErr != nil {
@@ -73,7 +75,8 @@ func (m *memoryDiscoveryStore) ListStoriesAtPlace(_ context.Context, placeLower 
 	}
 
 	// Mirror the SQL: match the normalised place name, then narrow by country when
-	// the filter is enabled (Absent means "records no country").
+	// the filter is enabled (Absent means "records no country") and by pillar when
+	// one is asked for.
 	filtered := make([]stories.Story, 0, len(m.stories))
 	for _, story := range m.stories {
 		if strings.ToLower(strings.TrimSpace(story.ApproximateLocation)) != placeLower {
@@ -83,6 +86,9 @@ func (m *memoryDiscoveryStore) ListStoriesAtPlace(_ context.Context, placeLower 
 			continue
 		}
 		if !country.Absent && country.Name != "" && (story.PlaceCountry == nil || *story.PlaceCountry != country.Name) {
+			continue
+		}
+		if pillar != "" && story.Pillar != pillar {
 			continue
 		}
 		filtered = append(filtered, story)
@@ -592,5 +598,63 @@ func TestDiscoveryPlaceStoriesCarriesFeedEnrichment(t *testing.T) {
 	}
 	if got.MyReactions == nil {
 		t.Error("my_reactions = null, want an array")
+	}
+}
+
+// TestDiscoveryPlaceStoriesFiltersByPillar proves the ?pillar= parameter narrows
+// a place page to one storytelling lens, composes with ?country=, and rejects an
+// unsupported pillar with a 400 before the store is consulted (KNOT-020e-fix6).
+func TestDiscoveryPlaceStoriesFiltersByPillar(t *testing.T) {
+	china := "China"
+
+	wonder := discoveryStoryAt("Beijing", &china, 1)
+	wonder.Pillar = stories.PillarWonder
+	heritage := discoveryStoryAt("Beijing", &china, 2)
+	heritage.Pillar = stories.PillarHeritage
+
+	store := &memoryDiscoveryStore{stories: []stories.Story{wonder, heritage}}
+	handler := newDiscoveryRouter(t, store)
+
+	cases := []struct {
+		name       string
+		query      string
+		want       int
+		wantPillar stories.Pillar
+	}{
+		{"an absent pillar lists every pillar", "", 2, ""},
+		{"wonder narrows the page", "?pillar=wonder", 1, stories.PillarWonder},
+		{"heritage narrows the page", "?country=China&pillar=heritage", 1, stories.PillarHeritage},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := doRequest(handler, http.MethodGet, "/discovery/places/Beijing"+tc.query, "")
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+			}
+
+			var body placeStoriesResponse
+			decodeBody(t, recorder, &body)
+			if len(body.Stories) != tc.want {
+				t.Fatalf("stories = %d, want %d", len(body.Stories), tc.want)
+			}
+			if store.gotPillar != tc.wantPillar {
+				t.Errorf("store pillar = %q, want %q", store.gotPillar, tc.wantPillar)
+			}
+		})
+	}
+
+	// An unsupported pillar is rejected by the domain, so the store is never
+	// reached and the client gets a validation error rather than an empty list.
+	before := store.listGo
+	recorder := doRequest(handler, http.MethodGet, "/discovery/places/Beijing?pillar=news", "")
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusBadRequest, recorder.Body.String())
+	}
+	if code := decodedErrorCode(t, recorder); code != codeValidation {
+		t.Errorf("error code = %q, want %q", code, codeValidation)
+	}
+	if store.listGo != before {
+		t.Errorf("the store was consulted for an invalid pillar (%d calls)", store.listGo-before)
 	}
 }

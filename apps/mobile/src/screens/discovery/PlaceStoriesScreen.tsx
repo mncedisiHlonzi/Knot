@@ -19,7 +19,13 @@ import FeedEntry from '../../components/FeedEntry';
 import Header from '../../components/Header';
 import { KNOT_MAPBOX_TOKEN } from '../../config/dev';
 import { colors, layout, spacing, typeScale } from '../../theme';
-import { placeMapPoint, placeSummaryLabel } from './discoveryFormat';
+import {
+  PILLAR_TABS,
+  type PillarFilter,
+  pillarEmptyHeadline,
+  placeMapPoint,
+  placeSummaryLabel,
+} from './discoveryFormat';
 
 /**
  * The compact map strip's height, in points.
@@ -105,15 +111,16 @@ type PlaceStoriesScreenProps = {
  * pull-to-refresh starts again from the newest story. A place with no stories is a
  * normal empty state, not an error — the server answers 200 with an empty list.
  *
- * The design is the reference's (KNOT-020e, KNOT-020e-fix3): the place is the
- * screen's headline with its totals beneath it, a compact **non-interactive map
- * strip** pinning where the place is, and the stories below as the same
- * `FeedEntry` the Feed renders — carrying the same author, media, and count
- * enrichment the feed does (KNOT-020e-fix2) — so a story reads the same in both
- * places. The strip is drawn only when the cluster carried a coordinate; the
- * reference's pillar tabs are still not built (disclosed in KNOT-020e), so the
- * strip sits directly on the list. Nothing here auto-plays: the Feed is the only
- * screen that does (KNOT-ADR-068), so a video entry renders on its paused frame.
+ * The design is the reference's (KNOT-020e, KNOT-020e-fix3, KNOT-020e-fix6): the
+ * place is the screen's headline with its totals beneath it, a compact
+ * **non-interactive map strip** pinning where the place is, the **pillar tabs**
+ * (All / Heritage / Wonder), and the stories below as the same `FeedEntry` the
+ * Feed renders — carrying the same author, media, and count enrichment the feed
+ * does (KNOT-020e-fix2) — so a story reads the same in both places. The strip is
+ * drawn only when the cluster carried a coordinate. A tab is a **server-side**
+ * filter rather than a view of the loaded page, so switching tabs starts the list
+ * again from the first page. Nothing here auto-plays: the Feed is the only screen
+ * that does (KNOT-ADR-068), so a video entry renders on its paused frame.
  */
 export default function PlaceStoriesScreen({
   place,
@@ -132,11 +139,19 @@ export default function PlaceStoriesScreen({
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  // The active pillar tab. The choice is a server-side query rather than a view of
+  // the loaded page, so changing it starts the list again from the first page
+  // (KNOT-020e-fix6).
+  const [pillar, setPillar] = useState<PillarFilter>('all');
 
   const loadFirstPage = useCallback(
     async (mode: 'initial' | 'refresh'): Promise<void> => {
       if (mode === 'initial') {
         setLoading(true);
+        // A new pillar is a different query, so the page starts over: the previous
+        // tab's rows must not linger under the new tab's label.
+        setStories([]);
+        setNextCursor('');
       } else {
         setRefreshing(true);
       }
@@ -145,7 +160,7 @@ export default function PlaceStoriesScreen({
       try {
         const page = await discoveryApi.listStoriesAtPlace(
           place,
-          { country, limit: PLACE_PAGE_SIZE },
+          { country, limit: PLACE_PAGE_SIZE, pillar: pillar === 'all' ? undefined : pillar },
           token,
         );
         setStories(page.stories);
@@ -157,7 +172,7 @@ export default function PlaceStoriesScreen({
         setRefreshing(false);
       }
     },
-    [country, place, token],
+    [country, pillar, place, token],
   );
 
   useEffect(() => {
@@ -179,6 +194,7 @@ export default function PlaceStoriesScreen({
           country,
           cursor: nextCursor,
           limit: PLACE_PAGE_SIZE,
+          pillar: pillar === 'all' ? undefined : pillar,
         },
         token,
       );
@@ -191,7 +207,7 @@ export default function PlaceStoriesScreen({
     } finally {
       setLoadingMore(false);
     }
-  }, [country, loadingMore, nextCursor, place, token]);
+  }, [country, loadingMore, nextCursor, pillar, place, token]);
 
   // The strip is drawn only when the cluster carried a usable coordinate; a place
   // told only by name has none, so the header then sits straight on the list with
@@ -232,9 +248,15 @@ export default function PlaceStoriesScreen({
           (KNOT-020e-fix5). */}
       {mapPoint === undefined ? null : (
         <View style={styles.strip}>
+          {/* A `TextureView`, not the Android default `GLSurfaceView`: a surface
+              view is punched through the RN view hierarchy, so it ignores this
+              wrapper's clipping and paints over the tab row and the list whatever
+              the z-order says. A texture view is an ordinary view, clipped and
+              stacked with everything else (KNOT-020e-fix6). */}
           <MapView
             style={styles.stripMap}
             styleURL={Mapbox.StyleURL.Light}
+            surfaceView={false}
             scrollEnabled={false}
             zoomEnabled={false}
             rotateEnabled={false}
@@ -258,6 +280,34 @@ export default function PlaceStoriesScreen({
           </MapView>
         </View>
       )}
+
+      {/* The pillar filter, mirroring the Feed's tab row: every tab carries the
+          button weight, and the active one is marked by ink and the indigo
+          underline rather than by weight, so the row never depends on weight
+          alone. The choice is a server-side filter, so tapping a tab refetches
+          from the first page (KNOT-020e-fix6). */}
+      <View style={styles.tabs}>
+        {PILLAR_TABS.map((option) => {
+          const active = option.value === pillar;
+          return (
+            <Pressable
+              key={option.value}
+              style={[styles.tab, active ? styles.tabActive : null]}
+              onPress={() => setPillar(option.value)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={option.label}
+            >
+              <Text
+                style={[typeScale.button, styles.tabLabel, active ? styles.tabLabelActive : null]}
+                numberOfLines={1}
+              >
+                {option.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
 
       <FlatList
         style={styles.list}
@@ -309,8 +359,8 @@ export default function PlaceStoriesScreen({
           ) : (
             <EmptyState
               illustrationName="no-stories"
-              headline="No stories here yet."
-              body={`Be the first to tell one about ${place}.`}
+              headline={pillarEmptyHeadline(pillar)}
+              body={pillar === 'all' ? `Be the first to tell one about ${place}.` : undefined}
             />
           )
         }
@@ -356,10 +406,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 44,
   },
-  // The list takes whatever the header, the place block, and the map strip leave,
-  // so the strip never pushes it off screen and never becomes part of its scroll.
+  // The list takes whatever the header, the place block, the map strip, and the
+  // tab row leave, so nothing pushes it off screen and it scrolls in the
+  // remainder. The explicit background and z-index keep a scrolled story beneath
+  // the bands above it rather than drawn across them (KNOT-020e-fix5,
+  // KNOT-020e-fix6).
   list: {
+    backgroundColor: colors.bg.canvas,
     flex: 1,
+    zIndex: 0,
   },
   place: {
     color: colors.text.primary,
@@ -379,6 +434,10 @@ const styles = StyleSheet.create({
     height: STRIP_HEIGHT,
     overflow: 'hidden',
     width: '100%',
+    // The strip is the topmost band, so a story scrolled under it is hidden rather
+    // than drawn across it. The stacking is 2 (strip) > 1 (tabs) > 0 (list)
+    // (KNOT-020e-fix6).
+    zIndex: 2,
   },
   // The map gets explicit dimensions rather than `flex: 1`: a native map view is
   // not a plain Yoga-measured View, and sizing it by flex alone is what let it lay
@@ -399,5 +458,34 @@ const styles = StyleSheet.create({
   summary: {
     color: colors.text.tertiary,
     marginTop: spacing.xs,
+  },
+  // The pillar tabs mirror the Feed's: three equal-width tabs, each carrying the
+  // row's hairline under it and the active one drawn 2px in the brand colour. The
+  // row is opaque and stacked above the list, so a scrolled story passes beneath
+  // it rather than through it (KNOT-020e-fix6).
+  tab: {
+    alignItems: 'center',
+    borderBottomColor: colors.border.hairline,
+    borderBottomWidth: 1,
+    flex: 1,
+    paddingBottom: spacing.sm,
+    paddingTop: spacing.md,
+  },
+  tabActive: {
+    borderBottomColor: colors.brand.primary,
+    borderBottomWidth: 2,
+  },
+  tabLabel: {
+    color: colors.text.tertiary,
+    textAlign: 'center',
+  },
+  tabLabelActive: {
+    color: colors.text.primary,
+  },
+  tabs: {
+    backgroundColor: colors.bg.canvas,
+    flexDirection: 'row',
+    paddingHorizontal: spacing.lg,
+    zIndex: 1,
   },
 });

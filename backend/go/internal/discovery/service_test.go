@@ -28,6 +28,7 @@ type fakeStore struct {
 	gotFilter  ClusterFilter
 	gotPlace   string
 	gotCountry PlaceCountryFilter
+	gotPillar  stories.Pillar
 	gotCursor  *stories.Cursor
 	gotLimit   int
 }
@@ -37,9 +38,10 @@ func (f *fakeStore) ListClusters(_ context.Context, filter ClusterFilter) ([]Pla
 	return f.clusters, f.clustersErr
 }
 
-func (f *fakeStore) ListStoriesAtPlace(_ context.Context, placeLower string, country PlaceCountryFilter, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error) {
+func (f *fakeStore) ListStoriesAtPlace(_ context.Context, placeLower string, country PlaceCountryFilter, pillar stories.Pillar, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error) {
 	f.gotPlace = placeLower
 	f.gotCountry = country
+	f.gotPillar = pillar
 	f.gotCursor = cursor
 	f.gotLimit = limit
 	return f.page, f.next, f.listErr
@@ -173,7 +175,7 @@ func TestListStoriesAtPlaceNormalisesPlaceAndEncodesCursor(t *testing.T) {
 	}
 	service := newTestService(t, store)
 
-	page, nextCursor, err := service.ListStoriesAtPlace(context.Background(), "  Cape Town  ", "", "", 10)
+	page, nextCursor, err := service.ListStoriesAtPlace(context.Background(), "  Cape Town  ", "", "", "", 10)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 	}
@@ -197,7 +199,7 @@ func TestListStoriesAtPlaceDecodesCursor(t *testing.T) {
 	service := newTestService(t, store)
 
 	raw := stories.NewCursor(testCursorTime, testCursorID).Encode()
-	if _, _, err := service.ListStoriesAtPlace(context.Background(), "Cape Town", "", raw, 10); err != nil {
+	if _, _, err := service.ListStoriesAtPlace(context.Background(), "Cape Town", "", "", raw, 10); err != nil {
 		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 	}
 
@@ -215,7 +217,7 @@ func TestListStoriesAtPlaceDecodesCursor(t *testing.T) {
 func TestListStoriesAtPlaceEmptyLastPage(t *testing.T) {
 	service := newTestService(t, &fakeStore{page: nil, next: nil})
 
-	page, next, err := service.ListStoriesAtPlace(context.Background(), "Cape Town", "", "", 10)
+	page, next, err := service.ListStoriesAtPlace(context.Background(), "Cape Town", "", "", "", 10)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 	}
@@ -245,7 +247,7 @@ func TestListStoriesAtPlaceRejectsBadInput(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			service := newTestService(t, &fakeStore{})
 
-			_, _, err := service.ListStoriesAtPlace(context.Background(), tc.place, "", tc.cursor, tc.limit)
+			_, _, err := service.ListStoriesAtPlace(context.Background(), tc.place, "", "", tc.cursor, tc.limit)
 			if err == nil {
 				t.Fatal("ListStoriesAtPlace() error = nil, want a validation error")
 			}
@@ -265,7 +267,7 @@ func TestListStoriesAtPlaceWrapsStoreError(t *testing.T) {
 	storeErr := errors.New("boom")
 	service := newTestService(t, &fakeStore{listErr: storeErr})
 
-	_, _, err := service.ListStoriesAtPlace(context.Background(), "Cape Town", "", "", 10)
+	_, _, err := service.ListStoriesAtPlace(context.Background(), "Cape Town", "", "", "", 10)
 	if !errors.Is(err, storeErr) {
 		t.Errorf("error = %v, want it to wrap %v", err, storeErr)
 	}
@@ -293,12 +295,74 @@ func TestListStoriesAtPlaceParsesCountry(t *testing.T) {
 			store := &fakeStore{}
 			service := newTestService(t, store)
 
-			if _, _, err := service.ListStoriesAtPlace(context.Background(), "Beijing", tc.raw, "", 10); err != nil {
+			if _, _, err := service.ListStoriesAtPlace(context.Background(), "Beijing", tc.raw, "", "", 10); err != nil {
 				t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 			}
 
 			if store.gotCountry != tc.want {
 				t.Errorf("store country filter = %+v, want %+v", store.gotCountry, tc.want)
+			}
+		})
+	}
+}
+
+// TestListStoriesAtPlaceParsesPillar proves the raw ?pillar= value is validated
+// before it reaches the store: blank means every pillar, a supported pillar is
+// passed down verbatim, and an unsupported one is a validation failure rather
+// than an empty page (KNOT-020e-fix6).
+func TestListStoriesAtPlaceParsesPillar(t *testing.T) {
+	supported := []struct {
+		name string
+		raw  string
+		want stories.Pillar
+	}{
+		{"absent", "", ""},
+		{"wonder", "wonder", stories.PillarWonder},
+		{"heritage", "heritage", stories.PillarHeritage},
+	}
+
+	for _, tc := range supported {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeStore{}
+			service := newTestService(t, store)
+
+			if _, _, err := service.ListStoriesAtPlace(context.Background(), "Beijing", "", tc.raw, "", 10); err != nil {
+				t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
+			}
+
+			if store.gotPillar != tc.want {
+				t.Errorf("store pillar = %q, want %q", store.gotPillar, tc.want)
+			}
+		})
+	}
+
+	unsupported := []struct {
+		name string
+		raw  string
+	}{
+		{"unknown pillar", "news"},
+		{"upper case", "Wonder"},
+		{"misspelled", "heritag"},
+	}
+
+	for _, tc := range unsupported {
+		t.Run(tc.name, func(t *testing.T) {
+			service := newTestService(t, &fakeStore{})
+
+			_, _, err := service.ListStoriesAtPlace(context.Background(), "Beijing", "", tc.raw, "", 10)
+			if err == nil {
+				t.Fatal("ListStoriesAtPlace() error = nil, want a validation error")
+			}
+
+			var validation *ValidationError
+			if !errors.As(err, &validation) {
+				t.Fatalf("error = %v, want *ValidationError", err)
+			}
+			if validation.Field != "pillar" {
+				t.Errorf("field = %q, want %q", validation.Field, "pillar")
+			}
+			if !errors.Is(err, ErrValidation) {
+				t.Error("errors.Is(err, ErrValidation) = false, want true")
 			}
 		})
 	}

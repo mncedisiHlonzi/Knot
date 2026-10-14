@@ -130,9 +130,10 @@ func createStoryAt(t *testing.T, pool *pgxpool.Pool, authorID, place, pillar, la
 	return storyID
 }
 
-// createStoryWithCoords inserts a story with (or without, when latitude is nil)
-// structured place data, together with its root version.
-func createStoryWithCoords(t *testing.T, pool *pgxpool.Pool, authorID, place string, latitude, longitude *float64, country *string, at time.Time) string {
+// createStoryWithPlace inserts a story with explicit structured place data and
+// pillar, together with its root version. latitude/longitude may be nil, which
+// models a story told only by name.
+func createStoryWithPlace(t *testing.T, pool *pgxpool.Pool, authorID, place, pillar string, latitude, longitude *float64, country *string, at time.Time) string {
 	t.Helper()
 
 	var storyID string
@@ -144,21 +145,28 @@ func createStoryWithCoords(t *testing.T, pool *pgxpool.Pool, authorID, place str
 				latitude, longitude, place_country,
 				media_urls, sensitive, root_version_id, created_at, updated_at
 			)
-			VALUES ($1, 'wonder', $2, lower(trim($2)), $3, $4, $5, '{}', false, gen_random_uuid(), $6, $6)
+			VALUES ($1, $2, $3, lower(trim($3)), $4, $5, $6, '{}', false, gen_random_uuid(), $7, $7)
 			RETURNING id, root_version_id
 		)
 		INSERT INTO story_versions (
 			id, story_id, parent_version_id, author_id, language, title, body, created_at, updated_at
 		)
-		SELECT root_version_id, id, NULL, $1, 'en', 'A discovery story', 'Body', $6, $6 FROM new_story
+		SELECT root_version_id, id, NULL, $1, 'en', 'A discovery story', 'Body', $7, $7 FROM new_story
 		RETURNING story_id`,
-		authorID, place, latitude, longitude, country, at,
+		authorID, pillar, place, latitude, longitude, country, at,
 	).Scan(&storyID)
 	if err != nil {
-		t.Fatalf("createStoryWithCoords() error = %v, want nil", err)
+		t.Fatalf("createStoryWithPlace() error = %v, want nil", err)
 	}
 
 	return storyID
+}
+
+// createStoryWithCoords is the Wonder-pillar shorthand for createStoryWithPlace:
+// a story with (or without, when latitude is nil) structured place data.
+func createStoryWithCoords(t *testing.T, pool *pgxpool.Pool, authorID, place string, latitude, longitude *float64, country *string, at time.Time) string {
+	t.Helper()
+	return createStoryWithPlace(t, pool, authorID, place, "wonder", latitude, longitude, country, at)
 }
 
 // runToken returns a per-run token used to give places unique names, so the
@@ -540,7 +548,7 @@ func TestPostgresStoreListStoriesAtPlaceMatchesNormalisedPlace(t *testing.T) {
 	createStoryAt(t, pool, userID, place, "heritage", "afr", base.Add(time.Minute))
 
 	// The store expects the already-normalised place: trimmed and lower-cased.
-	page, next, err := store.ListStoriesAtPlace(ctx, strings.ToLower(place), PlaceCountryFilter{}, nil, 10)
+	page, next, err := store.ListStoriesAtPlace(ctx, strings.ToLower(place), PlaceCountryFilter{}, "", nil, 10)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 	}
@@ -552,7 +560,7 @@ func TestPostgresStoreListStoriesAtPlaceMatchesNormalisedPlace(t *testing.T) {
 	}
 
 	// A different place returns nothing.
-	empty, _, err := store.ListStoriesAtPlace(ctx, strings.ToLower(place)+"x", PlaceCountryFilter{}, nil, 10)
+	empty, _, err := store.ListStoriesAtPlace(ctx, strings.ToLower(place)+"x", PlaceCountryFilter{}, "", nil, 10)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace(unknown) error = %v, want nil", err)
 	}
@@ -580,7 +588,7 @@ func TestPostgresStoreListStoriesAtPlacePaginates(t *testing.T) {
 		pages     int
 	)
 	for {
-		page, next, err := store.ListStoriesAtPlace(ctx, placeLower, PlaceCountryFilter{}, cursor, 2)
+		page, next, err := store.ListStoriesAtPlace(ctx, placeLower, PlaceCountryFilter{}, "", cursor, 2)
 		if err != nil {
 			t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 		}
@@ -619,7 +627,7 @@ func TestPostgresStoreListStoriesAtPlaceEmptyPlace(t *testing.T) {
 	_ = createUser(t, pool, prefix, "empty")
 	token := runToken()
 
-	page, next, err := store.ListStoriesAtPlace(ctx, strings.ToLower("Nowhere "+token), PlaceCountryFilter{}, nil, 10)
+	page, next, err := store.ListStoriesAtPlace(ctx, strings.ToLower("Nowhere "+token), PlaceCountryFilter{}, "", nil, 10)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 	}
@@ -654,7 +662,7 @@ func TestPostgresStoreListStoriesAtPlaceFiltersByCountry(t *testing.T) {
 	placeLower := strings.ToLower(place)
 
 	// The zero filter is the whole place, whatever country each story records.
-	all, _, err := store.ListStoriesAtPlace(ctx, placeLower, PlaceCountryFilter{}, nil, 10)
+	all, _, err := store.ListStoriesAtPlace(ctx, placeLower, PlaceCountryFilter{}, "", nil, 10)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 	}
@@ -663,7 +671,7 @@ func TestPostgresStoreListStoriesAtPlaceFiltersByCountry(t *testing.T) {
 	}
 
 	// A named country selects only its own story.
-	onlyChina, _, err := store.ListStoriesAtPlace(ctx, placeLower, PlaceCountryFilter{Name: china}, nil, 10)
+	onlyChina, _, err := store.ListStoriesAtPlace(ctx, placeLower, PlaceCountryFilter{Name: china}, "", nil, 10)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace(China) error = %v, want nil", err)
 	}
@@ -675,7 +683,7 @@ func TestPostgresStoreListStoriesAtPlaceFiltersByCountry(t *testing.T) {
 	}
 
 	// The absent filter selects the country-less stories.
-	withoutCountry, _, err := store.ListStoriesAtPlace(ctx, placeLower, PlaceCountryFilter{Absent: true}, nil, 10)
+	withoutCountry, _, err := store.ListStoriesAtPlace(ctx, placeLower, PlaceCountryFilter{Absent: true}, "", nil, 10)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace(absent) error = %v, want nil", err)
 	}
@@ -718,7 +726,7 @@ func TestPostgresStoreListStoriesAtPlaceCountryWithCursor(t *testing.T) {
 		pages     int
 	)
 	for {
-		page, next, err := store.ListStoriesAtPlace(ctx, placeLower, filter, cursor, 2)
+		page, next, err := store.ListStoriesAtPlace(ctx, placeLower, filter, "", cursor, 2)
 		if err != nil {
 			t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 		}
@@ -751,5 +759,72 @@ func TestPostgresStoreListStoriesAtPlaceCountryWithCursor(t *testing.T) {
 			t.Errorf("duplicate story id %s across pages", id)
 		}
 		seen[id] = true
+	}
+}
+
+// TestPostgresStoreListStoriesAtPlaceFiltersByPillar proves the pillar filter the
+// place screen's tabs send, and that it composes with the country filter rather
+// than replacing it (KNOT-020e-fix6).
+func TestPostgresStoreListStoriesAtPlaceFiltersByPillar(t *testing.T) {
+	store, pool, prefix := integrationSetup(t)
+	ctx := context.Background()
+	userID := createUser(t, pool, prefix, "pillarfilter")
+	token := runToken()
+
+	place := "Beijing " + token
+	china := "China"
+	france := "France"
+
+	latitude, longitude := 39.9042, 116.4074
+	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	// Two Wonder and one Heritage story in China, plus one Wonder story in France.
+	createStoryWithPlace(t, pool, userID, place, "wonder", &latitude, &longitude, &china, base)
+	createStoryWithPlace(t, pool, userID, place, "wonder", &latitude, &longitude, &china, base.Add(time.Minute))
+	createStoryWithPlace(t, pool, userID, place, "heritage", &latitude, &longitude, &china, base.Add(2*time.Minute))
+	createStoryWithPlace(t, pool, userID, place, "wonder", &latitude, &longitude, &france, base.Add(3*time.Minute))
+
+	placeLower := strings.ToLower(place)
+
+	// No pillar: every story at the place name, across pillars and countries.
+	all, _, err := store.ListStoriesAtPlace(ctx, placeLower, PlaceCountryFilter{}, "", nil, 10)
+	if err != nil {
+		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
+	}
+	if len(all) != 4 {
+		t.Fatalf("stories = %d, want 4", len(all))
+	}
+
+	// One lens, every country.
+	wonder, _, err := store.ListStoriesAtPlace(ctx, placeLower, PlaceCountryFilter{}, stories.PillarWonder, nil, 10)
+	if err != nil {
+		t.Fatalf("ListStoriesAtPlace(wonder) error = %v, want nil", err)
+	}
+	if len(wonder) != 3 {
+		t.Fatalf("wonder stories = %d, want 3", len(wonder))
+	}
+	for _, story := range wonder {
+		if story.Pillar != stories.PillarWonder {
+			t.Errorf("pillar = %q, want %q", story.Pillar, stories.PillarWonder)
+		}
+	}
+
+	// Country and pillar compose.
+	chinaWonder, _, err := store.ListStoriesAtPlace(ctx, placeLower, PlaceCountryFilter{Name: china}, stories.PillarWonder, nil, 10)
+	if err != nil {
+		t.Fatalf("ListStoriesAtPlace(China, wonder) error = %v, want nil", err)
+	}
+	if len(chinaWonder) != 2 {
+		t.Fatalf("China wonder stories = %d, want 2", len(chinaWonder))
+	}
+
+	chinaHeritage, _, err := store.ListStoriesAtPlace(ctx, placeLower, PlaceCountryFilter{Name: china}, stories.PillarHeritage, nil, 10)
+	if err != nil {
+		t.Fatalf("ListStoriesAtPlace(China, heritage) error = %v, want nil", err)
+	}
+	if len(chinaHeritage) != 1 {
+		t.Fatalf("China heritage stories = %d, want 1", len(chinaHeritage))
+	}
+	if chinaHeritage[0].Pillar != stories.PillarHeritage {
+		t.Errorf("pillar = %q, want %q", chinaHeritage[0].Pillar, stories.PillarHeritage)
 	}
 }

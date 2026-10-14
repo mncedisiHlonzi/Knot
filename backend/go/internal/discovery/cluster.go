@@ -157,7 +157,8 @@ type DiscoveryStore interface {
 	// ListStoriesAtPlace returns at most limit stories at the already-normalised
 	// place, newest first, starting after cursor. A nil cursor starts at the
 	// newest story. country narrows the page to the stories a cluster with that
-	// country holds; its zero value lists every story at the place. The returned
-	// cursor is the position to resume from, or nil when the page is the last one.
-	ListStoriesAtPlace(ctx context.Context, placeLower string, country PlaceCountryFilter, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error)
+	// country holds, and pillar to the stories filed under one storytelling lens;
+	// each zero value does not narrow. The returned cursor is the position to
+	// resume from, or nil when the page is the last one.
+	ListStoriesAtPlace(ctx context.Context, placeLower string, country PlaceCountryFilter, pillar stories.Pillar, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error)
 }

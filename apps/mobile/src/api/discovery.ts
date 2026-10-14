@@ -76,6 +76,12 @@ export type ListPlaceStoriesOptions = {
    * (KNOT-020e-fix2).
    */
   readonly country?: string | null;
+  /**
+   * The storytelling lens to narrow the page to. Omitted means every pillar — the
+   * place screen's "All" tab, which sends no `pillar` parameter at all
+   * (KNOT-020e-fix6).
+   */
+  readonly pillar?: Pillar;
 };
 
 /**
@@ -116,6 +122,9 @@ export function placeQuery(options: ListPlaceStoriesOptions): string {
   } else if (options.country !== undefined && options.country !== '') {
     parts.push(`country=${encodeURIComponent(options.country)}`);
   }
+  if (options.pillar !== undefined) {
+    parts.push(`pillar=${encodeURIComponent(options.pillar)}`);
+  }
   if (options.cursor !== undefined && options.cursor !== '') {
     parts.push(`cursor=${encodeURIComponent(options.cursor)}`);
   }
@@ -143,9 +152,11 @@ export const discoveryApi = {
    * first. Public. The place is URL-encoded; the server matches it case
    * insensitively, so the caller's casing does not matter. The optional `country`
    * narrows the page to one country (or, as `null`, to the stories that record
-   * none), so a country-scoped cluster's page matches its story count. A token
-   * hides blocked authors' stories; omit it for the anonymous view. Each story is
-   * the same enriched projection the feed returns (KNOT-020e-fix2).
+   * none), so a country-scoped cluster's page matches its story count, and the
+   * optional `pillar` narrows it to one storytelling lens. Both are server-side
+   * filters, so paging starts again when either changes. A token hides blocked
+   * authors' stories; omit it for the anonymous view. Each story is the same
+   * enriched projection the feed returns (KNOT-020e-fix2, KNOT-020e-fix6).
    */
   listStoriesAtPlace(
     place: string,

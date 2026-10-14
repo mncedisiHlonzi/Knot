@@ -18,7 +18,7 @@ import (
 // handler tests free of a database.
 type DiscoveryService interface {
 	ListClusters(ctx context.Context, filter discovery.ClusterFilter) ([]discovery.PlaceCluster, error)
-	ListStoriesAtPlace(ctx context.Context, place string, country string, cursor string, limit int) ([]stories.Story, string, error)
+	ListStoriesAtPlace(ctx context.Context, place string, country string, pillar string, cursor string, limit int) ([]stories.Story, string, error)
 }
 
 // DiscoveryHandler serves the discovery endpoints.
@@ -132,6 +132,12 @@ func (h *DiscoveryHandler) Clusters(w http.ResponseWriter, r *http.Request) {
 // asks for the stories that record no country at all. An absent parameter lists
 // every story at the place, which is what the endpoint did before KNOT-020e-fix2.
 //
+// The optional `pillar` query parameter narrows the page to one storytelling
+// lens, which is what the place screen's All / Heritage / Wonder tabs send. It
+// must be one of the supported pillars; anything else is a 400, because a pillar
+// is a closed set rather than free text. An absent parameter lists every pillar
+// (KNOT-020e-fix6).
+//
 // Each story is projected onto the same response the feed uses and enriched
 // through the same helper, so a story carries identical fields — author name and
 // avatar, inline Rooted summary, media preview, aggregate counts, and reactions —
@@ -149,6 +155,7 @@ func (h *DiscoveryHandler) PlaceStories(w http.ResponseWriter, r *http.Request) 
 		r.Context(),
 		r.PathValue("place"),
 		query.Get("country"),
+		query.Get("pillar"),
 		query.Get("cursor"),
 		limit,
 	)

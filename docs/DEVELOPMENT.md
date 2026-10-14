@@ -306,6 +306,16 @@ with `overflow: 'hidden'` plus a canvas fill. A native map view is not a plain Y
 and React Native does not clip by default, so both bounds and clipping are required for a strip of
 this size; without them the map laid out and drew beyond the strip and over the list.
 
+**KNOT-020e-fix6** closed the bleed properly and added the place screen's pillar tabs. The strip's
+`MapView` now sets `surfaceView={false}`, so Android renders it into a **texture view** rather than
+the default `GLSurfaceView` — a surface view is punched through the RN view hierarchy, ignoring its
+parent's clipping and the sibling z-order, which is why bounding it was not enough. The strip, the
+tab row, and the list are stacked `zIndex` 2 > 1 > 0 with an opaque canvas background on the list,
+so a story scrolled under the bands is hidden rather than drawn across them. The All / Heritage /
+Wonder tabs mirror the Feed's equal-width tab row and filter **server-side** through the place
+endpoint's new `?pillar=` parameter (a closed set: an unknown pillar is a `400`, unlike `country`);
+changing a tab restarts the list from the first page, so a cursor is never reused across filters.
+
 The `typeScale` **weights** are one step heavier than the reference snapshot for every token but
 the three body styles (`reading`, `body`, `bodyS`), which stay at 400 so prose keeps its
 readability — a deliberate divergence from `docs/design-reference/tokens.json` requested by the

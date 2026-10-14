@@ -1,14 +1,38 @@
 import {
   MARKER_MAX_SIZE,
   MARKER_MIN_SIZE,
+  PILLAR_TABS,
   markerCountLabel,
   markerSize,
+  pillarEmptyHeadline,
   placeCountLabel,
   placeMapPoint,
   placeSummaryLabel,
   placeTotalsLabel,
   storyCountLabel,
 } from '../discoveryFormat';
+
+describe('PILLAR_TABS', () => {
+  it('offers All, Heritage, Wonder in the reference order', () => {
+    expect(PILLAR_TABS.map((tab) => tab.label)).toEqual(['All', 'Heritage', 'Wonder']);
+    expect(PILLAR_TABS.map((tab) => tab.value)).toEqual(['all', 'heritage', 'wonder']);
+  });
+
+  it('starts on the unfiltered tab', () => {
+    expect(PILLAR_TABS[0].value).toBe('all');
+  });
+});
+
+describe('pillarEmptyHeadline', () => {
+  it('names the lens when a filtered tab is empty', () => {
+    expect(pillarEmptyHeadline('wonder')).toBe('No Wonder stories here yet.');
+    expect(pillarEmptyHeadline('heritage')).toBe('No Heritage stories here yet.');
+  });
+
+  it('is unqualified for the All tab', () => {
+    expect(pillarEmptyHeadline('all')).toBe('No stories here yet.');
+  });
+});
 
 describe('storyCountLabel', () => {
   it('singularises one story', () => {

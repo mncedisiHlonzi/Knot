@@ -56,10 +56,11 @@ func (s *Service) ListClusters(ctx context.Context, filter ClusterFilter) ([]Pla
 // The place is matched on its normalised form: it is trimmed and lower-cased
 // before the store sees it, so the caller's original casing does not matter. The
 // optional rawCountry narrows the page to one country — the one a cluster was
-// keyed by — and is interpreted by parsePlaceCountry. An empty rawCursor asks for
-// the first page. The returned next cursor is the empty string when the page is
-// the last one, mirroring the feed, so the HTTP layer signals "no more pages"
-// without inventing a null-versus-absent distinction.
+// keyed by — and is interpreted by parsePlaceCountry. The optional rawPillar
+// narrows it to one storytelling lens and must be a supported pillar. An empty
+// rawCursor asks for the first page. The returned next cursor is the empty string
+// when the page is the last one, mirroring the feed, so the HTTP layer signals
+// "no more pages" without inventing a null-versus-absent distinction.
 //
 // A place with no stories is not an error: the store returns an empty page, and
 // the caller answers 200 with an empty array.
@@ -67,7 +68,9 @@ func (s *Service) ListClusters(ctx context.Context, filter ClusterFilter) ([]Pla
 // An empty page is not the same as rejecting the input: an unrecognised country
 // simply matches nothing, exactly as an unknown place does, so there is no
 // validation failure to report and no way to enumerate another place's countries.
-func (s *Service) ListStoriesAtPlace(ctx context.Context, place string, rawCountry string, rawCursor string, limit int) ([]stories.Story, string, error) {
+// An unrecognised pillar *is* a failure, because the pillar is a closed set the
+// API publishes rather than free text (KNOT-020e-fix6).
+func (s *Service) ListStoriesAtPlace(ctx context.Context, place string, rawCountry string, rawPillar string, rawCursor string, limit int) ([]stories.Story, string, error) {
 	placeLower := strings.ToLower(strings.TrimSpace(place))
 	if placeLower == "" {
 		return nil, "", &ValidationError{Field: "place", Message: "is required"}
@@ -78,6 +81,11 @@ func (s *Service) ListStoriesAtPlace(ctx context.Context, place string, rawCount
 			Field:   "limit",
 			Message: fmt.Sprintf("must be between 1 and %d", MaxPlaceLimit),
 		}
+	}
+
+	pillar, err := parsePlacePillar(rawPillar)
+	if err != nil {
+		return nil, "", err
 	}
 
 	var cursor *stories.Cursor
@@ -95,7 +103,7 @@ func (s *Service) ListStoriesAtPlace(ctx context.Context, place string, rawCount
 		cursor = &decoded
 	}
 
-	page, next, err := s.store.ListStoriesAtPlace(ctx, placeLower, parsePlaceCountry(rawCountry), cursor, limit)
+	page, next, err := s.store.ListStoriesAtPlace(ctx, placeLower, parsePlaceCountry(rawCountry), pillar, cursor, limit)
 	if err != nil {
 		return nil, "", fmt.Errorf("discovery: list stories at place: %w", err)
 	}
@@ -139,6 +147,30 @@ func parsePlaceCountry(raw string) PlaceCountryFilter {
 	default:
 		return PlaceCountryFilter{Name: value}
 	}
+}
+
+// parsePlacePillar turns the raw `?pillar=` query value into a store filter.
+//
+// An absent or blank value does not narrow the page at all — that is the "All"
+// tab. Anything else must be one of the supported pillars, matched exactly as the
+// cluster filter matches its own pillar, so the two discovery surfaces accept the
+// same values and reject the same typos. A pillar is a closed set the API
+// publishes rather than free text, so an unknown one is a validation failure
+// rather than an empty page (KNOT-020e-fix6).
+func parsePlacePillar(raw string) (stories.Pillar, error) {
+	if raw == "" {
+		return "", nil
+	}
+
+	pillar := stories.Pillar(raw)
+	if !pillar.Valid() {
+		return "", &ValidationError{
+			Field:   "pillar",
+			Message: fmt.Sprintf("must be one of %s, %s", stories.PillarWonder, stories.PillarHeritage),
+		}
+	}
+
+	return pillar, nil
 }
 
 // validateClusterFilter applies every filter rule and returns the filter to pass
