@@ -4,6 +4,7 @@ import {
   Alert,
   Animated,
   FlatList,
+  Image,
   Modal,
   PanResponder,
   Pressable,
@@ -19,6 +20,7 @@ import {
   CaretRight,
   DotsThree,
   Plant,
+  PlayCircle,
   Prohibit,
   SignOut,
   type Icon,
@@ -107,6 +109,12 @@ type UserProfileScreenProps = {
 /** How far the options sheet must be dragged down before it dismisses. */
 const SHEET_CLOSE_DISTANCE = 96;
 
+/** The card preview's aspect ratio (16:9), matching the feed's media frame. */
+const MEDIA_ASPECT_RATIO = 16 / 9;
+
+/** The play glyph drawn on a video card's static placeholder. */
+const MEDIA_PLAY_ICON_SIZE = 48;
+
 /** The empty-state illustration for one tab. Versions reuse the stories artwork. */
 function emptyIllustration(kind: ActivityKind): 'no-stories' | 'no-inquiries' {
   return kind === 'inquiry' ? 'no-inquiries' : 'no-stories';
@@ -171,12 +179,13 @@ function OptionRow({
  * overflow control that opens a bottom-sheet menu — Edit avatar, Set Rooted,
  * Blocked users, and Sign out — while a visitor's opens Block user. Below the
  * block, three tabs (Stories, Versions, Inquiries) filter the wall, and each
- * entry is a card: an overline (or the story's pillar tag), the title, and a meta
- * line, closed by a full-bleed hairline — the design reference's tab content.
+ * entry is a card: an overline (or the story's pillar tag), the title, the story's
+ * first media item when it has one, and a meta line, closed by a full-bleed
+ * hairline — the design reference's tab content.
  *
- * The wall shows only what the person authored themselves. The other activity kinds
- * — comments, bridges, and answers — still arrive on the stream (the API is
- * unchanged) but are filtered out of the display and given no tab (KNOT-020g-fix).
+ * The wall shows only what the person authored themselves. Comments, bridges, and
+ * replies to questions still arrive on the stream (the API is unchanged) but are
+ * filtered out of the display and given no tab (KNOT-020g-fix).
  *
  * The stats and the per-tab lists are computed over the activities loaded so far
  * — the profile API returns no totals and no per-kind filter, so both grow as the
@@ -394,8 +403,8 @@ export default function UserProfileScreen({
           onOpenInquiry(activity.id);
           return;
         case 'inquiry_answer':
-          // An answer has no screen of its own: it belongs to the question it
-          // answers, which is where the reader wants to land.
+          // A reply to a question has no screen of its own: it belongs to the
+          // question it responds to, which is where the reader wants to land.
           onOpenInquiry(activity.payload.inquiry_id);
           return;
         default:
@@ -556,6 +565,14 @@ export default function UserProfileScreen({
           if (card === undefined) {
             return null;
           }
+
+          // The API sends a relative path, so the preview is joined to the base
+          // URL the way the feed's media is.
+          const mediaUri =
+            card.mediaType === 'image' && card.mediaUrl !== undefined
+              ? `${API_BASE_URL}${card.mediaUrl}`
+              : undefined;
+
           return (
             <Pressable
               style={styles.card}
@@ -578,6 +595,25 @@ export default function UserProfileScreen({
               <Text style={[typeScale.h3, styles.cardTitle]} numberOfLines={2}>
                 {card.title}
               </Text>
+
+              {card.mediaType === undefined ? null : mediaUri === undefined ? (
+                // A video shows a static placeholder, never a player: the wall is
+                // a browse surface, and playback belongs to the Feed (KNOT-020g-fix3).
+                <View style={[styles.cardMedia, styles.cardVideo]}>
+                  <PlayCircle
+                    color={colors.text.tertiary}
+                    size={MEDIA_PLAY_ICON_SIZE}
+                    weight="fill"
+                  />
+                </View>
+              ) : (
+                <Image
+                  source={{ uri: mediaUri }}
+                  style={styles.cardMedia}
+                  resizeMode="cover"
+                  accessibilityIgnoresInvertColors
+                />
+              )}
 
               {card.meta === '' ? null : (
                 <Text style={[typeScale.caption, styles.cardMeta]} numberOfLines={1}>
@@ -684,6 +720,15 @@ const styles = StyleSheet.create({
     color: colors.text.tertiary,
     marginTop: spacing.xs,
   },
+  // The card's media preview: the content column's width, rounded, and never a
+  // player — a still image, or a plain placeholder for a video (KNOT-020g-fix3).
+  cardMedia: {
+    aspectRatio: MEDIA_ASPECT_RATIO,
+    borderRadius: radius.lg,
+    marginTop: spacing.sm,
+    overflow: 'hidden',
+    width: '100%',
+  },
   cardOverline: {
     color: colors.brand.primary,
   },
@@ -693,6 +738,13 @@ const styles = StyleSheet.create({
   cardTitle: {
     color: colors.text.primary,
     marginTop: spacing.xs,
+  },
+  // The video placeholder behind the play glyph: the media frame's size, with a
+  // sunken fill standing in for a poster frame the API does not carry.
+  cardVideo: {
+    alignItems: 'center',
+    backgroundColor: colors.bg.sunken,
+    justifyContent: 'center',
   },
   container: {
     backgroundColor: colors.bg.canvas,
@@ -727,11 +779,10 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   // One row of the options sheet: a leading icon, the label, and a trailing
-  // chevron, separated from its neighbour by a hairline.
+  // chevron. Rows are separated by spacing alone — no drawn dividers
+  // (KNOT-020g-fix3).
   option: {
     alignItems: 'center',
-    borderTopColor: colors.border.hairline,
-    borderTopWidth: 1,
     flexDirection: 'row',
     gap: spacing.md,
     minHeight: 44,

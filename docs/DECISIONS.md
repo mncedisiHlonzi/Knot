@@ -2274,3 +2274,27 @@ never N+1, and the counts ride the existing `story_versions(story_id)` and
 count as zero. The version ordinal's window is bounded to the author's own stories, so it is sized
 by the page's subject rather than by the whole table. Because `inquiry_answer` still has no tab, an
 answer can never appear on the Inquiries tab — a display rule, not a data change.
+
+## Scope note — the profile cards carry a media preview, and the header counts inquiries (KNOT-020g-fix3)
+
+**Not a new ADR.** This records where the profile's card media comes from and what its headline
+counts, so neither is re-litigated.
+
+**Decision.** `GET /users/{id}/profile` attaches `media_preview_url` (the story's first media item's
+content path) and `first_media_type` (`image` or `video`) to every `story` activity, and to every
+`version` activity — a version has no media of its own, so it previews its story's. Both fields are
+**attached at the HTTP layer** from one batched `FirstMedia` read per page (the feed's
+`storyMediaPreviews` and `firstMediaFields` helpers), not projected in the profile store's SQL, and
+are omitted when the story has no media. Separately, the wall's header stats line counts **stories,
+versions, and inquiries**, replacing the former answer count, and each noun is pluralised against its
+own count.
+
+**Why.** On-device review of KNOT-020g-fix2 found the cards thin beside the Feed's, and the header
+still counting answers after the answer tab had already been removed.
+
+**Consequences.** A page costs one extra batched media read (one query, never one per activity). The
+store's payload type gains two fields it never populates, so a reader of the domain store sees them
+empty — the same layering the feed already uses, where media is a per-response decoration rather than
+a column on the story. The client omits the media block when both fields are absent, so a story with
+no media renders exactly as it did before, and the tabs and stats line remain display-only: the store
+still returns every kind.

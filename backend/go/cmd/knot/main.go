@@ -360,7 +360,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	profileHandler, err := httpapi.NewProfileHandler(profileService, rootedService, logger)
+	profileHandler, err := httpapi.NewProfileHandler(profileService, rootedService, storyMediaService, logger)
 	if err != nil {
 		return err
 	}

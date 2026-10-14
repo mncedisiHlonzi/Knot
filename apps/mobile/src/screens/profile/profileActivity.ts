@@ -49,38 +49,51 @@ export function filterActivities(
 export type ProfileStats = {
   readonly stories: number;
   readonly versions: number;
-  readonly answers: number;
+  readonly inquiries: number;
 };
 
 /**
- * Counts the three headline kinds — stories, adaptations (versions), and answers
- * to questions — over the activities given.
+ * Counts the three authored kinds — stories, adaptations (versions), and
+ * questions asked — over the activities given.
+ *
+ * Answers are deliberately not counted: the wall's tabs and its headline describe
+ * what a person made, and a question is one of those things (KNOT-020g-fix3).
  */
 export function profileStats(activities: readonly Activity[]): ProfileStats {
   let stories = 0;
   let versions = 0;
-  let answers = 0;
+  let inquiries = 0;
 
   for (const activity of activities) {
     if (activity.kind === 'story') {
       stories += 1;
     } else if (activity.kind === 'version') {
       versions += 1;
-    } else if (activity.kind === 'inquiry_answer') {
-      answers += 1;
+    } else if (activity.kind === 'inquiry') {
+      inquiries += 1;
     }
   }
 
-  return { answers, stories, versions };
+  return { inquiries, stories, versions };
+}
+
+/** One count with its noun, pluralised: "1 story", "4 stories". */
+function countLabel(count: number, singular: string, plural: string): string {
+  return `${count} ${count === 1 ? singular : plural}`;
 }
 
 /**
- * The stats row's single line, e.g. "12 stories · 8 versions · 21 answers".
+ * The stats row's single line, e.g. "12 stories · 8 versions · 21 inquiries".
  *
- * The nouns stay plural even at one, matching the design copy.
+ * Each noun agrees with its own count, so a wall with one question reads "1
+ * inquiry" rather than "1 inquiries".
  */
 export function statsLine(stats: ProfileStats): string {
-  return `${stats.stories} stories · ${stats.versions} versions · ${stats.answers} answers`;
+  return [
+    countLabel(stats.stories, 'story', 'stories'),
+    countLabel(stats.versions, 'version', 'versions'),
+    countLabel(stats.inquiries, 'inquiry', 'inquiries'),
+  ].join(' · ');
 }
 
 /** The pillars the tag accepts. Anything else is dropped rather than rendered. */
@@ -123,9 +136,9 @@ function answerCountLabel(count: number): string {
  * The rendered content of one card on the wall.
  *
  * A card carries only what the activity's payload holds. The server enriches each
- * activity with the counts and places the reference draws (KNOT-020g-fix2), but
- * the payload is still a small, kind-specific subset, so a card renders only the
- * segments it has.
+ * activity with the counts, places, and media preview the reference draws
+ * (KNOT-020g-fix2, KNOT-020g-fix3), but the payload is still a small,
+ * kind-specific subset, so a card renders only the segments it has.
  */
 export type ProfileCard = {
   /**
@@ -145,18 +158,40 @@ export type ProfileCard = {
   readonly place: string | undefined;
   /** The meta line under the title, or '' when there is nothing to show. */
   readonly meta: string;
+  /**
+   * The card's media preview path (API-relative), or undefined when there is
+   * nothing to draw. A story and a version carry the story's first media item; an
+   * inquiry has no media.
+   */
+  readonly mediaUrl: string | undefined;
+  /**
+   * How to draw that preview: an image, or a video's static placeholder. Undefined
+   * when there is no media.
+   */
+  readonly mediaType: 'image' | 'video' | undefined;
 };
+
+/** The preview kind a payload names, or undefined when it names none. */
+function asMediaType(value: string | undefined): 'image' | 'video' | undefined {
+  return value === 'image' || value === 'video' ? value : undefined;
+}
+
+/** A payload path, or undefined when it is absent or blank. */
+function asOptionalText(value: string | undefined): string | undefined {
+  const text = asText(value);
+  return text === '' ? undefined : text;
+}
 
 /**
  * The card for one activity, or undefined for a kind the wall does not show.
  *
  * A **story** card leads with its plain pillar tag — `PILLAR · PLACE` when the
- * story names a place — over the title, and its meta reads
+ * story names a place — over the title, its first media item, and the meta line
  * `{language} · {N versions} · {time}`. A **version** card leads with
- * `Version {n} · {language}` over the story's title, and its meta reads
- * `{place} · {time}`. An **inquiry** card leads with `Inquiry · {place}` over the
- * question, and its meta reads `{N answers} · {time}`. A segment whose field is
- * absent is omitted, never faked.
+ * `Version {n} · {language}` over the story's title, its story's media, and the
+ * meta line `{place} · {time}`. An **inquiry** card leads with `Inquiry · {place}`
+ * over the question and the meta line `{N answers} · {time}`; a question carries no
+ * media. A segment whose field is absent is omitted, never faked.
  *
  * `relativeTime` is passed in already formatted, so this stays a pure function of
  * its inputs and is testable without a wall clock.
@@ -176,6 +211,8 @@ export function activityCard(activity: Activity, relativeTime: string): ProfileC
           versions > 0 ? versionCountLabel(versions) : '',
           relativeTime,
         ]),
+        mediaUrl: asOptionalText(activity.payload.media_preview_url),
+        mediaType: asMediaType(activity.payload.first_media_type),
       };
     }
     case 'version': {
@@ -187,6 +224,8 @@ export function activityCard(activity: Activity, relativeTime: string): ProfileC
         pillar: undefined,
         place: undefined,
         meta: joinParts([asText(activity.payload.place), relativeTime]),
+        mediaUrl: asOptionalText(activity.payload.media_preview_url),
+        mediaType: asMediaType(activity.payload.first_media_type),
       };
     }
     case 'inquiry': {
@@ -197,6 +236,8 @@ export function activityCard(activity: Activity, relativeTime: string): ProfileC
         pillar: undefined,
         place: undefined,
         meta: joinParts([answerCountLabel(asCount(activity.payload.answer_count)), relativeTime]),
+        mediaUrl: undefined,
+        mediaType: undefined,
       };
     }
     default:

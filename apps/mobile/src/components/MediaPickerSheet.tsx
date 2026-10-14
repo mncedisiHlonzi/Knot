@@ -279,11 +279,10 @@ const styles = StyleSheet.create({
   body: {
     paddingHorizontal: spacing.lg,
   },
-  // A text-only Cancel below the last hairline, in the same 44-point rows.
+  // A text-only Cancel below the choices, in the same 44-point rows. Rows are
+  // separated by spacing alone — no drawn dividers (KNOT-020g-fix3).
   cancel: {
     alignItems: 'center',
-    borderTopColor: colors.border.hairline,
-    borderTopWidth: 1,
     justifyContent: 'center',
     minHeight: 44,
     paddingVertical: spacing.md,
@@ -303,12 +302,10 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.sm,
     paddingTop: spacing.sm,
   },
-  // One choice: a leading icon and its label, separated from its neighbour by a
-  // hairline (the same row the profile's options sheet draws).
+  // One choice: a leading icon and its label, separated from its neighbour by
+  // spacing alone (the same row the profile's options sheet draws).
   row: {
     alignItems: 'center',
-    borderTopColor: colors.border.hairline,
-    borderTopWidth: 1,
     flexDirection: 'row',
     gap: spacing.md,
     minHeight: 44,

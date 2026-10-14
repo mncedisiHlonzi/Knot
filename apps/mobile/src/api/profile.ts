@@ -25,6 +25,10 @@ export type StoryActivityPayload = {
   readonly place?: string;
   /** How many versions the story has, its root included (always at least 1). */
   readonly version_count?: number;
+  /** The API-relative path of the story's first media item, or absent when none. */
+  readonly media_preview_url?: string;
+  /** The first media item's kind, or absent when the story has no media. */
+  readonly first_media_type?: 'image' | 'video';
 };
 
 /** The context of an adaptation activity. */
@@ -39,6 +43,14 @@ export type VersionActivityPayload = {
    * so the first adaptation is 2.
    */
   readonly version_number?: number;
+  /**
+   * The API-relative path of the parent story's first media item, or absent when
+   * it has none. An adaptation has no media of its own, so it previews its
+   * story's.
+   */
+  readonly media_preview_url?: string;
+  /** The parent story's first media kind, or absent when it has no media. */
+  readonly first_media_type?: 'image' | 'video';
 };
 
 /** The context of a comment activity. */

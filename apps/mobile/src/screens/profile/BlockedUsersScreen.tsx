@@ -139,8 +139,8 @@ export default function BlockedUsersScreen({
         }
         renderItem={({ item }) => (
           <View style={styles.row}>
-            <Avatar uri={avatarUri(item)} displayName={item.display_name} size="md" />
-            <Text style={[typeScale.body, styles.name]} numberOfLines={1}>
+            <Avatar uri={avatarUri(item)} displayName={item.display_name} size="lg" />
+            <Text style={[typeScale.h3, styles.name]} numberOfLines={1}>
               {item.display_name}
             </Text>
             <Button
@@ -192,8 +192,10 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     flex: 1,
   },
-  // One blocked person: their avatar, their name, and the way to unblock them,
-  // closed by a full-bleed hairline.
+  // One blocked person, as the design system's list row: their avatar, their
+  // name, and the way to unblock them, closed by a full-bleed hairline. There is
+  // no carded box — the whole list is one continuous column, exactly as the
+  // feed's entries are.
   row: {
     alignItems: 'center',
     borderBottomColor: colors.border.hairline,
@@ -202,7 +204,7 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     marginHorizontal: -layout.screenPaddingFeed,
     paddingHorizontal: layout.screenPaddingFeed,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.lg,
   },
   spinner: {
     marginVertical: spacing.xl,

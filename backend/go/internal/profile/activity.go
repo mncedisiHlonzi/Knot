@@ -98,8 +98,8 @@ const (
 // to the activity's Kind are populated; the JSON tags carry `omitempty` so the
 // wire form is exactly the subset a client needs for that kind:
 //
-//	story          { title, pillar, language, place, version_count }
-//	version        { story_id, story_title, language, place, version_number }
+//	story          { title, pillar, language, place, version_count, media_preview_url, first_media_type }
+//	version        { story_id, story_title, language, place, version_number, media_preview_url, first_media_type }
 //	comment        { version_id, story_id, body_preview }
 //	bridge         { source_comment_id, version_id, target_language }
 //	inquiry        { title, place, answer_count }
@@ -152,6 +152,18 @@ type Payload struct {
 	VersionNumber int `json:"version_number,omitempty"`
 	// AnswerCount is how many answers the question has drawn. Set for KindInquiry.
 	AnswerCount int `json:"answer_count,omitempty"`
+	// MediaPreviewURL is the API-relative path to the story's first media item's
+	// content (`/stories/{id}/media/{mid}/content`), so a card can draw a thumbnail
+	// without a second request. Set for KindStory, and for KindVersion (which shows
+	// its story's media); empty when there is none.
+	//
+	// Unlike every other payload field, this one is NOT projected in SQL: it is
+	// attached at the HTTP layer from one batched media read per response, the same
+	// way AuthorRooted is attached to a story response (KNOT-020g-fix3).
+	MediaPreviewURL string `json:"media_preview_url,omitempty"`
+	// FirstMediaType is that item's kind — "image" or "video". Set alongside
+	// MediaPreviewURL, and empty when there is no media to preview.
+	FirstMediaType string `json:"first_media_type,omitempty"`
 	// InquiryID is the inquiry an answer belongs to. Set for KindInquiryAnswer.
 	InquiryID string `json:"inquiry_id,omitempty"`
 	// InquiryTitle is the title of the inquiry an answer belongs to, so an answer

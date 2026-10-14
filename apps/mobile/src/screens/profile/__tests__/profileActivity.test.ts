@@ -19,6 +19,8 @@ const story: Activity = {
     language: 'eng',
     place: 'Oaxaca, Mexico',
     version_count: 4,
+    media_preview_url: '/stories/story-1/media/media-1/content',
+    first_media_type: 'image',
   },
 };
 
@@ -32,6 +34,8 @@ const version: Activity = {
     language: 'zul',
     place: 'Oaxaca, Mexico',
     version_number: 2,
+    media_preview_url: '/stories/story-1/media/media-1/content',
+    first_media_type: 'image',
   },
 };
 
@@ -101,40 +105,72 @@ describe('filterActivities', () => {
 });
 
 describe('profileStats', () => {
-  it('counts stories, versions, and answers only', () => {
-    expect(profileStats(wall)).toEqual({ stories: 1, versions: 1, answers: 1 });
+  it('counts stories, versions, and inquiries only', () => {
+    expect(profileStats(wall)).toEqual({ stories: 1, versions: 1, inquiries: 1 });
+  });
+
+  it('does not count an answer as a question', () => {
+    expect(profileStats([answer])).toEqual({ stories: 0, versions: 0, inquiries: 0 });
   });
 
   it('is all zeros for an empty wall', () => {
-    expect(profileStats([])).toEqual({ stories: 0, versions: 0, answers: 0 });
+    expect(profileStats([])).toEqual({ stories: 0, versions: 0, inquiries: 0 });
   });
 
   it('formats the stats line with the design copy', () => {
-    expect(statsLine({ stories: 12, versions: 8, answers: 21 })).toBe(
-      '12 stories · 8 versions · 21 answers',
+    expect(statsLine({ stories: 12, versions: 8, inquiries: 21 })).toBe(
+      '12 stories · 8 versions · 21 inquiries',
+    );
+  });
+
+  it('pluralises each noun against its own count', () => {
+    expect(statsLine({ stories: 1, versions: 1, inquiries: 1 })).toBe(
+      '1 story · 1 version · 1 inquiry',
+    );
+    expect(statsLine({ stories: 0, versions: 0, inquiries: 0 })).toBe(
+      '0 stories · 0 versions · 0 inquiries',
     );
   });
 });
 
 describe('activityCard', () => {
-  it('builds a story card from its pillar, place, language, version count, and time', () => {
+  it('builds a story card from its pillar, place, language, version count, media, and time', () => {
     expect(activityCard(story, '2 days ago')).toEqual({
       overline: '',
       title: 'How my grandmother counted the days',
       pillar: 'heritage',
       place: 'Oaxaca, Mexico',
       meta: 'English · 4 versions · 2 days ago',
+      mediaUrl: '/stories/story-1/media/media-1/content',
+      mediaType: 'image',
     });
   });
 
-  it('omits the version count and place when the payload carries neither', () => {
+  it('omits the version count, place, and media when the payload carries none', () => {
     const bare = {
       ...story,
       payload: { title: 'A story with nothing extra', pillar: 'wonder', language: 'eng' },
     } as Activity;
     const card = activityCard(bare, '2 days ago');
     expect(card?.place).toBeUndefined();
+    expect(card?.mediaUrl).toBeUndefined();
+    expect(card?.mediaType).toBeUndefined();
     expect(card?.meta).toBe('English · 2 days ago');
+  });
+
+  it('marks a video preview so the card draws its placeholder', () => {
+    const video: Activity = {
+      ...story,
+      payload: {
+        title: 'A story with a clip',
+        pillar: 'wonder',
+        language: 'eng',
+        media_preview_url: '/stories/story-1/media/media-9/content',
+        first_media_type: 'video',
+      },
+    };
+
+    expect(activityCard(video, 'now')?.mediaType).toBe('video');
   });
 
   it('drops a pillar it does not recognise', () => {
@@ -145,13 +181,15 @@ describe('activityCard', () => {
     expect(activityCard(odd, 'now')?.pillar).toBeUndefined();
   });
 
-  it('builds a version card with its number, language, place, and time', () => {
+  it('builds a version card with its number, language, place, media, and time', () => {
     expect(activityCard(version, '3 weeks ago')).toEqual({
       overline: 'Version 2 · Zulu',
       title: 'How my grandmother…',
       pillar: undefined,
       place: undefined,
       meta: 'Oaxaca, Mexico · 3 weeks ago',
+      mediaUrl: '/stories/story-1/media/media-1/content',
+      mediaType: 'image',
     });
   });
 
@@ -165,13 +203,15 @@ describe('activityCard', () => {
     expect(card?.meta).toBe('3 weeks ago');
   });
 
-  it('builds an inquiry card with its answer count and pluralises one answer', () => {
+  it('builds an inquiry card with its answer count, no media, and pluralises one answer', () => {
     expect(activityCard(inquiry, '1 hour ago')).toEqual({
       overline: 'Inquiry',
       title: 'Why the stairs are uneven',
       pillar: undefined,
       place: undefined,
       meta: '6 answers · 1 hour ago',
+      mediaUrl: undefined,
+      mediaType: undefined,
     });
 
     const one = { ...inquiry, payload: { title: 'One answer', answer_count: 1 } } as Activity;

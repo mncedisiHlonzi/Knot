@@ -423,6 +423,17 @@ clipped. Finally, the blocked-users list left the wall for its own overlay scree
 (`screens/profile/BlockedUsersScreen.tsx`), reached from the options sheet: an avatar, a name, and
 an Unblock action per row, with pull-to-refresh and an empty state.
 
+**KNOT-020g-fix3** gave the cards their media. `GET /users/{id}/profile` now attaches the story's
+first media item to every story activity — and to every version activity, which previews its story's
+media — as `media_preview_url` plus `first_media_type`, from **one batched media read per page**,
+reusing the feed's `storyMediaPreviews` and `firstMediaFields` helpers (`internal/httpapi/enrich.go`).
+A story card therefore draws a 16:9 rounded image under its title, or a plain placeholder with a play
+glyph for a video, and draws nothing when the story has no media; a version card does the same. The
+profile's stats line now reads `N stories · N versions · N inquiries` (each noun pluralised against
+its own count) instead of counting answers, and the bottom sheets lost their row dividers — rows are
+separated by spacing alone. The three tabs already met the reference (natural width, left-aligned,
+a 24-point gap, a 16-point gutter, and a full-bleed hairline), so that item needed no change.
+
 The same screen serves the owner: `isOwnProfile` adds the avatar upload, the Set Rooted
 shortcut, and sign-out, so tapping your own author line opens your wall. `AuthorLine`'s
 `onPress` is how the app reaches it — a nested `Pressable` handles the author tap without

@@ -23,23 +23,29 @@ type ProfileService interface {
 type ProfileHandler struct {
 	service ProfileService
 	rooted  RootedLookup
+	media   StoryMediaLookup
 	logger  *slog.Logger
 }
 
 // NewProfileHandler returns a handler backed by service. The rooted lookup
 // attaches the wall owner's inline Rooted summary, exactly as every other content
-// response does.
-func NewProfileHandler(service ProfileService, rooted RootedLookup, logger *slog.Logger) (*ProfileHandler, error) {
+// response does; the media lookup attaches the first media item of every story on
+// the page (or of a version's story) in one batched read, so a card can draw a
+// preview (KNOT-020g-fix3).
+func NewProfileHandler(service ProfileService, rooted RootedLookup, media StoryMediaLookup, logger *slog.Logger) (*ProfileHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: profile handler requires a service")
 	}
 	if rooted == nil {
 		return nil, fmt.Errorf("httpapi: profile handler requires a rooted lookup")
 	}
+	if media == nil {
+		return nil, fmt.Errorf("httpapi: profile handler requires a story-media lookup")
+	}
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: profile handler requires a logger")
 	}
-	return &ProfileHandler{service: service, rooted: rooted, logger: logger}, nil
+	return &ProfileHandler{service: service, rooted: rooted, media: media, logger: logger}, nil
 }
 
 // profileUserResponse is the public identity header of a wall.
@@ -106,13 +112,32 @@ func (h *ProfileHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// One batched read of the page's story media. A story keys off its own id; a
+	// version keys off its story's, because media belongs to the story and a
+	// version has none of its own (KNOT-020g-fix3).
+	storyIDs := make([]string, 0, len(result.Activities))
+	for _, activity := range result.Activities {
+		if storyID := activityStoryID(activity); storyID != "" {
+			storyIDs = append(storyIDs, storyID)
+		}
+	}
+	previews := storyMediaPreviews(r.Context(), h.media, h.logger, storyIDs)
+
 	items := make([]profileActivityResponse, 0, len(result.Activities))
 	for _, activity := range result.Activities {
+		payload := activity.Payload
+		if mediaType, mediaURL := firstMediaFields(previews[activityStoryID(activity)]); mediaType != nil {
+			payload.FirstMediaType = *mediaType
+			if mediaURL != nil {
+				payload.MediaPreviewURL = *mediaURL
+			}
+		}
+
 		items = append(items, profileActivityResponse{
 			Kind:      string(activity.Kind),
 			ID:        activity.ID,
 			CreatedAt: activity.CreatedAt,
-			Payload:   activity.Payload,
+			Payload:   payload,
 		})
 	}
 
@@ -131,6 +156,20 @@ func (h *ProfileHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Activities: items,
 		NextCursor: next,
 	})
+}
+
+// activityStoryID returns the story whose media an activity can preview: a
+// story's own id, or the story a version adapts. Every other kind is empty,
+// because only a story carries media, so it has nothing to preview (KNOT-020g-fix3).
+func activityStoryID(activity profile.Activity) string {
+	switch activity.Kind {
+	case profile.KindStory:
+		return activity.ID
+	case profile.KindVersion:
+		return activity.Payload.StoryID
+	default:
+		return ""
+	}
 }
 
 // parseProfileLimit reads the optional "limit" query parameter.

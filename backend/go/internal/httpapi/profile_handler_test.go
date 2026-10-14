@@ -10,6 +10,7 @@ import (
 
 	"github.com/knot/backend/internal/identity"
 	"github.com/knot/backend/internal/profile"
+	"github.com/knot/backend/internal/storymedia"
 )
 
 // fakeProfileService returns canned values, so the failure paths a real service
@@ -40,7 +41,7 @@ func (f *fakeProfileService) GetProfile(_ context.Context, userID string, rawCur
 func newTestProfileHandler(t *testing.T, logger *slog.Logger) *ProfileHandler {
 	t.Helper()
 
-	handler, err := NewProfileHandler(&fakeProfileService{}, &fakeRootedService{}, logger)
+	handler, err := NewProfileHandler(&fakeProfileService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewProfileHandler() error = %v, want nil", err)
 	}
@@ -51,6 +52,13 @@ func newTestProfileHandler(t *testing.T, logger *slog.Logger) *ProfileHandler {
 // profile handler backed by service, so the tests exercise the real route table
 // and middleware chain.
 func newProfileRouter(t *testing.T, service ProfileService, rooted RootedLookup) http.Handler {
+	t.Helper()
+	return newProfileRouterWithMedia(t, service, rooted, &fakeStoryMediaLookup{})
+}
+
+// newProfileRouterWithMedia is newProfileRouter with the story-media enrichment
+// injected, so a test can prove the wall's cards carry a media preview.
+func newProfileRouterWithMedia(t *testing.T, service ProfileService, rooted RootedLookup, media StoryMediaLookup) http.Handler {
 	t.Helper()
 
 	logger := discardLogger()
@@ -82,7 +90,7 @@ func newProfileRouter(t *testing.T, service ProfileService, rooted RootedLookup)
 
 	discoveryHandler := newTestDiscoveryHandler(t, logger, fakeDiscoveryService{})
 
-	profileHandler, err := NewProfileHandler(service, rooted, logger)
+	profileHandler, err := NewProfileHandler(service, rooted, media, logger)
 	if err != nil {
 		t.Fatalf("NewProfileHandler() error = %v, want nil", err)
 	}
@@ -304,14 +312,100 @@ func TestGetProfileWithoutOwnerIsInternalError(t *testing.T) {
 func TestNewProfileHandlerRejectsMissingDependencies(t *testing.T) {
 	logger := discardLogger()
 
-	if _, err := NewProfileHandler(nil, &fakeRootedService{}, logger); err == nil {
-		t.Error("NewProfileHandler(nil, rooted, logger) error = nil, want an error")
+	if _, err := NewProfileHandler(nil, &fakeRootedService{}, &fakeStoryMediaLookup{}, logger); err == nil {
+		t.Error("NewProfileHandler(nil, rooted, media, logger) error = nil, want an error")
 	}
-	if _, err := NewProfileHandler(&fakeProfileService{}, nil, logger); err == nil {
-		t.Error("NewProfileHandler(service, nil, logger) error = nil, want an error")
+	if _, err := NewProfileHandler(&fakeProfileService{}, nil, &fakeStoryMediaLookup{}, logger); err == nil {
+		t.Error("NewProfileHandler(service, nil, media, logger) error = nil, want an error")
 	}
-	if _, err := NewProfileHandler(&fakeProfileService{}, &fakeRootedService{}, nil); err == nil {
-		t.Error("NewProfileHandler(service, rooted, nil) error = nil, want an error")
+	if _, err := NewProfileHandler(&fakeProfileService{}, &fakeRootedService{}, nil, logger); err == nil {
+		t.Error("NewProfileHandler(service, rooted, nil, logger) error = nil, want an error")
+	}
+	if _, err := NewProfileHandler(&fakeProfileService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, nil); err == nil {
+		t.Error("NewProfileHandler(service, rooted, media, nil) error = nil, want an error")
+	}
+}
+
+// TestGetProfileAttachesStoryMediaPreview proves the wall's story and version
+// cards carry the story's first media item, attached in one batched read, and that
+// a story with no media carries neither field (KNOT-020g-fix3).
+func TestGetProfileAttachesStoryMediaPreview(t *testing.T) {
+	const (
+		storyID     = "d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b"
+		versionID   = "e7c64b3d-3f30-4b5e-8c1a-4a7f5f1a2b3c"
+		bareStoryID = "11111111-1111-4111-8111-111111111111"
+	)
+
+	service := &fakeProfileService{
+		result: profile.Profile{
+			User: profileUserFixture(testUserID, "Ada Lovelace", ""),
+			Activities: []profile.Activity{
+				{
+					Kind:      profile.KindStory,
+					ID:        storyID,
+					CreatedAt: testNow,
+					Payload:   profile.Payload{Title: "The first rain", Pillar: "wonder", Language: "eng"},
+				},
+				{
+					Kind:      profile.KindVersion,
+					ID:        versionID,
+					CreatedAt: testNow,
+					Payload:   profile.Payload{StoryID: storyID, StoryTitle: "The first rain", Language: "fra"},
+				},
+				{
+					Kind:      profile.KindStory,
+					ID:        bareStoryID,
+					CreatedAt: testNow,
+					Payload:   profile.Payload{Title: "No media at all", Pillar: "heritage", Language: "eng"},
+				},
+			},
+		},
+	}
+	media := &fakeStoryMediaLookup{first: map[string]storymedia.StoryMedia{
+		storyID: {
+			ID:        "33333333-3333-4333-8333-333333333333",
+			StoryID:   storyID,
+			MediaType: storymedia.MediaTypeImage,
+		},
+	}}
+
+	handler := newProfileRouterWithMedia(t, service, &fakeRootedService{}, media)
+	recorder := doStoryRequest(handler, http.MethodGet, "/users/"+testUserID+"/profile", "", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	// The wire shape names the new fields, so a client can rely on them.
+	for _, want := range []string{
+		`"media_preview_url":"/stories/` + storyID + `/media/`,
+		`"first_media_type":"image"`,
+	} {
+		if !strings.Contains(recorder.Body.String(), want) {
+			t.Errorf("body = %s, want it to contain %s", recorder.Body.String(), want)
+		}
+	}
+
+	var body profileResponse
+	decodeBody(t, recorder, &body)
+	if len(body.Activities) != 3 {
+		t.Fatalf("activities = %d, want 3", len(body.Activities))
+	}
+
+	story := body.Activities[0].Payload
+	if story.FirstMediaType != "image" || !strings.HasSuffix(story.MediaPreviewURL, "/content") {
+		t.Errorf("story media = %q/%q, want the first item's image type and content path", story.FirstMediaType, story.MediaPreviewURL)
+	}
+
+	// A version has no media of its own, so it previews its story's.
+	version := body.Activities[1].Payload
+	if version.FirstMediaType != "image" || version.MediaPreviewURL != story.MediaPreviewURL {
+		t.Errorf("version media = %q/%q, want its story's preview %q", version.FirstMediaType, version.MediaPreviewURL, story.MediaPreviewURL)
+	}
+
+	bare := body.Activities[2].Payload
+	if bare.FirstMediaType != "" || bare.MediaPreviewURL != "" {
+		t.Errorf("story without media = %q/%q, want both empty", bare.FirstMediaType, bare.MediaPreviewURL)
 	}
 }
 

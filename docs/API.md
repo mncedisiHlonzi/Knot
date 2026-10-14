@@ -1084,7 +1084,9 @@ authored — stories, adaptations, comments, and bridges. It is how the app answ
         "pillar": "wonder",
         "language": "eng",
         "place": "Manguzi",
-        "version_count": 3
+        "version_count": 3,
+        "media_preview_url": "/stories/d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b/media/9f1c/content",
+        "first_media_type": "image"
       }
     }
   ],
@@ -1114,14 +1116,14 @@ thread are.
 Each activity is discriminated by `kind`; `payload` carries the context for that
 kind:
 
-| `kind`           | `id` names     | `payload`                                                       |
-| ---------------- | -------------- | --------------------------------------------------------------- |
-| `story`          | the story      | `{ title, pillar, language, place, version_count }`              |
-| `version`        | the adaptation | `{ story_id, story_title, language, place, version_number }`     |
-| `comment`        | the comment    | `{ version_id, story_id, body_preview }`                         |
-| `bridge`         | the bridge     | `{ source_comment_id, version_id, target_language }`             |
-| `inquiry`        | the question   | `{ title, place, answer_count }`                                 |
-| `inquiry_answer` | the answer     | `{ inquiry_id, inquiry_title, body_preview }`                    |
+| `kind`           | `id` names     | `payload`                                                                                          |
+| ---------------- | -------------- | -------------------------------------------------------------------------------------------------- |
+| `story`          | the story      | `{ title, pillar, language, place, version_count, media_preview_url, first_media_type }`             |
+| `version`        | the adaptation | `{ story_id, story_title, language, place, version_number, media_preview_url, first_media_type }`    |
+| `comment`        | the comment    | `{ version_id, story_id, body_preview }`                                                             |
+| `bridge`         | the bridge     | `{ source_comment_id, version_id, target_language }`                                                 |
+| `inquiry`        | the question   | `{ title, place, answer_count }`                                                                     |
+| `inquiry_answer` | the answer     | `{ inquiry_id, inquiry_title, body_preview }`                                                        |
 
 `place` is the content's coarse place, **omitted** (not `null`) when it names
 none. `version_count` counts every version in the story's tree, its root
@@ -1130,6 +1132,13 @@ among its story's versions, counting the root as 1, so a story's first adaptatio
 is 2. `answer_count` counts a question's public answers. Every one of them is
 resolved in the same single query that builds the page — never a query per
 activity (KNOT-020g-fix2).
+
+`media_preview_url` is the path to the story's first media item's content and
+`first_media_type` is that item's kind (`image` or `video`); both are **omitted**
+when the story carries no media, so a client draws a preview only when it has one.
+A version has no media of its own, so it carries its story's. Unlike the fields
+above, the preview is attached from one batched media read per page rather than
+being projected in SQL (KNOT-020g-fix3).
 
 Every activity is authored by the wall's owner, so there is **no per-activity
 author**: the name and avatar are on the `user` header. `body_preview` is the first
