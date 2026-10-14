@@ -367,10 +367,7 @@ func (e *storyMediaTestEnv) router(t *testing.T, subject string) http.Handler {
 		t.Fatalf("NewRootedHandler() error = %v, want nil", err)
 	}
 
-	discoveryHandler, err := NewDiscoveryHandler(fakeDiscoveryService{}, &fakeRootedService{}, e.logger)
-	if err != nil {
-		t.Fatalf("NewDiscoveryHandler() error = %v, want nil", err)
-	}
+	discoveryHandler := newTestDiscoveryHandler(t, e.logger, fakeDiscoveryService{})
 
 	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: subject}, e.logger)
 	if err != nil {

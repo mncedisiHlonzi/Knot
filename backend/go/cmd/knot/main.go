@@ -323,8 +323,10 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	// Discovery reads the stories and story_versions tables directly: finding
 	// stories by place is a different read shape over the same data, so it owns
 	// its own store rather than widening the stories interface. Its handler reuses
-	// the rooted service as the enrichment lookup, exactly as the stories handler
-	// does.
+	// the same enrichment lookups the stories handler does — identity for
+	// attribution, rooted for inline badges, story media for the preview, reactions
+	// for the counts, and the stats store for the aggregates — so a story carries
+	// identical fields from the feed and from a place (KNOT-020e-fix2).
 	discoveryStore, err := discovery.NewPostgresStore(pool)
 	if err != nil {
 		return err
@@ -335,7 +337,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	discoveryHandler, err := httpapi.NewDiscoveryHandler(discoveryService, rootedService, logger)
+	discoveryHandler, err := httpapi.NewDiscoveryHandler(discoveryService, service, rootedService, storyMediaService, reactionsService, storyStatsStore, logger)
 	if err != nil {
 		return err
 	}

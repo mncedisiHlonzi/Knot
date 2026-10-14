@@ -11,7 +11,11 @@ import (
 	"time"
 
 	"github.com/knot/backend/internal/discovery"
+	"github.com/knot/backend/internal/identity"
+	"github.com/knot/backend/internal/reactions"
 	"github.com/knot/backend/internal/stories"
+	"github.com/knot/backend/internal/storymedia"
+	"github.com/knot/backend/internal/storystats"
 )
 
 // fakeDiscoveryService is an inert DiscoveryService for the router-assembly
@@ -23,7 +27,7 @@ func (fakeDiscoveryService) ListClusters(context.Context, discovery.ClusterFilte
 	return []discovery.PlaceCluster{}, nil
 }
 
-func (fakeDiscoveryService) ListStoriesAtPlace(context.Context, string, string, int) ([]stories.Story, string, error) {
+func (fakeDiscoveryService) ListStoriesAtPlace(context.Context, string, string, string, int) ([]stories.Story, string, error) {
 	return []stories.Story{}, "", nil
 }
 
@@ -40,12 +44,13 @@ type memoryDiscoveryStore struct {
 	stories []stories.Story
 	listErr error
 
-	gotFilter discovery.ClusterFilter
-	gotPlace  string
-	gotCursor *stories.Cursor
-	gotLimit  int
-	clusterGo int
-	listGo    int
+	gotFilter  discovery.ClusterFilter
+	gotPlace   string
+	gotCountry discovery.PlaceCountryFilter
+	gotCursor  *stories.Cursor
+	gotLimit   int
+	clusterGo  int
+	listGo     int
 }
 
 func (m *memoryDiscoveryStore) ListClusters(_ context.Context, filter discovery.ClusterFilter) ([]discovery.PlaceCluster, error) {
@@ -57,20 +62,30 @@ func (m *memoryDiscoveryStore) ListClusters(_ context.Context, filter discovery.
 	return m.clusters, nil
 }
 
-func (m *memoryDiscoveryStore) ListStoriesAtPlace(_ context.Context, placeLower string, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error) {
+func (m *memoryDiscoveryStore) ListStoriesAtPlace(_ context.Context, placeLower string, country discovery.PlaceCountryFilter, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error) {
 	m.listGo++
 	m.gotPlace = placeLower
+	m.gotCountry = country
 	m.gotCursor = cursor
 	m.gotLimit = limit
 	if m.listErr != nil {
 		return nil, nil, m.listErr
 	}
 
+	// Mirror the SQL: match the normalised place name, then narrow by country when
+	// the filter is enabled (Absent means "records no country").
 	filtered := make([]stories.Story, 0, len(m.stories))
 	for _, story := range m.stories {
-		if strings.ToLower(strings.TrimSpace(story.ApproximateLocation)) == placeLower {
-			filtered = append(filtered, story)
+		if strings.ToLower(strings.TrimSpace(story.ApproximateLocation)) != placeLower {
+			continue
 		}
+		if country.Absent && story.PlaceCountry != nil {
+			continue
+		}
+		if !country.Absent && country.Name != "" && (story.PlaceCountry == nil || *story.PlaceCountry != country.Name) {
+			continue
+		}
+		filtered = append(filtered, story)
 	}
 
 	sort.SliceStable(filtered, func(i, j int) bool {
@@ -98,11 +113,62 @@ func (m *memoryDiscoveryStore) ListStoriesAtPlace(_ context.Context, placeLower 
 	return remaining[:limit], &next, nil
 }
 
+// discoveryLookups bundles the enrichment dependencies the discovery handler
+// needs, so a test can seed the one it asserts on and leave the rest inert.
+type discoveryLookups struct {
+	authors   AuthorLookup
+	rooted    RootedLookup
+	media     StoryMediaLookup
+	reactions ReactionsLookup
+	stats     StoryStatsLookup
+}
+
+// inertDiscoveryLookups returns lookups that add nothing, for the tests that
+// only exercise routing, country filtering, or paging.
+func inertDiscoveryLookups() discoveryLookups {
+	return discoveryLookups{
+		authors:   &fakeAuthorService{},
+		rooted:    &fakeRootedService{},
+		media:     &fakeStoryMediaLookup{},
+		reactions: &fakeReactionsLookup{},
+		stats:     &fakeStoryStatsLookup{},
+	}
+}
+
+// newTestDiscoveryHandler builds a discovery handler with inert enrichment
+// lookups, for the router-assembly tests in the other handler test files, which
+// build the full route table but do not exercise discovery.
+func newTestDiscoveryHandler(t *testing.T, logger *slog.Logger, service DiscoveryService) *DiscoveryHandler {
+	t.Helper()
+
+	handler, err := NewDiscoveryHandler(
+		service,
+		&fakeAuthorService{},
+		&fakeRootedService{},
+		&fakeStoryMediaLookup{},
+		&fakeReactionsLookup{},
+		&fakeStoryStatsLookup{},
+		logger,
+	)
+	if err != nil {
+		t.Fatalf("NewDiscoveryHandler() error = %v, want nil", err)
+	}
+
+	return handler
+}
+
 // newDiscoveryRouter assembles a mux with the two discovery routes and the real
 // discovery service over store. It uses the same Go 1.22 method-qualified
 // patterns as the real router, so the {place} wildcard and its URL decoding are
 // exercised, without pulling in the other handlers' fakes.
 func newDiscoveryRouter(t *testing.T, store discovery.DiscoveryStore) http.Handler {
+	t.Helper()
+	return newDiscoveryRouterWithLookups(t, store, inertDiscoveryLookups())
+}
+
+// newDiscoveryRouterWithLookups is newDiscoveryRouter over explicit enrichment
+// lookups, so a test can prove the place page is decorated like the feed.
+func newDiscoveryRouterWithLookups(t *testing.T, store discovery.DiscoveryStore, lookups discoveryLookups) http.Handler {
 	t.Helper()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -112,7 +178,7 @@ func newDiscoveryRouter(t *testing.T, store discovery.DiscoveryStore) http.Handl
 		t.Fatalf("discovery.NewService() error = %v, want nil", err)
 	}
 
-	handler, err := NewDiscoveryHandler(service, &fakeRootedService{}, logger)
+	handler, err := NewDiscoveryHandler(service, lookups.authors, lookups.rooted, lookups.media, lookups.reactions, lookups.stats, logger)
 	if err != nil {
 		t.Fatalf("NewDiscoveryHandler() error = %v, want nil", err)
 	}
@@ -139,6 +205,14 @@ func discoveryStory(place string, index int) stories.Story {
 		CreatedAt:           testNow.Add(time.Duration(index) * time.Second),
 		UpdatedAt:           testNow.Add(time.Duration(index) * time.Second),
 	}
+}
+
+// discoveryStoryAt is discoveryStory with an explicit country, so a test can
+// prove the ?country= filter.
+func discoveryStoryAt(place string, country *string, index int) stories.Story {
+	story := discoveryStory(place, index)
+	story.PlaceCountry = country
+	return story
 }
 
 // discoverableID renders a canonical UUID-shaped id from a sequence number.
@@ -379,5 +453,144 @@ func TestDiscoveryPlaceStoriesStoreErrorIs500(t *testing.T) {
 	}
 	if code := decodedErrorCode(t, recorder); code != codeInternal {
 		t.Errorf("error code = %q, want %q", code, codeInternal)
+	}
+}
+
+// TestDiscoveryPlaceStoriesFiltersByCountry proves the ?country= parameter
+// narrows a place page to one country, that its reserved "null" value selects the
+// stories which record no country, and that an absent parameter lists the whole
+// place — so a country-scoped cluster's page matches its story count
+// (KNOT-020e-fix2).
+func TestDiscoveryPlaceStoriesFiltersByCountry(t *testing.T) {
+	china := "China"
+	france := "France"
+
+	store := &memoryDiscoveryStore{
+		stories: []stories.Story{
+			discoveryStoryAt("Beijing", &china, 1),
+			discoveryStoryAt("Beijing", &china, 2),
+			discoveryStoryAt("Beijing", nil, 3),
+			discoveryStoryAt("Beijing", &france, 4),
+		},
+	}
+	handler := newDiscoveryRouter(t, store)
+
+	cases := []struct {
+		name        string
+		query       string
+		want        int
+		wantCountry discovery.PlaceCountryFilter
+	}{
+		{
+			name:        "an absent country lists the whole place",
+			query:       "",
+			want:        4,
+			wantCountry: discovery.PlaceCountryFilter{},
+		},
+		{
+			name:        "a named country narrows the page",
+			query:       "?country=China",
+			want:        2,
+			wantCountry: discovery.PlaceCountryFilter{Name: "China"},
+		},
+		{
+			name:        "the null sentinel selects the country-less stories",
+			query:       "?country=null",
+			want:        1,
+			wantCountry: discovery.PlaceCountryFilter{Absent: true},
+		},
+		{
+			name:        "an unknown country matches nothing rather than failing",
+			query:       "?country=Atlantis",
+			want:        0,
+			wantCountry: discovery.PlaceCountryFilter{Name: "Atlantis"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := doRequest(handler, http.MethodGet, "/discovery/places/Beijing"+tc.query, "")
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+			}
+
+			var body placeStoriesResponse
+			decodeBody(t, recorder, &body)
+			if len(body.Stories) != tc.want {
+				t.Fatalf("stories = %d, want %d", len(body.Stories), tc.want)
+			}
+			if store.gotCountry != tc.wantCountry {
+				t.Errorf("store country filter = %+v, want %+v", store.gotCountry, tc.wantCountry)
+			}
+			if store.gotPlace != "beijing" {
+				t.Errorf("store place = %q, want %q (normalised)", store.gotPlace, "beijing")
+			}
+		})
+	}
+}
+
+// TestDiscoveryPlaceStoriesCarriesFeedEnrichment proves a place page's stories
+// carry the same enrichment the feed's do — author attribution, the media
+// preview, the aggregate counts, and the reactions — so a story reads identically
+// in both places (KNOT-020e-fix2).
+func TestDiscoveryPlaceStoriesCarriesFeedEnrichment(t *testing.T) {
+	story := discoveryStory("Cape Town", 7)
+	storyID := story.ID
+
+	lookups := inertDiscoveryLookups()
+	lookups.authors = &fakeAuthorService{users: map[string]*identity.User{
+		testUserID: {ID: testUserID, DisplayName: "Ada Lovelace"},
+	}}
+	lookups.media = &fakeStoryMediaLookup{first: map[string]storymedia.StoryMedia{
+		storyID: {
+			ID:        "33333333-3333-4333-8333-333333333333",
+			StoryID:   storyID,
+			MediaType: storymedia.MediaTypeVideo,
+		},
+	}}
+	lookups.stats = &fakeStoryStatsLookup{byStory: map[string]storystats.Counts{
+		storyID: {Versions: 4, Languages: 3, Comments: 14, Media: 1},
+	}}
+	lookups.reactions = &fakeReactionsLookup{
+		summaries: map[string]reactions.Summary{storyID: {RingsTrue: 2}},
+	}
+
+	handler := newDiscoveryRouterWithLookups(t, &memoryDiscoveryStore{stories: []stories.Story{story}}, lookups)
+
+	recorder := doRequest(handler, http.MethodGet, "/discovery/places/Cape%20Town", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body placeStoriesResponse
+	decodeBody(t, recorder, &body)
+	if len(body.Stories) != 1 {
+		t.Fatalf("stories = %d, want 1", len(body.Stories))
+	}
+
+	got := body.Stories[0]
+	if got.AuthorDisplayName != "Ada Lovelace" {
+		t.Errorf("author_display_name = %q, want %q", got.AuthorDisplayName, "Ada Lovelace")
+	}
+	if got.AuthorAvatarURL != nil {
+		t.Errorf("author_avatar_url = %v, want null (this author has no avatar)", got.AuthorAvatarURL)
+	}
+	if got.VersionCount != 4 || got.LanguageCount != 3 || got.CommentCount != 14 || got.MediaCount != 1 {
+		t.Errorf(
+			"counts = versions %d, languages %d, comments %d, media %d, want 4/3/14/1",
+			got.VersionCount, got.LanguageCount, got.CommentCount, got.MediaCount,
+		)
+	}
+	if got.FirstMediaType == nil || *got.FirstMediaType != "video" {
+		t.Errorf("first_media_type = %v, want video", got.FirstMediaType)
+	}
+	if got.FirstMediaURL == nil || !strings.HasSuffix(*got.FirstMediaURL, "/content") {
+		t.Errorf("first_media_url = %v, want the media content path", got.FirstMediaURL)
+	}
+	if got.Reactions.RingsTrue != 2 {
+		t.Errorf("reactions.rings_true = %d, want 2", got.Reactions.RingsTrue)
+	}
+	if got.MyReactions == nil {
+		t.Error("my_reactions = null, want an array")
 	}
 }

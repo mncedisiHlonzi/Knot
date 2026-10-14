@@ -23,6 +23,14 @@ type PlaceStoriesScreenProps = {
   /** The place whose stories are shown, as it was named by the server. */
   readonly place: string;
   /**
+   * The country the place's cluster was keyed by, or null when the cluster's
+   * stories record none. It narrows every page to that cluster's own stories, so
+   * the list below matches the `storyCount` in the header. Left undefined, the
+   * page lists every story at the place name whatever country each records
+   * (KNOT-020e-fix2).
+   */
+  readonly country?: string | null;
+  /**
    * How many stories the place holds, and how they split across the two pillars.
    *
    * Both come from the place's cluster on the Discovery Map, which is where this
@@ -47,6 +55,10 @@ type PlaceStoriesScreenProps = {
 /**
  * Every story told at one place, newest first.
  *
+ * The place is narrowed to the country its cluster was keyed by, so the list
+ * matches the header's story count; a cluster with no country asks for the
+ * stories that record none (KNOT-020e-fix2).
+ *
  * Paging is the same keyset cursor the feed uses: each page returns an opaque
  * `next_cursor` sent back verbatim for the following page, and an empty cursor
  * means the end. Reaching the end of the list asks for the next page;
@@ -55,12 +67,14 @@ type PlaceStoriesScreenProps = {
  *
  * The design is the reference's (KNOT-020e): the place is the screen's headline
  * with its totals beneath it, and its stories are the same `FeedEntry` the Feed
- * renders, so a story reads the same in both places. Nothing here auto-plays:
- * the Feed is the only screen that does (KNOT-ADR-068), so a video entry renders
- * on its paused frame.
+ * renders — carrying the same author, media, and count enrichment the feed does
+ * (KNOT-020e-fix2) — so a story reads the same in both places. Nothing here
+ * auto-plays: the Feed is the only screen that does (KNOT-ADR-068), so a video
+ * entry renders on its paused frame.
  */
 export default function PlaceStoriesScreen({
   place,
+  country,
   storyCount,
   pillarCounts,
   token,
@@ -86,7 +100,7 @@ export default function PlaceStoriesScreen({
       try {
         const page = await discoveryApi.listStoriesAtPlace(
           place,
-          { limit: PLACE_PAGE_SIZE },
+          { country, limit: PLACE_PAGE_SIZE },
           token,
         );
         setStories(page.stories);
@@ -98,7 +112,7 @@ export default function PlaceStoriesScreen({
         setRefreshing(false);
       }
     },
-    [place, token],
+    [country, place, token],
   );
 
   useEffect(() => {
@@ -117,6 +131,7 @@ export default function PlaceStoriesScreen({
       const page = await discoveryApi.listStoriesAtPlace(
         place,
         {
+          country,
           cursor: nextCursor,
           limit: PLACE_PAGE_SIZE,
         },
@@ -131,7 +146,7 @@ export default function PlaceStoriesScreen({
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, nextCursor, place, token]);
+  }, [country, loadingMore, nextCursor, place, token]);
 
   return (
     <View style={styles.container}>

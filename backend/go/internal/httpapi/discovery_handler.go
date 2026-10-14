@@ -18,30 +18,50 @@ import (
 // handler tests free of a database.
 type DiscoveryService interface {
 	ListClusters(ctx context.Context, filter discovery.ClusterFilter) ([]discovery.PlaceCluster, error)
-	ListStoriesAtPlace(ctx context.Context, place string, cursor string, limit int) ([]stories.Story, string, error)
+	ListStoriesAtPlace(ctx context.Context, place string, country string, cursor string, limit int) ([]stories.Story, string, error)
 }
 
 // DiscoveryHandler serves the discovery endpoints.
 type DiscoveryHandler struct {
-	service DiscoveryService
-	rooted  RootedLookup
-	logger  *slog.Logger
+	service   DiscoveryService
+	authors   AuthorLookup
+	rooted    RootedLookup
+	media     StoryMediaLookup
+	reactions ReactionsLookup
+	stats     StoryStatsLookup
+	logger    *slog.Logger
 }
 
-// NewDiscoveryHandler returns a handler backed by service. The rooted lookup is
-// used to attach each story author's inline Rooted summary to a place's stories,
-// exactly as the feed does.
-func NewDiscoveryHandler(service DiscoveryService, rooted RootedLookup, logger *slog.Logger) (*DiscoveryHandler, error) {
+// NewDiscoveryHandler returns a handler backed by service. The lookups are the
+// same enrichment dependencies the stories handler uses, so a place's stories are
+// decorated identically to the feed's: the author lookup names and pictures each
+// author, the rooted lookup attaches their inline Rooted summary, the media
+// lookup attaches the single-item preview, the reactions lookup attaches the
+// counts and the reader's own signals, and the stats lookup attaches the
+// aggregate counts.
+func NewDiscoveryHandler(service DiscoveryService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, stats StoryStatsLookup, logger *slog.Logger) (*DiscoveryHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: discovery handler requires a service")
+	}
+	if authors == nil {
+		return nil, fmt.Errorf("httpapi: discovery handler requires an author lookup")
 	}
 	if rooted == nil {
 		return nil, fmt.Errorf("httpapi: discovery handler requires a rooted lookup")
 	}
+	if media == nil {
+		return nil, fmt.Errorf("httpapi: discovery handler requires a story media lookup")
+	}
+	if reactions == nil {
+		return nil, fmt.Errorf("httpapi: discovery handler requires a reactions lookup")
+	}
+	if stats == nil {
+		return nil, fmt.Errorf("httpapi: discovery handler requires a story stats lookup")
+	}
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: discovery handler requires a logger")
 	}
-	return &DiscoveryHandler{service: service, rooted: rooted, logger: logger}, nil
+	return &DiscoveryHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, stats: stats, logger: logger}, nil
 }
 
 // clusterResponse is the public projection of a place cluster. It is an explicit
@@ -105,6 +125,17 @@ func (h *DiscoveryHandler) Clusters(w http.ResponseWriter, r *http.Request) {
 // any casing: the service normalises it before matching. A place with no stories
 // is a 200 with an empty array, not a 404, so a client can tell "no stories here"
 // from "this endpoint is wrong".
+//
+// The optional `country` query parameter narrows the page to one country, which
+// is how a place cluster — keyed by (place, country) — is opened without also
+// pulling in the same-named places in other countries. Its reserved value "null"
+// asks for the stories that record no country at all. An absent parameter lists
+// every story at the place, which is what the endpoint did before KNOT-020e-fix2.
+//
+// Each story is projected onto the same response the feed uses and enriched
+// through the same helper, so a story carries identical fields — author name and
+// avatar, inline Rooted summary, media preview, aggregate counts, and reactions —
+// whether it is read from the feed or from a place.
 func (h *DiscoveryHandler) PlaceStories(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
@@ -114,23 +145,33 @@ func (h *DiscoveryHandler) PlaceStories(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	page, next, err := h.service.ListStoriesAtPlace(r.Context(), r.PathValue("place"), query.Get("cursor"), limit)
+	page, next, err := h.service.ListStoriesAtPlace(
+		r.Context(),
+		r.PathValue("place"),
+		query.Get("country"),
+		query.Get("cursor"),
+		limit,
+	)
 	if err != nil {
 		h.writeServiceError(w, r, err)
 		return
 	}
 
 	items := make([]storyResponse, 0, len(page))
-	authorIDs := make([]string, 0, len(page))
 	for _, story := range page {
-		authorIDs = append(authorIDs, story.AuthorID)
+		items = append(items, newStoryResponse(story))
 	}
-	summaries := authorRootedSummaries(r.Context(), h.rooted, h.logger, authorIDs)
-	for _, story := range page {
-		item := newStoryResponse(story)
-		item.AuthorRooted = summaries[story.AuthorID]
-		items = append(items, item)
-	}
+
+	// The same batched enrichment the feed applies, through the same helper, so a
+	// story reads identically in both places (KNOT-020e-fix2).
+	storyPageLookups{
+		authors:   h.authors,
+		rooted:    h.rooted,
+		media:     h.media,
+		reactions: h.reactions,
+		stats:     h.stats,
+		logger:    h.logger,
+	}.enrich(r.Context(), items)
 
 	writeJSON(w, http.StatusOK, placeStoriesResponse{Stories: items, NextCursor: next})
 }

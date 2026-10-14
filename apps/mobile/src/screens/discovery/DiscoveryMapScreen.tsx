@@ -275,7 +275,7 @@ export default function DiscoveryMapScreen({
               onSelected={() => onOpenPlace(cluster)}
             >
               {/* PointAnnotation renders its child as the marker: the place's story
-                  count in an indigo circle, ringed in canvas white so it reads on
+                  count in an indigo circle, ringed in the navy ink so it reads on
                   the light map. The count is now the whole place's, not one
                   coordinate's, so fewer and larger markers appear (KNOT-020e-fix). */}
               <View style={[styles.marker, { borderRadius: size / 2, height: size, width: size }]}>
@@ -406,7 +406,10 @@ const styles = StyleSheet.create({
   marker: {
     alignItems: 'center',
     backgroundColor: colors.brand.primary,
-    borderColor: colors.bg.canvas,
+    // A navy ring rather than the canvas white: on Mapbox's Light style a white
+    // ring disappears into the pale basemap, so the marker's edge uses the
+    // primary ink instead (KNOT-020e-fix2).
+    borderColor: colors.text.primary,
     borderWidth: 2,
     justifyContent: 'center',
   },

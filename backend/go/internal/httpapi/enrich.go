@@ -406,3 +406,83 @@ func storyStats(ctx context.Context, lookup StoryStatsLookup, logger *slog.Logge
 
 	return counts
 }
+
+// storyPageLookups bundles the batched reads that decorate a page of story
+// responses: the author attribution and inline Rooted summary of each story's
+// author, the story's media preview, its aggregate counts, and its reactions.
+//
+// It exists so that every surface which lists stories — the feed (GET /stories)
+// and a place page (GET /discovery/places/{place}) — decorates them through one
+// code path. A story then carries the same fields with the same values wherever
+// it is listed, and the two surfaces cannot drift apart (KNOT-020e-fix2).
+type storyPageLookups struct {
+	authors   AuthorLookup
+	rooted    RootedLookup
+	media     StoryMediaLookup
+	reactions ReactionsLookup
+	stats     StoryStatsLookup
+	logger    *slog.Logger
+}
+
+// enrich decorates a page of story responses in place.
+//
+// It is one batched read per lookup regardless of page size, so listing a page
+// of stories is a fixed number of queries rather than one per row. Every
+// enrichment is supplementary: a lookup failure is logged and swallowed by the
+// helper it belongs to, so a story stays readable when a dependency is down.
+func (l storyPageLookups) enrich(ctx context.Context, items []storyResponse) {
+	if len(items) == 0 {
+		return
+	}
+
+	ids := make([]string, 0, len(items))
+	authorIDs := make([]string, 0, len(items))
+	for i := range items {
+		ids = append(ids, items[i].ID)
+		authorIDs = append(authorIDs, items[i].AuthorID)
+	}
+
+	// One batched read names and pictures every author on the page, and one more
+	// attaches that author's inline Rooted summary.
+	attributions := authorAttributions(ctx, l.authors, l.logger, authorIDs)
+	for i := range items {
+		attribution := attributions[items[i].AuthorID]
+		items[i].AuthorDisplayName = attribution.DisplayName
+		items[i].AuthorAvatarURL = optionalString(attribution.AvatarURL)
+	}
+
+	rootedSummaries := authorRootedSummaries(ctx, l.rooted, l.logger, authorIDs)
+	for i := range items {
+		items[i].AuthorRooted = rootedSummaries[items[i].AuthorID]
+	}
+
+	// One batched read attaches a single-item media preview to each story.
+	previews := storyMediaPreviews(ctx, l.media, l.logger, ids)
+	for i := range items {
+		if preview, ok := previews[items[i].ID]; ok {
+			items[i].Media = preview
+		}
+	}
+
+	// One batched read attaches the aggregate counts; the first media item's type
+	// and URL come from the preview just attached, so the fields cannot disagree
+	// with the media array.
+	counts := storyStats(ctx, l.stats, l.logger, ids)
+	for i := range items {
+		entry := counts[items[i].ID]
+		items[i].VersionCount = entry.Versions
+		items[i].LanguageCount = entry.Languages
+		items[i].CommentCount = entry.Comments
+		items[i].MediaCount = entry.Media
+		items[i].FirstMediaType, items[i].FirstMediaURL = firstMediaFields(items[i].Media)
+	}
+
+	// One batched pair of reads decorates the page with the reaction counts and,
+	// when a reader is signed in, the signals that reader holds.
+	readerID, _ := UserIDFromContext(ctx)
+	reactionData := loadReactions(ctx, l.reactions, l.logger, reactions.EntityStory, readerID, ids)
+	for i := range items {
+		items[i].Reactions = reactionData.Counts[items[i].ID]
+		items[i].MyReactions = orEmptyStrings(reactionData.Mine[items[i].ID])
+	}
+}

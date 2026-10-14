@@ -2174,3 +2174,33 @@ position. `place` keeps the earliest member's original capitalisation (the SQL o
 `created_at, id` and takes the first). Every story at a place still opens its own collection
 through `GET /discovery/places/{place}`, which already matched on the normalised name, so a tap on
 the aggregated "Beijing" cluster lists every Beijing story, coordinates notwithstanding.
+
+## Scope note — the place endpoint is country-scoped on request and enriched like the feed (KNOT-020e-fix2)
+
+**Not a new ADR.** This records three connected changes to `GET /discovery/places/{place}` so its
+behaviour is not mistaken for a client bug or re-litigated later.
+
+**Decision.** (1) The endpoint accepts an optional `country` query parameter. When present, the page
+is narrowed to `place_country = <value>`, with the reserved literal `null` meaning
+`place_country IS NULL`. An absent parameter lists the whole place name, unchanged. (2) The
+endpoint's stories are enriched with the feed's batched lookups — `authorAttributions`,
+`authorRootedSummaries`, `storyMediaPreviews`, `storyStats` (+ `firstMediaFields`), and
+`loadReactions` — through the same internal helper the feed uses. (3) The map marker's ring changed
+from the canvas white to the navy ink (`colors.text.primary`).
+
+**Why.** KNOT-020e-fix keyed a cluster by `(place, country)`, but the place page still matched on the
+place name alone. Tapping a "Beijing / China" cluster whose `story_count` was 3 therefore opened a
+list of every Beijing story — including the country-less and the French ones — so the header and the
+list disagreed. Separately, KNOT-020e disclosed that the place endpoint ran only `newStoryResponse`
+plus the rooted summary, so a Place Stories entry rendered without an author name or avatar, without
+media, and without a meta line. On device, the white marker ring also vanished into Mapbox's Light
+basemap.
+
+**Consequences.** The country filter is an exact match on the stored `place_country`, because a
+client passes back verbatim what a cluster reported; there is no index on `place_country`, so the
+filter is a plain `WHERE` clause on top of the existing `stories_approximate_location_lower_idx`
+lookup, and no migration was needed. The word `null` is now reserved as the "records no country"
+sentinel, so a country literally named "null" cannot be matched by name. The enrichment is shared
+with the feed through `storyPageLookups.enrich`, so the two surfaces cannot drift — which is why the
+feed's own list handler was refactored onto the same helper rather than a second copy of the
+sequence being written. The cluster response shape is unchanged.

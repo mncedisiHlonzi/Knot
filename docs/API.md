@@ -1201,13 +1201,29 @@ Returns **200** with one page of the stories at a place, newest first:
 
 The `{place}` path segment is URL-encoded by the client and decoded by the server, and the
 match is case-insensitive: `GET /discovery/places/Cape%20Town` and
-`/discovery/places/cape%20town` are the same place. Each story is the
-[story object](#the-story-object), including `author_rooted` enrichment.
+`/discovery/places/cape%20town` are the same place.
 
-| Query    | Required | Rules                                                        |
-| -------- | -------- | ------------------------------------------------------------ |
-| `cursor` | no       | A `next_cursor` from a previous page. Omit for the first page  |
-| `limit`  | no       | 1-50. Defaults to 20; a larger value is clamped to 50          |
+Each story is the [story object](#the-story-object), carrying the **same enrichment the feed
+carries** (KNOT-020e-fix2): `author_display_name` and `author_avatar_url` from one batched
+identity read, `author_rooted`, the single-item `media` preview with `media_count` /
+`first_media_type` / `first_media_url`, the `version_count` / `language_count` / `comment_count`
+aggregates, and the `reactions` / `my_reactions` pair. A story read here and the same story read
+from `GET /stories` carry identical fields with identical values.
+
+| Query     | Required | Rules                                                           |
+| --------- | -------- | --------------------------------------------------------------- |
+| `country` | no       | Narrows the page to one country. The literal `null` selects the stories that record **no** country |
+| `cursor`  | no       | A `next_cursor` from a previous page. Omit for the first page  |
+| `limit`   | no       | 1-50. Defaults to 20; a larger value is clamped to 50          |
+
+`country` is how a country-scoped cluster is opened: a cluster is keyed by `(place, country)`
+(KNOT-020e-fix), so passing its `place_country` back lists exactly the stories its `story_count`
+counts. Omitting the parameter — the behaviour before KNOT-020e-fix2 — lists every story with that
+place name, including the same-named places in other countries. The value is matched verbatim
+against the stored `place_country`, because a client passes back exactly what a cluster reported.
+The word `null` is **reserved** to mean "records no country", so a story whose `place_country` is
+`null` is reachable only through it. An unrecognised country is not an error: it matches nothing
+and returns an empty page, exactly as an unknown place does.
 
 `stories` is always an array, never `null`, and `next_cursor` is always present. Paging is
 keyset, exactly as for the feed. A place with no stories is **200** with `"stories": []`, not

@@ -102,3 +102,18 @@ func TestClusterFilterZeroValueIsUnfiltered(t *testing.T) {
 		t.Errorf("limit = %d, want 0", filter.Limit)
 	}
 }
+
+// TestPlaceCountryFilterEnabled documents that the zero filter does not narrow a
+// place page, so "every story at this place" is the default and only a named or
+// explicitly-absent country opts in (KNOT-020e-fix2).
+func TestPlaceCountryFilterEnabled(t *testing.T) {
+	if (PlaceCountryFilter{}).Enabled() {
+		t.Error("the zero filter is enabled, want the disabled default")
+	}
+	if !(PlaceCountryFilter{Name: "China"}).Enabled() {
+		t.Error("a named country is disabled, want enabled")
+	}
+	if !(PlaceCountryFilter{Absent: true}).Enabled() {
+		t.Error("the absent filter is disabled, want enabled")
+	}
+}

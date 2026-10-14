@@ -396,10 +396,7 @@ func newConversationsRouter(t *testing.T, logger *slog.Logger, service Conversat
 		t.Fatalf("NewRootedHandler() error = %v, want nil", err)
 	}
 
-	discoveryHandler, err := NewDiscoveryHandler(fakeDiscoveryService{}, &fakeRootedService{}, logger)
-	if err != nil {
-		t.Fatalf("NewDiscoveryHandler() error = %v, want nil", err)
-	}
+	discoveryHandler := newTestDiscoveryHandler(t, logger, fakeDiscoveryService{})
 
 	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID}, logger)
 	if err != nil {

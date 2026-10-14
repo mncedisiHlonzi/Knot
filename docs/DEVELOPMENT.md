@@ -282,6 +282,15 @@ handle — no drag gesture), and discovery now clusters by **place and country**
 coordinate, averaging a cluster's coordinates to place its marker. The rationale is recorded as a
 scope note in [DECISIONS.md](DECISIONS.md); the API field notes are in [API.md](API.md).
 
+**KNOT-020e-fix2** closed the three gaps that pass left on device. `GET /discovery/places/{place}`
+now takes an optional `country` parameter (the reserved literal `null` meaning "records no country"),
+so a country-scoped cluster's page lists exactly the stories its header counts. The place page is
+enriched through the same `storyPageLookups.enrich` helper the feed uses, so a story carries
+identical fields — author, avatar, media preview, counts, reactions — in both places. And the map
+marker's ring is the navy ink rather than the canvas white, which disappeared into Mapbox's Light
+basemap. The `?country=` contract is in [API.md](API.md) and the rationale in
+[DECISIONS.md](DECISIONS.md).
+
 The `typeScale` **weights** are one step heavier than the reference snapshot for every token but
 the three body styles (`reading`, `body`, `bodyS`), which stay at 400 so prose keeps its
 readability — a deliberate divergence from `docs/design-reference/tokens.json` requested by the

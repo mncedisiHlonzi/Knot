@@ -101,10 +101,7 @@ func newTestRouter(t *testing.T, logger *slog.Logger, authHandler *AuthHandler) 
 		t.Fatalf("NewRootedHandler() error = %v, want nil", err)
 	}
 
-	discoveryHandler, err := NewDiscoveryHandler(fakeDiscoveryService{}, &fakeRootedService{}, logger)
-	if err != nil {
-		t.Fatalf("NewDiscoveryHandler() error = %v, want nil", err)
-	}
+	discoveryHandler := newTestDiscoveryHandler(t, logger, fakeDiscoveryService{})
 
 	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID}, logger)
 	if err != nil {
@@ -590,10 +587,7 @@ func TestNewRouterRejectsMissingDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRootedHandler() error = %v, want nil", err)
 	}
-	discoveryHandler, err := NewDiscoveryHandler(fakeDiscoveryService{}, &fakeRootedService{}, logger)
-	if err != nil {
-		t.Fatalf("NewDiscoveryHandler() error = %v, want nil", err)
-	}
+	discoveryHandler := newTestDiscoveryHandler(t, logger, fakeDiscoveryService{})
 	avatarHandler := newTestAvatarHandler(t, logger)
 	storyMediaHandler := newTestStoryMediaHandler(t, logger)
 	notificationsHandler := newTestNotificationsHandler(t, logger)

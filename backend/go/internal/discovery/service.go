@@ -54,14 +54,20 @@ func (s *Service) ListClusters(ctx context.Context, filter ClusterFilter) ([]Pla
 // plus the cursor that resumes after it.
 //
 // The place is matched on its normalised form: it is trimmed and lower-cased
-// before the store sees it, so the caller's original casing does not matter. An
-// empty rawCursor asks for the first page. The returned next cursor is the empty
-// string when the page is the last one, mirroring the feed, so the HTTP layer
-// signals "no more pages" without inventing a null-versus-absent distinction.
+// before the store sees it, so the caller's original casing does not matter. The
+// optional rawCountry narrows the page to one country — the one a cluster was
+// keyed by — and is interpreted by parsePlaceCountry. An empty rawCursor asks for
+// the first page. The returned next cursor is the empty string when the page is
+// the last one, mirroring the feed, so the HTTP layer signals "no more pages"
+// without inventing a null-versus-absent distinction.
 //
 // A place with no stories is not an error: the store returns an empty page, and
 // the caller answers 200 with an empty array.
-func (s *Service) ListStoriesAtPlace(ctx context.Context, place string, rawCursor string, limit int) ([]stories.Story, string, error) {
+//
+// An empty page is not the same as rejecting the input: an unrecognised country
+// simply matches nothing, exactly as an unknown place does, so there is no
+// validation failure to report and no way to enumerate another place's countries.
+func (s *Service) ListStoriesAtPlace(ctx context.Context, place string, rawCountry string, rawCursor string, limit int) ([]stories.Story, string, error) {
 	placeLower := strings.ToLower(strings.TrimSpace(place))
 	if placeLower == "" {
 		return nil, "", &ValidationError{Field: "place", Message: "is required"}
@@ -89,7 +95,7 @@ func (s *Service) ListStoriesAtPlace(ctx context.Context, place string, rawCurso
 		cursor = &decoded
 	}
 
-	page, next, err := s.store.ListStoriesAtPlace(ctx, placeLower, cursor, limit)
+	page, next, err := s.store.ListStoriesAtPlace(ctx, placeLower, parsePlaceCountry(rawCountry), cursor, limit)
 	if err != nil {
 		return nil, "", fmt.Errorf("discovery: list stories at place: %w", err)
 	}
@@ -106,6 +112,33 @@ func (s *Service) ListStoriesAtPlace(ctx context.Context, place string, rawCurso
 	}
 
 	return page, nextCursor, nil
+}
+
+// placeCountryAbsentToken is the `?country=` value that asks for the stories
+// which record no country. The word "null" is reserved for this purpose, so a
+// country literally named "null" cannot be matched by name (KNOT-020e-fix2).
+const placeCountryAbsentToken = "null"
+
+// parsePlaceCountry turns the raw `?country=` query value into a store filter.
+//
+// An absent or blank value does not narrow the page at all — the "every story at
+// this place" case. The sentinel "null" (any casing, after trimming) asks for the
+// stories that record no country, which is how a country-less cluster's page is
+// opened. Anything else is the exact country to match.
+//
+// There is no validation failure: an unknown country is a valid filter that
+// matches nothing, exactly as an unknown place does.
+func parsePlaceCountry(raw string) PlaceCountryFilter {
+	value := strings.TrimSpace(raw)
+
+	switch {
+	case value == "":
+		return PlaceCountryFilter{}
+	case strings.EqualFold(value, placeCountryAbsentToken):
+		return PlaceCountryFilter{Absent: true}
+	default:
+		return PlaceCountryFilter{Name: value}
+	}
 }
 
 // validateClusterFilter applies every filter rule and returns the filter to pass

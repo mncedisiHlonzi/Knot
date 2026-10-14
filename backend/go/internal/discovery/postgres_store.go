@@ -179,10 +179,16 @@ func (s *PostgresStore) ListClusters(ctx context.Context, filter ClusterFilter) 
 //
 // The place is expected already normalised (trimmed and lower-cased) by the
 // service, so the equality test uses the `stories_approximate_location_lower_idx`
-// index directly. Pagination is keyset, exactly as for the feed: the ORDER BY key
-// is (created_at DESC, id DESC), the page predicate is the matching row
-// comparison, and one extra row is fetched to decide whether more remain.
-func (s *PostgresStore) ListStoriesAtPlace(ctx context.Context, placeLower string, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error) {
+// index directly. country narrows the page further, to the stories a cluster with
+// that country holds; its zero value lists every story at the place, including
+// the ones from a different country with the same name. The country predicate is
+// appended after the cursor predicate so the cursor keeps its fixed $2/$3
+// placeholders (KNOT-020e-fix2).
+//
+// Pagination is keyset, exactly as for the feed: the ORDER BY key is
+// (created_at DESC, id DESC), the page predicate is the matching row comparison,
+// and one extra row is fetched to decide whether more remain.
+func (s *PostgresStore) ListStoriesAtPlace(ctx context.Context, placeLower string, country PlaceCountryFilter, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error) {
 	query := `SELECT ` + storyColumns + storyFrom + ` WHERE s.approximate_location_lower = $1`
 	args := []any{placeLower}
 
@@ -192,6 +198,17 @@ func (s *PostgresStore) ListStoriesAtPlace(ctx context.Context, placeLower strin
 		// DecodeCursor has already proven the id is canonical UUID text.
 		query += ` AND (s.created_at, s.id) < ($2::timestamptz, $3::uuid)`
 		args = append(args, cursor.CreatedAt(), cursor.ID())
+	}
+
+	// Narrow to one country. A cluster with no country is keyed by a NULL country,
+	// so "no country" is an IS NULL test rather than an equality one. The country
+	// is matched verbatim: the client passes back exactly the string the cluster
+	// reported.
+	if country.Absent {
+		query += ` AND s.place_country IS NULL`
+	} else if country.Name != "" {
+		args = append(args, country.Name)
+		query += fmt.Sprintf(` AND s.place_country = $%d`, len(args))
 	}
 
 	// Hide stories authored by anyone on either side of a block with the viewer. It

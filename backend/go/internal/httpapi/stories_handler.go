@@ -251,59 +251,23 @@ func (h *StoriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	items := make([]storyResponse, 0, len(page))
-	ids := make([]string, 0, len(page))
-	authorIDs := make([]string, 0, len(page))
 	for _, story := range page {
 		items = append(items, newStoryResponse(story))
-		ids = append(ids, story.ID)
-		authorIDs = append(authorIDs, story.AuthorID)
 	}
 
-	// One batched read names and pictures every author on the page.
-	attributions := authorAttributions(r.Context(), h.authors, h.logger, authorIDs)
-	for i := range items {
-		attribution := attributions[items[i].AuthorID]
-		items[i].AuthorDisplayName = attribution.DisplayName
-		items[i].AuthorAvatarURL = optionalString(attribution.AvatarURL)
-	}
-
-	// One batched read attaches the author's inline Rooted summary to every story
-	// on the page, the same enrichment the detail and version routes carry. The
-	// feed was deliberately left out of this once (KNOT-015b); KNOT-020c-fix4
-	// reverses that, so a feed card can show the quiet Rooted line.
-	rootedSummaries := authorRootedSummaries(r.Context(), h.rooted, h.logger, authorIDs)
-	for i := range items {
-		items[i].AuthorRooted = rootedSummaries[items[i].AuthorID]
-	}
-
-	previews := storyMediaPreviews(r.Context(), h.media, h.logger, ids)
-	for i := range items {
-		if preview, ok := previews[items[i].ID]; ok {
-			items[i].Media = preview
-		}
-	}
-
-	// One batched read attaches the version, language, comment, and media counts
-	// to the whole page, and the first media item's type and URL come from the
-	// preview just attached (KNOT-020c-fix).
-	counts := storyStats(r.Context(), h.stats, h.logger, ids)
-	for i := range items {
-		entry := counts[items[i].ID]
-		items[i].VersionCount = entry.Versions
-		items[i].LanguageCount = entry.Languages
-		items[i].CommentCount = entry.Comments
-		items[i].MediaCount = entry.Media
-		items[i].FirstMediaType, items[i].FirstMediaURL = firstMediaFields(items[i].Media)
-	}
-
-	// One batched pair of reads decorates the whole page with reaction counts and
-	// the reader's own signals (KNOT-ADR-051).
-	readerID, _ := UserIDFromContext(r.Context())
-	reactionData := loadReactions(r.Context(), h.reactions, h.logger, reactions.EntityStory, readerID, ids)
-	for i := range items {
-		items[i].Reactions = reactionData.Counts[items[i].ID]
-		items[i].MyReactions = orEmptyStrings(reactionData.Mine[items[i].ID])
-	}
+	// One batched read per lookup decorates the whole page: author attribution,
+	// the author's inline Rooted summary, the media preview, the aggregate counts
+	// and first-media fields, and the reactions. The discovery place page enriches
+	// through this same helper, so a story carries identical fields wherever it is
+	// listed (KNOT-020e-fix2).
+	storyPageLookups{
+		authors:   h.authors,
+		rooted:    h.rooted,
+		media:     h.media,
+		reactions: h.reactions,
+		stats:     h.stats,
+		logger:    h.logger,
+	}.enrich(r.Context(), items)
 
 	writeJSON(w, http.StatusOK, listStoriesResponse{Stories: items, NextCursor: next})
 }

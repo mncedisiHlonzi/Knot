@@ -70,6 +70,12 @@ type Overlay =
   | {
       readonly name: 'placeStories';
       readonly place: string;
+      /**
+       * The country the place's cluster was keyed by, or null when its stories
+       * record none. It narrows the place page to that cluster's own stories, so
+       * the page's list matches the story count in its header (KNOT-020e-fix2).
+       */
+      readonly country: string | null;
       readonly storyCount: number;
       readonly pillarCounts: Readonly<Record<string, number>>;
     }
@@ -248,6 +254,7 @@ export default function App(): React.ReactElement {
                 pushOverlay(stack, {
                   name: 'placeStories',
                   place: cluster.place,
+                  country: cluster.place_country,
                   storyCount: cluster.story_count,
                   pillarCounts: cluster.pillar_counts,
                 }),
@@ -538,6 +545,7 @@ export default function App(): React.ReactElement {
         return (
           <PlaceStoriesScreen
             place={overlay.place}
+            country={overlay.country}
             storyCount={overlay.storyCount}
             pillarCounts={overlay.pillarCounts}
             token={current.accessToken}

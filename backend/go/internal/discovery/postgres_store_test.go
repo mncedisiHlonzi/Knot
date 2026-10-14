@@ -540,7 +540,7 @@ func TestPostgresStoreListStoriesAtPlaceMatchesNormalisedPlace(t *testing.T) {
 	createStoryAt(t, pool, userID, place, "heritage", "afr", base.Add(time.Minute))
 
 	// The store expects the already-normalised place: trimmed and lower-cased.
-	page, next, err := store.ListStoriesAtPlace(ctx, strings.ToLower(place), nil, 10)
+	page, next, err := store.ListStoriesAtPlace(ctx, strings.ToLower(place), PlaceCountryFilter{}, nil, 10)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 	}
@@ -552,7 +552,7 @@ func TestPostgresStoreListStoriesAtPlaceMatchesNormalisedPlace(t *testing.T) {
 	}
 
 	// A different place returns nothing.
-	empty, _, err := store.ListStoriesAtPlace(ctx, strings.ToLower(place)+"x", nil, 10)
+	empty, _, err := store.ListStoriesAtPlace(ctx, strings.ToLower(place)+"x", PlaceCountryFilter{}, nil, 10)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace(unknown) error = %v, want nil", err)
 	}
@@ -580,7 +580,7 @@ func TestPostgresStoreListStoriesAtPlacePaginates(t *testing.T) {
 		pages     int
 	)
 	for {
-		page, next, err := store.ListStoriesAtPlace(ctx, placeLower, cursor, 2)
+		page, next, err := store.ListStoriesAtPlace(ctx, placeLower, PlaceCountryFilter{}, cursor, 2)
 		if err != nil {
 			t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 		}
@@ -619,7 +619,7 @@ func TestPostgresStoreListStoriesAtPlaceEmptyPlace(t *testing.T) {
 	_ = createUser(t, pool, prefix, "empty")
 	token := runToken()
 
-	page, next, err := store.ListStoriesAtPlace(ctx, strings.ToLower("Nowhere "+token), nil, 10)
+	page, next, err := store.ListStoriesAtPlace(ctx, strings.ToLower("Nowhere "+token), PlaceCountryFilter{}, nil, 10)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 	}
@@ -628,5 +628,128 @@ func TestPostgresStoreListStoriesAtPlaceEmptyPlace(t *testing.T) {
 	}
 	if next != nil {
 		t.Errorf("next cursor = %v, want nil", next)
+	}
+}
+
+// TestPostgresStoreListStoriesAtPlaceFiltersByCountry proves the country filter a
+// cluster's page is opened with: a named country selects only its own stories,
+// the absent filter selects only the stories that record no country, and the zero
+// filter still lists the whole place (KNOT-020e-fix2).
+func TestPostgresStoreListStoriesAtPlaceFiltersByCountry(t *testing.T) {
+	store, pool, prefix := integrationSetup(t)
+	ctx := context.Background()
+	userID := createUser(t, pool, prefix, "country")
+	token := runToken()
+
+	place := "Beijing " + token
+	china := "China"
+	france := "France"
+
+	latitude, longitude := 39.9042, 116.4074
+	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	createStoryWithCoords(t, pool, userID, place, &latitude, &longitude, &china, base)
+	createStoryWithCoords(t, pool, userID, place, &latitude, &longitude, &france, base.Add(time.Minute))
+	createStoryWithCoords(t, pool, userID, place, &latitude, &longitude, nil, base.Add(2*time.Minute))
+
+	placeLower := strings.ToLower(place)
+
+	// The zero filter is the whole place, whatever country each story records.
+	all, _, err := store.ListStoriesAtPlace(ctx, placeLower, PlaceCountryFilter{}, nil, 10)
+	if err != nil {
+		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("stories = %d, want 3 for the unfiltered place", len(all))
+	}
+
+	// A named country selects only its own story.
+	onlyChina, _, err := store.ListStoriesAtPlace(ctx, placeLower, PlaceCountryFilter{Name: china}, nil, 10)
+	if err != nil {
+		t.Fatalf("ListStoriesAtPlace(China) error = %v, want nil", err)
+	}
+	if len(onlyChina) != 1 {
+		t.Fatalf("China stories = %d, want 1", len(onlyChina))
+	}
+	if onlyChina[0].PlaceCountry == nil || *onlyChina[0].PlaceCountry != china {
+		t.Errorf("country = %v, want %q", onlyChina[0].PlaceCountry, china)
+	}
+
+	// The absent filter selects the country-less stories.
+	withoutCountry, _, err := store.ListStoriesAtPlace(ctx, placeLower, PlaceCountryFilter{Absent: true}, nil, 10)
+	if err != nil {
+		t.Fatalf("ListStoriesAtPlace(absent) error = %v, want nil", err)
+	}
+	if len(withoutCountry) != 1 {
+		t.Fatalf("country-less stories = %d, want 1", len(withoutCountry))
+	}
+	if withoutCountry[0].PlaceCountry != nil {
+		t.Errorf("country = %v, want nil", withoutCountry[0].PlaceCountry)
+	}
+}
+
+// TestPostgresStoreListStoriesAtPlaceCountryWithCursor proves the country
+// predicate composes with keyset pagination: the cursor keeps its fixed
+// placeholders ($2/$3) with the country appended after them, and a
+// country-scoped page still walks cleanly to the end.
+func TestPostgresStoreListStoriesAtPlaceCountryWithCursor(t *testing.T) {
+	store, pool, prefix := integrationSetup(t)
+	ctx := context.Background()
+	userID := createUser(t, pool, prefix, "countrypage")
+	token := runToken()
+
+	place := "Beijing " + token
+	china := "China"
+	france := "France"
+
+	latitude, longitude := 39.9042, 116.4074
+	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	for i := 0; i < 3; i++ {
+		createStoryWithCoords(t, pool, userID, place, &latitude, &longitude, &china, base.Add(time.Duration(i)*time.Minute))
+	}
+	// A story in another country must never appear in a China-scoped page.
+	createStoryWithCoords(t, pool, userID, place, &latitude, &longitude, &france, base.Add(3*time.Minute))
+
+	placeLower := strings.ToLower(place)
+	filter := PlaceCountryFilter{Name: china}
+
+	var (
+		collected []string
+		cursor    *stories.Cursor
+		pages     int
+	)
+	for {
+		page, next, err := store.ListStoriesAtPlace(ctx, placeLower, filter, cursor, 2)
+		if err != nil {
+			t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
+		}
+		pages++
+		for _, story := range page {
+			if story.PlaceCountry == nil || *story.PlaceCountry != china {
+				t.Fatalf("story country = %v, want %q in a country-scoped page", story.PlaceCountry, china)
+			}
+			collected = append(collected, story.ID)
+		}
+		if next == nil {
+			break
+		}
+		cursor = next
+		if pages > 4 {
+			t.Fatal("pagination did not terminate")
+		}
+	}
+
+	if pages != 2 {
+		t.Errorf("pages = %d, want 2", pages)
+	}
+	if len(collected) != 3 {
+		t.Fatalf("stories collected = %d, want 3", len(collected))
+	}
+
+	seen := make(map[string]bool, len(collected))
+	for _, id := range collected {
+		if seen[id] {
+			t.Errorf("duplicate story id %s across pages", id)
+		}
+		seen[id] = true
 	}
 }

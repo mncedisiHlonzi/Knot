@@ -103,10 +103,7 @@ func newSearchRouter(t *testing.T, logger *slog.Logger, service SearchService, b
 		t.Fatalf("NewRootedHandler() error = %v, want nil", err)
 	}
 
-	discoveryHandler, err := NewDiscoveryHandler(fakeDiscoveryService{}, &fakeRootedService{}, logger)
-	if err != nil {
-		t.Fatalf("NewDiscoveryHandler() error = %v, want nil", err)
-	}
+	discoveryHandler := newTestDiscoveryHandler(t, logger, fakeDiscoveryService{})
 
 	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID}, logger, WithBlockLookup(blocks))
 	if err != nil {

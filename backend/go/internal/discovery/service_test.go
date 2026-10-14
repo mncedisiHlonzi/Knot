@@ -25,10 +25,11 @@ type fakeStore struct {
 	next    *stories.Cursor
 	listErr error
 
-	gotFilter ClusterFilter
-	gotPlace  string
-	gotCursor *stories.Cursor
-	gotLimit  int
+	gotFilter  ClusterFilter
+	gotPlace   string
+	gotCountry PlaceCountryFilter
+	gotCursor  *stories.Cursor
+	gotLimit   int
 }
 
 func (f *fakeStore) ListClusters(_ context.Context, filter ClusterFilter) ([]PlaceCluster, error) {
@@ -36,8 +37,9 @@ func (f *fakeStore) ListClusters(_ context.Context, filter ClusterFilter) ([]Pla
 	return f.clusters, f.clustersErr
 }
 
-func (f *fakeStore) ListStoriesAtPlace(_ context.Context, placeLower string, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error) {
+func (f *fakeStore) ListStoriesAtPlace(_ context.Context, placeLower string, country PlaceCountryFilter, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error) {
 	f.gotPlace = placeLower
+	f.gotCountry = country
 	f.gotCursor = cursor
 	f.gotLimit = limit
 	return f.page, f.next, f.listErr
@@ -171,7 +173,7 @@ func TestListStoriesAtPlaceNormalisesPlaceAndEncodesCursor(t *testing.T) {
 	}
 	service := newTestService(t, store)
 
-	page, nextCursor, err := service.ListStoriesAtPlace(context.Background(), "  Cape Town  ", "", 10)
+	page, nextCursor, err := service.ListStoriesAtPlace(context.Background(), "  Cape Town  ", "", "", 10)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 	}
@@ -195,7 +197,7 @@ func TestListStoriesAtPlaceDecodesCursor(t *testing.T) {
 	service := newTestService(t, store)
 
 	raw := stories.NewCursor(testCursorTime, testCursorID).Encode()
-	if _, _, err := service.ListStoriesAtPlace(context.Background(), "Cape Town", raw, 10); err != nil {
+	if _, _, err := service.ListStoriesAtPlace(context.Background(), "Cape Town", "", raw, 10); err != nil {
 		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 	}
 
@@ -213,7 +215,7 @@ func TestListStoriesAtPlaceDecodesCursor(t *testing.T) {
 func TestListStoriesAtPlaceEmptyLastPage(t *testing.T) {
 	service := newTestService(t, &fakeStore{page: nil, next: nil})
 
-	page, next, err := service.ListStoriesAtPlace(context.Background(), "Cape Town", "", 10)
+	page, next, err := service.ListStoriesAtPlace(context.Background(), "Cape Town", "", "", 10)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 	}
@@ -243,7 +245,7 @@ func TestListStoriesAtPlaceRejectsBadInput(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			service := newTestService(t, &fakeStore{})
 
-			_, _, err := service.ListStoriesAtPlace(context.Background(), tc.place, tc.cursor, tc.limit)
+			_, _, err := service.ListStoriesAtPlace(context.Background(), tc.place, "", tc.cursor, tc.limit)
 			if err == nil {
 				t.Fatal("ListStoriesAtPlace() error = nil, want a validation error")
 			}
@@ -263,8 +265,41 @@ func TestListStoriesAtPlaceWrapsStoreError(t *testing.T) {
 	storeErr := errors.New("boom")
 	service := newTestService(t, &fakeStore{listErr: storeErr})
 
-	_, _, err := service.ListStoriesAtPlace(context.Background(), "Cape Town", "", 10)
+	_, _, err := service.ListStoriesAtPlace(context.Background(), "Cape Town", "", "", 10)
 	if !errors.Is(err, storeErr) {
 		t.Errorf("error = %v, want it to wrap %v", err, storeErr)
+	}
+}
+
+// TestListStoriesAtPlaceParsesCountry proves the raw ?country= value is turned
+// into a store filter: blank means no filter, the reserved "null" means the
+// country-less stories, and anything else is an exact match (KNOT-020e-fix2).
+func TestListStoriesAtPlaceParsesCountry(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want PlaceCountryFilter
+	}{
+		{"absent", "", PlaceCountryFilter{}},
+		{"blank", "   ", PlaceCountryFilter{}},
+		{"named country", "China", PlaceCountryFilter{Name: "China"}},
+		{"named country is trimmed", "  South Africa  ", PlaceCountryFilter{Name: "South Africa"}},
+		{"the null sentinel", "null", PlaceCountryFilter{Absent: true}},
+		{"the null sentinel is case-insensitive", "NULL", PlaceCountryFilter{Absent: true}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &fakeStore{}
+			service := newTestService(t, store)
+
+			if _, _, err := service.ListStoriesAtPlace(context.Background(), "Beijing", tc.raw, "", 10); err != nil {
+				t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
+			}
+
+			if store.gotCountry != tc.want {
+				t.Errorf("store country filter = %+v, want %+v", store.gotCountry, tc.want)
+			}
+		})
 	}
 }

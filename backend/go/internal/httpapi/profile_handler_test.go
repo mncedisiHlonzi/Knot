@@ -80,10 +80,7 @@ func newProfileRouter(t *testing.T, service ProfileService, rooted RootedLookup)
 		t.Fatalf("NewRootedHandler() error = %v, want nil", err)
 	}
 
-	discoveryHandler, err := NewDiscoveryHandler(fakeDiscoveryService{}, &fakeRootedService{}, logger)
-	if err != nil {
-		t.Fatalf("NewDiscoveryHandler() error = %v, want nil", err)
-	}
+	discoveryHandler := newTestDiscoveryHandler(t, logger, fakeDiscoveryService{})
 
 	profileHandler, err := NewProfileHandler(service, rooted, logger)
 	if err != nil {

@@ -92,7 +92,7 @@ func TestBlockFilterPlaceListExcludesBlockedAuthor(t *testing.T) {
 	createStoryAt(t, pool, blocked, place, "wonder", "eng", time.Now().Add(-time.Hour).UTC())
 	placeLower := strings.ToLower(place)
 
-	page, next, err := store.ListStoriesAtPlace(blockedSet(blocked), placeLower, nil, DefaultPlaceLimit)
+	page, next, err := store.ListStoriesAtPlace(blockedSet(blocked), placeLower, PlaceCountryFilter{}, nil, DefaultPlaceLimit)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 	}
@@ -103,7 +103,7 @@ func TestBlockFilterPlaceListExcludesBlockedAuthor(t *testing.T) {
 		t.Fatalf("ListStoriesAtPlace() with %q blocked = %d stories, want 0: %+v", blocked, len(page), page)
 	}
 
-	anonymous, _, err := store.ListStoriesAtPlace(context.Background(), placeLower, nil, DefaultPlaceLimit)
+	anonymous, _, err := store.ListStoriesAtPlace(context.Background(), placeLower, PlaceCountryFilter{}, nil, DefaultPlaceLimit)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 	}
@@ -139,7 +139,7 @@ func TestBlockFilterAnonymousReaderSeesAllStories(t *testing.T) {
 		t.Fatalf("anonymous StoryCount = %d, want 2", got[0].StoryCount)
 	}
 
-	page, _, err := store.ListStoriesAtPlace(context.Background(), placeLower, nil, DefaultPlaceLimit)
+	page, _, err := store.ListStoriesAtPlace(context.Background(), placeLower, PlaceCountryFilter{}, nil, DefaultPlaceLimit)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 	}
@@ -168,7 +168,7 @@ func TestBlockFilterUnblockRestoresDiscoveryStories(t *testing.T) {
 	if got := ours(blockedClusters, token); len(got) != 0 {
 		t.Fatalf("ListClusters() with %q blocked = %+v, want the place to be absent", author, got)
 	}
-	blockedPage, _, err := store.ListStoriesAtPlace(blockedSet(author), placeLower, nil, DefaultPlaceLimit)
+	blockedPage, _, err := store.ListStoriesAtPlace(blockedSet(author), placeLower, PlaceCountryFilter{}, nil, DefaultPlaceLimit)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 	}
@@ -187,7 +187,7 @@ func TestBlockFilterUnblockRestoresDiscoveryStories(t *testing.T) {
 		t.Fatalf("ListClusters() after unblock = %+v, want one cluster with 1 story", got)
 	}
 
-	page, _, err := store.ListStoriesAtPlace(context.Background(), placeLower, nil, DefaultPlaceLimit)
+	page, _, err := store.ListStoriesAtPlace(context.Background(), placeLower, PlaceCountryFilter{}, nil, DefaultPlaceLimit)
 	if err != nil {
 		t.Fatalf("ListStoriesAtPlace() error = %v, want nil", err)
 	}

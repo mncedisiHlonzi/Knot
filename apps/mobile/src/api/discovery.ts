@@ -18,6 +18,13 @@ import type { Pillar, StoryListResponse } from './stories';
 export const PLACE_PAGE_SIZE = 20;
 
 /**
+ * The `country` value that asks the server for the stories which record no
+ * country. The server reserves the word "null" for exactly this purpose, so a
+ * cluster whose `place_country` is null is opened with it (KNOT-020e-fix2).
+ */
+export const PLACE_COUNTRY_ABSENT = 'null';
+
+/**
  * A place with the stories told there, as returned by `GET /discovery/clusters`.
  *
  * `place` is the author's original spelling; grouping is by the normalised lower
@@ -60,6 +67,15 @@ export type ListPlaceStoriesOptions = {
   readonly cursor?: string;
   /** How many stories to ask for. The server defaults to 20 and caps at 50. */
   readonly limit?: number;
+  /**
+   * The country to narrow the page to, as a cluster reported it. `undefined` does
+   * not filter — every story at the place name is returned, whatever country each
+   * records. `null` asks for the stories that record no country (sent as the
+   * reserved `PLACE_COUNTRY_ABSENT` token). A string matches exactly. This is what
+   * keeps a country-scoped cluster's page to that cluster's own stories
+   * (KNOT-020e-fix2).
+   */
+  readonly country?: string | null;
 };
 
 /**
@@ -85,12 +101,20 @@ function clusterQuery(options: ListClustersOptions): string {
 /**
  * Builds the query string for a place request, omitting empty values so the
  * server applies its own defaults.
+ *
+ * A null country is a real filter, not an absent one, so it is sent as the
+ * reserved absent token rather than dropped (KNOT-020e-fix2).
  */
-function placeQuery(options: ListPlaceStoriesOptions): string {
+export function placeQuery(options: ListPlaceStoriesOptions): string {
   const parts: string[] = [];
 
   if (options.limit !== undefined) {
     parts.push(`limit=${encodeURIComponent(String(options.limit))}`);
+  }
+  if (options.country === null) {
+    parts.push(`country=${PLACE_COUNTRY_ABSENT}`);
+  } else if (options.country !== undefined && options.country !== '') {
+    parts.push(`country=${encodeURIComponent(options.country)}`);
   }
   if (options.cursor !== undefined && options.cursor !== '') {
     parts.push(`cursor=${encodeURIComponent(options.cursor)}`);
@@ -117,8 +141,11 @@ export const discoveryApi = {
   /**
    * GET /discovery/places/{place} — one page of the stories at a place, newest
    * first. Public. The place is URL-encoded; the server matches it case
-   * insensitively, so the caller's casing does not matter. A token hides blocked
-   * authors' stories; omit it for the anonymous view.
+   * insensitively, so the caller's casing does not matter. The optional `country`
+   * narrows the page to one country (or, as `null`, to the stories that record
+   * none), so a country-scoped cluster's page matches its story count. A token
+   * hides blocked authors' stories; omit it for the anonymous view. Each story is
+   * the same enriched projection the feed returns (KNOT-020e-fix2).
    */
   listStoriesAtPlace(
     place: string,

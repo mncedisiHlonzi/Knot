@@ -91,6 +91,28 @@ type ClusterFilter struct {
 	Limit int
 }
 
+// PlaceCountryFilter narrows which stories a place page lists by the country
+// they record.
+//
+// The zero value applies no country filter, so the page lists every story at the
+// place whatever country each records. A cluster, though, is keyed by
+// (place, country) (KNOT-020e-fix), so opening one asks for exactly its members:
+// either a named country, or — with Absent set — the stories that record no
+// country at all. This is what keeps a country-scoped cluster's story count and
+// its page's list length in agreement (KNOT-020e-fix2).
+type PlaceCountryFilter struct {
+	// Name is the exact country to match, compared verbatim because the caller
+	// passes back the value a cluster reported.
+	Name string
+	// Absent selects the stories whose place_country is NULL. It takes precedence
+	// over Name.
+	Absent bool
+}
+
+// Enabled reports whether the filter narrows the page at all. The zero value is
+// disabled, which is the "every story at this place" case.
+func (f PlaceCountryFilter) Enabled() bool { return f.Absent || f.Name != "" }
+
 // PlaceCluster is one place with the stories told there.
 //
 // It is an aggregate, not a row: Place is a representative spelling of the
@@ -134,7 +156,8 @@ type DiscoveryStore interface {
 	ListClusters(ctx context.Context, filter ClusterFilter) ([]PlaceCluster, error)
 	// ListStoriesAtPlace returns at most limit stories at the already-normalised
 	// place, newest first, starting after cursor. A nil cursor starts at the
-	// newest story. The returned cursor is the position to resume from, or nil
-	// when the page is the last one.
-	ListStoriesAtPlace(ctx context.Context, placeLower string, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error)
+	// newest story. country narrows the page to the stories a cluster with that
+	// country holds; its zero value lists every story at the place. The returned
+	// cursor is the position to resume from, or nil when the page is the last one.
+	ListStoriesAtPlace(ctx context.Context, placeLower string, country PlaceCountryFilter, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error)
 }
