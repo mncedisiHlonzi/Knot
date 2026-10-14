@@ -291,13 +291,20 @@ marker's ring is the navy ink rather than the canvas white, which disappeared in
 basemap. The `?country=` contract is in [API.md](API.md) and the rationale in
 [DECISIONS.md](DECISIONS.md).
 
-**KNOT-020e-fix3** added the reference's compact map header to Place Stories: a 100-point,
+**KNOT-020e-fix3** added the reference's compact map header to Place Stories: a 140-point,
 edge-to-edge, fully non-interactive Mapbox strip (`StyleURL.Light`, city-level camera, one indigo
 dot ringed in the navy ink) between the place block and the story list. It is positioned from the
 cluster's averaged coordinate, which the `placeStories` overlay now carries, so it costs no extra
 request; `placeMapPoint()` (in `screens/discovery/discoveryFormat.ts`) returns `undefined` for a
 missing or nonsensical pair, and the strip is then not rendered at all. The strip is a sibling of
 the list, not a list header, so it never scrolls with the stories.
+
+**KNOT-020e-fix5** corrected the strip's sizing after on-device review, where the first story's
+media bled into the strip. The wrapper is a normal-flow box with an explicit height; the MapView is
+now given explicit `width: '100%'` / `height: '100%'` instead of `flex: 1`, and the wrapper clips it
+with `overflow: 'hidden'` plus a canvas fill. A native map view is not a plain Yoga-measured View,
+and React Native does not clip by default, so both bounds and clipping are required for a strip of
+this size; without them the map laid out and drew beyond the strip and over the list.
 
 The `typeScale` **weights** are one step heavier than the reference snapshot for every token but
 the three body styles (`reading`, `body`, `bodyS`), which stay at 400 so prose keeps its

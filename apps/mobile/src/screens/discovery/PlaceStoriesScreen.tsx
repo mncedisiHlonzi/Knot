@@ -22,10 +22,15 @@ import { colors, layout, spacing, typeScale } from '../../theme';
 import { placeMapPoint, placeSummaryLabel } from './discoveryFormat';
 
 /**
- * The compact map strip's height, in points. The reference draws a 96-point
- * strip between the place block and the story list (KNOT-020e-fix3).
+ * The compact map strip's height, in points.
+ *
+ * The reference draws a 96-point strip; this is taller so Mapbox's mandated logo
+ * and attribution, which sit inside the strip, do not crowd it — the follow-up the
+ * KNOT-020e-fix3 note proposed. The strip is a plain normal-flow box of exactly
+ * this height and clips its map, so nothing it holds can draw over the list below
+ * (KNOT-020e-fix5).
  */
-const STRIP_HEIGHT = 100;
+const STRIP_HEIGHT = 140;
 
 /**
  * City-level zoom, so the strip reads as "here is the town" rather than a country
@@ -222,7 +227,9 @@ export default function PlaceStoriesScreen({
       {/* The reference's compact map strip (KNOT-020e-fix3): a decorative preview
           of where the place is. It is a sibling of the list rather than a list
           header, so it stays put while the stories scroll beneath it, and it is
-          fully non-interactive — no pan, zoom, rotate, or pitch. */}
+          fully non-interactive — no pan, zoom, rotate, or pitch. The wrapper
+          clips its map, so the map can never draw over the stories
+          (KNOT-020e-fix5). */}
       {mapPoint === undefined ? null : (
         <View style={styles.strip}>
           <MapView
@@ -360,14 +367,25 @@ const styles = StyleSheet.create({
   spinner: {
     marginTop: spacing.xl,
   },
-  // The compact map strip: full width, a fixed height, and outside the list so it
-  // never scrolls with the stories (KNOT-020e-fix3).
+  // The compact map strip: a normal-flow box of a fixed height, fully outside the
+  // list so it never scrolls with the stories. `overflow: 'hidden'` is
+  // load-bearing rather than cosmetic — the MapView is a native view and React
+  // Native does not clip by default, so without it the map lays out and draws
+  // beyond these bounds and paints over the first stories. The canvas fill makes
+  // the box opaque even before the map has drawn, so nothing behind it shows
+  // through (KNOT-020e-fix5).
   strip: {
+    backgroundColor: colors.bg.canvas,
     height: STRIP_HEIGHT,
+    overflow: 'hidden',
     width: '100%',
   },
+  // The map gets explicit dimensions rather than `flex: 1`: a native map view is
+  // not a plain Yoga-measured View, and sizing it by flex alone is what let it lay
+  // out larger than the strip it sits in (KNOT-020e-fix5).
   stripMap: {
-    flex: 1,
+    height: '100%',
+    width: '100%',
   },
   // The Discovery Map's marker in miniature: indigo fill, navy ring, no count.
   stripMarker: {
