@@ -1,10 +1,19 @@
 import React from 'react';
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  Image,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type ImageLoadEventData,
+  type NativeSyntheticEvent,
+} from 'react-native';
 import { Images } from 'phosphor-react-native';
 
 import { API_BASE_URL } from '../config/api';
 import { colors, layout, radius, spacing, tabularNums, typeScale } from '../theme';
-import { mediaAspectRatio } from '../utils/mediaFrame';
+import { PLACEHOLDER_MEDIA_ASPECT_RATIO } from '../utils/mediaFrame';
+import { useMediaAspectRatio } from '../utils/useMediaAspectRatio';
 import AuthorLine from './AuthorLine';
 import { feedMetaLine } from './feedEntryMeta';
 import FeedVideo, { VIDEO_MUTE_BUTTON_SIZE } from './FeedVideo';
@@ -108,14 +117,19 @@ function resolveMediaUrl(path: string | null | undefined): string {
  * entry is the visible one. The count badge stacks above the video's mute control
  * so the two never collide.
  *
- * The media's frame takes the **media's own aspect ratio** when the server
- * reported its pixel dimensions, so a portrait photo renders tall and a landscape
- * one renders wide; when the shape is unknown it falls back to 16:9. The media is
- * fitted with `contain`, so an unknown shape is letterboxed rather than cropped
- * (KNOT-020g-fix5).
+ * The media's frame is the **media's own shape**: full width, and a height that
+ * follows the media's natural width:height ratio, so a landscape photo is short
+ * and a portrait one is tall. The ratio comes from the payload when the server
+ * reported the item's dimensions; otherwise it comes from the media itself, which
+ * reports its natural size on load (KNOT-020g-fix7). Until one of them answers,
+ * the frame is a full-width square of `bg.sunken` — the media fills whatever frame
+ * it is given (`cover`), so a placeholder is never a bar.
  *
- * This component stays **hookless** on purpose — the tests call it as a plain
- * function — so all playback logic lives in `FeedVideo`.
+ * This component used to stay **hookless** so the tests could call it as a plain
+ * function. It no longer is: resolving a frame from the loaded media needs state,
+ * and the tests were moved to a suite that mocks the hook primitives instead. The
+ * playback logic still lives in `FeedVideo`, which remains the only component that
+ * owns a player.
  */
 export default function FeedEntry({
   story,
@@ -129,8 +143,19 @@ export default function FeedEntry({
   const mediaUrl = resolveMediaUrl(story.first_media_url);
   const isVideo = story.first_media_type === 'video';
   const mediaCount = story.media_count ?? 0;
-  // The media's own shape when the server knows it, 16:9 when it does not.
-  const mediaFrame = mediaAspectRatio(story.first_media_width, story.first_media_height);
+  const { aspectRatio, onLoadSize } = useMediaAspectRatio(
+    story.first_media_width,
+    story.first_media_height,
+  );
+  // The media's own shape when either source knows it; a neutral square until one
+  // does. Never a fixed landscape frame — that is the crop this rule removes.
+  const mediaFrame = aspectRatio ?? PLACEHOLDER_MEDIA_ASPECT_RATIO;
+
+  /** Takes the shape off a decoded image, for media the payload could not size. */
+  const handleImageLoad = (event: NativeSyntheticEvent<ImageLoadEventData>): void => {
+    const { width, height } = event.nativeEvent.source;
+    onLoadSize(width, height);
+  };
 
   const metaLine = feedMetaLine({
     commentCount: story.comment_count,
@@ -176,12 +201,14 @@ export default function FeedEntry({
               isVisible={isVisible}
               isMuted={isMuted}
               onToggleMute={onToggleMute}
+              onLoadSize={onLoadSize}
             />
           ) : (
             <Image
               source={{ uri: mediaUrl }}
               style={styles.media}
-              resizeMode="contain"
+              resizeMode="cover"
+              onLoad={handleImageLoad}
               accessibilityIgnoresInvertColors
             />
           )}
@@ -243,10 +270,10 @@ const styles = StyleSheet.create({
   media: {
     height: '100%',
     width: '100%',
-  },
-  // Full-bleed: no horizontal inset and no rounding, so the media runs edge to
-  // edge (KNOT-020c-fix2). The ratio is set per entry from the media's own
-  // dimensions, so it is not fixed here (KNOT-020g-fix5).
+  }, // Full-bleed: no horizontal inset and no rounding, so the media runs edge to
+  // edge (KNOT-020c-fix2). The ratio is set per entry from the media's own shape,
+  // so it is not fixed here (KNOT-020g-fix5); the fill is `cover`, so the frame is
+  // always filled and never barred (KNOT-020g-fix6).
   mediaFrame: {
     backgroundColor: colors.bg.sunken,
     marginTop: spacing.md,

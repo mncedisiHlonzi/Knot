@@ -507,6 +507,12 @@ func TestStoryMediaCreateHappyPath(t *testing.T) {
 	if envelope.Media.Width == nil || *envelope.Media.Width != 2 {
 		t.Errorf("width = %v, want 2", envelope.Media.Width)
 	}
+	// Both dimensions are stored, not just the first: a list frames the media at
+	// the pair's ratio, so a height that went missing would leave every card
+	// cropping to the 16:9 fallback (KNOT-020g-fix5, KNOT-020g-fix6).
+	if envelope.Media.Height == nil || *envelope.Media.Height != 2 {
+		t.Errorf("height = %v, want 2", envelope.Media.Height)
+	}
 	wantURL := "/stories/" + testMediaStoryID + "/media/" + envelope.Media.ID + "/content"
 	if envelope.Media.URL != wantURL {
 		t.Errorf("url = %q, want %q", envelope.Media.URL, wantURL)
@@ -515,6 +521,38 @@ func TestStoryMediaCreateHappyPath(t *testing.T) {
 		t.Errorf("url = %q, want a relative path", envelope.Media.URL)
 	}
 
+}
+
+// TestStoryMediaCreateWithoutDimensionsStoresNulls proves the dimensions are
+// optional: a client that cannot measure the file omits the fields, and the row
+// keeps NULL rather than a zero. A list then falls back to its own default frame
+// ratio, so a zero would be read as "a shape that is 0 pixels wide" and a null is
+// read as "unknown" (KNOT-020g-fix6).
+func TestStoryMediaCreateWithoutDimensionsStoresNulls(t *testing.T) {
+	env := newStoryMediaTestEnv(t)
+	router := env.router(t, testMediaAuthorID)
+
+	body, contentType := mediaUpload(t, pngImage(t), string(storymedia.MediaSourceGallery), nil)
+
+	recorder := postMedia(router, testMediaStoryID, body, contentType, testAccessToken)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	var envelope storyMediaEnvelope
+	decodeBody(t, recorder, &envelope)
+
+	if envelope.Media.Width != nil {
+		t.Errorf("width = %v, want nil when the client omits it", envelope.Media.Width)
+	}
+	if envelope.Media.Height != nil {
+		t.Errorf("height = %v, want nil when the client omits it", envelope.Media.Height)
+	}
+	// The rest of the upload still works, so the omission is genuinely optional
+	// rather than a silent failure.
+	if envelope.Media.MediaType != string(storymedia.MediaTypeImage) {
+		t.Errorf("media_type = %q, want image", envelope.Media.MediaType)
+	}
 }
 
 // TestStoryMediaCreateEnforcesTheCap fills a story to the cap and proves the next

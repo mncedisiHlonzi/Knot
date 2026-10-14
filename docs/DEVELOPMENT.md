@@ -467,6 +467,42 @@ full-bleed and unrounded (KNOT-020c-fix2). The profile's video preview badge wen
 `scrim.overlay` disc around a 48-point `PlayCircle` to a 36-point disc around a 20-point white
 `Play` triangle, so the badge reads over arbitrary media without dominating the card.
 
+**KNOT-020g-fix6** changed how a list *fills* the frame it builds. Frames are still shaped by
+`mediaFrame.ts` (the media's own `width / height`, or 16:9 when the payload reports neither), but
+the media inside them is now fitted with **`cover`** everywhere a list draws it — `FeedEntry`, the
+profile card, and `FeedVideo`, which lost the `resizeMode` knob it had briefly carried for a
+`contain` preview, because no caller wants one. `cover` fills the frame, so a frame whose ratio does
+not quite match the media crops the overflow instead of leaving a `bg.sunken` bar; and media whose
+shape the payload never reported — a legacy row, or a video whose picker reported only its duration,
+which `react-native-image-picker` routinely does — is cropped into the 16:9 fallback rather than
+letterboxed inside it. **Nothing changed in the upload path:** the picker already forwarded the
+asset's width and height, `CreateStoryScreen` already passed them, `uploadStoryMedia` already sent
+them as form fields, and the server already parsed and stored them — the bars came from `contain`
+meeting a payload with no dimensions, not from a missing field. Avatar uploads carry no dimensions
+and are unchanged: an avatar renders in a fixed circle and the `users` table has no columns for
+them, so sending them would be write-only.
+
+**KNOT-020g-fix7** gave list media its own height. A list frame was already full width, but its
+*shape* was guessed whenever the payload could not describe the media — which is most videos, since
+`react-native-image-picker` reports only their duration — so a fixed 16:9 frame cropped portrait
+media into it. Now the frame is the media's own shape, resolved in two stages: the payload's
+`first_media_width` / `first_media_height` when the server knows them (so the frame is right on the
+first paint and the media never settles), and otherwise the natural size the media reports on load —
+`Image`'s `onLoad` for a photo, and `FeedVideo`'s new `onLoadSize` pass-through, which forwards
+`naturalSize` from the player in **both** of its modes, for a video. Until one of them answers, the
+frame is a full-width square of `bg.sunken`; the media is fitted with `cover`, so it fills whatever
+frame it is given and a placeholder is never a bar. `resolveMediaAspectRatio` is the whole rule and
+is pure, so it is tested without a renderer; it deliberately returns `null` rather than a fixed
+fallback, and `useMediaAspectRatio` (a new module beside `mediaFrame.ts`, which stays import-free)
+holds the loaded size across renders.
+
+**This is where `FeedEntry` stopped being hookless.** It held no state on purpose so the tests could
+call it as a plain function, and the media frame is the first thing in it that genuinely needs state.
+Its tests moved to `components/__tests__/FeedEntry.test.ts`, which stubs React's `useState` and
+`useCallback` so the direct-call pattern survives; the decision itself is covered exhaustively as a
+pure rule. The profile card's media follows the same rule and is now a file-local `CardMedia`
+component, because the hook cannot live in a helper a parent calls mid-render.
+
 The same screen serves the owner: `isOwnProfile` adds the avatar upload, the Set Rooted
 shortcut, and sign-out, so tapping your own author line opens your wall. `AuthorLine`'s
 `onPress` is how the app reaches it — a nested `Pressable` handles the author tap without

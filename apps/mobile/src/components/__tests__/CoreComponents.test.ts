@@ -1,10 +1,7 @@
 import Avatar from '../Avatar';
-import AuthorLine from '../AuthorLine';
 import Button from '../Button';
 import Chip from '../Chip';
 import EmptyState from '../EmptyState';
-import FeedEntry from '../FeedEntry';
-import FeedVideo from '../FeedVideo';
 import PillarTag from '../PillarTag';
 import RootedBadge from '../RootedBadge';
 import TabBar from '../TabBar';
@@ -16,7 +13,9 @@ import { countLabel, feedMetaLine, totalReactions } from '../feedEntryMeta';
  * the components are called directly as plain functions — the pattern the
  * AuthorLine suite already uses. Rendering through a renderer would need a new
  * dependency, which this task must not add. Stateful components (Input, Header,
- * ReactionBar) are covered by their pure logic instead.
+ * ReactionBar) are covered by their pure logic instead, and `FeedEntry` — which
+ * now holds state for its media frame — has its own suite that stubs the hook
+ * primitives (KNOT-020g-fix7).
  *
  * React Native is stubbed so its Flow source is not parsed, and `config/api` is
  * stubbed so the gitignored `secrets.local` module is never imported in CI
@@ -36,21 +35,12 @@ jest.mock('react-native', () => ({
 // SVGs now, mapped to a stub by jest.config.js (KNOT-020b-fix).
 jest.mock('phosphor-react-native', () => ({
   House: () => null,
-  Images: () => null,
   MagnifyingGlass: () => null,
   MapTrifold: () => null,
-  PlayCircle: () => null,
   Plus: () => null,
-  SpeakerHigh: () => null,
-  SpeakerSlash: () => null,
   User: () => null,
   X: () => null,
 }));
-
-// FeedEntry draws a video preview with react-native-video, which is a native
-// module; stub it to a host component so the direct-call test can render the
-// element (KNOT-020c-fix2).
-jest.mock('react-native-video', () => ({ __esModule: true, default: 'Video' }));
 
 jest.mock('../../config/api', () => ({ API_BASE_URL: 'http://localhost:8080' }));
 
@@ -226,195 +216,6 @@ describe('TabBar', () => {
     for (const tab of ['feed', 'discoveryMap', 'createStory', 'inquiries', 'profile'] as const) {
       expect(TabBar({ activeTab: tab, onSelect })).toBeTruthy();
     }
-  });
-});
-
-/**
- * Collects every element type in a directly-called component's element tree,
- * depth-first. There is no renderer, so a structural assertion is the only way to
- * prove which child component a parent chose to build (KNOT-020c-fix3).
- */
-function elementTypes(node: unknown, found: unknown[] = []): unknown[] {
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      elementTypes(child, found);
-    }
-    return found;
-  }
-  if (node === null || node === undefined || typeof node !== 'object') {
-    return found;
-  }
-
-  const element = node as { type?: unknown; props?: { children?: unknown } };
-  if (element.type !== undefined) {
-    found.push(element.type);
-  }
-  if (element.props !== undefined) {
-    elementTypes(element.props.children, found);
-  }
-
-  return found;
-}
-
-/**
- * Finds the first element of the given component type in a directly-called
- * component's element tree, so a parent's choice of child props can be asserted
- * without a renderer (KNOT-020c-fix4).
- */
-function findElementByType(
-  node: unknown,
-  type: unknown,
-): { props?: Record<string, unknown> } | undefined {
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      const found = findElementByType(child, type);
-      if (found !== undefined) {
-        return found;
-      }
-    }
-    return undefined;
-  }
-  if (node === null || node === undefined || typeof node !== 'object') {
-    return undefined;
-  }
-
-  const element = node as { type?: unknown; props?: { children?: unknown } };
-  if (element.type === type) {
-    return element as { props?: Record<string, unknown> };
-  }
-  if (element.props !== undefined) {
-    return findElementByType(element.props.children, type);
-  }
-  return undefined;
-}
-
-describe('FeedEntry', () => {
-  const story = {
-    id: 'story-1',
-    title: 'How my grandmother counted the days',
-    pillar: 'heritage' as const,
-    preview: 'She kept a string of knots.',
-    language: 'zap',
-    place: 'Oaxaca, Mexico',
-    author_display_name: 'Nomsa Khan',
-    author_avatar_url: null,
-    author_rooted: { place: 'Oaxaca', duration_bucket: 'many_years' },
-    created_at: '2026-10-09T12:00:00.000Z',
-    version_count: 4,
-    comment_count: 14,
-    reactions: {
-      rings_true: 128,
-      know_it_differently: 19,
-      adds_something_new: 7,
-      needs_a_source: 2,
-    },
-  };
-
-  it('renders a full entry without invoking the press handlers', () => {
-    const onPress = jest.fn();
-    const onOpenAuthor = jest.fn();
-
-    const element = FeedEntry({ story, onPress, onOpenAuthor });
-
-    expect(element).toBeTruthy();
-    expect(onPress).not.toHaveBeenCalled();
-    expect(onOpenAuthor).not.toHaveBeenCalled();
-  });
-
-  it('renders an image preview and a video preview with a count badge', () => {
-    expect(
-      FeedEntry({
-        story: {
-          ...story,
-          first_media_type: 'image',
-          first_media_url: '/stories/x/media/y/content',
-        },
-        onPress: () => undefined,
-      }),
-    ).toBeTruthy();
-    expect(
-      FeedEntry({
-        story: {
-          ...story,
-          first_media_type: 'video',
-          first_media_url: '/stories/x/media/y/content',
-          media_count: 5,
-        },
-        isMuted: true,
-        isVisible: true,
-        onToggleMute: () => undefined,
-        onPress: () => undefined,
-      }),
-    ).toBeTruthy();
-  });
-
-  it('renders FeedVideo for a video and never for an image', () => {
-    const image = FeedEntry({
-      story: {
-        ...story,
-        first_media_type: 'image',
-        first_media_url: '/stories/x/media/y/content',
-      },
-      onPress: () => undefined,
-    });
-    expect(elementTypes(image)).toContain('Image');
-    expect(elementTypes(image)).not.toContain(FeedVideo);
-
-    const video = FeedEntry({
-      story: {
-        ...story,
-        first_media_type: 'video',
-        first_media_url: '/stories/x/media/y/content',
-        media_count: 5,
-      },
-      isMuted: false,
-      isVisible: true,
-      onToggleMute: () => undefined,
-      onPress: () => undefined,
-    });
-    expect(elementTypes(video)).toContain(FeedVideo);
-    expect(elementTypes(video)).not.toContain('Image');
-  });
-
-  it('renders with no author fields, no media, and every count zero', () => {
-    expect(
-      FeedEntry({
-        story: {
-          ...story,
-          author_display_name: null,
-          author_avatar_url: null,
-          author_rooted: null,
-          reactions: undefined,
-          comment_count: 0,
-          language_count: 0,
-          media_count: 0,
-          version_count: 0,
-        },
-        onPress: () => undefined,
-      }),
-    ).toBeTruthy();
-  });
-
-  // The feed's Rooted line (KNOT-020c-fix4): the story's author_rooted is handed
-  // to AuthorLine, which draws the quiet second line.
-  it('passes the author Rooted summary to AuthorLine for the quiet second line', () => {
-    const element = FeedEntry({ story, onPress: () => undefined });
-    const authorLine = findElementByType(element, AuthorLine);
-
-    expect(authorLine).toBeDefined();
-    expect(authorLine?.props?.rooted).toEqual({ place: 'Oaxaca', duration_bucket: 'many_years' });
-    expect(authorLine?.props?.showRootedOnNewLine).toBe(true);
-    expect(authorLine?.props?.size).toBe('large');
-  });
-
-  it('passes a null Rooted summary when the author has no signal', () => {
-    const element = FeedEntry({
-      story: { ...story, author_rooted: null },
-      onPress: () => undefined,
-    });
-    const authorLine = findElementByType(element, AuthorLine);
-
-    expect(authorLine?.props?.rooted).toBeNull();
   });
 });
 

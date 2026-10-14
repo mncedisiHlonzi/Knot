@@ -7,16 +7,28 @@
  * tall and a landscape one renders wide, and the media is shown whole rather than
  * cropped into a fixed window.
  *
- * The dimensions are nullable because they are client-reported: an upload from a
- * picker that could not supply them, or a story uploaded before the columns
- * existed, carries none. That is why the fallback is a named constant rather than
- * a value buried in a screen — the feed, a place page, and the profile wall all
- * frame media, and they must agree on the ratio they use when the shape is
- * unknown.
+ * The server does not always know the shape. Its dimensions are client-reported
+ * and the upload pipeline cannot measure everything — a video asset is the common
+ * case, because the picker reports only its duration. So a frame can learn the
+ * shape two ways: from the payload before the bytes are fetched, or from the
+ * media's own natural size once it has loaded. `resolveMediaAspectRatio` settles
+ * which of the two to use, and `useMediaAspectRatio` (its React counterpart, in
+ * `useMediaAspectRatio.ts`) holds the on-load result across renders.
  *
- * It is deliberately free of any import: a pure rule about two numbers, testable
- * on its own and usable by a component and a screen alike.
+ * It is deliberately free of any import: a pure rule about four numbers, testable
+ * on its own and usable by a component and a screen alike. The hook lives
+ * elsewhere so this module can stay that way.
  */
+
+/**
+ * The ratio a frame takes before the media has reported its shape.
+ *
+ * A square, chosen because it is the one frame that is neither wide nor tall: the
+ * media fills it (`cover`), so it is a neutral placeholder rather than a promise
+ * about the shape that the load may not keep. It is replaced the moment the media
+ * reports its natural size (KNOT-020g-fix7).
+ */
+export const PLACEHOLDER_MEDIA_ASPECT_RATIO = 1;
 
 /** The ratio a frame falls back to when the media's dimensions are unknown. */
 export const FALLBACK_MEDIA_ASPECT_RATIO = 16 / 9;
@@ -29,8 +41,11 @@ export const FALLBACK_MEDIA_ASPECT_RATIO = 16 / 9;
  * is known, because half a pair cannot describe a shape, and when a dimension is
  * zero or negative, which is not a shape either.
  *
- * A caller pairs this with a resize mode that does not crop (`contain`), so an
- * unknown shape is letterboxed inside the fallback frame rather than cut into it.
+ * A caller frames the media with this ratio and fits it with `cover`, so the media
+ * always fills its frame. It is the last resort, for a frame that has no other
+ * source of shape — `resolveMediaAspectRatio` prefers a real measurement and
+ * reports "unknown" rather than this constant, so that a frame can wait for the
+ * media instead of guessing (KNOT-020g-fix6).
  */
 export function mediaAspectRatio(width?: number | null, height?: number | null): number {
   if (typeof width === 'number' && typeof height === 'number' && width > 0 && height > 0) {
@@ -48,4 +63,37 @@ export function mediaAspectRatio(width?: number | null, height?: number | null):
  */
 export function hasMediaDimensions(width?: number | null, height?: number | null): boolean {
   return typeof width === 'number' && typeof height === 'number' && width > 0 && height > 0;
+}
+
+/**
+ * The aspect ratio to frame media with, from whichever source knows its shape.
+ *
+ * The payload comes first: the server's dimensions arrive with the list, so the
+ * frame is already the right shape on the first paint and the media never has to
+ * settle into place. Only when the payload cannot describe the media — no columns
+ * on a legacy row, or a client that could not measure the file, which is the
+ * common case for a video — does the natural size read off the loaded media
+ * decide the frame.
+ *
+ * `null` means neither source has a shape yet: the caller draws its placeholder
+ * frame and waits for `onLoad` to report one. That is deliberately different from
+ * `mediaAspectRatio`'s fallback, which is a fixed guess — guessing here would
+ * reinstate exactly the crop the natural-ratio rule exists to remove
+ * (KNOT-020g-fix7).
+ */
+export function resolveMediaAspectRatio(
+  payloadWidth?: number | null,
+  payloadHeight?: number | null,
+  loadedWidth?: number | null,
+  loadedHeight?: number | null,
+): number | null {
+  if (hasMediaDimensions(payloadWidth, payloadHeight)) {
+    return mediaAspectRatio(payloadWidth, payloadHeight);
+  }
+
+  if (hasMediaDimensions(loadedWidth, loadedHeight)) {
+    return mediaAspectRatio(loadedWidth, loadedHeight);
+  }
+
+  return null;
 }

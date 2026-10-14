@@ -360,10 +360,11 @@ poster frame is stored yet) without reading the `media` array (KNOT-020c-fix).
 
 `first_media_width` and `first_media_height` are that item's pixel dimensions, or `null`
 when the uploader's client did not report them (a story uploaded before the columns
-existed, or from a source that could not measure it). They let a list frame the media at
-its **natural width:height ratio** instead of a fixed one, so a portrait photo is shown
-whole rather than cropped into a 16:9 window; a client falls back to its own default ratio
-when either is `null` (KNOT-020g-fix5). The same pair is on
+existed, or from a source that could not measure it — a video asset often reports none).
+They let a list frame the media at its **natural width:height ratio** instead of a fixed
+one, so a portrait photo is shown whole rather than cropped into a 16:9 window; a client
+falls back to its own default ratio when either is `null`, and fills that frame rather than
+letterboxing inside it (KNOT-020g-fix5, KNOT-020g-fix6). The same pair is on
 [`GET /users/{id}/profile`](#get-usersidprofile) as `first_media_width` /
 `first_media_height` (omitted rather than `null` when unknown), and on
 `GET /discovery/places/{place}` by the same enrichment.
@@ -515,6 +516,14 @@ path: resolve it against the API base URL. The object's storage key is never ret
 origin in a field named **`source`**. Optional fields `width`, `height`, and `duration_ms`
 may carry the picker's metadata. Only the story's **author** may attach media in the MVP;
 any other authenticated user is `403 forbidden`.
+
+Send **`width` and `height`** whenever the picker can measure the file. They are what a list
+frames the item with: the feed, a place page, and a profile wall all set the frame's aspect
+ratio from this pair, so a portrait photo renders tall instead of being cropped into a fixed
+window. Omitting them is legal and stores `NULL` — the client then falls back to a 16:9 frame
+and fills it, cropping rather than leaving a bar. A video asset often reports no dimensions,
+so a video uploaded without them is the common case that takes the fallback
+(KNOT-020g-fix6).
 
 | Constraint | Rule                                                                         |
 | ---------- | ---------------------------------------------------------------------------- |

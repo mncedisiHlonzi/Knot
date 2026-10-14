@@ -13,6 +13,8 @@ import {
   StyleSheet,
   Text,
   View,
+  type ImageLoadEventData,
+  type NativeSyntheticEvent,
 } from 'react-native';
 import {
   ArrowLeft,
@@ -55,7 +57,8 @@ import {
   tabularNums,
   typeScale,
 } from '../../theme';
-import { mediaAspectRatio } from '../../utils/mediaFrame';
+import { PLACEHOLDER_MEDIA_ASPECT_RATIO } from '../../utils/mediaFrame';
+import { useMediaAspectRatio } from '../../utils/useMediaAspectRatio';
 import { formatRelativeTime } from '../../utils/time';
 import {
   DEFAULT_PROFILE_TAB,
@@ -124,33 +127,56 @@ function emptyIllustration(kind: ActivityKind): 'no-stories' | 'no-inquiries' {
  * feed's media is. A video never plays here — the wall is a browse surface, and
  * playback belongs to the Feed (KNOT-020g-fix4).
  *
- * The frame is **full-bleed** (it escapes the card's gutter) and takes the
- * **media's own aspect ratio** when the payload reports its dimensions, so a
- * portrait photo renders tall instead of being cropped into a 16:9 window; an
- * unknown shape falls back to 16:9 and is letterboxed rather than cropped
- * (KNOT-020g-fix5).
+ * The frame is **full-bleed** (it escapes the card's gutter) and is the **media's
+ * own shape**: full width, with a height that follows the media's natural
+ * width:height ratio, so a portrait photo is tall and a landscape one is short. The
+ * ratio comes from the payload when the server reported the item's dimensions, and
+ * otherwise from the media itself, which reports its natural size on load — which
+ * is the case that matters for video, since the picker reports no size for most
+ * video assets (KNOT-020g-fix5, KNOT-020g-fix7). Until either answers, the frame is
+ * a full-width square of `bg.sunken`; the media fills whatever frame it is given
+ * (`cover`), so a placeholder is never a bar.
+ *
+ * It is a component rather than a helper that returns an element, because
+ * resolving the shape from the loaded media needs state, and state cannot live in
+ * a function a parent calls mid-render. It is local to this file for the same
+ * reason `OptionRow` is: the profile wall is the only place that draws one
+ * (KNOT-020g-fix7).
  */
-function cardMediaNode(card: ProfileCard): React.ReactElement | null {
+function CardMedia({ card }: { readonly card: ProfileCard }): React.ReactElement | null {
+  // The hook is called before the early return, so the component always calls it
+  // however the card changes between renders.
+  const { aspectRatio, onLoadSize } = useMediaAspectRatio(card.mediaWidth, card.mediaHeight);
+
   if (card.mediaUrl === undefined || card.mediaType === undefined) {
     return null;
   }
 
   const uri = `${API_BASE_URL}${card.mediaUrl}`;
-  const frame = [
-    styles.cardMedia,
-    { aspectRatio: mediaAspectRatio(card.mediaWidth, card.mediaHeight) },
-  ];
+  const frame = [styles.cardMedia, { aspectRatio: aspectRatio ?? PLACEHOLDER_MEDIA_ASPECT_RATIO }];
+
+  /** Takes the shape off a decoded image, for media the payload could not size. */
+  const handleImageLoad = (event: NativeSyntheticEvent<ImageLoadEventData>): void => {
+    const { width, height } = event.nativeEvent.source;
+    onLoadSize(width, height);
+  };
 
   if (card.mediaType === 'video') {
     return (
       <View style={frame}>
-        <FeedVideo uri={uri} previewOnly />
+        <FeedVideo uri={uri} previewOnly onLoadSize={onLoadSize} />
       </View>
     );
   }
 
   return (
-    <Image source={{ uri }} style={frame} resizeMode="contain" accessibilityIgnoresInvertColors />
+    <Image
+      source={{ uri }}
+      style={frame}
+      resizeMode="cover"
+      onLoad={handleImageLoad}
+      accessibilityIgnoresInvertColors
+    />
   );
 }
 
@@ -630,7 +656,7 @@ export default function UserProfileScreen({
                 </Text>
               )}
 
-              {cardMediaNode(card)}
+              <CardMedia card={card} />
 
               {card.meta === '' ? null : (
                 <Text style={[typeScale.caption, styles.cardMeta]} numberOfLines={1}>

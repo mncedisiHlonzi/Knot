@@ -58,15 +58,16 @@ type FeedVideoProps = {
    */
   readonly previewOnly?: boolean;
   /**
-   * How the video is fitted to its frame: `cover` fills the frame and crops the
-   * overflow, `contain` shows the whole frame and letterboxes it. Defaults to
-   * `cover`, the feed's mode — a playing video reads better filling its frame.
+   * Reports the video's natural pixel size once the player has read it.
    *
-   * A `previewOnly` preview defaults to `contain` instead, because the frame the
-   * caller gives it is already the media's own ratio when the server reported its
-   * dimensions, and a card must never crop (KNOT-020g-fix5).
+   * It is how a frame learns the shape of a video the payload could not describe:
+   * the upload pipeline has no dimensions for most video assets, because the
+   * picker reports only their duration, so the frame would otherwise never know
+   * what shape to be (KNOT-020g-fix7). Called in both modes — a preview needs the
+   * shape as much as the player does, and it is the only way a video card can
+   * avoid a fixed frame.
    */
-  readonly resizeMode?: 'cover' | 'contain';
+  readonly onLoadSize?: (width: number, height: number) => void;
   /** Test identifier. */
   readonly testID?: string;
 };
@@ -90,6 +91,12 @@ type FeedVideoProps = {
  * With `previewOnly` it becomes a display-only preview instead: the same paused
  * first frame under a centred play glyph, with no chrome, no playback, and no
  * handlers — the profile wall's card media (KNOT-020g-fix4).
+ *
+ * Either way the video is fitted with `cover`, so it always fills the frame its
+ * caller gives it. The caller owns the ratio: `FeedEntry` and the profile card
+ * both set it from the media's reported dimensions, falling back to the natural
+ * size this component reports through `onLoadSize` when the payload has none
+ * (KNOT-020g-fix6, KNOT-020g-fix7).
  */
 export default function FeedVideo({
   uri,
@@ -97,22 +104,41 @@ export default function FeedVideo({
   isMuted = true,
   onToggleMute = NOOP,
   previewOnly = false,
-  resizeMode,
+  onLoadSize,
   testID,
 }: FeedVideoProps): React.ReactElement {
   const [durationSeconds, setDurationSeconds] = useState(0);
 
-  // The duration is only known once the file's metadata has loaded; before that
-  // the badge is simply absent.
-  const handleLoad = useCallback((data: OnLoadData): void => {
-    setDurationSeconds(typeof data.duration === 'number' ? data.duration : 0);
-  }, []);
+  // The duration and the natural size are both known only once the file's
+  // metadata has loaded; before that the duration badge is simply absent and the
+  // frame is still its placeholder shape.
+  const handleLoad = useCallback(
+    (data: OnLoadData): void => {
+      // A display-only preview never draws a duration, so it does not hold one.
+      if (!previewOnly) {
+        setDurationSeconds(typeof data.duration === 'number' ? data.duration : 0);
+      }
+
+      // The size is reported defensively: the type declares it, but a platform
+      // that could not read the track leaves it empty, and a frame must not be
+      // shaped from a missing pair.
+      const natural = data.naturalSize;
+      if (
+        onLoadSize !== undefined &&
+        typeof natural?.width === 'number' &&
+        typeof natural?.height === 'number' &&
+        natural.width > 0 &&
+        natural.height > 0
+      ) {
+        onLoadSize(natural.width, natural.height);
+      }
+    },
+    [onLoadSize, previewOnly],
+  );
 
   // A display-only preview is always paused and never reads a duration.
   const playing = previewOnly ? false : isVisible;
   const durationLabel = previewOnly ? '' : formatDuration(durationSeconds);
-  // A preview shows the frame whole; the feed's player fills it.
-  const fit = resizeMode ?? (previewOnly ? 'contain' : 'cover');
 
   return (
     <View style={styles.container} testID={testID}>
@@ -126,8 +152,8 @@ export default function FeedVideo({
         paused={!playing}
         muted={isMuted}
         repeat
-        resizeMode={fit}
-        onLoad={previewOnly ? undefined : handleLoad}
+        resizeMode="cover"
+        onLoad={handleLoad}
       />
 
       {previewOnly ? (
