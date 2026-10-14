@@ -6,15 +6,37 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 
 import { describeError } from '../../api/client';
 import { INQUIRY_PAGE_SIZE, Inquiry, inquiriesApi } from '../../api/inquiries';
 import AuthorLine from '../../components/AuthorLine';
-import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
-import { answerCountLabel, inquiryPlaceLabel } from '../../utils/inquiry';
+import Button from '../../components/Button';
+import Chip from '../../components/Chip';
+import EmptyState from '../../components/EmptyState';
+import Header from '../../components/Header';
+import Input from '../../components/Input';
+import { colors, layout, spacing, typeScale } from '../../theme';
+import { answerCountLabel } from '../../utils/inquiry';
+
+/**
+ * "INQUIRY · OAXACA, MEXICO" — the overline naming what the row is and where. A
+ * question that names no place reads simply "Inquiry".
+ */
+function inquiryOverline(inquiry: Inquiry): string {
+  const place = typeof inquiry.place === 'string' ? inquiry.place.trim() : '';
+  const country = typeof inquiry.place_country === 'string' ? inquiry.place_country.trim() : '';
+  const where = [place, country].filter((part) => part !== '').join(', ');
+  return where === '' ? 'Inquiry' : `Inquiry · ${where}`;
+}
+
+/** "6 answers · eng" — the answer tally and the language the question is written in. */
+function inquiryMetaLabel(inquiry: Inquiry): string {
+  const count = answerCountLabel(inquiry.answer_count);
+  const language = typeof inquiry.language === 'string' ? inquiry.language.trim() : '';
+  return language === '' ? count : `${count} · ${language}`;
+}
 
 type InquiryListScreenProps = {
   /** The signed-in user's access token, so a page can carry their own reaction highlights. */
@@ -118,212 +140,218 @@ export default function InquiryListScreen({
     }
   }, [loadingMore, nextCursor, place, token]);
 
+  const draftTrimmed = draftPlace.trim();
+  // A filter the person has typed but not yet applied, so it is offered as a tap
+  // rather than fired on every keystroke.
+  const filterPending = draftTrimmed !== '' && draftTrimmed !== place;
+
   return (
-    <FlatList
-      data={inquiries}
-      keyExtractor={(inquiry) => inquiry.id}
-      contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={() => {
-            void loadFirstPage('refresh');
-          }}
-        />
-      }
-      ListHeaderComponent={
-        <View>
-          <View style={styles.header}>
-            <Text style={styles.title}>Inquiries</Text>
-            <Pressable
-              style={styles.askButton}
-              onPress={onAsk}
-              accessibilityRole="button"
-              accessibilityLabel="Ask a question about a place"
-            >
-              <Text style={styles.askButtonText}>Ask</Text>
-            </Pressable>
-          </View>
-          <Text style={styles.subtitle}>
-            Questions people have about places, answered by the people who know them.
-          </Text>
-
-          <TextInput
-            style={styles.input}
-            value={draftPlace}
-            onChangeText={setDraftPlace}
-            onSubmitEditing={() => setPlace(draftPlace.trim())}
-            returnKeyType="search"
-            autoCapitalize="words"
-            autoCorrect={false}
-            placeholder="Filter by place, e.g. Manguzi"
-            placeholderTextColor={colors.text.secondary}
-          />
-          {place !== '' ? (
-            <Pressable
-              style={styles.clearFilter}
-              onPress={() => {
-                setDraftPlace('');
-                setPlace('');
-              }}
-            >
-              <Text style={styles.linkText}>Clear the {place} filter</Text>
-            </Pressable>
-          ) : null}
-
-          {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
-          {loading ? <ActivityIndicator style={styles.spinner} /> : null}
-          {!loading && inquiries.length === 0 && error === undefined ? (
-            <Text style={styles.empty}>
-              {place === ''
-                ? 'No questions yet. Ask the first one.'
-                : `No questions about ${place} yet.`}
-            </Text>
-          ) : null}
-        </View>
-      }
-      renderItem={({ item }) => (
-        <Pressable
-          style={styles.card}
-          onPress={() => onOpenInquiry(item.id)}
-          accessibilityRole="button"
-          accessibilityLabel={`Open the question: ${item.title}`}
-        >
-          <Text style={styles.cardTitle}>{item.title}</Text>
-          <Text style={styles.cardBody} numberOfLines={2}>
-            {item.body}
-          </Text>
-          <View style={styles.cardMeta}>
-            <Text style={styles.place}>{inquiryPlaceLabel(item.place)}</Text>
-            <Text style={styles.answers}>{answerCountLabel(item.answer_count)}</Text>
-          </View>
-          <AuthorLine
-            displayName={item.author_display_name}
-            avatarUrl={item.author_avatar_url}
-            createdAt={item.created_at}
-            rooted={item.author_rooted}
-            onPress={() => onOpenUserProfile(item.author_id)}
-          />
-        </Pressable>
-      )}
-      ListFooterComponent={
-        nextCursor !== '' ? (
+    <View style={styles.screen}>
+      <Header
+        title="Inquiries"
+        right={
           <Pressable
-            style={styles.more}
-            onPress={() => {
-              void loadMore();
-            }}
-            disabled={loadingMore}
+            style={styles.headerAction}
+            onPress={onAsk}
+            accessibilityRole="button"
+            accessibilityLabel="Ask a question about a place"
           >
-            {loadingMore ? <ActivityIndicator /> : <Text style={styles.linkText}>Load more</Text>}
+            <Text style={[typeScale.label, styles.headerActionLabel]}>Ask a question</Text>
           </Pressable>
-        ) : null
-      }
-    />
+        }
+      />
+
+      <FlatList
+        data={inquiries}
+        keyExtractor={(inquiry) => inquiry.id}
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              void loadFirstPage('refresh');
+            }}
+          />
+        }
+        ListHeaderComponent={
+          <View>
+            <Text style={[typeScale.bodyS, styles.subtitle]}>
+              Questions people have about places, answered by the people who know them.
+            </Text>
+
+            <View style={styles.filter}>
+              <Input
+                label="Place"
+                value={draftPlace}
+                onChangeText={setDraftPlace}
+                autoCapitalize="words"
+                returnKeyType="search"
+                accessibilityLabel="Filter the list by place"
+                placeholder="Filter by place, e.g. Manguzi"
+              />
+              {filterPending || place !== '' ? (
+                <View style={styles.filterChips}>
+                  {filterPending ? (
+                    <Chip
+                      label="Apply filter"
+                      variant="outline"
+                      selected
+                      onPress={() => setPlace(draftTrimmed)}
+                    />
+                  ) : null}
+                  {place !== '' ? (
+                    <Chip
+                      label={`Clear the ${place} filter`}
+                      variant="outline"
+                      onPress={() => {
+                        setDraftPlace('');
+                        setPlace('');
+                      }}
+                    />
+                  ) : null}
+                </View>
+              ) : null}
+            </View>
+
+            {error !== undefined ? (
+              <Text style={[typeScale.bodyS, styles.error]}>{error}</Text>
+            ) : null}
+            {loading ? <ActivityIndicator style={styles.spinner} /> : null}
+          </View>
+        }
+        renderItem={({ item }) => (
+          <Pressable
+            style={styles.row}
+            onPress={() => onOpenInquiry(item.id)}
+            accessibilityRole="button"
+            accessibilityLabel={`Open the question: ${item.title}`}
+          >
+            <Text style={[typeScale.overline, styles.rowOverline]} numberOfLines={1}>
+              {inquiryOverline(item)}
+            </Text>
+            <Text style={[typeScale.title, styles.rowTitle]} numberOfLines={3}>
+              {item.title}
+            </Text>
+            {item.body.trim() === '' ? null : (
+              <Text style={[typeScale.body, styles.rowBody]} numberOfLines={2}>
+                {item.body}
+              </Text>
+            )}
+            <View style={styles.rowMeta}>
+              <View style={styles.rowMetaIdentity}>
+                <AuthorLine
+                  displayName={item.author_display_name}
+                  avatarUrl={item.author_avatar_url}
+                  rooted={null}
+                  onPress={() => onOpenUserProfile(item.author_id)}
+                />
+              </View>
+              <Text style={[typeScale.caption, styles.rowCount]} numberOfLines={1}>
+                {inquiryMetaLabel(item)}
+              </Text>
+            </View>
+          </Pressable>
+        )}
+        ListEmptyComponent={
+          loading || error !== undefined ? null : (
+            <EmptyState
+              illustrationName="no-inquiries"
+              headline={place === '' ? 'No questions yet' : `No questions about ${place} yet`}
+              body={place === '' ? 'Ask the first one.' : undefined}
+            />
+          )
+        }
+        ListFooterComponent={
+          nextCursor !== '' ? (
+            <View style={styles.footer}>
+              <Button
+                variant="ghost"
+                label="Load more"
+                loading={loadingMore}
+                onPress={() => {
+                  void loadMore();
+                }}
+              />
+            </View>
+          ) : null
+        }
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  answers: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-  },
-  askButton: {
-    backgroundColor: colors.brand.purple,
-    borderRadius: radius.pill,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-  },
-  askButtonText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.semiBold,
-  },
-  card: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.subtle,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    marginBottom: spacing.md,
-    padding: spacing.lg,
-  },
-  cardBody: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    lineHeight: lineHeights.sm,
-    marginBottom: spacing.sm,
-  },
-  cardMeta: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: spacing.sm,
-  },
-  cardTitle: {
-    color: colors.text.primary,
-    fontSize: fontSizes.lg,
-    fontWeight: fontWeights.semiBold,
-    marginBottom: spacing.xs,
-  },
-  clearFilter: {
-    marginBottom: spacing.md,
-  },
   content: {
-    padding: spacing.lg,
-  },
-  empty: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.md,
-    paddingVertical: spacing.xl,
-    textAlign: 'center',
+    paddingBottom: spacing.xxxl,
+    paddingHorizontal: layout.screenPaddingFeed,
   },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.sm,
-    marginBottom: spacing.md,
+    color: colors.state.danger,
+    marginTop: spacing.md,
   },
-  header: {
+  filter: {
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  filterChips: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  footer: {
+    paddingVertical: spacing.lg,
+  },
+  // A 44-point tap target for the header's trailing action, even though it is
+  // only as tall as its label.
+  headerAction: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+  },
+  headerActionLabel: {
+    color: colors.brand.primary,
+  },
+  // One question: the overline, the title, up to two lines of the body, then the
+  // asker's attribution and the answer tally, closed by a full-bleed hairline.
+  // Flat rather than a card, per the design system's canvas rule.
+  row: {
+    borderBottomColor: colors.border.hairline,
+    borderBottomWidth: 1,
+    gap: spacing.sm,
+    marginHorizontal: -layout.screenPaddingFeed,
+    paddingHorizontal: layout.screenPaddingFeed,
+    paddingVertical: spacing.lg,
+  },
+  rowBody: {
+    color: colors.text.secondary,
+  },
+  rowCount: {
+    color: colors.text.secondary,
+  },
+  rowMeta: {
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginTop: spacing.xs,
   },
-  input: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
+  rowMetaIdentity: {
+    flexShrink: 1,
+  },
+  rowOverline: {
+    color: colors.brand.primary,
+  },
+  rowTitle: {
     color: colors.text.primary,
-    fontSize: fontSizes.md,
-    marginBottom: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
   },
-  linkText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.medium,
-  },
-  more: {
-    alignItems: 'center',
-    paddingVertical: spacing.lg,
-  },
-  place: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.medium,
+  screen: {
+    backgroundColor: colors.bg.canvas,
+    flex: 1,
   },
   spinner: {
     marginVertical: spacing.lg,
   },
   subtitle: {
     color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    lineHeight: lineHeights.sm,
-    marginBottom: spacing.lg,
-    marginTop: spacing.xs,
-  },
-  title: {
-    color: colors.text.primary,
-    fontSize: fontSizes['2xl'],
-    fontWeight: fontWeights.bold,
+    marginTop: spacing.sm,
   },
 });

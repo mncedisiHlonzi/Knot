@@ -294,19 +294,23 @@ export default function SearchScreen({
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
           <View>
-            {/* The phrase field. The glyph is a sibling of the field rather than a
-                slot inside it, because the design system's `Input` has no leading
-                icon slot and extending it is out of this task's scope (KNOT-020f). */}
-            <View style={styles.searchRow}>
-              <MagnifyingGlass color={colors.text.tertiary} size={20} />
-              <View style={styles.searchField}>
-                <Input
-                  value={draft}
-                  onChangeText={setDraft}
-                  autoFocus
-                  placeholder="Search stories, versions, and questions"
-                />
-              </View>
+            {/* The phrase field. Its magnifier rides inside the field's leading
+                edge through the design system's `Input` (KNOT-020g), so the
+                glyph and the text share one underline. The keyboard behaviour
+                is the reference's: no autocapitalisation or autocorrection, and
+                a search return key. */}
+            <View style={styles.searchField}>
+              <Input
+                value={draft}
+                onChangeText={setDraft}
+                autoFocus
+                autoCapitalize="none"
+                autoCorrect={false}
+                returnKeyType="search"
+                accessibilityLabel="Search phrase"
+                leadingIcon={<MagnifyingGlass color={colors.text.tertiary} size={20} />}
+                placeholder="Search stories, versions, and questions"
+              />
             </View>
 
             {draft === '' && recent.length > 0 ? (
@@ -393,7 +397,7 @@ export default function SearchScreen({
                   displayName={item.author_display_name}
                   avatarUrl={item.author_avatar_url}
                   createdAt={item.created_at}
-                  rooted={item.author_rooted}
+                  rooted={null}
                   onPress={() => onOpenUserProfile(item.author_id)}
                 />
               </View>
@@ -582,12 +586,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   searchField: {
-    flex: 1,
-  },
-  searchRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.sm,
     marginTop: spacing.md,
   },
   spinner: {

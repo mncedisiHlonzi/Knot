@@ -22,6 +22,23 @@ type InputProps = {
   readonly autoFocus?: boolean;
   /** When false, the field is read-only. Defaults to true. */
   readonly editable?: boolean;
+  /** How the keyboard capitalises what is typed. Defaults to `sentences`. */
+  readonly autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
+  /** Whether the keyboard autocorrects. Defaults to true. */
+  readonly autoCorrect?: boolean;
+  /** The label on the keyboard's return key. Defaults to the platform's own. */
+  readonly returnKeyType?: 'default' | 'done' | 'go' | 'next' | 'search' | 'send';
+  /**
+   * Overrides the field's accessibility label. When omitted the label falls back
+   * to the `label` prop and then the placeholder, as it always has.
+   */
+  readonly accessibilityLabel?: string;
+  /**
+   * A node drawn inside the field's leading edge — a magnifier glyph on a search
+   * field, for instance. When present it offsets the text area to its right, and
+   * the field's underline spans the icon and the text together.
+   */
+  readonly leadingIcon?: React.ReactNode;
   /** An error message. Its presence turns the underline red and shows the text. */
   readonly error?: string;
   /** Helper text, shown below the field only when there is no error. */
@@ -65,6 +82,11 @@ export default function Input({
   secureTextEntry,
   autoFocus,
   editable = true,
+  autoCapitalize = 'sentences',
+  autoCorrect = true,
+  returnKeyType,
+  accessibilityLabel,
+  leadingIcon,
   error,
   helper,
   testID,
@@ -85,30 +107,49 @@ export default function Input({
 
   const underline = { borderBottomColor: underlineColor, borderBottomWidth: underlineWidth };
   const fieldStyle = multiline
-    ? [typeScale.reading, styles.field, styles.multiline, underline]
-    : [typeScale.body, styles.field, underline];
+    ? [typeScale.reading, styles.field, styles.multiline]
+    : [typeScale.body, styles.field];
+
+  // With a leading icon the underline moves onto the row that holds the icon and
+  // the text together, so a single hairline runs under both; without one it stays
+  // on the field itself, exactly as before (KNOT-020g).
+  const hasLeadingIcon = leadingIcon !== undefined;
+
+  const field = (
+    <TextInput
+      style={hasLeadingIcon ? [fieldStyle, styles.fieldInline] : [fieldStyle, underline]}
+      value={value}
+      onChangeText={onChangeText}
+      placeholder={placeholder}
+      placeholderTextColor={colors.text.disabled}
+      multiline={multiline}
+      keyboardType={keyboardType}
+      secureTextEntry={secureTextEntry}
+      autoFocus={autoFocus}
+      editable={editable}
+      autoCapitalize={autoCapitalize}
+      autoCorrect={autoCorrect}
+      returnKeyType={returnKeyType}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      accessibilityLabel={accessibilityLabel ?? label ?? placeholder}
+      accessibilityState={{ disabled: !editable }}
+      testID={testID}
+    />
+  );
 
   return (
     <View style={styles.container}>
       {label !== undefined ? <Text style={[typeScale.overline, styles.label]}>{label}</Text> : null}
 
-      <TextInput
-        style={fieldStyle}
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={colors.text.disabled}
-        multiline={multiline}
-        keyboardType={keyboardType}
-        secureTextEntry={secureTextEntry}
-        autoFocus={autoFocus}
-        editable={editable}
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        accessibilityLabel={label ?? placeholder}
-        accessibilityState={{ disabled: !editable }}
-        testID={testID}
-      />
+      {hasLeadingIcon ? (
+        <View style={[styles.fieldRow, underline]}>
+          <View style={styles.leadingIcon}>{leadingIcon}</View>
+          {field}
+        </View>
+      ) : (
+        field
+      )}
 
       {message !== undefined ? (
         <Text style={[typeScale.caption, styles.error]}>{message}</Text>
@@ -131,6 +172,16 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     paddingVertical: spacing.sm,
   },
+  // The text takes the row's width once a leading icon has taken its own.
+  fieldInline: {
+    flex: 1,
+  },
+  // The row that holds a leading icon and the field, sharing one underline.
+  fieldRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
   helper: {
     color: colors.text.tertiary,
     marginTop: spacing.xs,
@@ -138,6 +189,10 @@ const styles = StyleSheet.create({
   label: {
     color: colors.text.secondary,
     marginBottom: spacing.xs,
+  },
+  leadingIcon: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   multiline: {
     minHeight: 96,

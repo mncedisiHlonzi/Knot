@@ -329,8 +329,24 @@ now read `typeScale.*` and the semantic colour roles only: no `fontSizes`, `line
 `typography.*` remains in either screen, and neither reads a deprecated colour alias. The inbox's
 sentence wording moved into `screens/notifications/notificationFormat.ts`, a React-Native-free
 module, so the rules that turn an event into its sentence — and the avatar URL resolver — are
-unit-tested the way the discovery screens' labels are. The screens the design pass has not reached
-yet (auth, inquiries, Rooted setup, Create Story) still read the deprecated legacy aliases.
+unit-tested the way the discovery screens' labels are.
+
+**KNOT-020g** migrated the three Curious Inquiries screens and audited the profile. `Input` gained
+five optional pass-throughs — `autoCapitalize`, `autoCorrect`, `returnKeyType`,
+`accessibilityLabel`, and a `leadingIcon` slot — so the Search field's magnifier now rides inside the
+field and its keyboard behaviour (no autocapitalisation or autocorrection, a search return key, and
+a "Search phrase" label) is restored (the KNOT-020f-fix1 item). `InquiryListScreen` opens on the
+shared `Header` with an "Ask a question" trailing action and renders each question as a flat
+hairline entry — an `INQUIRY · PLACE` overline, the title, a two-line body, the asker's `AuthorLine`,
+and the answer tally with the question's language — with the place filter moved onto an `Input` and
+an `EmptyState` for an empty list. `InquiryDetailScreen` reads the `Header` (back, and a report
+action behind a `DotsThree` overflow), the question block (overline, `h1`, `AuthorLine`, body,
+`ReactionBar`), a hairlined count bar, each answer as a hairline entry, and a composer pairing a
+language `Chip` with an `Input` and a `Button`. `AskInquiryScreen` reads the `Header` with a close
+button, two `Input` fields, the language and place pickers, the routing note, and a primary
+`Button`. All three screens now read `typeScale.*` and the semantic colour roles only; the profile
+screens were already there. The screens the design pass has not reached yet (auth, Rooted setup,
+Create Story) still read the deprecated legacy aliases.
 
 The `typeScale` **weights** are one step heavier than the reference snapshot for every token but
 the three body styles (`reading`, `body`, `bodyS`), which stay at 400 so prose keeps its
@@ -367,9 +383,10 @@ hand-roll the markup on a new screen.
 
 **Where the Rooted badge shows.** The badge belongs to **detail views** — Feed, Story Detail,
 Profile, and the version detail (`StoryVersionScreen`) — where attribution is the point. **List
-rows drop it**: a Language Tree row and a Comment Thread row pass `rooted={null}`, because a row
-is about the version, or the discussion, and not the author's rootedness (KNOT-020d-fix, see the
-scope note at the end of [`docs/DECISIONS.md`](DECISIONS.md)).
+rows drop it**: a Language Tree row, a Comment Thread row, a Search result, and an Inquiry list row
+pass `rooted={null}`, and the Inquiry detail drops it too, because a row is about the version, the
+discussion, the result, or the question, and not the author's rootedness (KNOT-020d-fix, extended by
+KNOT-020g; see the scope notes at the end of [`docs/DECISIONS.md`](DECISIONS.md)).
 
 ### The profile wall (`UserProfileScreen`)
 

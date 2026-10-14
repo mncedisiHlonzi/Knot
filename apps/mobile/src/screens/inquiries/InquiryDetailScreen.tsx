@@ -8,21 +8,36 @@ import {
   RefreshControl,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
+import { ArrowLeft, DotsThree } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { ANSWER_PAGE_SIZE, Inquiry, InquiryAnswer, inquiriesApi } from '../../api/inquiries';
 import { EMPTY_REACTION_COUNTS, ReactionCounts } from '../../api/reactions';
 import { DEFAULT_LANGUAGE_CODE } from '../../config/language';
 import AuthorLine from '../../components/AuthorLine';
+import Button from '../../components/Button';
+import Chip from '../../components/Chip';
+import Header from '../../components/Header';
+import Input from '../../components/Input';
 import ReactionBar from '../../components/ReactionBar';
 import ReportAction from '../../components/ReportAction';
+import ReportModal from '../../components/ReportModal';
 import { isLanguageCode, languageName } from '../../data/languages';
-import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
-import { answerCountLabel, answerDraftError, inquiryPlaceLabel } from '../../utils/inquiry';
-import { formatRelativeTime } from '../../utils/time';
+import { colors, layout, spacing, typeScale } from '../../theme';
+import { answerCountLabel, answerDraftError } from '../../utils/inquiry';
+
+/**
+ * "INQUIRY · OAXACA, MEXICO" — the overline naming what the question is and where.
+ * A question that names no place reads simply "Inquiry".
+ */
+function inquiryOverline(inquiry: Inquiry): string {
+  const place = typeof inquiry.place === 'string' ? inquiry.place.trim() : '';
+  const country = typeof inquiry.place_country === 'string' ? inquiry.place_country.trim() : '';
+  const where = [place, country].filter((part) => part !== '').join(', ');
+  return where === '' ? 'Inquiry' : `Inquiry · ${where}`;
+}
 
 type InquiryDetailScreenProps = {
   /** The inquiry to show. */
@@ -69,6 +84,7 @@ export default function InquiryDetailScreen({
   const [draft, setDraft] = useState('');
   const [posting, setPosting] = useState(false);
   const [answerError, setAnswerError] = useState<string | undefined>(undefined);
+  const [reportVisible, setReportVisible] = useState(false);
 
   // Only a canonical ISO 639-3 code is usable: a legacy or malformed preference is
   // ignored rather than forwarded, or the server rejects the answer (KNOT-016-fix).
@@ -174,6 +190,29 @@ export default function InquiryDetailScreen({
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      <Header
+        left={
+          <Pressable
+            style={styles.iconButton}
+            onPress={onBack}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+          >
+            <ArrowLeft color={colors.text.primary} size={24} />
+          </Pressable>
+        }
+        right={
+          <Pressable
+            style={styles.iconButton}
+            onPress={() => setReportVisible(true)}
+            accessibilityRole="button"
+            accessibilityLabel="More options"
+          >
+            <DotsThree color={colors.text.primary} size={24} weight="bold" />
+          </Pressable>
+        }
+      />
+
       <FlatList
         data={answers}
         keyExtractor={(answer) => answer.id}
@@ -189,31 +228,31 @@ export default function InquiryDetailScreen({
         }
         ListHeaderComponent={
           <View>
-            <Pressable style={styles.link} onPress={onBack}>
-              <Text style={styles.linkText}>← Back</Text>
-            </Pressable>
-
-            {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
+            {error !== undefined ? (
+              <Text style={[typeScale.bodyS, styles.error]}>{error}</Text>
+            ) : null}
             {loading ? <ActivityIndicator style={styles.spinner} /> : null}
 
             {inquiry !== undefined ? (
-              <View style={styles.questionCard}>
-                <Text style={styles.questionTitle}>{inquiry.title}</Text>
-                <Text style={styles.questionBody}>{inquiry.body}</Text>
+              <View style={styles.question}>
+                <Text style={[typeScale.overline, styles.questionOverline]}>
+                  {inquiryOverline(inquiry)}
+                </Text>
 
-                <View style={styles.metaRow}>
-                  <Text style={styles.meta}>{inquiryPlaceLabel(inquiry.place)}</Text>
-                  <Text style={styles.meta}>{answerCountLabel(inquiry.answer_count)}</Text>
+                <Text style={[typeScale.h1, styles.questionTitle]}>{inquiry.title}</Text>
+
+                <View style={styles.questionAuthor}>
+                  <AuthorLine
+                    displayName={inquiry.author_display_name}
+                    avatarUrl={inquiry.author_avatar_url}
+                    createdAt={inquiry.created_at}
+                    rooted={null}
+                    size="medium"
+                    onPress={() => onOpenUserProfile(inquiry.author_id)}
+                  />
                 </View>
 
-                <AuthorLine
-                  displayName={inquiry.author_display_name}
-                  avatarUrl={inquiry.author_avatar_url}
-                  createdAt={inquiry.created_at}
-                  rooted={inquiry.author_rooted}
-                  size="medium"
-                  onPress={() => onOpenUserProfile(inquiry.author_id)}
-                />
+                <Text style={[typeScale.reading, styles.questionBody]}>{inquiry.body}</Text>
 
                 <ReactionBar
                   entityType="inquiry"
@@ -223,209 +262,191 @@ export default function InquiryDetailScreen({
                   token={token}
                   onChange={applyReactionCounts}
                 />
-
-                <View style={styles.reportRow}>
-                  <ReportAction token={token} entityType="inquiry" entityId={inquiry.id} />
-                </View>
               </View>
             ) : null}
 
-            <Text style={styles.sectionLabel}>
-              {answers.length === 0 ? 'No answers yet' : 'Answers'}
-            </Text>
+            <View style={styles.answersBar}>
+              <Text style={[typeScale.label, styles.answersBarLabel]}>
+                {answerCountLabel(inquiry?.answer_count ?? answers.length)}
+              </Text>
+            </View>
           </View>
         }
         renderItem={({ item }) => (
-          <View style={styles.answerCard}>
-            <AuthorLine
-              displayName={item.author_display_name}
-              avatarUrl={item.author_avatar_url}
-              createdAt={item.created_at}
-              rooted={item.author_rooted}
-              onPress={() => onOpenUserProfile(item.author_id)}
-            />
-            <Text style={styles.answerBody}>{item.body}</Text>
-            <Text style={styles.answerMeta}>
-              {languageName(item.language)} · {formatRelativeTime(item.created_at)}
-            </Text>
-            <View style={styles.answerActions}>
+          <View style={styles.answer}>
+            <View style={styles.answerHead}>
+              <View style={styles.answerIdentity}>
+                <AuthorLine
+                  displayName={item.author_display_name}
+                  avatarUrl={item.author_avatar_url}
+                  createdAt={item.created_at}
+                  rooted={null}
+                  onPress={() => onOpenUserProfile(item.author_id)}
+                />
+              </View>
+              <Text style={[typeScale.caption, styles.answerLanguage]} numberOfLines={1}>
+                {languageName(item.language)}
+              </Text>
               <ReportAction token={token} entityType="inquiry_answer" entityId={item.id} />
             </View>
+            <Text style={[typeScale.body, styles.answerBody]}>{item.body}</Text>
           </View>
         )}
         ListFooterComponent={
           <View>
             {nextCursor !== '' ? (
-              <Pressable
-                style={styles.more}
-                onPress={() => {
-                  void loadMore();
-                }}
-                disabled={loadingMore}
-              >
-                {loadingMore ? (
-                  <ActivityIndicator />
-                ) : (
-                  <Text style={styles.linkText}>Load more answers</Text>
-                )}
-              </Pressable>
+              <View style={styles.more}>
+                <Button
+                  variant="ghost"
+                  label="Load more answers"
+                  loading={loadingMore}
+                  onPress={() => {
+                    void loadMore();
+                  }}
+                />
+              </View>
             ) : null}
 
-            <Text style={styles.sectionLabel}>Your answer</Text>
-            <Text style={styles.hint}>Public and attributed, in {languageName(language)}.</Text>
-            <TextInput
-              style={styles.composer}
+            <Text style={[typeScale.overline, styles.composerLabel]}>Your answer</Text>
+            <Text style={[typeScale.caption, styles.composerHint]}>
+              Public and attributed, in {languageName(language)}.
+            </Text>
+            <View style={styles.composerLang}>
+              <Chip label={languageName(language)} selected />
+            </View>
+            <Input
               value={draft}
               onChangeText={setDraft}
               multiline
+              accessibilityLabel="Write an answer"
               placeholder="Answer in your own words"
-              placeholderTextColor={colors.text.secondary}
             />
-            {answerError !== undefined ? <Text style={styles.error}>{answerError}</Text> : null}
-            <Pressable
-              style={[styles.submit, posting ? styles.submitDisabled : null]}
-              onPress={() => {
-                void submitAnswer();
-              }}
-              disabled={posting}
-              accessibilityRole="button"
-              accessibilityLabel="Post your answer"
-            >
-              {posting ? (
-                <ActivityIndicator color={colors.text.primary} />
-              ) : (
-                <Text style={styles.submitText}>Post answer</Text>
-              )}
-            </Pressable>
+            {answerError !== undefined ? (
+              <Text style={[typeScale.bodyS, styles.error]}>{answerError}</Text>
+            ) : null}
+            <View style={styles.composerSubmit}>
+              <Button
+                variant="primary"
+                fullWidth
+                label="Post answer"
+                loading={posting}
+                onPress={() => {
+                  void submitAnswer();
+                }}
+              />
+            </View>
           </View>
         }
       />
+
+      {inquiry !== undefined ? (
+        <ReportModal
+          visible={reportVisible}
+          token={token}
+          entityType="inquiry"
+          entityId={inquiry.id}
+          onClose={() => setReportVisible(false)}
+          onSubmitted={() => setReportVisible(false)}
+        />
+      ) : null}
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  answerActions: {
-    alignItems: 'flex-end',
-  },
-  reportRow: {
-    alignItems: 'flex-end',
-    marginTop: spacing.sm,
+  answer: {
+    borderBottomColor: colors.border.hairline,
+    borderBottomWidth: 1,
+    marginHorizontal: -layout.screenPaddingReading,
+    paddingHorizontal: layout.screenPaddingReading,
+    paddingVertical: spacing.lg,
   },
   answerBody: {
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    lineHeight: lineHeights.md,
-    marginBottom: spacing.sm,
+    color: colors.text.secondary,
     marginTop: spacing.sm,
   },
-  answerCard: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.subtle,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    marginBottom: spacing.md,
-    padding: spacing.lg,
+  answerHead: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
   },
-  answerMeta: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.xs,
+  answerIdentity: {
+    flexShrink: 1,
   },
-  composer: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
+  answerLanguage: {
+    color: colors.text.tertiary,
+  },
+  // The count bar between the question and its answers: hairlines above and
+  // below, full-bleed across the reading column.
+  answersBar: {
+    borderBottomColor: colors.border.hairline,
+    borderBottomWidth: 1,
+    borderTopColor: colors.border.hairline,
+    borderTopWidth: 1,
+    marginHorizontal: -layout.screenPaddingReading,
+    marginTop: spacing.lg,
+    paddingHorizontal: layout.screenPaddingReading,
+    paddingVertical: spacing.md,
+  },
+  answersBarLabel: {
     color: colors.text.primary,
-    fontSize: fontSizes.md,
-    minHeight: 96,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    textAlignVertical: 'top',
+  },
+  composerHint: {
+    color: colors.text.tertiary,
+    marginTop: spacing.xs,
+  },
+  composerLabel: {
+    color: colors.text.secondary,
+    marginTop: spacing.xl,
+  },
+  composerLang: {
+    marginBottom: spacing.md,
+    marginTop: spacing.md,
+  },
+  composerSubmit: {
+    marginTop: spacing.md,
   },
   container: {
-    backgroundColor: colors.bg.primary,
+    backgroundColor: colors.bg.canvas,
     flex: 1,
   },
   content: {
-    padding: spacing.lg,
+    paddingBottom: spacing.xxxl,
+    paddingHorizontal: layout.screenPaddingReading,
+    paddingTop: spacing.xs,
   },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.sm,
-    marginBottom: spacing.md,
+    color: colors.state.danger,
     marginTop: spacing.sm,
   },
-  hint: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.xs,
-    marginBottom: spacing.sm,
-  },
-  link: {
-    marginBottom: spacing.md,
-  },
-  linkText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.medium,
-  },
-  meta: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-  },
-  metaRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: spacing.md,
-    marginTop: spacing.sm,
+  // A 44-point tap target for each header icon button.
+  iconButton: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
   },
   more: {
-    alignItems: 'center',
     paddingVertical: spacing.lg,
   },
-  questionBody: {
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    lineHeight: lineHeights.md,
+  question: {
+    paddingTop: spacing.xs,
   },
-  questionCard: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.subtle,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    padding: spacing.lg,
+  questionAuthor: {
+    marginTop: spacing.md,
+  },
+  questionBody: {
+    color: colors.text.secondary,
+    marginTop: spacing.md,
+  },
+  questionOverline: {
+    color: colors.brand.primary,
   },
   questionTitle: {
     color: colors.text.primary,
-    fontSize: fontSizes.xl,
-    fontWeight: fontWeights.bold,
-    lineHeight: lineHeights.xl,
-    marginBottom: spacing.sm,
-  },
-  sectionLabel: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.semiBold,
-    marginBottom: spacing.sm,
-    marginTop: spacing.lg,
-    textTransform: 'uppercase',
+    marginTop: spacing.xs,
   },
   spinner: {
     marginVertical: spacing.lg,
-  },
-  submit: {
-    alignItems: 'center',
-    backgroundColor: colors.brand.purple,
-    borderRadius: radius.md,
-    marginTop: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  submitDisabled: {
-    opacity: 0.6,
-  },
-  submitText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    fontWeight: fontWeights.semiBold,
   },
 });

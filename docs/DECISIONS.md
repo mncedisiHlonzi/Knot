@@ -2204,3 +2204,27 @@ sentinel, so a country literally named "null" cannot be matched by name. The enr
 with the feed through `storyPageLookups.enrich`, so the two surfaces cannot drift — which is why the
 feed's own list handler was refactored onto the same helper rather than a second copy of the
 sequence being written. The cluster response shape is unchanged.
+
+## Scope note — the Rooted badge is also dropped from Search and Inquiries (KNOT-020g)
+
+**Not a new ADR.** This extends the KNOT-020d-fix display rule to two more surfaces, so it is not
+re-litigated as a regression.
+
+**Decision.** The inline `RootedBadge` stays off **Search results** (`SearchScreen` passes
+`rooted={null}`) and off **Inquiries** — the inquiry list row and the inquiry detail, on both the
+question's and the answers' `AuthorLine`, pass `rooted={null}`. The KNOT-020d-fix rule itself is
+unchanged: the badge belongs to detail views where attribution is the point (Feed, Story Detail,
+Profile, Version Detail), and a list row or a question is about the content, not the author's
+rootedness.
+
+**Why now.** KNOT-020g ported the Inquiries screens to the design system and, per the scope rule,
+removed the inline badge from them; while migrating Search off its deprecated tokens in KNOT-020f,
+its result row was found still passing the author's summary. The reference's inquiry rows draw the
+Rooted line as plain text, but the brief's scope rule wins: the badge is a detail-view signal, and a
+question is not about the asker.
+
+**Consequences.** The enrichment is unchanged — `author_rooted` is still attached to inquiry,
+answer, and search responses (KNOT-ADR-017, KNOT-ADR-041); the rule is purely which client surface
+draws it. `AuthorLine` still renders the badge whenever a caller passes a `rooted` summary, so the
+Profile keeps it in both own and visitor modes (the profile is a detail view of a person, and the
+badge describes them).
