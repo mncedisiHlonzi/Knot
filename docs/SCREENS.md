@@ -27,9 +27,11 @@ Discovery Map, Curious Inquiries, notifications. **Post-MVP** — everything aft
 | Bridge | Conversations | Phase 1 | Shipped | KNOT-006 | Bridge a comment into another language, joining two conversations: the source comment framed by a hairline, then a target-language picker and the adapted comment with an optional note. Redesigned by KNOT-020d. |
 | Discovery Map | Discovery | Phase 2 | Shipped | KNOT-020e | Browse the places stories are told in: a Mapbox map (light style, KNOT-ADR-026) across the screen behind a rounded bottom sheet, a size-scaled marker per cluster (keyed by place and country), a pillar filter (All / Wonder / Heritage) as underline tabs, and the scrollable place list with pull-to-refresh inside the sheet. Tapping a marker or a row opens that place's stories. Redesigned by KNOT-020e; reworked by KNOT-020e-fix. |
 | Place Stories | Discovery | Phase 2 | Shipped | KNOT-020e | Every story told at one place, newest first: the place as the screen's headline with its story and pillar totals beneath it, a compact **non-interactive map strip** pinning where the place is (drawn only when the place's cluster carried a coordinate), a **pillar filter** (All / Heritage / Wonder) that refetches the list server-side, then a list of `FeedEntry` rows (the same component the Feed uses) with pull-to-refresh and cursor paging on scroll-to-end. Opened from the Discovery Map. Redesigned by KNOT-020e; the map header is KNOT-020e-fix3; the pillar tabs are KNOT-020e-fix6. |
+| Search | Discovery | Phase 1 | Shipped | KNOT-018 | Full-text search across stories, versions, and inquiries: a phrase field with a 300 ms debounce, content-type / pillar / language / place filters, session-only recent phrases as chips, and flat hairline result rows — an overline kind label, the title, a two-line preview, the author line, and the pillar tag. Results page by keyset; tapping one opens the story, its version tree, or the inquiry. Redesigned by KNOT-020f. |
+| Notifications | Community | Phase 2 | Shipped | KNOT-015 | The in-app notification inbox (KNOT-ADR-039): who adapted your version, commented on it, bridged one of your comments, reacted to it, or asked about your place, newest first, with pull-to-refresh and keyset paging. Each row is the actor's avatar, the sentence, and the relative time, carrying an indigo dot while unread; tapping a row marks it read and opens what it can. Delivery is in-app only — there is no push channel. Redesigned by KNOT-020f. |
 | Profile (own) | Profile | Phase 1 | Shipped | KNOT-020c | The signed-in user's wall: a centred header (avatar, name, Rooted badge, joined date, stories/versions/answers stats) above six activity tabs and a compact activity list. A redesign of the wall shipped in KNOT-015c / KNOT-015d. |
 
-Fifteen screens shipped; the same list is visible in the `ScreenName` state machine in
+Seventeen screens shipped; the same list is visible in the `ScreenName` state machine in
 `apps/mobile/App.tsx`, which is documented in [`docs/NAVIGATION.md`](NAVIGATION.md).
 
 ## Concept and planned screens
@@ -39,7 +41,6 @@ Fifteen screens shipped; the same list is visible in the `ScreenName` state mach
 | Cultural Profile | Profile | Phase 1 | Planned | — | A person's languages, places, and heritage, as a page others can visit. |
 | Rooted | Community | Phase 2 | Concept | — | Trust and standing signals for contributors. |
 | Curious Inquiries | Discovery | Phase 2 | Concept | — | Question-led discovery over stories and languages. |
-| Notifications | Community | Phase 2 | Concept | — | Alerts when a story is adapted, commented on, or bridged. A surface rather than a single screen. |
 
 None of the entries in this second table has a dispatched task yet, so none carries a
 `KNOT-XXX` reference. `docs/UX_REFERENCE.md` describes each concept screen in full and states

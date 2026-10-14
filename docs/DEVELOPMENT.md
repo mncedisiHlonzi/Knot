@@ -316,6 +316,22 @@ Wonder tabs mirror the Feed's equal-width tab row and filter **server-side** thr
 endpoint's new `?pillar=` parameter (a closed set: an unknown pillar is a `400`, unlike `country`);
 changing a tab restarts the list from the first page, so a cursor is never reused across filters.
 
+**KNOT-020f** migrated the last two screens that predate the design pass. `NotificationsScreen` now
+opens on the shared `Header` — a 44-point back button, the title, and "Mark all as read" as the
+trailing action in the brand ink — and each row is a full-bleed hairline entry rather than a card:
+the actor's `Avatar`, one paragraph of body text with the actor's name in the stronger ink, the
+relative time in the tertiary ink, and an 8-point indigo dot on the paper tint when the row is
+unread. `SearchScreen` reads the same `Header`, two `Input` fields (the phrase and the place), a row
+of `Chip`s for each filter, and flat result rows carrying an overline kind label, the title, a
+two-line preview, the `AuthorLine`, and the `PillarTag`, each closed by a full-bleed hairline. Both
+screens keep their fetching, keyset paging, debounce, and tap-through routing unchanged, and both
+now read `typeScale.*` and the semantic colour roles only: no `fontSizes`, `lineHeights`, or
+`typography.*` remains in either screen, and neither reads a deprecated colour alias. The inbox's
+sentence wording moved into `screens/notifications/notificationFormat.ts`, a React-Native-free
+module, so the rules that turn an event into its sentence — and the avatar URL resolver — are
+unit-tested the way the discovery screens' labels are. The screens the design pass has not reached
+yet (auth, inquiries, Rooted setup, Create Story) still read the deprecated legacy aliases.
+
 The `typeScale` **weights** are one step heavier than the reference snapshot for every token but
 the three body styles (`reading`, `body`, `bodyS`), which stay at 400 so prose keeps its
 readability — a deliberate divergence from `docs/design-reference/tokens.json` requested by the

@@ -2,26 +2,22 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Image,
   Pressable,
   RefreshControl,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { ArrowLeft } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
-import {
-  NOTIFICATIONS_PAGE_SIZE,
-  Notification,
-  NotificationEntityType,
-  notificationsApi,
-} from '../../api/notifications';
-import { REACTION_EMOJI, REACTION_LABELS, ReactionType } from '../../api/reactions';
-import RootedBadge from '../../components/RootedBadge';
-import { API_BASE_URL } from '../../config/api';
-import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
+import { NOTIFICATIONS_PAGE_SIZE, Notification, notificationsApi } from '../../api/notifications';
+import Avatar from '../../components/Avatar';
+import EmptyState from '../../components/EmptyState';
+import Header from '../../components/Header';
+import { colors, fontWeights, layout, radius, spacing, typeScale } from '../../theme';
 import { formatRelativeTime } from '../../utils/time';
+import { avatarUri, notificationParts } from './notificationFormat';
 
 type NotificationsScreenProps = {
   /** The signed-in user's access token. Every inbox route requires it. */
@@ -33,128 +29,21 @@ type NotificationsScreenProps = {
 };
 
 /**
- * The entity types a notification can open.
- *
- * Each resolves to a screen over public GETs: a version names its story
- * (`GET /versions/{id}`); a comment names its version and story
- * (`GET /comments/{id}`); a bridge names its source comment, which resolves the
- * same way. A version tap lands on the story detail, while a comment or a bridge
- * lands on the comment's thread.
- */
-const OPENABLE_ENTITY_TYPES: readonly NotificationEntityType[] = [
-  'story',
-  'version',
-  'comment',
-  'bridge',
-  'inquiry',
-];
-
-/**
- * Names a reaction signal for the inbox sentence: its emoji and label, e.g.
- * "✅ Rings true". An unknown or absent type falls back to a generic phrase, so a
- * row from a newer server never reads as broken.
- */
-function reactionPhrase(raw: string | undefined): string {
-  if (raw !== undefined && raw in REACTION_LABELS) {
-    const type = raw as ReactionType;
-    return `${REACTION_EMOJI[type]} ${REACTION_LABELS[type]}`;
-  }
-  return 'reacted';
-}
-
-/** Builds the absolute URL for an actor's avatar, or undefined when they have none. */
-function avatarSource(avatarUrl: string): { uri: string } | undefined {
-  return avatarUrl === '' ? undefined : { uri: `${API_BASE_URL}${avatarUrl}` };
-}
-
-/** The initials shown when an actor has no avatar, e.g. "Ada Lovelace" -> "AL". */
-function initials(displayName: string): string {
-  const words = displayName
-    .trim()
-    .split(/\s+/)
-    .filter((word) => word !== '');
-  if (words.length === 0) {
-    return '?';
-  }
-
-  const first = words[0]?.charAt(0) ?? '';
-  const last = words.length > 1 ? (words[words.length - 1]?.charAt(0) ?? '') : '';
-
-  return (first + last).toUpperCase();
-}
-
-/**
- * Describes a notification in one line, in the second person, so the inbox reads
- * as a sentence about the person reading it.
- *
- * An actor the server could not resolve is named "Someone" rather than being
- * hidden, so a row never loses its meaning when an account is deleted.
- */
-function describeNotification(notification: Notification): string {
-  const actor = notification.actor?.display_name ?? 'Someone';
-
-  switch (notification.event_type) {
-    case 'version.created':
-      return `${actor} adapted your version.`;
-    case 'comment.created':
-      return `${actor} commented on your version.`;
-    case 'bridge.created':
-      return `${actor} bridged your comment into another language.`;
-    case 'reaction.created':
-      return `${actor} ${reactionPhrase(notification.reaction_type)} on your ${notification.entity_type}.`;
-    case 'inquiry.answered':
-      return `${actor} answered your question.`;
-    case 'inquiry.nearby':
-      // The one event about content the recipient has no part in: it fires because
-      // of where they are from, so the sentence names the act, not "your".
-      return `${actor} asked a question about your place.`;
-    default:
-      return `${actor} did something on your content.`;
-  }
-}
-
-/**
- * One actor's avatar, falling back to initials on a coloured circle.
- *
- * The avatar is served by the Knot API, not by object storage, so the URL is the
- * API base plus the path the server returned.
- */
-function ActorAvatar({
-  displayName,
-  avatarUrl,
-}: {
-  displayName: string;
-  avatarUrl: string;
-}): React.ReactElement {
-  const source = avatarSource(avatarUrl);
-
-  if (source === undefined) {
-    return (
-      <View style={styles.avatarFallback}>
-        <Text style={styles.avatarInitials}>{initials(displayName)}</Text>
-      </View>
-    );
-  }
-
-  return (
-    <Image
-      source={source}
-      style={styles.avatar}
-      accessibilityLabel={`${displayName}'s profile picture`}
-    />
-  );
-}
-
-/**
  * The in-app notification inbox: who acted on your content, newest first.
+ *
+ * Every row is a Pressable that marks the notification read and then hands it to
+ * the caller, which opens what it can. Each entity type resolves over public GETs:
+ * a version names its story (`GET /versions/{id}`), a comment names its version
+ * and story (`GET /comments/{id}`), and a bridge names its source comment, which
+ * resolves the same way. A version tap lands on the story detail, while a comment
+ * or a bridge lands on the comment's thread.
  *
  * Paging is keyset-based, exactly as the feed and a thread are: each page returns
  * an opaque `next_cursor` sent back verbatim to fetch the following page, and an
  * empty cursor means the end.
  *
  * Delivery is in-app only (KNOT-ADR-039): this screen is the whole notification
- * feature, and there is no push channel behind it. Tapping a row marks it read and
- * then hands it to the caller, which opens what it can.
+ * feature, and there is no push channel behind it.
  */
 export default function NotificationsScreen({
   token,
@@ -278,211 +167,199 @@ export default function NotificationsScreen({
   const hasUnread = notifications.some((notification) => !notification.read);
 
   return (
-    <FlatList
-      data={notifications}
-      keyExtractor={(notification) => notification.id}
-      contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={refresh}
-          tintColor={colors.text.secondary}
-        />
-      }
-      ListHeaderComponent={
-        <View>
-          <View style={styles.header}>
-            <Pressable style={styles.backButton} onPress={onBack}>
-              <Text style={styles.backButtonText}>Back</Text>
-            </Pressable>
-            <Text style={styles.title}>Notifications</Text>
-          </View>
-
-          {hasUnread ? (
+    <View style={styles.screen}>
+      <Header
+        title="Notifications"
+        left={
+          <Pressable
+            style={styles.iconButton}
+            onPress={onBack}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+          >
+            <ArrowLeft color={colors.text.primary} size={24} />
+          </Pressable>
+        }
+        right={
+          hasUnread ? (
             <Pressable
-              style={[styles.markAllButton, markingAll ? styles.buttonDisabled : null]}
-              onPress={handleMarkAllRead}
+              style={styles.markAllButton}
+              onPress={() => {
+                void handleMarkAllRead();
+              }}
               disabled={markingAll}
+              accessibilityRole="button"
+              accessibilityLabel="Mark all as read"
+              accessibilityState={{ disabled: markingAll }}
             >
-              <Text style={styles.markAllButtonText}>
+              <Text style={[typeScale.label, styles.markAllLabel]}>
                 {markingAll ? 'Marking…' : 'Mark all as read'}
               </Text>
             </Pressable>
-          ) : null}
+          ) : undefined
+        }
+      />
 
-          {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
-          {loading ? <ActivityIndicator style={styles.spinner} /> : null}
-          {!loading && notifications.length === 0 && error === undefined ? (
-            <Text style={styles.empty}>No notifications yet.</Text>
-          ) : null}
-        </View>
-      }
-      renderItem={({ item }) => {
-        const displayName = item.actor?.display_name ?? 'Someone';
-        const openable = OPENABLE_ENTITY_TYPES.includes(item.entity_type);
-
-        return (
-          <Pressable
-            style={[styles.card, item.read ? null : styles.unreadCard]}
-            onPress={() => {
-              void handleOpen(item);
+      <FlatList
+        data={notifications}
+        keyExtractor={(notification) => notification.id}
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              void refresh();
             }}
-          >
-            <ActorAvatar displayName={displayName} avatarUrl={item.actor?.avatar_url ?? ''} />
+            tintColor={colors.text.secondary}
+          />
+        }
+        renderItem={({ item }) => {
+          const { actor, text } = notificationParts(item);
 
-            <View style={styles.cardBody}>
-              <Text style={styles.cardText}>{describeNotification(item)}</Text>
-              <Text style={styles.cardMeta}>
-                {formatRelativeTime(item.created_at)}
-                {openable ? ' · tap to open' : ''}
-              </Text>
-              {item.actor?.author_rooted ? (
-                <View style={styles.rootedBadge}>
-                  <RootedBadge
-                    place={item.actor.author_rooted.place}
-                    durationBucket={item.actor.author_rooted.duration_bucket}
-                  />
-                </View>
-              ) : null}
-            </View>
+          return (
+            <Pressable
+              style={[styles.row, item.read ? null : styles.rowUnread]}
+              onPress={() => {
+                void handleOpen(item);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={`${actor} ${text}`}
+            >
+              <Avatar uri={avatarUri(item.actor?.avatar_url ?? '')} displayName={actor} size="md" />
 
-            {item.read ? null : <View style={styles.unreadDot} />}
-          </Pressable>
-        );
-      }}
-      ListFooterComponent={
-        nextCursor !== '' ? (
-          <Pressable
-            style={[styles.loadMoreButton, loadingMore ? styles.buttonDisabled : null]}
-            onPress={loadMore}
-            disabled={loadingMore}
-          >
-            <Text style={styles.loadMoreButtonText}>{loadingMore ? 'Loading…' : 'Load more'}</Text>
-          </Pressable>
-        ) : null
-      }
-    />
+              <View style={styles.rowBody}>
+                <Text style={[typeScale.body, styles.sentence]}>
+                  <Text style={styles.actor}>{actor}</Text> {text}
+                </Text>
+                <Text style={[typeScale.caption, styles.when]}>
+                  {formatRelativeTime(item.created_at)}
+                </Text>
+              </View>
+
+              {item.read ? null : <View style={styles.unreadDot} />}
+            </Pressable>
+          );
+        }}
+        ListEmptyComponent={
+          loading ? (
+            <ActivityIndicator style={styles.spinner} />
+          ) : error !== undefined ? (
+            <Text style={styles.error}>{error}</Text>
+          ) : (
+            <EmptyState
+              illustrationName="no-notifications"
+              headline="No notifications yet."
+              body="When someone adapts your story, comments on it, or reacts, it shows up here."
+            />
+          )
+        }
+        ListFooterComponent={
+          error !== undefined && notifications.length > 0 ? (
+            <Text style={styles.error}>{error}</Text>
+          ) : nextCursor !== '' ? (
+            <Pressable
+              style={styles.more}
+              onPress={() => {
+                void loadMore();
+              }}
+              disabled={loadingMore}
+              accessibilityRole="button"
+              accessibilityLabel="Load more notifications"
+            >
+              {loadingMore ? (
+                <ActivityIndicator />
+              ) : (
+                <Text style={[typeScale.button, styles.moreLabel]}>Load more</Text>
+              )}
+            </Pressable>
+          ) : null
+        }
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  avatar: {
-    backgroundColor: colors.bg.secondary,
-    borderRadius: radius.pill,
-    height: 40,
-    width: 40,
-  },
-  avatarFallback: {
-    alignItems: 'center',
-    backgroundColor: colors.brand.purple,
-    borderRadius: radius.pill,
-    height: 40,
-    justifyContent: 'center',
-    width: 40,
-  },
-  avatarInitials: {
+  // Inline emphasis inside the sentence: the actor's name takes the primary ink
+  // and the heavier weight, while the clause stays in the body ink. Only colour
+  // and weight are overridden — never the size or the line height — so the
+  // paragraph keeps one rhythm; there is no bold variant of `typeScale.body`
+  // (KNOT-020f).
+  actor: {
     color: colors.text.primary,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.semiBold,
-  },
-  backButton: {
-    marginRight: spacing.lg,
-    paddingVertical: spacing.sm,
-  },
-  backButtonText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
-  },
-  buttonDisabled: {
-    opacity: 0.5,
-  },
-  card: {
-    alignItems: 'flex-start',
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.subtle,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.md,
-    marginTop: spacing.md,
-    padding: spacing.lg,
-  },
-  cardBody: {
-    flexGrow: 1,
-  },
-  cardMeta: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    marginTop: spacing.xs,
-  },
-  cardText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    lineHeight: lineHeights.base,
+    fontWeight: fontWeights.bold,
   },
   content: {
-    backgroundColor: colors.bg.primary,
-    padding: spacing.xl,
-    paddingBottom: spacing['3xl'],
-  },
-  empty: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.base,
-    marginTop: spacing.lg,
+    paddingBottom: spacing.xxxl,
   },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.base,
-    marginTop: spacing.lg,
+    color: colors.state.danger,
+    marginVertical: spacing.lg,
+    paddingHorizontal: layout.screenPaddingFeed,
+    textAlign: 'center',
   },
-  header: {
+  // A 44-point tap target for the header's leading icon button.
+  iconButton: {
     alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  // The header's trailing action: body text in the brand ink, inside a 44-point
+  // tap target even though it is only as tall as its label.
+  markAllButton: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'flex-end',
+    paddingHorizontal: spacing.xs,
+  },
+  markAllLabel: {
+    color: colors.brand.primary,
+  },
+  more: {
+    alignItems: 'center',
+    paddingVertical: spacing.lg,
+  },
+  moreLabel: {
+    color: colors.brand.primary,
+  },
+  // One inbox row: the actor's avatar, the sentence, and when it happened, on a
+  // hairline. An unread row carries the paper tint and an indigo dot; a read row
+  // is the bare canvas with neither.
+  row: {
+    alignItems: 'flex-start',
+    borderBottomColor: colors.border.hairline,
+    borderBottomWidth: 1,
     flexDirection: 'row',
-  },
-  loadMoreButton: {
-    alignItems: 'center',
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginTop: spacing.lg,
-    paddingHorizontal: spacing.lg,
+    gap: spacing.md,
+    paddingHorizontal: layout.screenPaddingFeed,
     paddingVertical: spacing.md,
   },
-  loadMoreButtonText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
+  rowBody: {
+    flex: 1,
+    gap: spacing.xs,
   },
-  markAllButton: {
-    alignSelf: 'flex-start',
-    marginTop: spacing.lg,
-    paddingVertical: spacing.sm,
+  rowUnread: {
+    backgroundColor: colors.bg.paper,
   },
-  markAllButtonText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
+  screen: {
+    backgroundColor: colors.bg.canvas,
+    flex: 1,
   },
-  rootedBadge: {
-    marginTop: spacing.sm,
+  sentence: {
+    color: colors.text.secondary,
   },
   spinner: {
     marginTop: spacing.xl,
   },
-  title: {
-    color: colors.text.primary,
-    fontSize: fontSizes.xl,
-    fontWeight: fontWeights.bold,
-  },
-  unreadCard: {
-    borderColor: colors.brand.purple,
-  },
   unreadDot: {
-    backgroundColor: colors.brand.purple,
+    backgroundColor: colors.brand.primary,
     borderRadius: radius.pill,
-    height: 10,
+    height: 8,
     marginTop: spacing.sm,
-    width: 10,
+    width: 8,
+  },
+  when: {
+    color: colors.text.tertiary,
   },
 });

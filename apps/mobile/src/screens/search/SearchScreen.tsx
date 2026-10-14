@@ -6,9 +6,9 @@ import {
   Pressable,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
+import { ArrowLeft, MagnifyingGlass } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import {
@@ -20,9 +20,14 @@ import {
   searchApi,
 } from '../../api/search';
 import AuthorLine from '../../components/AuthorLine';
+import Chip from '../../components/Chip';
+import EmptyState from '../../components/EmptyState';
+import Header from '../../components/Header';
+import Input from '../../components/Input';
 import LanguagePicker from '../../components/LanguagePicker';
+import PillarTag from '../../components/PillarTag';
 import { languageName } from '../../data/languages';
-import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../../theme';
+import { colors, layout, radius, spacing, typeScale } from '../../theme';
 
 /** How long to wait after the last keystroke before searching. */
 const DEBOUNCE_MS = 300;
@@ -85,15 +90,16 @@ type SearchScreenProps = {
  * A row of single-choice filter chips.
  *
  * It is a plain presentation helper, not a hook-bearing component, so it stays a
- * module-level function and each screen keeps its own filter state.
+ * module-level function and each screen keeps its own filter state. Each chip is
+ * the design system's `Chip`, which supplies the selected and unselected fills and
+ * labels itself with its own text, so there is no separate group label to thread
+ * through here.
  */
 function ChipRow({
-  label,
   options,
   selected,
   onSelect,
 }: {
-  readonly label: string;
   readonly options: readonly { readonly value: string; readonly label: string }[];
   readonly selected: string;
   readonly onSelect: (value: string) => void;
@@ -103,18 +109,13 @@ function ChipRow({
       {options.map((option) => {
         const active = option.value === selected;
         return (
-          <Pressable
+          <Chip
             key={option.value}
-            style={[styles.chip, active ? styles.chipActive : null]}
+            label={option.label}
+            selected={active}
+            variant="outline"
             onPress={() => onSelect(option.value)}
-            accessibilityRole="button"
-            accessibilityState={{ selected: active }}
-            accessibilityLabel={`${label}: ${option.label}`}
-          >
-            <Text style={[styles.chipText, active ? styles.chipTextActive : null]}>
-              {option.label}
-            </Text>
-          </Pressable>
+          />
         );
       })}
     </View>
@@ -272,6 +273,20 @@ export default function SearchScreen({
 
   return (
     <View style={styles.screen}>
+      <Header
+        title="Search"
+        left={
+          <Pressable
+            style={styles.iconButton}
+            onPress={onBack}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+          >
+            <ArrowLeft color={colors.text.primary} size={24} />
+          </Pressable>
+        }
+      />
+
       <FlatList
         data={results}
         keyExtractor={(result) => `${result.kind}:${result.id}`}
@@ -279,150 +294,137 @@ export default function SearchScreen({
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={
           <View>
-            <Pressable style={styles.link} onPress={onBack}>
-              <Text style={styles.linkText}>← Back</Text>
-            </Pressable>
-            <Text style={styles.title}>Search</Text>
-
-            <TextInput
-              style={styles.input}
-              value={draft}
-              onChangeText={setDraft}
-              autoFocus
-              autoCapitalize="none"
-              autoCorrect={false}
-              returnKeyType="search"
-              placeholder="Search stories, versions, and questions"
-              placeholderTextColor={colors.text.secondary}
-              accessibilityLabel="Search phrase"
-            />
+            {/* The phrase field. The glyph is a sibling of the field rather than a
+                slot inside it, because the design system's `Input` has no leading
+                icon slot and extending it is out of this task's scope (KNOT-020f). */}
+            <View style={styles.searchRow}>
+              <MagnifyingGlass color={colors.text.tertiary} size={20} />
+              <View style={styles.searchField}>
+                <Input
+                  value={draft}
+                  onChangeText={setDraft}
+                  autoFocus
+                  placeholder="Search stories, versions, and questions"
+                />
+              </View>
+            </View>
 
             {draft === '' && recent.length > 0 ? (
-              <View style={styles.chipRow}>
+              <View style={styles.recentRow}>
                 {recent.map((item) => (
-                  <Pressable
-                    key={item}
-                    style={styles.chip}
-                    onPress={() => setDraft(item)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Search again for ${item}`}
-                  >
-                    <Text style={styles.chipText}>{item}</Text>
-                  </Pressable>
+                  <Chip key={item} label={item} variant="outline" onPress={() => setDraft(item)} />
                 ))}
               </View>
             ) : null}
 
-            <ChipRow
-              label="Content type"
-              options={KIND_OPTIONS}
-              selected={kind}
-              onSelect={(value) => setKind(value as KindFilter)}
-            />
-            <ChipRow
-              label="Pillar"
-              options={PILLAR_OPTIONS}
-              selected={pillar}
-              onSelect={(value) => setPillar(value as PillarFilter)}
-            />
+            <View style={styles.filters}>
+              <ChipRow
+                options={KIND_OPTIONS}
+                selected={kind}
+                onSelect={(value) => setKind(value as KindFilter)}
+              />
+              <ChipRow
+                options={PILLAR_OPTIONS}
+                selected={pillar}
+                onSelect={(value) => setPillar(value as PillarFilter)}
+              />
 
-            <View style={styles.chipRow}>
-              <Pressable
-                style={[styles.chip, language !== '' ? styles.chipActive : null]}
-                onPress={() => setLanguageOpen(true)}
-                accessibilityRole="button"
-                accessibilityLabel="Filter by language"
-              >
-                <Text style={[styles.chipText, language !== '' ? styles.chipTextActive : null]}>
-                  {language === '' ? 'Language' : languageName(language)}
-                </Text>
-              </Pressable>
-              {filtersActive ? (
-                <Pressable
-                  style={styles.chip}
-                  onPress={clearFilters}
-                  accessibilityRole="button"
-                  accessibilityLabel="Clear all filters"
-                >
-                  <Text style={styles.chipText}>Clear filters</Text>
-                </Pressable>
-              ) : null}
+              <View style={styles.chipRow}>
+                <Chip
+                  label={language === '' ? 'Language' : languageName(language)}
+                  selected={language !== ''}
+                  variant="outline"
+                  onPress={() => setLanguageOpen(true)}
+                />
+                {filtersActive ? (
+                  <Chip label="Clear filters" variant="outline" onPress={clearFilters} />
+                ) : null}
+              </View>
+
+              <Input
+                label="Place"
+                value={place}
+                onChangeText={setPlace}
+                placeholder="Exact spelling"
+              />
             </View>
 
-            <TextInput
-              style={styles.input}
-              value={place}
-              onChangeText={setPlace}
-              autoCapitalize="words"
-              autoCorrect={false}
-              returnKeyType="search"
-              placeholder="Filter by place, exact spelling"
-              placeholderTextColor={colors.text.secondary}
-              accessibilityLabel="Place filter"
-            />
-
             {error !== undefined ? (
-              <View>
+              <View style={styles.errorBlock}>
                 <Text style={styles.error}>{error}</Text>
                 <Pressable
-                  style={styles.retry}
+                  style={styles.action}
                   onPress={() => {
                     void loadFirstPage();
                   }}
                   accessibilityRole="button"
                   accessibilityLabel="Try the search again"
                 >
-                  <Text style={styles.linkText}>Try again</Text>
+                  <Text style={[typeScale.button, styles.actionLabel]}>Try again</Text>
                 </Pressable>
               </View>
             ) : null}
 
             {loading ? <ActivityIndicator style={styles.spinner} /> : null}
-
-            {!searchable && !loading ? (
-              <Text style={styles.empty}>Search Knot for stories, versions, and questions.</Text>
-            ) : null}
-
-            {searchable && !loading && error === undefined && results.length === 0 ? (
-              <Text style={styles.empty}>
-                {phrase === '' ? 'No matches for these filters.' : `No results for '${phrase}'.`}
-              </Text>
-            ) : null}
           </View>
         }
-        renderItem={({ item }) => (
-          <Pressable
-            style={styles.card}
-            onPress={() => openResult(item)}
-            accessibilityRole="button"
-            accessibilityLabel={`Open the ${KIND_LABELS[item.kind].toLowerCase()}: ${item.title}`}
-          >
-            <View style={styles.cardTop}>
-              <Text style={styles.kindBadge}>{KIND_LABELS[item.kind]}</Text>
-              {item.pillar !== null ? <Text style={styles.metaBadge}>{item.pillar}</Text> : null}
-              {item.place !== null && item.place !== '' ? (
-                <Text style={styles.metaBadge} numberOfLines={1}>
-                  {item.place}
-                </Text>
-              ) : null}
-            </View>
+        renderItem={({ item }) => {
+          const place = typeof item.place === 'string' ? item.place.trim() : '';
 
-            <Text style={styles.cardTitle}>{item.title}</Text>
-            {item.preview !== '' ? (
-              <Text style={styles.cardBody} numberOfLines={2}>
-                {item.preview}
+          return (
+            <Pressable
+              style={styles.result}
+              onPress={() => openResult(item)}
+              accessibilityRole="button"
+              accessibilityLabel={`Open the ${KIND_LABELS[item.kind].toLowerCase()}: ${item.title}`}
+            >
+              <Text style={[typeScale.overline, styles.resultKind]}>{KIND_LABELS[item.kind]}</Text>
+              <Text style={[typeScale.h3, styles.resultTitle]} numberOfLines={2}>
+                {item.title}
               </Text>
-            ) : null}
+              {item.preview === '' ? null : (
+                <Text style={[typeScale.bodyS, styles.resultPreview]} numberOfLines={2}>
+                  {item.preview}
+                </Text>
+              )}
 
-            <AuthorLine
-              displayName={item.author_display_name}
-              avatarUrl={item.author_avatar_url}
-              createdAt={item.created_at}
-              rooted={item.author_rooted}
-              onPress={() => onOpenUserProfile(item.author_id)}
+              <View style={styles.resultAuthor}>
+                <AuthorLine
+                  displayName={item.author_display_name}
+                  avatarUrl={item.author_avatar_url}
+                  createdAt={item.created_at}
+                  rooted={item.author_rooted}
+                  onPress={() => onOpenUserProfile(item.author_id)}
+                />
+              </View>
+
+              {item.pillar !== null ? (
+                <View style={styles.resultTag}>
+                  <PillarTag pillar={item.pillar} place={item.place} variant="plain" />
+                </View>
+              ) : place === '' ? null : (
+                <Text style={[typeScale.overline, styles.resultPlace]} numberOfLines={1}>
+                  {place}
+                </Text>
+              )}
+            </Pressable>
+          );
+        }}
+        ListEmptyComponent={
+          loading ? null : error !== undefined ? null : !searchable ? (
+            <EmptyState
+              headline="Search Knot"
+              body="Find stories, versions, and questions by phrase, place, or lens."
             />
-          </Pressable>
-        )}
+          ) : results.length === 0 ? (
+            <EmptyState
+              illustrationName="no-results"
+              headline={
+                phrase === '' ? 'No matches for these filters.' : `No results for ${phrase}.`
+              }
+            />
+          ) : null
+        }
         ListFooterComponent={
           nextCursor !== '' ? (
             <Pressable
@@ -434,7 +436,11 @@ export default function SearchScreen({
               accessibilityRole="button"
               accessibilityLabel="Load more results"
             >
-              {loadingMore ? <ActivityIndicator /> : <Text style={styles.linkText}>Load more</Text>}
+              {loadingMore ? (
+                <ActivityIndicator />
+              ) : (
+                <Text style={[typeScale.button, styles.actionLabel]}>Load more</Text>
+              )}
             </Pressable>
           ) : null
         }
@@ -448,7 +454,7 @@ export default function SearchScreen({
       >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Filter by language</Text>
+            <Text style={[typeScale.h3, styles.modalTitle]}>Filter by language</Text>
             <LanguagePicker
               mode="single"
               selected={language}
@@ -463,12 +469,12 @@ export default function SearchScreen({
               placeholder="Search languages"
             />
             <Pressable
-              style={styles.modalClose}
+              style={styles.action}
               onPress={() => setLanguageOpen(false)}
               accessibilityRole="button"
               accessibilityLabel="Close the language filter"
             >
-              <Text style={styles.linkText}>Close</Text>
+              <Text style={[typeScale.button, styles.actionLabel]}>Close</Text>
             </Pressable>
           </View>
         </View>
@@ -478,144 +484,113 @@ export default function SearchScreen({
 }
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.subtle,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    marginBottom: spacing.md,
-    padding: spacing.lg,
+  // A text action in the brand ink, inside a 44-point tap target even though it
+  // is only as tall as its label.
+  action: {
+    justifyContent: 'center',
+    minHeight: 44,
   },
-  cardBody: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    lineHeight: lineHeights.sm,
-    marginBottom: spacing.sm,
-  },
-  cardTitle: {
-    color: colors.text.primary,
-    fontSize: fontSizes.lg,
-    fontWeight: fontWeights.semiBold,
-    marginBottom: spacing.xs,
-  },
-  cardTop: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    marginBottom: spacing.xs,
-  },
-  chip: {
-    borderColor: colors.border.default,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    marginBottom: spacing.sm,
-    marginRight: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
-  },
-  chipActive: {
-    backgroundColor: colors.brand.purple,
-    borderColor: colors.brand.purple,
+  actionLabel: {
+    color: colors.brand.primary,
   },
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-  },
-  chipText: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-  },
-  chipTextActive: {
-    color: colors.text.primary,
-    fontWeight: fontWeights.semiBold,
+    gap: spacing.sm,
   },
   content: {
-    padding: spacing.lg,
-  },
-  empty: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.md,
-    paddingVertical: spacing.xl,
-    textAlign: 'center',
+    paddingBottom: spacing.xxxl,
+    paddingHorizontal: layout.screenPaddingFeed,
   },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.sm,
-    marginBottom: spacing.sm,
+    color: colors.state.danger,
   },
-  input: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    marginBottom: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+  errorBlock: {
+    gap: spacing.sm,
+    marginTop: spacing.md,
   },
-  kindBadge: {
-    backgroundColor: colors.bg.secondary,
-    borderRadius: radius.sm,
-    color: colors.text.brand,
-    fontSize: fontSizes.xs,
-    fontWeight: fontWeights.semiBold,
-    marginRight: spacing.sm,
-    overflow: 'hidden',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
+  filters: {
+    gap: spacing.sm,
+    marginTop: spacing.md,
   },
-  link: {
-    marginBottom: spacing.md,
-  },
-  linkText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.base,
-  },
-  metaBadge: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.xs,
-    marginRight: spacing.sm,
+  // A 44-point tap target for the header's leading icon button.
+  iconButton: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
   },
   modalBackdrop: {
-    backgroundColor: colors.overlay,
+    backgroundColor: colors.scrim.overlay,
     flex: 1,
     justifyContent: 'flex-end',
   },
   modalCard: {
-    backgroundColor: colors.bg.primary,
-    borderColor: colors.border.subtle,
-    borderTopLeftRadius: radius.lg,
-    borderTopRightRadius: radius.lg,
-    borderWidth: 1,
+    backgroundColor: colors.bg.canvas,
+    borderTopLeftRadius: radius.xxl,
+    borderTopRightRadius: radius.xxl,
     padding: spacing.lg,
-  },
-  modalClose: {
-    marginTop: spacing.md,
   },
   modalTitle: {
     color: colors.text.primary,
-    fontSize: fontSizes.lg,
-    fontWeight: fontWeights.semiBold,
     marginBottom: spacing.md,
   },
   more: {
     alignItems: 'center',
     paddingVertical: spacing.lg,
   },
-  retry: {
-    marginBottom: spacing.md,
+  recentRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  // One result: the overline kind, the title, up to two lines of preview, the
+  // author line, and the pillar-and-place line, closed by a full-bleed hairline.
+  // Flat rather than a card, because the design system keeps a canvas free of
+  // cards; the negative inset lets the hairline run edge to edge while the text
+  // stays on the screen's padding.
+  result: {
+    borderBottomColor: colors.border.hairline,
+    borderBottomWidth: 1,
+    gap: spacing.xs,
+    marginHorizontal: -layout.screenPaddingFeed,
+    paddingHorizontal: layout.screenPaddingFeed,
+    paddingVertical: spacing.md,
+  },
+  resultAuthor: {
+    marginTop: spacing.xs,
+  },
+  resultKind: {
+    color: colors.brand.primary,
+  },
+  resultPlace: {
+    color: colors.text.tertiary,
+    marginTop: spacing.xs,
+  },
+  resultPreview: {
+    color: colors.text.secondary,
+  },
+  resultTag: {
+    marginTop: spacing.xs,
+  },
+  resultTitle: {
+    color: colors.text.primary,
   },
   screen: {
-    backgroundColor: colors.bg.primary,
+    backgroundColor: colors.bg.canvas,
     flex: 1,
+  },
+  searchField: {
+    flex: 1,
+  },
+  searchRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
   },
   spinner: {
     marginVertical: spacing.lg,
-  },
-  title: {
-    color: colors.text.primary,
-    fontSize: fontSizes['2xl'],
-    fontWeight: fontWeights.bold,
-    marginBottom: spacing.md,
   },
 });
