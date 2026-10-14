@@ -159,6 +159,11 @@ export type ProfileCard = {
   /** The meta line under the title, or '' when there is nothing to show. */
   readonly meta: string;
   /**
+   * The card's body excerpt, or '' when the payload carries none. It is the
+   * opening lines of the story, the adaptation, or the question (KNOT-020g-fix4).
+   */
+  readonly preview: string;
+  /**
    * The card's media preview path (API-relative), or undefined when there is
    * nothing to draw. A story and a version carry the story's first media item; an
    * inquiry has no media.
@@ -211,6 +216,7 @@ export function activityCard(activity: Activity, relativeTime: string): ProfileC
           versions > 0 ? versionCountLabel(versions) : '',
           relativeTime,
         ]),
+        preview: asText(activity.payload.preview),
         mediaUrl: asOptionalText(activity.payload.media_preview_url),
         mediaType: asMediaType(activity.payload.first_media_type),
       };
@@ -224,6 +230,7 @@ export function activityCard(activity: Activity, relativeTime: string): ProfileC
         pillar: undefined,
         place: undefined,
         meta: joinParts([asText(activity.payload.place), relativeTime]),
+        preview: asText(activity.payload.preview),
         mediaUrl: asOptionalText(activity.payload.media_preview_url),
         mediaType: asMediaType(activity.payload.first_media_type),
       };
@@ -236,6 +243,7 @@ export function activityCard(activity: Activity, relativeTime: string): ProfileC
         pillar: undefined,
         place: undefined,
         meta: joinParts([answerCountLabel(asCount(activity.payload.answer_count)), relativeTime]),
+        preview: asText(activity.payload.preview),
         mediaUrl: undefined,
         mediaType: undefined,
       };

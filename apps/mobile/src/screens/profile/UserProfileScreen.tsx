@@ -20,7 +20,6 @@ import {
   CaretRight,
   DotsThree,
   Plant,
-  PlayCircle,
   Prohibit,
   SignOut,
   type Icon,
@@ -40,6 +39,7 @@ import { uploadAvatar } from '../../api/users';
 import Avatar from '../../components/Avatar';
 import Button from '../../components/Button';
 import EmptyState from '../../components/EmptyState';
+import FeedVideo from '../../components/FeedVideo';
 import Header from '../../components/Header';
 import MediaPickerSheet, { PickedMedia } from '../../components/MediaPickerSheet';
 import PillarTag from '../../components/PillarTag';
@@ -64,6 +64,7 @@ import {
   profileStats,
   profileTabEmptyHeadline,
   statsLine,
+  type ProfileCard,
 } from './profileActivity';
 
 type UserProfileScreenProps = {
@@ -112,12 +113,42 @@ const SHEET_CLOSE_DISTANCE = 96;
 /** The card preview's aspect ratio (16:9), matching the feed's media frame. */
 const MEDIA_ASPECT_RATIO = 16 / 9;
 
-/** The play glyph drawn on a video card's static placeholder. */
-const MEDIA_PLAY_ICON_SIZE = 48;
-
 /** The empty-state illustration for one tab. Versions reuse the stories artwork. */
 function emptyIllustration(kind: ActivityKind): 'no-stories' | 'no-inquiries' {
   return kind === 'inquiry' ? 'no-inquiries' : 'no-stories';
+}
+
+/**
+ * The card's media block: a still image, or a video's paused first frame, or
+ * nothing when the card carries no media.
+ *
+ * The API sends a relative path, so it is joined to the base URL the way the
+ * feed's media is. A video never plays here — the wall is a browse surface, and
+ * playback belongs to the Feed (KNOT-020g-fix4).
+ */
+function cardMediaNode(card: ProfileCard): React.ReactElement | null {
+  if (card.mediaUrl === undefined || card.mediaType === undefined) {
+    return null;
+  }
+
+  const uri = `${API_BASE_URL}${card.mediaUrl}`;
+
+  if (card.mediaType === 'video') {
+    return (
+      <View style={styles.cardMedia}>
+        <FeedVideo uri={uri} previewOnly />
+      </View>
+    );
+  }
+
+  return (
+    <Image
+      source={{ uri }}
+      style={styles.cardMedia}
+      resizeMode="cover"
+      accessibilityIgnoresInvertColors
+    />
+  );
 }
 
 /**
@@ -425,6 +456,7 @@ export default function UserProfileScreen({
     <View style={styles.container}>
       <Header
         title="Profile"
+        centered
         left={
           showBackButton && onBack !== undefined ? (
             <Pressable
@@ -566,13 +598,6 @@ export default function UserProfileScreen({
             return null;
           }
 
-          // The API sends a relative path, so the preview is joined to the base
-          // URL the way the feed's media is.
-          const mediaUri =
-            card.mediaType === 'image' && card.mediaUrl !== undefined
-              ? `${API_BASE_URL}${card.mediaUrl}`
-              : undefined;
-
           return (
             <Pressable
               style={styles.card}
@@ -596,24 +621,13 @@ export default function UserProfileScreen({
                 {card.title}
               </Text>
 
-              {card.mediaType === undefined ? null : mediaUri === undefined ? (
-                // A video shows a static placeholder, never a player: the wall is
-                // a browse surface, and playback belongs to the Feed (KNOT-020g-fix3).
-                <View style={[styles.cardMedia, styles.cardVideo]}>
-                  <PlayCircle
-                    color={colors.text.tertiary}
-                    size={MEDIA_PLAY_ICON_SIZE}
-                    weight="fill"
-                  />
-                </View>
-              ) : (
-                <Image
-                  source={{ uri: mediaUri }}
-                  style={styles.cardMedia}
-                  resizeMode="cover"
-                  accessibilityIgnoresInvertColors
-                />
+              {card.preview === '' ? null : (
+                <Text style={[typeScale.bodyS, styles.cardPreview]} numberOfLines={2}>
+                  {card.preview}
+                </Text>
               )}
+
+              {cardMediaNode(card)}
 
               {card.meta === '' ? null : (
                 <Text style={[typeScale.caption, styles.cardMeta]} numberOfLines={1}>
@@ -735,16 +749,14 @@ const styles = StyleSheet.create({
   cardPillar: {
     alignSelf: 'flex-start',
   },
+  // The card's body excerpt, under the title — the feed's reading order.
+  cardPreview: {
+    color: colors.text.secondary,
+    marginTop: spacing.xs,
+  },
   cardTitle: {
     color: colors.text.primary,
     marginTop: spacing.xs,
-  },
-  // The video placeholder behind the play glyph: the media frame's size, with a
-  // sunken fill standing in for a poster frame the API does not carry.
-  cardVideo: {
-    alignItems: 'center',
-    backgroundColor: colors.bg.sunken,
-    justifyContent: 'center',
   },
   container: {
     backgroundColor: colors.bg.canvas,
@@ -863,10 +875,13 @@ const styles = StyleSheet.create({
     marginTop: spacing.xl,
   },
   tabsContent: {
+    // Three natural-width tabs, centred as a group: `flexGrow: 1` lets the content
+    // container fill the viewport so `justifyContent` has the space to centre
+    // within, while a row wider than the screen still scrolls (KNOT-020g-fix4). The
+    // row itself stays full-bleed, so its hairline spans the screen.
+    flexGrow: 1,
     gap: spacing.xl,
-    // The row is full-bleed (so its hairline spans the screen) but its content is
-    // inset to the screen's gutter, so the first tab is not flush at the edge
-    // (KNOT-020g-fix2).
+    justifyContent: 'center',
     paddingHorizontal: layout.screenPaddingFeed,
   },
 });

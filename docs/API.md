@@ -1085,6 +1085,7 @@ authored — stories, adaptations, comments, and bridges. It is how the app answ
         "language": "eng",
         "place": "Manguzi",
         "version_count": 3,
+        "preview": "When the first rain came, the herd turned for home before anyone…",
         "media_preview_url": "/stories/d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b/media/9f1c/content",
         "first_media_type": "image"
       }
@@ -1118,11 +1119,11 @@ kind:
 
 | `kind`           | `id` names     | `payload`                                                                                          |
 | ---------------- | -------------- | -------------------------------------------------------------------------------------------------- |
-| `story`          | the story      | `{ title, pillar, language, place, version_count, media_preview_url, first_media_type }`             |
-| `version`        | the adaptation | `{ story_id, story_title, language, place, version_number, media_preview_url, first_media_type }`    |
+| `story`          | the story      | `{ title, pillar, language, place, version_count, preview, media_preview_url, first_media_type }`             |
+| `version`        | the adaptation | `{ story_id, story_title, language, place, version_number, preview, media_preview_url, first_media_type }`    |
 | `comment`        | the comment    | `{ version_id, story_id, body_preview }`                                                             |
 | `bridge`         | the bridge     | `{ source_comment_id, version_id, target_language }`                                                 |
-| `inquiry`        | the question   | `{ title, place, answer_count }`                                                                     |
+| `inquiry`        | the question   | `{ title, place, answer_count, preview }`                                                             |
 | `inquiry_answer` | the answer     | `{ inquiry_id, inquiry_title, body_preview }`                                                        |
 
 `place` is the content's coarse place, **omitted** (not `null`) when it names
@@ -1132,6 +1133,14 @@ among its story's versions, counting the root as 1, so a story's first adaptatio
 is 2. `answer_count` counts a question's public answers. Every one of them is
 resolved in the same single query that builds the page — never a query per
 activity (KNOT-020g-fix2).
+
+`preview` is the card's body excerpt: the first **150** characters of the story's
+body, the adaptation's body, or the question's body, with a `…` appended when the
+body is longer than that, and no ellipsis when it fits. It is **omitted** (not
+`null`) only when the body is empty, and it is truncated in SQL — `left(body, 150)`
+— so a page never ships a full body to draw a two-line excerpt (KNOT-020g-fix4).
+`body_preview` on a comment or an answer is the separate 200-character excerpt
+used by a thread, and is unchanged.
 
 `media_preview_url` is the path to the story's first media item's content and
 `first_media_type` is that item's kind (`image` or `video`); both are **omitted**

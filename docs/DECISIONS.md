@@ -2298,3 +2298,31 @@ empty — the same layering the feed already uses, where media is a per-response
 a column on the story. The client omits the media block when both fields are absent, so a story with
 no media renders exactly as it did before, and the tabs and stats line remain display-only: the store
 still returns every kind.
+
+## Scope note — the profile cards carry a body excerpt, and the wall's title is centred off the bar (KNOT-020g-fix4)
+
+**Not a new ADR.** This records where a card's excerpt comes from and how the two centring rules
+work, so neither is re-litigated.
+
+**Decision.** `GET /users/{id}/profile` adds `preview` to every `story`, `version`, and `inquiry`
+activity: the first 150 characters of that content's body, with a `…` appended when the body is
+longer, truncated **in SQL** in the same query that builds the page (`left(body, 150) || '…'`) rather
+than in the client. A card draws it under its title as `typeScale.bodyS`, the feed's reading order.
+A video card draws the clip's first frame through `FeedVideo`'s new `previewOnly` mode rather than a
+bare play glyph. Two centring rules ship with it: the profile tabs are centred as a group
+(`tabsContent` with `flexGrow: 1` and `justifyContent: 'center'`), and `Header` gains an opt-in
+`centered` prop that draws the title out of flow, pinned to the bar's own middle with a 56-point
+inset so a long title cannot run under a side control.
+
+**Why.** On-device review of KNOT-020g-fix3 found the cards still thinner than the reference's,
+whose story cards carry two lines of body, and found the Profile title sitting left of centre because
+its header has no left slot to balance the right one.
+
+**Consequences.** The wall now ships at most 150 characters of body per activity instead of a full
+body it would only have truncated. Truncating in SQL means the client cannot re-derive the untruncated
+text, so a card must render the excerpt it is given — the story detail remains the place to read the
+whole body. `centered` defaults to `false`, so no existing header changes; the Feed, Story Detail,
+Version Detail, Inquiries, Search, and Notifications keep their current titles. A video on the wall is
+decoded as a still, so a card costs a video's first frame rather than a poster image — acceptable
+because a version has no media of its own and a story's first item is the one the feed already
+previews.

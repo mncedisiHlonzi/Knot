@@ -288,7 +288,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   cancelText: {
-    color: colors.text.secondary,
+    color: colors.state.danger,
     fontWeight: fontWeights.bold,
   },
   handle: {

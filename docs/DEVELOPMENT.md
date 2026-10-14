@@ -434,6 +434,22 @@ its own count) instead of counting answers, and the bottom sheets lost their row
 separated by spacing alone. The three tabs already met the reference (natural width, left-aligned,
 a 24-point gap, a 16-point gutter, and a full-bleed hairline), so that item needed no change.
 
+**KNOT-020g-fix4** gave the cards their body and their frame. Each `story`, `version`, and `inquiry`
+activity now carries `preview` — the first 150 characters of the story's, the adaptation's, or the
+question's body, truncated **in SQL** (`left(body, 150) || '…'`) so a page never ships a whole body
+to draw a two-line excerpt — and a card draws it as `typeScale.bodyS` under its title, in the feed's
+reading order: pillar or overline, title, excerpt, media, meta. A video card no longer shows a bare
+play glyph: it renders `FeedVideo` in a new `previewOnly` mode, which draws the clip's first frame
+as a still (with its own fallback layer while it loads) behind a scrim-backed play badge, with no
+duration chrome and no mute control — the wall is a browse surface, and playback stays in the Feed.
+`FeedVideo`'s `isVisible`, `isMuted`, and `onToggleMute` became optional with the defaults the feed
+already passed, so its one call site is unchanged. The three tabs are now centred as a group
+(`tabsContent` gained `flexGrow: 1` and `justifyContent: 'center'`; `flexGrow` is what lets the
+content container fill the viewport so the justification has space to act in), the picker sheet's
+Cancel reads in `colors.state.danger`, and `Header` gained an opt-in `centered` prop that pins a
+title to the bar's own middle rather than to the space left between the two side slots. Only the
+profile passes it, so every other header is untouched.
+
 The same screen serves the owner: `isOwnProfile` adds the avatar upload, the Set Rooted
 shortcut, and sign-out, so tapping your own author line opens your wall. `AuthorLine`'s
 `onPress` is how the app reaches it — a nested `Pressable` handles the author tap without

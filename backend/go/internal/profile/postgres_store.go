@@ -33,6 +33,22 @@ func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 // below carries no injection risk.
 var bodyPreviewCharsSQL = strconv.Itoa(MaxBodyPreviewChars)
 
+// previewCharsSQL is MaxPreviewChars rendered as a SQL integer, on the same terms.
+var previewCharsSQL = strconv.Itoa(MaxPreviewChars)
+
+// activityPreviewSQL builds the payload entry for a card's body excerpt: the
+// column's first MaxPreviewChars characters, with an ellipsis appended when the
+// body is longer. It is enforced here rather than in the client so a full body
+// never travels over the wall (KNOT-020g-fix4). `column` is always a
+// compile-time literal written in the union below — never client input — so
+// interpolating it carries no injection risk.
+func activityPreviewSQL(column string) string {
+	return `'preview', CASE
+				WHEN length(` + column + `) > ` + previewCharsSQL + ` THEN left(` + column + `, ` + previewCharsSQL + `) || '…'
+				ELSE ` + column + `
+			END`
+}
+
 // activityUnion is the merged activity stream: one UNION ALL branch per entity a
 // user can author, each already narrowed to that user's rows and shaped into the
 // common (kind, id, created_at, payload) columns.
@@ -81,7 +97,8 @@ var activityUnion = `
 				SELECT COUNT(*)
 				FROM story_versions sv
 				WHERE sv.story_id = s.id
-			)
+			),
+			` + activityPreviewSQL("rv.body") + `
 		) AS payload
 	FROM stories s
 	JOIN story_versions rv ON rv.id = s.root_version_id
@@ -98,7 +115,8 @@ var activityUnion = `
 			'story_title', rv.title,
 			'language', v.language,
 			'place', s.approximate_location,
-			'version_number', ranked.version_number
+			'version_number', ranked.version_number,
+			` + activityPreviewSQL("v.body") + `
 		) AS payload
 	FROM story_versions v
 	JOIN stories s ON s.id = v.story_id
@@ -172,7 +190,8 @@ var activityUnion = `
 				SELECT COUNT(*)
 				FROM inquiry_answers ans
 				WHERE ans.inquiry_id = i.id
-			)
+			),
+			` + activityPreviewSQL("i.body") + `
 		) AS payload
 	FROM inquiries i
 	WHERE i.author_id = $1

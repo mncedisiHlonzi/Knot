@@ -641,6 +641,9 @@ func TestPostgresStoreListForUserEnrichesCardFields(t *testing.T) {
 	if story.Payload.VersionCount != 3 {
 		t.Errorf("story version_count = %d, want 3 (root plus two adaptations)", story.Payload.VersionCount)
 	}
+	if story.Payload.Preview != "Body for enriched" {
+		t.Errorf("story preview = %q, want the story's body", story.Payload.Preview)
+	}
 
 	for id, wantNumber := range map[string]int{secondID: 2, thirdID: 3} {
 		activity, ok := versions[id]
@@ -652,6 +655,10 @@ func TestPostgresStoreListForUserEnrichesCardFields(t *testing.T) {
 		}
 		if activity.Payload.VersionNumber != wantNumber {
 			t.Errorf("version %s number = %d, want %d", id, activity.Payload.VersionNumber, wantNumber)
+		}
+		wantPreview := "Adapted body for " + []string{"", "", "fra", "zul"}[wantNumber] + "."
+		if activity.Payload.Preview != wantPreview {
+			t.Errorf("version %s preview = %q, want %q", id, activity.Payload.Preview, wantPreview)
 		}
 	}
 
@@ -665,4 +672,50 @@ func TestPostgresStoreListForUserEnrichesCardFields(t *testing.T) {
 	if inquiryActivity.Payload.AnswerCount != 2 {
 		t.Errorf("inquiry answer_count = %d, want 2", inquiryActivity.Payload.AnswerCount)
 	}
+	if inquiryActivity.Payload.Preview != "Asked of the people who live there." {
+		t.Errorf("inquiry preview = %q, want the question's body", inquiryActivity.Payload.Preview)
+	}
+}
+
+// TestPostgresStoreListForUserTruncatesThePreview proves a long body is cut to
+// MaxPreviewChars with an ellipsis, in SQL, so a full body never travels over the
+// wall (KNOT-020g-fix4).
+func TestPostgresStoreListForUserTruncatesThePreview(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	body := strings.Repeat("a", MaxPreviewChars+50)
+	created, err := env.storyStore.CreateStory(context.Background(), stories.Story{
+		AuthorID:  env.userA,
+		Pillar:    stories.PillarHeritage,
+		Language:  "eng",
+		Title:     "A story with a long body",
+		Body:      body,
+		MediaURLs: []string{},
+	})
+	if err != nil {
+		t.Fatalf("CreateStory() error = %v, want nil", err)
+	}
+
+	page, _, err := env.store.ListForUser(ctx, env.userA, nil, 50)
+	if err != nil {
+		t.Fatalf("ListForUser() error = %v, want nil", err)
+	}
+
+	for _, activity := range page {
+		if activity.Kind == KindStory && activity.ID == created.ID {
+			want := body[:MaxPreviewChars] + "…"
+			if activity.Payload.Preview != want {
+				t.Errorf(
+					"preview = %q (length %d), want the first %d characters plus an ellipsis (length %d)",
+					activity.Payload.Preview,
+					len(activity.Payload.Preview),
+					MaxPreviewChars,
+					len(want),
+				)
+			}
+			return
+		}
+	}
+	t.Error("the long story is missing from the wall")
 }

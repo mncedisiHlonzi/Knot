@@ -17,12 +17,26 @@ type HeaderProps = {
    * the case that needs that.
    */
   readonly pinned?: boolean;
+  /**
+   * Centres the title against the bar itself rather than against the space left
+   * between the two side slots, so a narrow — or absent — slot cannot shift it off
+   * centre. The Profile tab, whose left slot is empty, needs that. Defaults to
+   * `false`, which leaves every screen that already passes a title unchanged
+   * (KNOT-020g-fix4).
+   */
+  readonly centered?: boolean;
   /** Test identifier. */
   readonly testID?: string;
 };
 
 /** The header's height below the status bar. */
 const HEIGHT = 56;
+
+/**
+ * The inset a centred title keeps from each edge, so a long one cannot run under a
+ * side slot's control.
+ */
+const CENTERED_TITLE_INSET = 56;
 
 /**
  * The screen header: a 56-point bar with a centred title between two slots.
@@ -42,6 +56,7 @@ export default function Header({
   left,
   right,
   pinned = false,
+  centered = false,
   testID,
 }: HeaderProps): React.ReactElement {
   return (
@@ -51,14 +66,26 @@ export default function Header({
       {pinned ? <View pointerEvents="none" style={styles.background} /> : null}
       <View style={styles.row}>
         <View style={styles.side}>{left}</View>
-        {title !== undefined ? (
+        {/* A centred title is drawn out of flow (below), so the middle keeps a
+            flexible spacer that lets the two slots take their own corners. */}
+        {centered || title === undefined ? (
+          <View style={styles.titleSpacer} />
+        ) : (
           <Text style={[typeScale.h3, styles.title]} numberOfLines={1}>
             {title}
           </Text>
-        ) : (
-          <View style={styles.titleSpacer} />
         )}
         <View style={styles.side}>{right}</View>
+
+        {centered && title !== undefined ? (
+          // Drawn out of flow so the two side slots keep their own corners without
+          // pulling the title off the bar's centre.
+          <View pointerEvents="none" style={styles.titleCentered}>
+            <Text style={[typeScale.h3, styles.title]} numberOfLines={1}>
+              {title}
+            </Text>
+          </View>
+        ) : null}
       </View>
     </View>
   );
@@ -88,6 +115,15 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     flex: 1,
     textAlign: 'center',
+  },
+  // Pinned to the bar's own middle, so an empty or narrow side slot cannot pull the
+  // title off centre (KNOT-020g-fix4). The inset keeps a long title clear of the
+  // side slots; a short one is genuinely centred.
+  titleCentered: {
+    left: 0,
+    paddingHorizontal: CENTERED_TITLE_INSET,
+    position: 'absolute',
+    right: 0,
   },
   titleSpacer: {
     flex: 1,

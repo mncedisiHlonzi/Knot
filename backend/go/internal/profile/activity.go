@@ -71,6 +71,10 @@ const (
 	// enforced in SQL (left(body, n)) so a full comment body never travels to a
 	// client through the wall.
 	MaxBodyPreviewChars = 200
+	// MaxPreviewChars is the longest body excerpt a card's `preview` carries: the
+	// story's (or adaptation's, or question's) opening lines. It is enforced in SQL
+	// so a full body never travels to a client through the wall (KNOT-020g-fix4).
+	MaxPreviewChars = 150
 )
 
 // Kind is the type of one activity on a wall. The set is closed: the store only
@@ -98,11 +102,11 @@ const (
 // to the activity's Kind are populated; the JSON tags carry `omitempty` so the
 // wire form is exactly the subset a client needs for that kind:
 //
-//	story          { title, pillar, language, place, version_count, media_preview_url, first_media_type }
-//	version        { story_id, story_title, language, place, version_number, media_preview_url, first_media_type }
+//	story          { title, pillar, language, place, version_count, preview, media_preview_url, first_media_type }
+//	version        { story_id, story_title, language, place, version_number, preview, media_preview_url, first_media_type }
 //	comment        { version_id, story_id, body_preview }
 //	bridge         { source_comment_id, version_id, target_language }
-//	inquiry        { title, place, answer_count }
+//	inquiry        { title, place, answer_count, preview }
 //	inquiry_answer { inquiry_id, inquiry_title, body_preview }
 //
 // The payload is context, not authorship: everything in it is already public on
@@ -130,6 +134,11 @@ type Payload struct {
 	// BodyPreview is the first MaxBodyPreviewChars characters of a comment or an
 	// answer. Set for KindComment and KindInquiryAnswer.
 	BodyPreview string `json:"body_preview,omitempty"`
+	// Preview is a card's body excerpt: the first MaxPreviewChars characters of the
+	// story's body, the adaptation's body, or the question's body, with an ellipsis
+	// appended when the body is longer than that. Set for KindStory, KindVersion,
+	// and KindInquiry.
+	Preview string `json:"preview,omitempty"`
 
 	// SourceCommentID is the comment a bridge was made from. Set for KindBridge.
 	SourceCommentID string `json:"source_comment_id,omitempty"`

@@ -19,6 +19,7 @@ const story: Activity = {
     language: 'eng',
     place: 'Oaxaca, Mexico',
     version_count: 4,
+    preview: 'Every morning she tied a knot in a cord…',
     media_preview_url: '/stories/story-1/media/media-1/content',
     first_media_type: 'image',
   },
@@ -34,6 +35,7 @@ const version: Activity = {
     language: 'zul',
     place: 'Oaxaca, Mexico',
     version_number: 2,
+    preview: 'The telling opens with the cord…',
     media_preview_url: '/stories/story-1/media/media-1/content',
     first_media_type: 'image',
   },
@@ -57,7 +59,11 @@ const inquiry: Activity = {
   kind: 'inquiry',
   id: 'inquiry-1',
   created_at: '2025-03-05T00:00:00Z',
-  payload: { title: 'Why the stairs are uneven', answer_count: 6 },
+  payload: {
+    title: 'Why the stairs are uneven',
+    answer_count: 6,
+    preview: 'The masons left them so.',
+  },
 };
 
 const answer: Activity = {
@@ -134,13 +140,14 @@ describe('profileStats', () => {
 });
 
 describe('activityCard', () => {
-  it('builds a story card from its pillar, place, language, version count, media, and time', () => {
+  it('builds a story card from its pillar, place, language, version count, preview, media, and time', () => {
     expect(activityCard(story, '2 days ago')).toEqual({
       overline: '',
       title: 'How my grandmother counted the days',
       pillar: 'heritage',
       place: 'Oaxaca, Mexico',
       meta: 'English · 4 versions · 2 days ago',
+      preview: 'Every morning she tied a knot in a cord…',
       mediaUrl: '/stories/story-1/media/media-1/content',
       mediaType: 'image',
     });
@@ -156,6 +163,14 @@ describe('activityCard', () => {
     expect(card?.mediaUrl).toBeUndefined();
     expect(card?.mediaType).toBeUndefined();
     expect(card?.meta).toBe('English · 2 days ago');
+  });
+
+  it('reads an empty preview for a payload that carries none', () => {
+    const bare = {
+      ...story,
+      payload: { title: 'A story with no excerpt', pillar: 'wonder', language: 'eng' },
+    } as Activity;
+    expect(activityCard(bare, 'now')?.preview).toBe('');
   });
 
   it('marks a video preview so the card draws its placeholder', () => {
@@ -181,13 +196,14 @@ describe('activityCard', () => {
     expect(activityCard(odd, 'now')?.pillar).toBeUndefined();
   });
 
-  it('builds a version card with its number, language, place, media, and time', () => {
+  it('builds a version card with its number, language, place, preview, media, and time', () => {
     expect(activityCard(version, '3 weeks ago')).toEqual({
       overline: 'Version 2 · Zulu',
       title: 'How my grandmother…',
       pillar: undefined,
       place: undefined,
       meta: 'Oaxaca, Mexico · 3 weeks ago',
+      preview: 'The telling opens with the cord…',
       mediaUrl: '/stories/story-1/media/media-1/content',
       mediaType: 'image',
     });
@@ -203,13 +219,14 @@ describe('activityCard', () => {
     expect(card?.meta).toBe('3 weeks ago');
   });
 
-  it('builds an inquiry card with its answer count, no media, and pluralises one answer', () => {
+  it('builds an inquiry card with its answer count, preview, no media, and pluralises one answer', () => {
     expect(activityCard(inquiry, '1 hour ago')).toEqual({
       overline: 'Inquiry',
       title: 'Why the stairs are uneven',
       pillar: undefined,
       place: undefined,
       meta: '6 answers · 1 hour ago',
+      preview: 'The masons left them so.',
       mediaUrl: undefined,
       mediaType: undefined,
     });
