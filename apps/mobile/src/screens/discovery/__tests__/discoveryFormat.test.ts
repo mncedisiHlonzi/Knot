@@ -3,7 +3,9 @@ import {
   MARKER_MIN_SIZE,
   markerCountLabel,
   markerSize,
+  placeCountLabel,
   placeSummaryLabel,
+  placeTotalsLabel,
   storyCountLabel,
 } from '../discoveryFormat';
 
@@ -32,6 +34,35 @@ describe('placeSummaryLabel', () => {
   it('is the story count alone when no pillar is counted', () => {
     expect(placeSummaryLabel(1, {})).toBe('1 story');
     expect(placeSummaryLabel(1, { other: 3 })).toBe('1 story');
+  });
+});
+
+describe('placeCountLabel', () => {
+  it('singularises one place', () => {
+    expect(placeCountLabel(1)).toBe('1 place');
+  });
+
+  it('pluralises every other count', () => {
+    expect(placeCountLabel(0)).toBe('0 places');
+    expect(placeCountLabel(5)).toBe('5 places');
+  });
+});
+
+describe('placeTotalsLabel', () => {
+  it('reads places, stories, then the pillar break-down, Heritage first', () => {
+    expect(placeTotalsLabel(1, 24, { wonder: 10, heritage: 14 })).toBe(
+      '1 place · 24 stories · 14 Heritage · 10 Wonder',
+    );
+  });
+
+  it('omits a pillar with no stories', () => {
+    expect(placeTotalsLabel(3, 12, { wonder: 8, heritage: 4 })).toBe(
+      '3 places · 12 stories · 4 Heritage · 8 Wonder',
+    );
+  });
+
+  it('is places and stories alone when no pillar is counted', () => {
+    expect(placeTotalsLabel(2, 2, {})).toBe('2 places · 2 stories');
   });
 });
 

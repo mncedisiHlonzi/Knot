@@ -40,6 +40,31 @@ export function storyCountLabel(count: number): string {
 }
 
 /**
+ * Renders a place count with the right noun: "1 place" / "5 places". Used by the
+ * Discovery Map sheet header, which totals every place it has loaded.
+ */
+export function placeCountLabel(count: number): string {
+  return count === 1 ? '1 place' : `${count} places`;
+}
+
+/**
+ * The pillar segments of a summary line, in reading order, each left out when its
+ * count is zero or absent so a wonder-only place never prints "0 Heritage".
+ */
+function pillarSegments(pillarCounts: Readonly<Record<string, number>>): string[] {
+  const segments: string[] = [];
+
+  for (const { key, label } of SUMMARY_PILLARS) {
+    const count = pillarCounts[key];
+    if (typeof count === 'number' && count > 0) {
+      segments.push(`${count} ${label}`);
+    }
+  }
+
+  return segments;
+}
+
+/**
  * A place's summary line: "{N} stories · {H} Heritage · {W} Wonder".
  *
  * A pillar with no stories is left out rather than printed as a zero, so a place
@@ -49,16 +74,23 @@ export function placeSummaryLabel(
   storyCount: number,
   pillarCounts: Readonly<Record<string, number>>,
 ): string {
-  const segments = [storyCountLabel(storyCount)];
+  return [storyCountLabel(storyCount), ...pillarSegments(pillarCounts)].join(' · ');
+}
 
-  for (const { key, label } of SUMMARY_PILLARS) {
-    const count = pillarCounts[key];
-    if (typeof count === 'number' && count > 0) {
-      segments.push(`${count} ${label}`);
-    }
-  }
-
-  return segments.join(' · ');
+/**
+ * The Discovery Map sheet header's totals: "{P} places · {N} stories · {H}
+ * Heritage · {W} Wonder".
+ *
+ * The totals are summed over the clusters the sheet has loaded, so they describe
+ * exactly the list beneath them. A pillar with no stories is left out.
+ */
+export function placeTotalsLabel(
+  placeCount: number,
+  storyCount: number,
+  pillarCounts: Readonly<Record<string, number>>,
+): string {
+  const segments = [placeCountLabel(placeCount), storyCountLabel(storyCount)];
+  return [...segments, ...pillarSegments(pillarCounts)].join(' · ');
 }
 
 /**

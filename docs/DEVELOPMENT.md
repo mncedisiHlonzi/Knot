@@ -265,15 +265,22 @@ version's own screen. `StoryVersionScreen` mirrors `StoryDetailScreen`'s reading
 fetches through the same `versionsApi.getVersion` client, and it is reached from a Language Tree
 row (an `onOpenVersion` callback) through a `storyVersion` overlay in `App.tsx`.
 
-**KNOT-020e** migrated the two discovery screens the same way. `DiscoveryMapScreen` is now the
-reference's layout: a static `Header`, the pillar filter as underline tabs, the Mapbox map (the
-existing dark style, KNOT-ADR-026) across the top of the screen, and a hairline-separated place
-list beneath it with pull-to-refresh and a count-scaled marker per cluster. `PlaceStoriesScreen`
-renders the place as an `h1` with its story and pillar totals beneath it and lists its stories
-through the same `FeedEntry` the Feed uses (paused — the Feed is the only screen that auto-plays,
-KNOT-ADR-068), with pull-to-refresh and cursor paging on scroll-to-end. Both read `typeScale.*`
-and the semantic colour roles only, and the wording they share lives in the pure
+**KNOT-020e** migrated the two discovery screens the same way. `DiscoveryMapScreen` follows the
+reference's layout: a static `Header`, the pillar filter as underline tabs, the Mapbox map across
+the screen behind a rounded bottom sheet, and the sheet carrying the aggregate totals over a
+scrollable place list with pull-to-refresh and a count-scaled marker per cluster.
+`PlaceStoriesScreen` renders the place as an `h1` with its story and pillar totals beneath it and
+lists its stories through the same `FeedEntry` the Feed uses (paused — the Feed is the only screen
+that auto-plays, KNOT-ADR-068), with pull-to-refresh and cursor paging on scroll-to-end. Both read
+`typeScale.*` and the semantic colour roles only, and the wording they share lives in the pure
 `screens/discovery/discoveryFormat.ts`.
+
+**KNOT-020e-fix** corrected that pass after on-device review: the map uses Mapbox's **Light** style
+(the reference's light canvas, KNOT-ADR-026), the place list is the reference's **bottom sheet**
+(`radius.xxl` top corners, `colors.bg.canvas`, `elevation[3]`'s upward shadow, a decorative drag
+handle — no drag gesture), and discovery now clusters by **place and country** rather than by
+coordinate, averaging a cluster's coordinates to place its marker. The rationale is recorded as a
+scope note in [DECISIONS.md](DECISIONS.md); the API field notes are in [API.md](API.md).
 
 The `typeScale` **weights** are one step heavier than the reference snapshot for every token but
 the three body styles (`reading`, `body`, `bodyS`), which stay at 400 so prose keeps its

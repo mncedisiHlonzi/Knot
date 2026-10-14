@@ -2146,3 +2146,31 @@ additive backend change that would bring Place Stories to parity with the Feed. 
 out of KNOT-020e's scope, which is a mobile-only design pass with no backend changes. Until it
 lands, `AuthorLine` omits the missing segments and draws its initials fallback, which is its
 documented behaviour for a nameless author rather than a failure.
+
+## Scope note — place clustering is by (place, country), not by coordinates (KNOT-020e-fix)
+
+**Not a new ADR.** This records a correction to how discovery groups stories, so the shape of a
+cluster is not mistaken for a bug or re-litigated later.
+
+**Decision.** `GET /discovery/clusters` groups stories by
+`(stories.approximate_location_lower, stories.place_country)`. Coordinates are **no longer** the
+cluster key: a story's coordinate only places its cluster's marker, and a cluster's
+`latitude`/`longitude` is the **average** of its members' coordinates (null when no member has
+one).
+
+**Why.** KNOT-020e clustered by coordinate (`geo:<lat>,<lng>`, falling back to the normalised
+name). On-device review found that three stories about "Beijing" at slightly different points
+rendered as three one-story rows ("Beijing 1", "Beijing 1", "Beijing 1") instead of one "Beijing
+3" cluster, and three separate markers instead of one. The coordinate was doing two jobs — the
+cluster's identity and the marker's position — and only the second is what a coordinate is for.
+Keying on the place name (with the country, so a bare "Springfield" never merges with
+"Springfield, United States") makes the place the identity and keeps the coordinate as geometry.
+This reverses the coordinate-keying part of KNOT-ADR-034's discovery behaviour while keeping the
+structured place data itself.
+
+**Consequences.** The cluster response shape is unchanged except that `latitude`/`longitude` are
+now averages rather than one member's point; the mobile client already reads them as the marker
+position. `place` keeps the earliest member's original capitalisation (the SQL orders by
+`created_at, id` and takes the first). Every story at a place still opens its own collection
+through `GET /discovery/places/{place}`, which already matched on the normalised name, so a tap on
+the aggregated "Beijing" cluster lists every Beijing story, coordinates notwithstanding.

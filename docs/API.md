@@ -1134,11 +1134,13 @@ entry per place, with how many stories are there, which pillars they belong to, 
 languages they are told in, and when the newest one was published — and lists the stories at a
 single place, with the same keyset pagination the feed uses.
 
-A place is identified by its **structured coordinate** when a story has one — the point the
-author chose from the geocoding picker (KNOT-ADR-034, KNOT-ADR-035) — and by the normalised
-`lower(trim(...))` form of its name otherwise, for stories created before migration `0009`
-(KNOT-ADR-020). The map client plots the coordinate directly, so a small town appears even
-though it is not in the client's fallback lookup table.
+A place is identified by the normalised `lower(trim(...))` form of its name together with the
+country the geocoder reported (KNOT-ADR-020, KNOT-020e-fix). Two stories about "Beijing" are one
+cluster however far apart the coordinates the authors chose from the geocoding picker
+(KNOT-ADR-034, KNOT-ADR-035), and a story with no country is its own cluster rather than merging
+with a same-named place that has one. The cluster's coordinate is the **average** of its members'
+points; the map client plots that point directly, so a small town appears even though it is not
+in the client's fallback lookup table.
 
 | Route                           | Auth   | Purpose                                    |
 | ------------------------------- | ------ | ------------------------------------------ |
@@ -1160,11 +1162,13 @@ though it is not in the client's fallback lookup table.
 }
 ```
 
-`latitude`, `longitude`, and `place_country` are the cluster's structured place data, or `null`
-for a **legacy cluster** — one whose stories were created before migration `0009` and carry no
-coordinate. A cluster with a coordinate is keyed by that point, so two stories at the same
-place are grouped together whatever each named it; a legacy cluster is keyed by the normalised
-place name.
+`latitude` and `longitude` are the **average** of the cluster's member coordinates, or `null`
+together for a **legacy cluster** — one whose stories carry no coordinate (created before
+migration `0009`) — in which case the client falls back to its own lookup table. `place_country`
+is the country the geocoder reported, or `null` when the stories name none. The cluster is keyed
+by `(place, place_country)`: the place name normalised to lower case, and the country treated as
+a distinct bucket when absent. Two stories at the same place with slightly different coordinates
+are therefore one cluster, not two; `place` keeps the earliest member's original spelling.
 
 `pillar_counts` always carries **both** supported pillars, so a place with only wonder stories
 still has `"heritage": 0`. `languages` is the distinct, sorted set of the stories' **root

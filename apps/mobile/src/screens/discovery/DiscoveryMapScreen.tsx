@@ -19,8 +19,8 @@ import EmptyState from '../../components/EmptyState';
 import Header from '../../components/Header';
 import { KNOT_MAPBOX_TOKEN } from '../../config/dev';
 import { PlaceCoordinate, coordinatesForPlace } from '../../data/placeCoordinates';
-import { colors, layout, spacing, tabularNums, typeScale } from '../../theme';
-import { markerCountLabel, markerSize, storyCountLabel } from './discoveryFormat';
+import { colors, elevation, layout, radius, spacing, tabularNums, typeScale } from '../../theme';
+import { markerCountLabel, markerSize, placeTotalsLabel, storyCountLabel } from './discoveryFormat';
 
 type DiscoveryMapScreenProps = {
   /**
@@ -57,11 +57,13 @@ const INITIAL_CENTER: [number, number] = [10, 10];
 const INITIAL_ZOOM = 1.2;
 
 /**
- * The share of the screen height the map occupies above the place list. The
- * reference gives the map the top of the screen and the list the strip below it
- * (KNOT-020e).
+ * The share of the screen height the bottom sheet occupies. The reference gives
+ * the map the screen and the sheet the bottom of it, overlapping the map's lower
+ * edge (KNOT-020e-fix). The map behind the sheet is not sized explicitly: it
+ * simply fills the space between the tabs and the bottom of the screen, so it
+ * always extends behind the sheet whatever the device's height.
  */
-const MAP_HEIGHT_RATIO = 0.55;
+const SHEET_HEIGHT_RATIO = 0.44;
 
 // Mapbox needs its access token before any map mounts. Setting it once, at module
 // load, keeps it out of the component and off every render. The token is public
@@ -100,6 +102,17 @@ function placeSubtitle(cluster: PlaceCluster): string {
 }
 
 /**
+ * A stable key for a cluster across the map and the list.
+ *
+ * The place's country is part of its identity (KNOT-020e-fix), so two clusters
+ * that share a name but differ in country — or in having none — must not collide
+ * as React keys. Both fields are joined by a character no place name can contain.
+ */
+function clusterKey(cluster: PlaceCluster): string {
+  return `${cluster.place}\u0000${cluster.place_country ?? ''}`;
+}
+
+/**
  * Discovery, as a map.
  *
  * The map is rendered natively with Mapbox (`@rnmapbox/maps`, KNOT-ADR-026). The
@@ -114,12 +127,13 @@ function placeSubtitle(cluster: PlaceCluster): string {
  * no user location and no permission prompt: the map is a way in to places, not a
  * way to find the user.
  *
- * The layout is the design reference's (KNOT-020e): a static header and the pillar
- * tabs, then the map occupying the top of the screen, with the place list
- * scrolling beneath it. The reference's map search control, its location button,
- * and its overlapping bottom sheet are deliberately not built — the location
- * button would need a permission and a behaviour the app does not have, and the
- * brief asks for a list below the map rather than a sheet over it.
+ * The layout is the design reference's (KNOT-020e, KNOT-020e-fix): a static header
+ * and the pillar tabs, the map filling the screen behind a rounded bottom sheet,
+ * and the sheet carrying the aggregate totals and the scrollable place list over
+ * the map's lower edge. The reference's map search control and its location
+ * button are deliberately not built — the location button would need a permission
+ * and a behaviour the app does not have — and the sheet's drag handle is
+ * decorative for the MVP, with no drag-to-expand.
  */
 export default function DiscoveryMapScreen({
   onOpenPlace,
@@ -132,7 +146,7 @@ export default function DiscoveryMapScreen({
   const [error, setError] = useState<string | undefined>(undefined);
 
   const { height } = useWindowDimensions();
-  const mapHeight = Math.round(height * MAP_HEIGHT_RATIO);
+  const sheetHeight = Math.round(height * SHEET_HEIGHT_RATIO);
 
   const load = useCallback(
     async (mode: 'initial' | 'refresh'): Promise<void> => {
@@ -182,6 +196,24 @@ export default function DiscoveryMapScreen({
     [plotted],
   );
 
+  // The sheet header's totals, summed over every cluster the sheet has loaded, so
+  // the line describes exactly the list beneath it. The endpoint returns one page
+  // (up to its cluster limit), so these are the totals for what is shown, not
+  // necessarily for every place in the world (KNOT-020e-fix).
+  const totals = useMemo(() => {
+    let stories = 0;
+    const pillars: Record<string, number> = {};
+
+    for (const cluster of clusters) {
+      stories += cluster.story_count;
+      for (const [pillar, count] of Object.entries(cluster.pillar_counts)) {
+        pillars[pillar] = (pillars[pillar] ?? 0) + count;
+      }
+    }
+
+    return { places: clusters.length, stories, pillars };
+  }, [clusters]);
+
   return (
     <View style={styles.container}>
       <Header title="Discover" />
@@ -219,12 +251,12 @@ export default function DiscoveryMapScreen({
        * cannot send identifying headers, so its tiles never rendered; Mapbox draws
        * tiles from its own native SDK using an access token.
        *
-       * The token is the *public* one from `src/config/dev.ts`. The Dark style is
-       * used so the map sits on the app's navy canvas, and Mapbox's logo and
-       * attribution are left enabled (required by Mapbox's terms). A custom brand
-       * style is a separate task (KNOT-020e keeps StyleURL.Dark as it is).
+       * The token is the *public* one from `src/config/dev.ts`. The Light style is
+       * used so the map reads as the reference's light canvas (KNOT-020e-fix), and
+       * Mapbox's logo and attribution are left enabled (required by Mapbox's
+       * terms). A custom brand style is a separate task.
        */}
-      <MapView style={[styles.map, { height: mapHeight }]} styleURL={Mapbox.StyleURL.Dark}>
+      <MapView style={styles.map} styleURL={Mapbox.StyleURL.Light}>
         <Camera defaultSettings={{ centerCoordinate: INITIAL_CENTER, zoomLevel: INITIAL_ZOOM }} />
         {plotted.map((cluster) => {
           const coordinate = coordinateForCluster(cluster);
@@ -236,15 +268,16 @@ export default function DiscoveryMapScreen({
 
           return (
             <PointAnnotation
-              key={cluster.place}
-              id={cluster.place}
+              key={clusterKey(cluster)}
+              id={clusterKey(cluster)}
               coordinate={[coordinate.longitude, coordinate.latitude]}
               title={cluster.place}
               onSelected={() => onOpenPlace(cluster)}
             >
               {/* PointAnnotation renders its child as the marker: the place's story
                   count in an indigo circle, ringed in canvas white so it reads on
-                  the dark map, sized by how busy the place is. */}
+                  the light map. The count is now the whole place's, not one
+                  coordinate's, so fewer and larger markers appear (KNOT-020e-fix). */}
               <View style={[styles.marker, { borderRadius: size / 2, height: size, width: size }]}>
                 <Text style={[typeScale.caption, tabularNums, styles.markerCount]}>
                   {markerCountLabel(cluster.story_count)}
@@ -255,65 +288,83 @@ export default function DiscoveryMapScreen({
         })}
       </MapView>
 
-      <FlatList
-        style={styles.list}
-        data={clusters}
-        keyExtractor={(cluster) => cluster.place}
-        contentContainerStyle={styles.listContent}
-        refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={refresh}
-            tintColor={colors.text.secondary}
-          />
-        }
-        ListHeaderComponent={
-          loading ? (
-            <ActivityIndicator style={styles.spinner} />
-          ) : error !== undefined ? (
-            <Text style={styles.error}>{error}</Text>
-          ) : null
-        }
-        renderItem={({ item }) => {
-          const subtitle = placeSubtitle(item);
+      {/* The place list as a bottom sheet (KNOT-020e-fix): rounded top corners, the
+          canvas surface, the design's upward shadow (elevation Level 3), a
+          decorative drag handle, the aggregate totals, then the scrollable list.
+          It is pinned to the bottom of the screen and overlaps the map's lower
+          edge; the map keeps rendering behind it, and a marker beneath the sheet
+          is covered rather than tappable. No drag gesture: the handle is
+          decorative for the MVP. */}
+      <View style={[styles.sheet, { height: sheetHeight }]}>
+        <View style={styles.handle} />
 
-          return (
-            <Pressable
-              style={styles.placeRow}
-              onPress={() => onOpenPlace(item)}
-              accessibilityRole="button"
-              accessibilityLabel={`${item.place}, ${storyCountLabel(item.story_count)}`}
-            >
-              <View style={styles.placeText}>
-                <Text style={[typeScale.button, styles.placeName]} numberOfLines={1}>
-                  {item.place}
-                </Text>
-                {subtitle === '' ? null : (
-                  <Text style={[typeScale.caption, styles.placeMeta]} numberOfLines={1}>
-                    {subtitle}
-                  </Text>
-                )}
-              </View>
+        <View style={styles.sheetHeader}>
+          <Text style={[typeScale.h2, styles.sheetTitle]}>Places</Text>
+          <Text style={[typeScale.caption, styles.sheetSubtitle]}>
+            {placeTotalsLabel(totals.places, totals.stories, totals.pillars)}
+          </Text>
+        </View>
 
-              <View style={styles.placeCount}>
-                <Text style={[typeScale.bodyS, tabularNums, styles.placeCountText]}>
-                  {storyCountLabel(item.story_count)}
-                </Text>
-                <CaretRight color={colors.text.tertiary} size={18} />
-              </View>
-            </Pressable>
-          );
-        }}
-        ListEmptyComponent={
-          !loading && error === undefined ? (
-            <EmptyState
-              illustrationName="no-stories"
-              headline="No places yet."
-              body="When people tell stories about a place, it appears on the map and in this list."
+        <FlatList
+          style={styles.list}
+          data={clusters}
+          keyExtractor={(cluster) => clusterKey(cluster)}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={refresh}
+              tintColor={colors.text.secondary}
             />
-          ) : null
-        }
-      />
+          }
+          ListHeaderComponent={
+            loading ? (
+              <ActivityIndicator style={styles.spinner} />
+            ) : error !== undefined ? (
+              <Text style={styles.error}>{error}</Text>
+            ) : null
+          }
+          renderItem={({ item }) => {
+            const subtitle = placeSubtitle(item);
+
+            return (
+              <Pressable
+                style={styles.placeRow}
+                onPress={() => onOpenPlace(item)}
+                accessibilityRole="button"
+                accessibilityLabel={`${item.place}, ${storyCountLabel(item.story_count)}`}
+              >
+                <View style={styles.placeText}>
+                  <Text style={[typeScale.button, styles.placeName]} numberOfLines={1}>
+                    {item.place}
+                  </Text>
+                  {subtitle === '' ? null : (
+                    <Text style={[typeScale.caption, styles.placeMeta]} numberOfLines={1}>
+                      {subtitle}
+                    </Text>
+                  )}
+                </View>
+
+                <View style={styles.placeCount}>
+                  <Text style={[typeScale.bodyS, tabularNums, styles.placeCountText]}>
+                    {storyCountLabel(item.story_count)}
+                  </Text>
+                  <CaretRight color={colors.text.tertiary} size={18} />
+                </View>
+              </Pressable>
+            );
+          }}
+          ListEmptyComponent={
+            !loading && error === undefined ? (
+              <EmptyState
+                illustrationName="no-stories"
+                headline="No places yet."
+                body="When people tell stories about a place, it appears on the map and in this list."
+              />
+            ) : null
+          }
+        />
+      </View>
     </View>
   );
 }
@@ -329,13 +380,27 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     textAlign: 'center',
   },
+  // The decorative drag handle: a 32x4 pill in the hairline colour. No gesture
+  // is attached — drag-to-expand is out of scope for the MVP (KNOT-020e-fix).
+  handle: {
+    alignSelf: 'center',
+    backgroundColor: colors.border.hairline,
+    borderRadius: radius.xs,
+    height: 4,
+    marginBottom: spacing.md,
+    marginTop: spacing.sm,
+    width: 32,
+  },
   list: {
     flex: 1,
   },
   listContent: {
     paddingBottom: spacing.xxxl,
   },
+  // The map fills the space between the tabs and the bottom of the screen, so it
+  // always extends behind the sheet whatever the device's height.
   map: {
+    flex: 1,
     width: '100%',
   },
   marker: {
@@ -375,6 +440,32 @@ const styles = StyleSheet.create({
   },
   placeText: {
     flexShrink: 1,
+  },
+  // The sheet: rounded top corners, the canvas surface, and the design's upward
+  // shadow (elevation Level 3, whose offset-Y is negative — exactly this use
+  // case). Pinned to the bottom so it overlaps the map's lower edge. No
+  // `overflow: hidden`, so the shadow is not clipped; the corners are above the
+  // list, which never reaches them (KNOT-020e-fix).
+  sheet: {
+    backgroundColor: colors.bg.canvas,
+    borderTopLeftRadius: radius.xxl,
+    borderTopRightRadius: radius.xxl,
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    ...elevation[3],
+  },
+  sheetHeader: {
+    paddingBottom: spacing.md,
+    paddingHorizontal: layout.screenPaddingFeed,
+  },
+  sheetSubtitle: {
+    color: colors.text.tertiary,
+    marginTop: spacing.xs,
+  },
+  sheetTitle: {
+    color: colors.text.primary,
   },
   spinner: {
     marginTop: spacing.lg,

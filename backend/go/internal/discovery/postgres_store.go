@@ -44,26 +44,25 @@ func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 	return &PostgresStore{pool: pool}, nil
 }
 
-// clusterKeyExpr is the expression a story is grouped by.
+// ListClusters aggregates stories by place and country.
 //
-// A story with a structured coordinate is identified by that coordinate, so two
-// stories at the same point are one cluster whatever each named the place. A
-// story without one falls back to the normalised place name, which is how every
-// row created before migration 0009 still clusters (KNOT-ADR-034).
-const clusterKeyExpr = `CASE
-			WHEN s.latitude IS NOT NULL AND s.longitude IS NOT NULL
-				THEN 'geo:' || s.latitude::text || ',' || s.longitude::text
-			ELSE 'txt:' || COALESCE(s.approximate_location_lower, '')
-		END`
-
-// ListClusters aggregates stories by place.
+// A place is identified by the normalised lower case form of its name *and* the
+// country the geocoder reported, so "Cape Town" and "cape town" are one cluster
+// while two "Beijing" stories far apart on the map are still one cluster. The
+// country is part of the key rather than decoration: a story with no country is
+// its own bucket, so a bare "Springfield" never merges with a "Springfield,
+// United States". The displayed Place is the earliest member's original spelling,
+// so the author's capitalisation survives.
 //
-// A place is identified by its structured coordinate when the story has one, and
-// by the normalised `approximate_location_lower` otherwise, so "Cape Town" and
-// "cape town" are one cluster and every story with the same coordinate is one
-// cluster regardless of spelling. The displayed Place is a representative
-// original spelling from the group. Rows with neither a coordinate nor a
-// location are excluded, because they cannot belong to a place cluster.
+// The cluster's Latitude and Longitude are the **average** of its members'
+// coordinates (KNOT-020e-fix), so the marker sits among the stories rather than
+// on whichever one a non-deterministic MIN happened to pick. A cluster whose
+// members carry no coordinate at all averages to NULL, and the client falls back
+// to its own lookup table exactly as a legacy story did before structured place
+// data existed (KNOT-ADR-034).
+//
+// Rows with no place name are excluded, because they cannot belong to a place
+// cluster.
 //
 // The language counts come from each story's **root version** only. Aggregating
 // every version of every story would need a second, heavier join for a figure the
@@ -78,11 +77,11 @@ const clusterKeyExpr = `CASE
 func (s *PostgresStore) ListClusters(ctx context.Context, filter ClusterFilter) ([]PlaceCluster, error) {
 	query := `
 		SELECT
-			` + clusterKeyExpr + ` AS cluster_key,
-			MIN(s.approximate_location) AS place,
-			MIN(s.place_country) AS place_country,
-			MIN(s.latitude) AS latitude,
-			MIN(s.longitude) AS longitude,
+			(array_agg(s.approximate_location ORDER BY s.created_at ASC, s.id ASC)
+				FILTER (WHERE s.approximate_location IS NOT NULL))[1] AS place,
+			s.place_country AS place_country,
+			AVG(s.latitude) AS latitude,
+			AVG(s.longitude) AS longitude,
 			COUNT(*) AS story_count,
 			COUNT(*) FILTER (WHERE s.pillar = 'wonder') AS wonder_count,
 			COUNT(*) FILTER (WHERE s.pillar = 'heritage') AS heritage_count,
@@ -90,8 +89,7 @@ func (s *PostgresStore) ListClusters(ctx context.Context, filter ClusterFilter) 
 			MAX(s.created_at) AS latest_story_at
 		FROM stories s
 		JOIN story_versions rv ON rv.id = s.root_version_id
-		WHERE (s.approximate_location_lower IS NOT NULL
-			OR (s.latitude IS NOT NULL AND s.longitude IS NOT NULL))`
+		WHERE s.approximate_location_lower IS NOT NULL`
 
 	args := make([]any, 0, 4)
 
@@ -119,8 +117,8 @@ func (s *PostgresStore) ListClusters(ctx context.Context, filter ClusterFilter) 
 	}
 
 	query += `
-		GROUP BY ` + clusterKeyExpr + `
-		ORDER BY story_count DESC, cluster_key ASC`
+		GROUP BY s.approximate_location_lower, s.place_country
+		ORDER BY story_count DESC, s.approximate_location_lower ASC, s.place_country ASC`
 
 	// The limit is always the final placeholder.
 	args = append(args, filter.Limit)
@@ -135,7 +133,6 @@ func (s *PostgresStore) ListClusters(ctx context.Context, filter ClusterFilter) 
 	clusters := make([]PlaceCluster, 0, filter.Limit)
 	for rows.Next() {
 		var (
-			clusterKey    string
 			place         *string
 			placeCountry  *string
 			latitude      *float64
@@ -147,12 +144,12 @@ func (s *PostgresStore) ListClusters(ctx context.Context, filter ClusterFilter) 
 			latest        time.Time
 		)
 
-		if err := rows.Scan(&clusterKey, &place, &placeCountry, &latitude, &longitude, &storyCount, &wonderCount, &heritageCount, &languages, &latest); err != nil {
+		if err := rows.Scan(&place, &placeCountry, &latitude, &longitude, &storyCount, &wonderCount, &heritageCount, &languages, &latest); err != nil {
 			return nil, fmt.Errorf("discovery: list clusters: %w", err)
 		}
 
-		display := clusterKey
-		if place != nil && *place != "" {
+		display := ""
+		if place != nil {
 			display = *place
 		}
 

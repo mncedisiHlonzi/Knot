@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -226,24 +227,112 @@ func TestPostgresStoreListClustersAggregates(t *testing.T) {
 }
 
 func TestPostgresStoreListClustersGroupsByCoordinates(t *testing.T) {
+	// Superseded by KNOT-020e-fix: clustering is by (place, country), not by
+	// coordinate. Two stories at the same point but with different names are now
+	// deliberately *two* clusters, and the coordinate is averaged rather than taken
+	// from one member. The cases below prove the new contract.
+	t.Run("same point, different names are separate clusters", func(t *testing.T) {
+		store, pool, prefix := integrationSetup(t)
+		ctx := context.Background()
+		userID := createUser(t, pool, prefix, "pointnames")
+		token := runToken()
+
+		first := "Manguzi " + token
+		second := "Kwangwanase " + token
+
+		latitude, longitude := -26.9998, 32.7489
+		country := "South Africa"
+
+		base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+		// The same coordinate, but two different place names: the name, not the
+		// point, is the cluster key.
+		createStoryWithCoords(t, pool, userID, first, &latitude, &longitude, &country, base)
+		createStoryWithCoords(t, pool, userID, second, &latitude, &longitude, &country, base.Add(time.Minute))
+
+		clusters, err := store.ListClusters(ctx, ClusterFilter{Limit: 100})
+		if err != nil {
+			t.Fatalf("ListClusters() error = %v, want nil", err)
+		}
+
+		group := ours(clusters, token)
+		if len(group) != 2 {
+			t.Fatalf("clusters for this run = %d, want 2 (different names, same point): %+v", len(group), group)
+		}
+		for _, cluster := range group {
+			if cluster.StoryCount != 1 {
+				t.Errorf("%s story_count = %d, want 1", cluster.Place, cluster.StoryCount)
+			}
+			if cluster.PlaceCountry == nil || *cluster.PlaceCountry != country {
+				t.Errorf("%s place_country = %v, want %q", cluster.Place, cluster.PlaceCountry, country)
+			}
+		}
+	})
+}
+
+// TestPostgresStoreListClustersAggregatesByName covers the KNOT-020e-fix fix
+// directly: stories about the same place with slightly different coordinates must
+// collapse into one cluster, whose coordinate is the average of the members'.
+func TestPostgresStoreListClustersAggregatesByName(t *testing.T) {
 	store, pool, prefix := integrationSetup(t)
 	ctx := context.Background()
-	userID := createUser(t, pool, prefix, "coords")
+	userID := createUser(t, pool, prefix, "byname")
 	token := runToken()
 
-	manguzi := "Manguzi " + token
-	kwangwanase := "Kwangwanase " + token
-	legacy := "Nowhere " + token
+	place := "Beijing " + token
+	country := "China"
 
-	latitude, longitude := -26.9998, 32.7489
-	country := "South Africa"
+	lats := []float64{39.90, 39.92, 39.94}
+	lngs := []float64{116.40, 116.42, 116.44}
 
 	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
-	// Two stories at the same coordinate but with different place names.
-	createStoryWithCoords(t, pool, userID, manguzi, &latitude, &longitude, &country, base)
-	createStoryWithCoords(t, pool, userID, kwangwanase, &latitude, &longitude, &country, base.Add(time.Minute))
-	// A story with no coordinate still clusters, by its place name.
-	createStoryWithCoords(t, pool, userID, legacy, nil, nil, nil, base.Add(2*time.Minute))
+	for i := range lats {
+		lat, lng := lats[i], lngs[i]
+		createStoryWithCoords(t, pool, userID, place, &lat, &lng, &country, base.Add(time.Duration(i)*time.Minute))
+	}
+
+	clusters, err := store.ListClusters(ctx, ClusterFilter{Limit: 100})
+	if err != nil {
+		t.Fatalf("ListClusters() error = %v, want nil", err)
+	}
+
+	group := ours(clusters, token)
+	if len(group) != 1 {
+		t.Fatalf("clusters for this run = %d, want 1 (same place, same country): %+v", len(group), group)
+	}
+	if group[0].StoryCount != 3 {
+		t.Errorf("story_count = %d, want 3", group[0].StoryCount)
+	}
+
+	wantLat := (lats[0] + lats[1] + lats[2]) / 3
+	wantLng := (lngs[0] + lngs[1] + lngs[2]) / 3
+	if group[0].Latitude == nil || math.Abs(*group[0].Latitude-wantLat) > 1e-9 {
+		t.Errorf("latitude = %v, want %v (the average of the members)", group[0].Latitude, wantLat)
+	}
+	if group[0].Longitude == nil || math.Abs(*group[0].Longitude-wantLng) > 1e-9 {
+		t.Errorf("longitude = %v, want %v (the average of the members)", group[0].Longitude, wantLng)
+	}
+}
+
+// TestPostgresStoreListClustersSeparatesPlaces proves two different place names
+// stay two clusters even when both carry coordinates.
+func TestPostgresStoreListClustersSeparatesPlaces(t *testing.T) {
+	store, pool, prefix := integrationSetup(t)
+	ctx := context.Background()
+	userID := createUser(t, pool, prefix, "twoplaces")
+	token := runToken()
+
+	beijing := "Beijing " + token
+	capeTown := "Cape Town " + token
+
+	beijingLat, beijingLng := 39.9042, 116.4074
+	capeLat, capeLng := -33.9249, 18.4241
+	china, southAfrica := "China", "South Africa"
+
+	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	createStoryWithCoords(t, pool, userID, beijing, &beijingLat, &beijingLng, &china, base)
+	createStoryWithCoords(t, pool, userID, beijing, &beijingLat, &beijingLng, &china, base.Add(time.Minute))
+	createStoryWithCoords(t, pool, userID, capeTown, &capeLat, &capeLng, &southAfrica, base.Add(2*time.Minute))
+	createStoryWithCoords(t, pool, userID, capeTown, &capeLat, &capeLng, &southAfrica, base.Add(3*time.Minute))
 
 	clusters, err := store.ListClusters(ctx, ClusterFilter{Limit: 100})
 	if err != nil {
@@ -254,20 +343,97 @@ func TestPostgresStoreListClustersGroupsByCoordinates(t *testing.T) {
 	if len(group) != 2 {
 		t.Fatalf("clusters for this run = %d, want 2: %+v", len(group), group)
 	}
+	for _, cluster := range group {
+		if cluster.StoryCount != 2 {
+			t.Errorf("%s story_count = %d, want 2", cluster.Place, cluster.StoryCount)
+		}
+	}
+}
 
-	// story_count descending: the coordinate cluster (2) leads.
-	coordinateCluster := group[0]
-	if coordinateCluster.Latitude == nil || *coordinateCluster.Latitude != latitude {
-		t.Errorf("latitude = %v, want %v", coordinateCluster.Latitude, latitude)
+// TestPostgresStoreListClustersCountryIsPartOfTheKey proves a story with no
+// country is its own bucket rather than merging with the same-named place that
+// has one.
+func TestPostgresStoreListClustersCountryIsPartOfTheKey(t *testing.T) {
+	store, pool, prefix := integrationSetup(t)
+	ctx := context.Background()
+	userID := createUser(t, pool, prefix, "countrykey")
+	token := runToken()
+
+	place := "Beijing " + token
+	china := "China"
+
+	latA, lngA := 39.9042, 116.4074
+	latB, lngB := 39.8000, 116.3000
+
+	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	// Same place name; one story names a country, the other does not.
+	createStoryWithCoords(t, pool, userID, place, &latA, &lngA, &china, base)
+	createStoryWithCoords(t, pool, userID, place, &latB, &lngB, nil, base.Add(time.Minute))
+
+	clusters, err := store.ListClusters(ctx, ClusterFilter{Limit: 100})
+	if err != nil {
+		t.Fatalf("ListClusters() error = %v, want nil", err)
 	}
-	if coordinateCluster.Longitude == nil || *coordinateCluster.Longitude != longitude {
-		t.Errorf("longitude = %v, want %v", coordinateCluster.Longitude, longitude)
+
+	group := ours(clusters, token)
+	if len(group) != 2 {
+		t.Fatalf("clusters for this run = %d, want 2 (country splits the key): %+v", len(group), group)
 	}
-	if coordinateCluster.PlaceCountry == nil || *coordinateCluster.PlaceCountry != country {
-		t.Errorf("place_country = %v, want %q", coordinateCluster.PlaceCountry, country)
+
+	var withCountry, withoutCountry *PlaceCluster
+	for i := range group {
+		if group[i].PlaceCountry == nil {
+			withoutCountry = &group[i]
+		} else {
+			withCountry = &group[i]
+		}
 	}
-	if coordinateCluster.StoryCount != 2 {
-		t.Errorf("coordinate cluster story_count = %d, want 2", coordinateCluster.StoryCount)
+	if withCountry == nil || withoutCountry == nil {
+		t.Fatalf("expected one cluster with a country and one without: %+v", group)
+	}
+	if *withCountry.PlaceCountry != china {
+		t.Errorf("country cluster place_country = %q, want %q", *withCountry.PlaceCountry, china)
+	}
+	if withCountry.StoryCount != 1 || withoutCountry.StoryCount != 1 {
+		t.Errorf("story counts = %d and %d, want 1 and 1", withCountry.StoryCount, withoutCountry.StoryCount)
+	}
+}
+
+// TestPostgresStoreListClustersKeepsEarliestSpelling proves the cluster's Place
+// keeps the earliest member's original capitalisation rather than a normalised or
+// lexicographic form.
+func TestPostgresStoreListClustersKeepsEarliestSpelling(t *testing.T) {
+	store, pool, prefix := integrationSetup(t)
+	ctx := context.Background()
+	userID := createUser(t, pool, prefix, "spelling")
+	token := runToken()
+
+	first := "Beijing " + token
+	second := "beijing " + token
+
+	latA, lngA := 39.9042, 116.4074
+	latB, lngB := 39.9200, 116.4300
+
+	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	// The earlier story is capitalised; the later one is not. Both normalise to the
+	// same key, so they are one cluster displaying the earlier spelling.
+	createStoryWithCoords(t, pool, userID, first, &latA, &lngA, nil, base)
+	createStoryWithCoords(t, pool, userID, second, &latB, &lngB, nil, base.Add(time.Minute))
+
+	clusters, err := store.ListClusters(ctx, ClusterFilter{Limit: 100})
+	if err != nil {
+		t.Fatalf("ListClusters() error = %v, want nil", err)
+	}
+
+	group := ours(clusters, token)
+	if len(group) != 1 {
+		t.Fatalf("clusters for this run = %d, want 1: %+v", len(group), group)
+	}
+	if group[0].Place != first {
+		t.Errorf("place = %q, want the earliest member's spelling %q", group[0].Place, first)
+	}
+	if group[0].StoryCount != 2 {
+		t.Errorf("story_count = %d, want 2", group[0].StoryCount)
 	}
 }
 

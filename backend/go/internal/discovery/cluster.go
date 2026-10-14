@@ -13,11 +13,11 @@
 //	service.go        business rules (ListClusters, ListStoriesAtPlace)
 //	postgres_store.go the PostgreSQL implementation of the store contract
 //
-// Nothing in this package knows about HTTP, JSON, or SQL types. A place carries
-// a structured coordinate when the author picked one from the geocoding search
-// (KNOT-ADR-034): a cluster is identified by that coordinate, and a legacy row
-// without one falls back to the normalised `approximate_location_lower` column
-// the stories write path maintains (KNOT-ADR-020). Discovery itself never
+// Nothing in this package knows about HTTP, JSON, or SQL types. A place is
+// identified by its normalised name together with the country the geocoder
+// reported (KNOT-020e-fix): two stories about "Beijing" are one cluster however
+// far apart their coordinates, and the cluster's own coordinate is the average of
+// its members' points, used to place the map marker. Discovery itself never
 // geocodes; it only groups what the stories write path stored. The package
 // reuses the stories domain's Story type and its opaque pagination cursor rather
 // than defining parallel ones, because a story at a place is an ordinary story
@@ -96,17 +96,19 @@ type ClusterFilter struct {
 // It is an aggregate, not a row: Place is a representative spelling of the
 // place name, and the remaining fields summarise every story grouped under it.
 type PlaceCluster struct {
-	// Place is the place name as it was written by an author. Grouping is by the
-	// structured coordinate when present (KNOT-ADR-034), and by the normalised
-	// lower case form otherwise; the display value preserves the author's original
-	// casing.
+	// Place is the place name as the earliest member story spelled it, with the
+	// author's capitalisation preserved. Grouping itself is by the normalised lower
+	// case form together with PlaceCountry (KNOT-020e-fix).
 	Place string
-	// PlaceCountry is the country the geocoder reported for the place, or nil for
-	// a legacy cluster that predates structured place data.
+	// PlaceCountry is the country the geocoder reported for the place, or nil for a
+	// legacy cluster that predates structured place data. It is part of the
+	// cluster's identity: a story with no country is its own cluster, never merged
+	// with a same-named place that has one.
 	PlaceCountry *string
-	// Latitude and Longitude are the cluster's coordinate, or nil for a legacy
-	// cluster. When present the pair is the cluster's identity: two stories with
-	// the same coordinate are one cluster, whatever each named the place.
+	// Latitude and Longitude are the average of the member stories' coordinates, so
+	// the marker sits among the stories rather than on one arbitrary member. The
+	// pair is nil (together) for a cluster whose members carry no coordinate — a
+	// legacy cluster, or one whose stories were all told by name.
 	Latitude  *float64
 	Longitude *float64
 	// StoryCount is how many stories are at this place.
@@ -126,8 +128,9 @@ type PlaceCluster struct {
 // on this interface rather than on pgx, so the business rules can be tested
 // without a database.
 type DiscoveryStore interface {
-	// ListClusters returns one entry per place, ordered by story count
-	// descending, applying filter. The result is never nil.
+	// ListClusters returns one entry per place, keyed by the normalised place name
+	// and country, ordered by story count descending, applying filter. The result
+	// is never nil.
 	ListClusters(ctx context.Context, filter ClusterFilter) ([]PlaceCluster, error)
 	// ListStoriesAtPlace returns at most limit stories at the already-normalised
 	// place, newest first, starting after cursor. A nil cursor starts at the
