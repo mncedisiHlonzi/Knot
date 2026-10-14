@@ -265,6 +265,16 @@ version's own screen. `StoryVersionScreen` mirrors `StoryDetailScreen`'s reading
 fetches through the same `versionsApi.getVersion` client, and it is reached from a Language Tree
 row (an `onOpenVersion` callback) through a `storyVersion` overlay in `App.tsx`.
 
+**KNOT-020e** migrated the two discovery screens the same way. `DiscoveryMapScreen` is now the
+reference's layout: a static `Header`, the pillar filter as underline tabs, the Mapbox map (the
+existing dark style, KNOT-ADR-026) across the top of the screen, and a hairline-separated place
+list beneath it with pull-to-refresh and a count-scaled marker per cluster. `PlaceStoriesScreen`
+renders the place as an `h1` with its story and pillar totals beneath it and lists its stories
+through the same `FeedEntry` the Feed uses (paused — the Feed is the only screen that auto-plays,
+KNOT-ADR-068), with pull-to-refresh and cursor paging on scroll-to-end. Both read `typeScale.*`
+and the semantic colour roles only, and the wording they share lives in the pure
+`screens/discovery/discoveryFormat.ts`.
+
 The `typeScale` **weights** are one step heavier than the reference snapshot for every token but
 the three body styles (`reading`, `body`, `bodyS`), which stay at 400 so prose keeps its
 readability — a deliberate divergence from `docs/design-reference/tokens.json` requested by the

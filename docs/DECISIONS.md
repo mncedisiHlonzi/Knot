@@ -2119,3 +2119,30 @@ surface draws it. `AuthorLine` keeps rendering the badge whenever a caller passe
 summary, so a future list surface that wants it need only pass the value rather than change the
 component. The Feed's quiet second-line variant (KNOT-020c-fix5) is unaffected: the Feed is a
 detail surface for this rule.
+
+## Scope note — `/discovery/places/{place}` is not author- or count-enriched (KNOT-020e)
+
+**Not a new ADR.** This records what the place endpoint does and does not carry, so a sparse
+Place Stories entry is not mistaken for a client bug.
+
+**Decision.** `GET /discovery/places/{place}` projects its stories with `newStoryResponse` and
+attaches the author's inline Rooted summary — and nothing else. It does **not** run the batched
+enrichment the feed (`GET /stories`) runs, so each item carries an empty `author_display_name`,
+a null `author_avatar_url`, an empty `media` array, all four aggregate counts at `0`, and null
+`first_media_type` / `first_media_url` (`internal/httpapi/discovery_handler.go`).
+
+**Why it is recorded now.** KNOT-020e rebuilt Place Stories on the same `FeedEntry` the Feed uses,
+which is the design reference's shape. With this payload an entry renders its time, its quiet
+Rooted line, its pillar tag, its title, and its opening lines — but no author name or avatar, no
+media, and no meta line, because the data is absent rather than because the component dropped it.
+Two further reference elements have no data behind them either: the header's story and pillar
+totals are not on this endpoint (KNOT-020e threads them through the `placeStories` overlay from
+the cluster the screen was opened from), and the decorative map strip and per-place pillar tabs
+were left out of the brief's structure.
+
+**Consequences.** Enriching the place endpoint with the same batched lookups the feed uses
+(`authorAttributions`, `storyMediaPreviews`, `storyStats`, and `firstMediaFields`) is a small,
+additive backend change that would bring Place Stories to parity with the Feed. It is deliberately
+out of KNOT-020e's scope, which is a mobile-only design pass with no backend changes. Until it
+lands, `AuthorLine` omits the missing segments and draws its initials fallback, which is its
+documented behaviour for a nameless author rather than a failure.

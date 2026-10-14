@@ -8,16 +8,30 @@ import {
   Text,
   View,
 } from 'react-native';
+import { ArrowLeft } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { PLACE_PAGE_SIZE, discoveryApi } from '../../api/discovery';
 import { Story } from '../../api/stories';
-import { languageName } from '../../data/languages';
-import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
+import EmptyState from '../../components/EmptyState';
+import FeedEntry from '../../components/FeedEntry';
+import Header from '../../components/Header';
+import { colors, layout, spacing, typeScale } from '../../theme';
+import { placeSummaryLabel } from './discoveryFormat';
 
 type PlaceStoriesScreenProps = {
   /** The place whose stories are shown, as it was named by the server. */
   readonly place: string;
+  /**
+   * How many stories the place holds, and how they split across the two pillars.
+   *
+   * Both come from the place's cluster on the Discovery Map, which is where this
+   * screen is opened from. The place endpoint pages stories and carries no totals
+   * of its own, so the cluster is handed over with the place rather than fetched
+   * again — the header is exact and costs no extra request (KNOT-020e).
+   */
+  readonly storyCount: number;
+  readonly pillarCounts: Readonly<Record<string, number>>;
   /**
    * The signed-in user's access token, or undefined when signed out. It is sent
    * on every page request so the server hides blocked authors' stories; an
@@ -31,26 +45,24 @@ type PlaceStoriesScreenProps = {
 };
 
 /**
- * Renders a story's timestamp as a short, locale-independent date.
- */
-function formatDate(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toISOString().slice(0, 10);
-}
-
-/**
  * Every story told at one place, newest first.
  *
  * Paging is the same keyset cursor the feed uses: each page returns an opaque
  * `next_cursor` sent back verbatim for the following page, and an empty cursor
- * means the end. A place with no stories is a normal empty state, not an error —
- * the server answers 200 with an empty list.
+ * means the end. Reaching the end of the list asks for the next page;
+ * pull-to-refresh starts again from the newest story. A place with no stories is a
+ * normal empty state, not an error — the server answers 200 with an empty list.
+ *
+ * The design is the reference's (KNOT-020e): the place is the screen's headline
+ * with its totals beneath it, and its stories are the same `FeedEntry` the Feed
+ * renders, so a story reads the same in both places. Nothing here auto-plays:
+ * the Feed is the only screen that does (KNOT-ADR-068), so a video entry renders
+ * on its paused frame.
  */
 export default function PlaceStoriesScreen({
   place,
+  storyCount,
+  pillarCounts,
   token,
   onOpenStory,
   onBack,
@@ -122,119 +134,135 @@ export default function PlaceStoriesScreen({
   }, [loadingMore, nextCursor, place, token]);
 
   return (
-    <FlatList
-      data={stories}
-      keyExtractor={(story) => story.id}
-      contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl
-          refreshing={refreshing}
-          onRefresh={() => {
-            void loadFirstPage('refresh');
-          }}
-        />
-      }
-      ListHeaderComponent={
-        <View>
-          <Pressable style={styles.link} onPress={onBack}>
-            <Text style={styles.linkText}>← Back</Text>
-          </Pressable>
-          <Text style={styles.title}>{place}</Text>
-
-          {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
-          {loading ? <ActivityIndicator style={styles.spinner} /> : null}
-          {!loading && stories.length === 0 && error === undefined ? (
-            <Text style={styles.empty}>No stories here yet.</Text>
-          ) : null}
-        </View>
-      }
-      renderItem={({ item }) => (
-        <Pressable style={styles.card} onPress={() => onOpenStory(item.id)}>
-          <Text style={styles.cardTitle}>{item.title}</Text>
-          <Text style={styles.cardMeta}>
-            {item.pillar} · {languageName(item.language)} · {formatDate(item.created_at)}
-            {item.sensitive ? ' · sensitive' : ''}
-          </Text>
-        </Pressable>
-      )}
-      ListFooterComponent={
-        nextCursor !== '' ? (
+    <View style={styles.container}>
+      <Header
+        left={
           <Pressable
-            style={[styles.secondaryButton, loadingMore ? styles.buttonDisabled : null]}
-            onPress={loadMore}
-            disabled={loadingMore}
+            style={styles.iconButton}
+            onPress={onBack}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
           >
-            <Text style={styles.secondaryButtonText}>{loadingMore ? 'Loading…' : 'Load more'}</Text>
+            <ArrowLeft color={colors.text.primary} size={24} />
           </Pressable>
-        ) : null
-      }
-    />
+        }
+      />
+
+      {/* The reference's place block: the place as the screen's headline, with its
+          story and pillar totals as the quiet line beneath it. */}
+      <View style={styles.heading}>
+        <Text style={[typeScale.h1, styles.place]} numberOfLines={2}>
+          {place}
+        </Text>
+        <Text style={[typeScale.caption, styles.summary]}>
+          {placeSummaryLabel(storyCount, pillarCounts)}
+        </Text>
+      </View>
+
+      <FlatList
+        data={stories}
+        keyExtractor={(story) => story.id}
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={() => {
+              void loadFirstPage('refresh');
+            }}
+            tintColor={colors.text.secondary}
+          />
+        }
+        onEndReached={() => {
+          void loadMore();
+        }}
+        onEndReachedThreshold={0.5}
+        renderItem={({ item }) => (
+          <FeedEntry
+            story={{
+              author_avatar_url: item.author_avatar_url,
+              author_display_name: item.author_display_name,
+              author_rooted: item.author_rooted ?? null,
+              comment_count: item.comment_count,
+              created_at: item.created_at,
+              first_media_type: item.first_media_type ?? null,
+              first_media_url: item.first_media_url ?? null,
+              id: item.id,
+              language: item.language,
+              language_count: item.language_count,
+              media_count: item.media_count,
+              pillar: item.pillar,
+              place: item.approximate_location,
+              preview: item.body,
+              reactions: item.reactions,
+              title: item.title,
+              version_count: item.version_count,
+            }}
+            onPress={() => onOpenStory(item.id)}
+          />
+        )}
+        ListEmptyComponent={
+          loading ? (
+            <ActivityIndicator style={styles.spinner} />
+          ) : error !== undefined ? (
+            <Text style={styles.error}>{error}</Text>
+          ) : (
+            <EmptyState
+              illustrationName="no-stories"
+              headline="No stories here yet."
+              body={`Be the first to tell one about ${place}.`}
+            />
+          )
+        }
+        ListFooterComponent={
+          loadingMore ? (
+            <ActivityIndicator style={styles.footerSpinner} />
+          ) : error !== undefined && stories.length > 0 ? (
+            <Text style={styles.error}>{error}</Text>
+          ) : null
+        }
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  buttonDisabled: {
-    opacity: 0.5,
+  container: {
+    backgroundColor: colors.bg.canvas,
+    flex: 1,
   },
-  card: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.subtle,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginTop: spacing.md,
-    padding: spacing.lg,
-  },
-  cardMeta: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    marginTop: spacing.xs,
-  },
-  cardTitle: {
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    fontWeight: fontWeights.semiBold,
-  },
+  // The entries are edge-to-edge and carry their own horizontal inset
+  // (`FeedEntry` uses `layout.screenPaddingFeed`), so the list adds none.
   content: {
-    backgroundColor: colors.bg.primary,
-    padding: spacing.xl,
-    paddingBottom: spacing['3xl'],
-  },
-  empty: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.base,
-    marginTop: spacing.lg,
+    paddingBottom: spacing.xxxl,
   },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.base,
-    marginTop: spacing.lg,
-  },
-  link: {
-    marginBottom: spacing.md,
-  },
-  linkText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.base,
-  },
-  secondaryButton: {
-    alignItems: 'center',
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginTop: spacing.md,
+    color: colors.state.danger,
+    paddingHorizontal: layout.screenPaddingFeed,
     paddingVertical: spacing.md,
+    textAlign: 'center',
   },
-  secondaryButtonText: {
+  footerSpinner: {
+    marginVertical: spacing.xl,
+  },
+  heading: {
+    paddingBottom: spacing.md,
+    paddingHorizontal: layout.screenPaddingFeed,
+    paddingTop: spacing.xs,
+  },
+  iconButton: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  place: {
     color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
   },
   spinner: {
     marginTop: spacing.xl,
   },
-  title: {
-    color: colors.text.primary,
-    fontSize: fontSizes.xl,
-    fontWeight: fontWeights.bold,
+  summary: {
+    color: colors.text.tertiary,
+    marginTop: spacing.xs,
   },
 });

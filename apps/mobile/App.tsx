@@ -67,7 +67,12 @@ type Overlay =
     }
   | { readonly name: 'rootedSetup' }
   | { readonly name: 'notifications' }
-  | { readonly name: 'placeStories'; readonly place: string }
+  | {
+      readonly name: 'placeStories';
+      readonly place: string;
+      readonly storyCount: number;
+      readonly pillarCounts: Readonly<Record<string, number>>;
+    }
   | { readonly name: 'inquiry'; readonly inquiryId: string }
   | { readonly name: 'askInquiry' }
   | { readonly name: 'search' }
@@ -238,8 +243,15 @@ export default function App(): React.ReactElement {
         return (
           <DiscoveryMapScreen
             token={current.accessToken}
-            onOpenPlace={(place) =>
-              setOverlays((stack) => pushOverlay(stack, { name: 'placeStories', place }))
+            onOpenPlace={(cluster) =>
+              setOverlays((stack) =>
+                pushOverlay(stack, {
+                  name: 'placeStories',
+                  place: cluster.place,
+                  storyCount: cluster.story_count,
+                  pillarCounts: cluster.pillar_counts,
+                }),
+              )
             }
           />
         );
@@ -526,6 +538,8 @@ export default function App(): React.ReactElement {
         return (
           <PlaceStoriesScreen
             place={overlay.place}
+            storyCount={overlay.storyCount}
+            pillarCounts={overlay.pillarCounts}
             token={current.accessToken}
             onOpenStory={(id) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId: id }))

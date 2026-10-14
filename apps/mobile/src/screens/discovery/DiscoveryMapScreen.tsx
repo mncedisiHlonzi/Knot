@@ -1,17 +1,34 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import Mapbox, { Camera, MapView, PointAnnotation } from '@rnmapbox/maps';
+import { CaretRight } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { PlaceCluster, discoveryApi } from '../../api/discovery';
 import { Pillar } from '../../api/stories';
+import EmptyState from '../../components/EmptyState';
+import Header from '../../components/Header';
 import { KNOT_MAPBOX_TOKEN } from '../../config/dev';
 import { PlaceCoordinate, coordinatesForPlace } from '../../data/placeCoordinates';
-import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
+import { colors, layout, spacing, tabularNums, typeScale } from '../../theme';
+import { markerCountLabel, markerSize, storyCountLabel } from './discoveryFormat';
 
 type DiscoveryMapScreenProps = {
-  /** Called when a place is tapped, on the map or in the list below it. */
-  readonly onOpenPlace: (place: string) => void;
+  /**
+   * Called when a place is tapped, on the map or in the list below it. The whole
+   * cluster is handed over, so the place screen can name itself and print its
+   * story and pillar totals without a second request.
+   */
+  readonly onOpenPlace: (cluster: PlaceCluster) => void;
   /**
    * The signed-in user's access token, or undefined when signed out. It is sent
    * on the cluster request so the server hides blocked authors' stories; an
@@ -39,17 +56,17 @@ const FILTERS: readonly { readonly value: PillarFilter; readonly label: string }
 const INITIAL_CENTER: [number, number] = [10, 10];
 const INITIAL_ZOOM = 1.2;
 
+/**
+ * The share of the screen height the map occupies above the place list. The
+ * reference gives the map the top of the screen and the list the strip below it
+ * (KNOT-020e).
+ */
+const MAP_HEIGHT_RATIO = 0.55;
+
 // Mapbox needs its access token before any map mounts. Setting it once, at module
 // load, keeps it out of the component and off every render. The token is public
 // (see `config/dev.ts`).
 void Mapbox.setAccessToken(KNOT_MAPBOX_TOKEN);
-
-/**
- * Renders a story count with the right singular/plural noun.
- */
-function storyLabel(count: number): string {
-  return count === 1 ? '1 story' : `${count} stories`;
-}
 
 /**
  * Resolves a cluster to a point the map can plot.
@@ -67,6 +84,22 @@ function coordinateForCluster(cluster: PlaceCluster): PlaceCoordinate | undefine
 }
 
 /**
+ * The quiet line beneath a place in the list: the country the geocoder reported,
+ * and a note when the place has no coordinate to plot. It is empty when there is
+ * nothing to say, so the row draws one line rather than a blank second one.
+ */
+function placeSubtitle(cluster: PlaceCluster): string {
+  const country = typeof cluster.place_country === 'string' ? cluster.place_country.trim() : '';
+  const parts = country === '' ? [] : [country];
+
+  if (coordinateForCluster(cluster) === undefined) {
+    parts.push('Not on map');
+  }
+
+  return parts.join(' · ');
+}
+
+/**
  * Discovery, as a map.
  *
  * The map is rendered natively with Mapbox (`@rnmapbox/maps`, KNOT-ADR-026). The
@@ -80,6 +113,13 @@ function coordinateForCluster(cluster: PlaceCluster): PlaceCoordinate | undefine
  * Tapping a marker, or an entry in the list, opens that place's stories. There is
  * no user location and no permission prompt: the map is a way in to places, not a
  * way to find the user.
+ *
+ * The layout is the design reference's (KNOT-020e): a static header and the pillar
+ * tabs, then the map occupying the top of the screen, with the place list
+ * scrolling beneath it. The reference's map search control, its location button,
+ * and its overlapping bottom sheet are deliberately not built — the location
+ * button would need a permission and a behaviour the app does not have, and the
+ * brief asks for a list below the map rather than a sheet over it.
  */
 export default function DiscoveryMapScreen({
   onOpenPlace,
@@ -88,55 +128,88 @@ export default function DiscoveryMapScreen({
   const [clusters, setClusters] = useState<readonly PlaceCluster[]>([]);
   const [filter, setFilter] = useState<PillarFilter>('all');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
 
-  const load = useCallback(async (): Promise<void> => {
-    setLoading(true);
-    setError(undefined);
+  const { height } = useWindowDimensions();
+  const mapHeight = Math.round(height * MAP_HEIGHT_RATIO);
 
-    try {
-      const result = await discoveryApi.listClusters(
-        filter === 'all' ? {} : { pillar: filter },
-        token,
-      );
-      setClusters(result.clusters);
-    } catch (caught) {
-      setError(describeError(caught));
-    } finally {
-      setLoading(false);
-    }
-  }, [filter, token]);
+  const load = useCallback(
+    async (mode: 'initial' | 'refresh'): Promise<void> => {
+      if (mode === 'refresh') {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      setError(undefined);
+
+      try {
+        const result = await discoveryApi.listClusters(
+          filter === 'all' ? {} : { pillar: filter },
+          token,
+        );
+        setClusters(result.clusters);
+      } catch (caught) {
+        setError(describeError(caught));
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [filter, token],
+  );
 
   useEffect(() => {
-    void load();
+    void load('initial');
   }, [load]);
 
-  const plotted = clusters.filter((cluster) => coordinateForCluster(cluster) !== undefined);
+  /** Pull-to-refresh: re-read the first page for the filter that is showing. */
+  const refresh = useCallback((): void => {
+    void load('refresh');
+  }, [load]);
+
+  // The clusters the map can actually plot. A cluster with no coordinate is still
+  // listed below the map, so a place told before structured place data existed is
+  // never hidden.
+  const plotted = useMemo(
+    () => clusters.filter((cluster) => coordinateForCluster(cluster) !== undefined),
+    [clusters],
+  );
+
+  // The busiest plotted cluster sets the scale every marker is sized against.
+  const maxCount = useMemo(
+    () => plotted.reduce((max, cluster) => Math.max(max, cluster.story_count), 0),
+    [plotted],
+  );
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Explore by place</Text>
-        <Text style={styles.subtitle}>Stories told around the world.</Text>
+      <Header title="Discover" />
 
-        <View style={styles.filters}>
-          {FILTERS.map((option) => {
-            const active = option.value === filter;
-            return (
-              <Pressable
-                key={option.value}
-                style={[styles.filter, active ? styles.filterActive : null]}
-                onPress={() => setFilter(option.value)}
-                accessibilityRole="button"
-                accessibilityState={{ selected: active }}
+      {/* The pillar filter, drawn as the reference's underline tabs: the active
+          tab pairs the primary ink with the indigo underline, so the row never
+          depends on weight alone (KNOT-020e). */}
+      <View style={styles.tabs}>
+        {FILTERS.map((option) => {
+          const active = option.value === filter;
+          return (
+            <Pressable
+              key={option.value}
+              style={[styles.tab, active ? styles.tabActive : null]}
+              onPress={() => setFilter(option.value)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={option.label}
+            >
+              <Text
+                style={[typeScale.button, styles.tabLabel, active ? styles.tabLabelActive : null]}
+                numberOfLines={1}
               >
-                <Text style={[styles.filterText, active ? styles.filterTextActive : null]}>
-                  {option.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
+                {option.label}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       {/*
@@ -148,55 +221,96 @@ export default function DiscoveryMapScreen({
        *
        * The token is the *public* one from `src/config/dev.ts`. The Dark style is
        * used so the map sits on the app's navy canvas, and Mapbox's logo and
-       * attribution are left enabled (required by Mapbox's terms).
+       * attribution are left enabled (required by Mapbox's terms). A custom brand
+       * style is a separate task (KNOT-020e keeps StyleURL.Dark as it is).
        */}
-      <MapView style={styles.map} styleURL={Mapbox.StyleURL.Dark}>
+      <MapView style={[styles.map, { height: mapHeight }]} styleURL={Mapbox.StyleURL.Dark}>
         <Camera defaultSettings={{ centerCoordinate: INITIAL_CENTER, zoomLevel: INITIAL_ZOOM }} />
         {plotted.map((cluster) => {
           const coordinate = coordinateForCluster(cluster);
           if (coordinate === undefined) {
             return null;
           }
+
+          const size = markerSize(cluster.story_count, maxCount);
+
           return (
             <PointAnnotation
               key={cluster.place}
               id={cluster.place}
               coordinate={[coordinate.longitude, coordinate.latitude]}
               title={cluster.place}
-              onSelected={() => onOpenPlace(cluster.place)}
+              onSelected={() => onOpenPlace(cluster)}
             >
-              {/* PointAnnotation renders its child as the marker, so this is the
-                  pin: a brand-purple dot ringed in white to read on the dark map. */}
-              <View style={styles.marker} />
+              {/* PointAnnotation renders its child as the marker: the place's story
+                  count in an indigo circle, ringed in canvas white so it reads on
+                  the dark map, sized by how busy the place is. */}
+              <View style={[styles.marker, { borderRadius: size / 2, height: size, width: size }]}>
+                <Text style={[typeScale.caption, tabularNums, styles.markerCount]}>
+                  {markerCountLabel(cluster.story_count)}
+                </Text>
+              </View>
             </PointAnnotation>
           );
         })}
       </MapView>
 
-      {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
-
       <FlatList
+        style={styles.list}
         data={clusters}
         keyExtractor={(cluster) => cluster.place}
         contentContainerStyle={styles.listContent}
-        ListHeaderComponent={
-          <View>
-            <Text style={styles.sectionTitle}>Places</Text>
-            {loading ? <ActivityIndicator style={styles.spinner} /> : null}
-          </View>
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={refresh}
+            tintColor={colors.text.secondary}
+          />
         }
-        renderItem={({ item }) => (
-          <Pressable style={styles.placeRow} onPress={() => onOpenPlace(item.place)}>
-            <Text style={styles.placeName}>{item.place}</Text>
-            <Text style={styles.placeMeta}>
-              {storyLabel(item.story_count)}
-              {coordinateForCluster(item) === undefined ? ' · not on map' : ''}
-            </Text>
-          </Pressable>
-        )}
+        ListHeaderComponent={
+          loading ? (
+            <ActivityIndicator style={styles.spinner} />
+          ) : error !== undefined ? (
+            <Text style={styles.error}>{error}</Text>
+          ) : null
+        }
+        renderItem={({ item }) => {
+          const subtitle = placeSubtitle(item);
+
+          return (
+            <Pressable
+              style={styles.placeRow}
+              onPress={() => onOpenPlace(item)}
+              accessibilityRole="button"
+              accessibilityLabel={`${item.place}, ${storyCountLabel(item.story_count)}`}
+            >
+              <View style={styles.placeText}>
+                <Text style={[typeScale.button, styles.placeName]} numberOfLines={1}>
+                  {item.place}
+                </Text>
+                {subtitle === '' ? null : (
+                  <Text style={[typeScale.caption, styles.placeMeta]} numberOfLines={1}>
+                    {subtitle}
+                  </Text>
+                )}
+              </View>
+
+              <View style={styles.placeCount}>
+                <Text style={[typeScale.bodyS, tabularNums, styles.placeCountText]}>
+                  {storyCountLabel(item.story_count)}
+                </Text>
+                <CaretRight color={colors.text.tertiary} size={18} />
+              </View>
+            </Pressable>
+          );
+        }}
         ListEmptyComponent={
           !loading && error === undefined ? (
-            <Text style={styles.empty}>No places yet. Be the first to tell one.</Text>
+            <EmptyState
+              illustrationName="no-stories"
+              headline="No places yet."
+              body="When people tell stories about a place, it appears on the map and in this list."
+            />
           ) : null
         }
       />
@@ -206,100 +320,87 @@ export default function DiscoveryMapScreen({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: colors.bg.primary,
+    backgroundColor: colors.bg.canvas,
     flex: 1,
   },
-  empty: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.base,
-    marginTop: spacing.md,
-  },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.sm,
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.sm,
+    color: colors.state.danger,
+    paddingHorizontal: layout.screenPaddingFeed,
+    paddingVertical: spacing.md,
+    textAlign: 'center',
   },
-  filter: {
-    borderColor: colors.border.default,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.xs,
-  },
-  filterActive: {
-    backgroundColor: colors.brand.purple,
-    borderColor: colors.brand.purple,
-  },
-  filterText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.medium,
-  },
-  filterTextActive: {
-    color: colors.text.primary,
-  },
-  filters: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.md,
-  },
-  header: {
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.xl,
+  list: {
+    flex: 1,
   },
   listContent: {
-    paddingBottom: spacing['3xl'],
-    paddingHorizontal: spacing.xl,
+    paddingBottom: spacing.xxxl,
   },
   map: {
-    height: 280,
-    marginTop: spacing.lg,
     width: '100%',
   },
   marker: {
-    backgroundColor: colors.brand.purple,
-    borderColor: colors.text.primary,
-    borderRadius: radius.pill,
+    alignItems: 'center',
+    backgroundColor: colors.brand.primary,
+    borderColor: colors.bg.canvas,
     borderWidth: 2,
-    height: 18,
-    width: 18,
+    justifyContent: 'center',
+  },
+  markerCount: {
+    color: colors.text.onBrand,
+  },
+  placeCount: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  placeCountText: {
+    color: colors.text.secondary,
   },
   placeMeta: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
+    color: colors.text.tertiary,
     marginTop: spacing.xs,
   },
   placeName: {
     color: colors.text.primary,
-    fontSize: fontSizes.md,
-    fontWeight: fontWeights.semiBold,
   },
   placeRow: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.subtle,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginTop: spacing.md,
-    padding: spacing.lg,
+    alignItems: 'center',
+    borderTopColor: colors.border.hairline,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
+    justifyContent: 'space-between',
+    paddingHorizontal: layout.screenPaddingFeed,
+    paddingVertical: spacing.md,
   },
-  sectionTitle: {
-    color: colors.text.primary,
-    fontSize: fontSizes.lg,
-    fontWeight: fontWeights.bold,
-    marginTop: spacing.xl,
+  placeText: {
+    flexShrink: 1,
   },
   spinner: {
     marginTop: spacing.lg,
   },
-  subtitle: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.base,
-    marginTop: spacing.xs,
+  // One tab, as wide as its label: the reference draws the three filters
+  // left-aligned with a 24-point gap, and underlines only the active one.
+  tab: {
+    borderBottomColor: 'transparent',
+    borderBottomWidth: 2,
+    paddingBottom: spacing.sm,
+    paddingTop: spacing.md,
   },
-  title: {
+  tabActive: {
+    borderBottomColor: colors.brand.primary,
+  },
+  tabLabel: {
+    color: colors.text.tertiary,
+  },
+  tabLabelActive: {
     color: colors.text.primary,
-    fontSize: fontSizes.xl,
-    fontWeight: fontWeights.bold,
+  },
+  tabs: {
+    borderBottomColor: colors.border.hairline,
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.xl,
+    paddingHorizontal: layout.screenPaddingFeed,
   },
 });
