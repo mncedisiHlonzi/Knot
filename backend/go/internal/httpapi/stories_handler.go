@@ -151,6 +151,13 @@ type storyResponse struct {
 	// (KNOT-020c-fix).
 	FirstMediaType *string `json:"first_media_type"`
 	FirstMediaURL  *string `json:"first_media_url"`
+	// FirstMediaWidth and FirstMediaHeight are that item's pixel dimensions, or
+	// null when the uploader's client did not report them. They let a list frame
+	// the media at its natural width:height ratio instead of a fixed one, so a
+	// portrait photo is not cropped; a consumer must fall back to its own default
+	// ratio when either is null (KNOT-020g-fix5).
+	FirstMediaWidth  *int `json:"first_media_width"`
+	FirstMediaHeight *int `json:"first_media_height"`
 }
 
 // storyEnvelope wraps a single story, so the response shape can gain sibling
@@ -351,29 +358,56 @@ func newStoryResponse(story stories.Story) storyResponse {
 }
 
 // attachStoryCounts attaches a single story's aggregate counts and its first
-// media item's type and URL, in one batched read (KNOT-020c-fix).
+// media item's kind, URL, and dimensions, in one batched read (KNOT-020c-fix).
 //
 // It is the single-entity counterpart of the batched loop in List. The first
-// media fields are read from the response's own media, so the detail and the feed
-// agree on which item is first, and are null when the story has no media.
+// media fields are read from the response's own media, so the detail and the
+// feed agree on which item is first, and are null when the story has no media.
 func attachStoryCounts(response *storyResponse, lookup StoryStatsLookup, r *http.Request, logger *slog.Logger, storyID string) {
 	counts := storyStats(r.Context(), lookup, logger, []string{storyID})[storyID]
 	response.VersionCount = counts.Versions
 	response.LanguageCount = counts.Languages
 	response.CommentCount = counts.Comments
 	response.MediaCount = counts.Media
-	response.FirstMediaType, response.FirstMediaURL = firstMediaFields(response.Media)
+
+	first := firstMediaFields(response.Media)
+	response.FirstMediaType = first.mediaType
+	response.FirstMediaURL = first.url
+	response.FirstMediaWidth = first.width
+	response.FirstMediaHeight = first.height
 }
 
-// firstMediaFields returns the type and relative URL of the first media item, or
-// (nil, nil) when there is none, so the wire fields are nullable rather than empty
-// strings.
-func firstMediaFields(media []storyMediaResponse) (*string, *string) {
+// firstMedia is the projection of a story's first media item onto the fields
+// that describe it: its kind, its relative URL, and its pixel dimensions.
+//
+// Every field is a pointer so "the story has no media" is a null on the wire
+// rather than an empty string or a zero dimension. The dimensions are null when
+// the uploader's device did not report them (KNOT-020g-fix5).
+type firstMedia struct {
+	mediaType *string
+	url       *string
+	width     *int
+	height    *int
+}
+
+// firstMediaFields projects the first item of a story's media onto the wire
+// fields that describe it, or the zero value when the story has no media.
+//
+// The dimensions let a list frame the media at its natural width:height ratio
+// instead of a fixed one, so a portrait photo or video is not cropped
+// (KNOT-020g-fix5). They are null when the uploader's client did not report
+// them, so a consumer falls back to its own default ratio.
+func firstMediaFields(media []storyMediaResponse) firstMedia {
 	if len(media) == 0 {
-		return nil, nil
+		return firstMedia{}
 	}
 
 	kind := media[0].MediaType
 	url := media[0].URL
-	return &kind, &url
+	return firstMedia{
+		mediaType: &kind,
+		url:       &url,
+		width:     media[0].Width,
+		height:    media[0].Height,
+	}
 }

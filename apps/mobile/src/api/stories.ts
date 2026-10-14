@@ -116,6 +116,14 @@ export type Story = {
    */
   readonly first_media_type?: 'image' | 'video' | null;
   readonly first_media_url?: string | null;
+  /**
+   * The first media item's pixel dimensions, or null when the uploader's client
+   * did not report them. The feed frames the media at its natural width:height
+   * ratio from these, so a portrait photo is shown whole rather than cropped into
+   * a fixed frame; both null falls back to 16:9 (KNOT-020g-fix5).
+   */
+  readonly first_media_width?: number | null;
+  readonly first_media_height?: number | null;
 };
 
 /** The request body for POST /stories. */

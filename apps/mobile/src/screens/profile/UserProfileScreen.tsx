@@ -55,6 +55,7 @@ import {
   tabularNums,
   typeScale,
 } from '../../theme';
+import { mediaAspectRatio } from '../../utils/mediaFrame';
 import { formatRelativeTime } from '../../utils/time';
 import {
   DEFAULT_PROFILE_TAB,
@@ -110,9 +111,6 @@ type UserProfileScreenProps = {
 /** How far the options sheet must be dragged down before it dismisses. */
 const SHEET_CLOSE_DISTANCE = 96;
 
-/** The card preview's aspect ratio (16:9), matching the feed's media frame. */
-const MEDIA_ASPECT_RATIO = 16 / 9;
-
 /** The empty-state illustration for one tab. Versions reuse the stories artwork. */
 function emptyIllustration(kind: ActivityKind): 'no-stories' | 'no-inquiries' {
   return kind === 'inquiry' ? 'no-inquiries' : 'no-stories';
@@ -125,6 +123,12 @@ function emptyIllustration(kind: ActivityKind): 'no-stories' | 'no-inquiries' {
  * The API sends a relative path, so it is joined to the base URL the way the
  * feed's media is. A video never plays here — the wall is a browse surface, and
  * playback belongs to the Feed (KNOT-020g-fix4).
+ *
+ * The frame is **full-bleed** (it escapes the card's gutter) and takes the
+ * **media's own aspect ratio** when the payload reports its dimensions, so a
+ * portrait photo renders tall instead of being cropped into a 16:9 window; an
+ * unknown shape falls back to 16:9 and is letterboxed rather than cropped
+ * (KNOT-020g-fix5).
  */
 function cardMediaNode(card: ProfileCard): React.ReactElement | null {
   if (card.mediaUrl === undefined || card.mediaType === undefined) {
@@ -132,22 +136,21 @@ function cardMediaNode(card: ProfileCard): React.ReactElement | null {
   }
 
   const uri = `${API_BASE_URL}${card.mediaUrl}`;
+  const frame = [
+    styles.cardMedia,
+    { aspectRatio: mediaAspectRatio(card.mediaWidth, card.mediaHeight) },
+  ];
 
   if (card.mediaType === 'video') {
     return (
-      <View style={styles.cardMedia}>
+      <View style={frame}>
         <FeedVideo uri={uri} previewOnly />
       </View>
     );
   }
 
   return (
-    <Image
-      source={{ uri }}
-      style={styles.cardMedia}
-      resizeMode="cover"
-      accessibilityIgnoresInvertColors
-    />
+    <Image source={{ uri }} style={frame} resizeMode="contain" accessibilityIgnoresInvertColors />
   );
 }
 
@@ -734,11 +737,12 @@ const styles = StyleSheet.create({
     color: colors.text.tertiary,
     marginTop: spacing.xs,
   },
-  // The card's media preview: the content column's width, rounded, and never a
-  // player — a still image, or a plain placeholder for a video (KNOT-020g-fix3).
+  // The card's media preview: full-bleed and never a player — a still image, or
+  // a video's first frame (KNOT-020g-fix3, KNOT-020g-fix5). It escapes the card's
+  // gutter so the media runs edge to edge, and its ratio is set per card from the
+  // media's own dimensions, so it is not fixed here.
   cardMedia: {
-    aspectRatio: MEDIA_ASPECT_RATIO,
-    borderRadius: radius.lg,
+    marginHorizontal: -layout.screenPaddingFeed,
     marginTop: spacing.sm,
     overflow: 'hidden',
     width: '100%',

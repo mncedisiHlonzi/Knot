@@ -464,9 +464,9 @@ func (l storyPageLookups) enrich(ctx context.Context, items []storyResponse) {
 		}
 	}
 
-	// One batched read attaches the aggregate counts; the first media item's type
-	// and URL come from the preview just attached, so the fields cannot disagree
-	// with the media array.
+	// One batched read attaches the aggregate counts; the first media item's
+	// kind, URL, and dimensions come from the preview just attached, so the
+	// fields cannot disagree with the media array.
 	counts := storyStats(ctx, l.stats, l.logger, ids)
 	for i := range items {
 		entry := counts[items[i].ID]
@@ -474,7 +474,12 @@ func (l storyPageLookups) enrich(ctx context.Context, items []storyResponse) {
 		items[i].LanguageCount = entry.Languages
 		items[i].CommentCount = entry.Comments
 		items[i].MediaCount = entry.Media
-		items[i].FirstMediaType, items[i].FirstMediaURL = firstMediaFields(items[i].Media)
+
+		first := firstMediaFields(items[i].Media)
+		items[i].FirstMediaType = first.mediaType
+		items[i].FirstMediaURL = first.url
+		items[i].FirstMediaWidth = first.width
+		items[i].FirstMediaHeight = first.height
 	}
 
 	// One batched pair of reads decorates the page with the reaction counts and,

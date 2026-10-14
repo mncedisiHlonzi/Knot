@@ -1,6 +1,6 @@
 import React, { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { PlayCircle, SpeakerHigh, SpeakerSlash } from 'phosphor-react-native';
+import { Play, SpeakerHigh, SpeakerSlash } from 'phosphor-react-native';
 import Video, { type OnLoadData } from 'react-native-video';
 
 import { colors, radius, spacing, tabularNums, typeScale } from '../theme';
@@ -15,11 +15,17 @@ export const VIDEO_MUTE_BUTTON_SIZE = 44;
 /** The speaker glyph inside the mute control. */
 const MUTE_ICON_SIZE = 22;
 
-/** The play glyph drawn on a display-only preview. */
-const PREVIEW_PLAY_ICON_SIZE = 48;
+/** The play triangle drawn on a display-only preview. */
+const PREVIEW_PLAY_ICON_SIZE = 20;
 
-/** The preview's play badge's diameter. */
-const PREVIEW_PLAY_BADGE_SIZE = 64;
+/**
+ * The play triangle's backdrop's diameter.
+ *
+ * It is deliberately tight around the glyph, not a panel: the badge has to read
+ * over arbitrary media, and a translucent disc the size of the glyph does that
+ * without becoming the loudest thing on the card (KNOT-020g-fix5).
+ */
+const PREVIEW_PLAY_BADGE_SIZE = 36;
 
 /** A no-op mute handler, for a caller that draws no mute control. */
 const NOOP = (): void => undefined;
@@ -51,6 +57,16 @@ type FeedVideoProps = {
    * media preview (KNOT-020g-fix4). Defaults to `false`, the feed's full player.
    */
   readonly previewOnly?: boolean;
+  /**
+   * How the video is fitted to its frame: `cover` fills the frame and crops the
+   * overflow, `contain` shows the whole frame and letterboxes it. Defaults to
+   * `cover`, the feed's mode — a playing video reads better filling its frame.
+   *
+   * A `previewOnly` preview defaults to `contain` instead, because the frame the
+   * caller gives it is already the media's own ratio when the server reported its
+   * dimensions, and a card must never crop (KNOT-020g-fix5).
+   */
+  readonly resizeMode?: 'cover' | 'contain';
   /** Test identifier. */
   readonly testID?: string;
 };
@@ -81,6 +97,7 @@ export default function FeedVideo({
   isMuted = true,
   onToggleMute = NOOP,
   previewOnly = false,
+  resizeMode,
   testID,
 }: FeedVideoProps): React.ReactElement {
   const [durationSeconds, setDurationSeconds] = useState(0);
@@ -94,6 +111,8 @@ export default function FeedVideo({
   // A display-only preview is always paused and never reads a duration.
   const playing = previewOnly ? false : isVisible;
   const durationLabel = previewOnly ? '' : formatDuration(durationSeconds);
+  // A preview shows the frame whole; the feed's player fills it.
+  const fit = resizeMode ?? (previewOnly ? 'contain' : 'cover');
 
   return (
     <View style={styles.container} testID={testID}>
@@ -107,14 +126,14 @@ export default function FeedVideo({
         paused={!playing}
         muted={isMuted}
         repeat
-        resizeMode="cover"
+        resizeMode={fit}
         onLoad={previewOnly ? undefined : handleLoad}
       />
 
       {previewOnly ? (
         // Decorative: the card around it owns the tap, and the video never plays.
         <View style={styles.previewPlay} pointerEvents="none">
-          <PlayCircle color={colors.text.onBrand} size={PREVIEW_PLAY_ICON_SIZE} weight="fill" />
+          <Play color={colors.text.onBrand} size={PREVIEW_PLAY_ICON_SIZE} weight="fill" />
         </View>
       ) : (
         <>
@@ -188,7 +207,9 @@ const styles = StyleSheet.create({
     right: spacing.sm,
     width: VIDEO_MUTE_BUTTON_SIZE,
   },
-  // A display-only preview's play badge, centred on the frame it sits over.
+  // A display-only preview's play badge, centred on the frame it sits over. The
+  // translucent disc is tight around the glyph — the media it sits on can be any
+  // colour, so the glyph needs a little backing to read, and no more (KNOT-020g-fix5).
   previewPlay: {
     alignItems: 'center',
     backgroundColor: colors.scrim.overlay,

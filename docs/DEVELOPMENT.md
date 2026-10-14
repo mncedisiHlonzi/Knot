@@ -450,6 +450,23 @@ Cancel reads in `colors.state.danger`, and `Header` gained an opt-in `centered` 
 title to the bar's own middle rather than to the space left between the two side slots. Only the
 profile passes it, so every other header is untouched.
 
+**KNOT-020g-fix5** gave list media its own shape. Every payload that already carried a story's first
+media item — `GET /stories`, `GET /stories/{id}`, `GET /discovery/places/{place}`, and
+`GET /users/{id}/profile` — now also carries `first_media_width` and `first_media_height`. **No
+query changed:** `storymedia.FirstMedia` already selected and scanned the columns (KNOT-013); only
+the HTTP projection was discarding them, so `firstMediaFields` now returns the whole description
+of the first item (kind, URL, dimensions) as one small struct and the three call sites assign all of
+it. On the client, `src/utils/mediaFrame.ts` turns a nullable pair into a ratio —
+`FALLBACK_MEDIA_ASPECT_RATIO` (16:9) when either dimension is missing, zero, or negative — and both
+`FeedEntry` and the profile card frame their media with it, so a portrait photo renders tall instead
+of being cropped into a fixed window. Media is fitted with `contain` rather than `cover`, so an
+unknown shape is letterboxed rather than cut. The profile card's media also went **full-bleed**: it
+escapes the card's 16-point gutter (`marginHorizontal: -layout.screenPaddingFeed`) and lost its
+`radius.lg` corners, which is the inset the founder saw — the feed's media frame was already
+full-bleed and unrounded (KNOT-020c-fix2). The profile's video preview badge went from a 64-point
+`scrim.overlay` disc around a 48-point `PlayCircle` to a 36-point disc around a 20-point white
+`Play` triangle, so the badge reads over arbitrary media without dominating the card.
+
 The same screen serves the owner: `isOwnProfile` adds the avatar upload, the Set Rooted
 shortcut, and sign-out, so tapping your own author line opens your wall. `AuthorLine`'s
 `onPress` is how the app reaches it — a nested `Pressable` handles the author tap without

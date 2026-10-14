@@ -324,7 +324,9 @@ and the pillar it belongs to.
   "comment_count": 14,
   "media_count": 5,
   "first_media_type": "image",
-  "first_media_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content"
+  "first_media_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content",
+  "first_media_width": 1080,
+  "first_media_height": 1920
 }
 ```
 
@@ -355,6 +357,16 @@ integers (KNOT-020c-fix).
 API that serves the first media item's bytes — or both are `null` when the story has no
 media. They let the feed draw a preview (an image, or a placeholder for a video, since no
 poster frame is stored yet) without reading the `media` array (KNOT-020c-fix).
+
+`first_media_width` and `first_media_height` are that item's pixel dimensions, or `null`
+when the uploader's client did not report them (a story uploaded before the columns
+existed, or from a source that could not measure it). They let a list frame the media at
+its **natural width:height ratio** instead of a fixed one, so a portrait photo is shown
+whole rather than cropped into a 16:9 window; a client falls back to its own default ratio
+when either is `null` (KNOT-020g-fix5). The same pair is on
+[`GET /users/{id}/profile`](#get-usersidprofile) as `first_media_width` /
+`first_media_height` (omitted rather than `null` when unknown), and on
+`GET /discovery/places/{place}` by the same enrichment.
 
 Both the feed (`GET /stories`, on every story in the page) and the detail
 (`GET /stories/{id}`) carry `author_rooted`, the author's inline Rooted summary, or `null`.
@@ -1087,7 +1099,9 @@ authored — stories, adaptations, comments, and bridges. It is how the app answ
         "version_count": 3,
         "preview": "When the first rain came, the herd turned for home before anyone…",
         "media_preview_url": "/stories/d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b/media/9f1c/content",
-        "first_media_type": "image"
+        "first_media_type": "image",
+        "first_media_width": 1080,
+        "first_media_height": 1920
       }
     }
   ],
@@ -1119,8 +1133,8 @@ kind:
 
 | `kind`           | `id` names     | `payload`                                                                                          |
 | ---------------- | -------------- | -------------------------------------------------------------------------------------------------- |
-| `story`          | the story      | `{ title, pillar, language, place, version_count, preview, media_preview_url, first_media_type }`             |
-| `version`        | the adaptation | `{ story_id, story_title, language, place, version_number, preview, media_preview_url, first_media_type }`    |
+| `story`          | the story      | `{ title, pillar, language, place, version_count, preview, media_preview_url, first_media_type, first_media_width, first_media_height }`             |
+| `version`        | the adaptation | `{ story_id, story_title, language, place, version_number, preview, media_preview_url, first_media_type, first_media_width, first_media_height }`    |
 | `comment`        | the comment    | `{ version_id, story_id, body_preview }`                                                             |
 | `bridge`         | the bridge     | `{ source_comment_id, version_id, target_language }`                                                 |
 | `inquiry`        | the question   | `{ title, place, answer_count, preview }`                                                             |
@@ -1148,6 +1162,13 @@ when the story carries no media, so a client draws a preview only when it has on
 A version has no media of its own, so it carries its story's. Unlike the fields
 above, the preview is attached from one batched media read per page rather than
 being projected in SQL (KNOT-020g-fix3).
+
+`first_media_width` and `first_media_height` are that item's pixel dimensions, so
+a card frames the media at its natural ratio rather than a fixed one. They are
+**omitted** when the media carries no dimensions or when the activity has no media
+at all — note the difference from `GET /stories`, where the pair is `null` — and a
+client treats an absent pair exactly as it treats `null`: fall back to 16:9
+(KNOT-020g-fix5).
 
 Every activity is authored by the wall's owner, so there is **no per-activity
 author**: the name and avatar are on the `user` header. `body_preview` is the first

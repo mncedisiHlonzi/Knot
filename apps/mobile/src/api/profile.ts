@@ -31,6 +31,14 @@ export type StoryActivityPayload = {
   readonly media_preview_url?: string;
   /** The first media item's kind, or absent when the story has no media. */
   readonly first_media_type?: 'image' | 'video';
+  /**
+   * The first media item's pixel dimensions, or absent when the uploader's client
+   * did not report them. A card frames the media at `first_media_width /
+   * first_media_height` and falls back to 16:9 when either is missing
+   * (KNOT-020g-fix5).
+   */
+  readonly first_media_width?: number;
+  readonly first_media_height?: number;
 };
 
 /** The context of an adaptation activity. */
@@ -55,6 +63,13 @@ export type VersionActivityPayload = {
   readonly media_preview_url?: string;
   /** The parent story's first media kind, or absent when it has no media. */
   readonly first_media_type?: 'image' | 'video';
+  /**
+   * The parent story's first media dimensions, or absent when the uploader's
+   * client did not report them. A version shows its story's media, so it frames it
+   * with the same ratio the story card would (KNOT-020g-fix5).
+   */
+  readonly first_media_width?: number;
+  readonly first_media_height?: number;
 };
 
 /** The context of a comment activity. */

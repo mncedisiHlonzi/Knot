@@ -126,11 +126,16 @@ func (h *ProfileHandler) Get(w http.ResponseWriter, r *http.Request) {
 	items := make([]profileActivityResponse, 0, len(result.Activities))
 	for _, activity := range result.Activities {
 		payload := activity.Payload
-		if mediaType, mediaURL := firstMediaFields(previews[activityStoryID(activity)]); mediaType != nil {
-			payload.FirstMediaType = *mediaType
-			if mediaURL != nil {
-				payload.MediaPreviewURL = *mediaURL
+
+		// The preview's kind, URL, and dimensions all come from the one lookup, so
+		// a card cannot be told a URL without being told its shape (KNOT-020g-fix5).
+		if first := firstMediaFields(previews[activityStoryID(activity)]); first.mediaType != nil {
+			payload.FirstMediaType = *first.mediaType
+			if first.url != nil {
+				payload.MediaPreviewURL = *first.url
 			}
+			payload.FirstMediaWidth = first.width
+			payload.FirstMediaHeight = first.height
 		}
 
 		items = append(items, profileActivityResponse{

@@ -337,6 +337,8 @@ export default function PlaceStoriesScreen({
               created_at: item.created_at,
               first_media_type: item.first_media_type ?? null,
               first_media_url: item.first_media_url ?? null,
+              first_media_width: item.first_media_width ?? null,
+              first_media_height: item.first_media_height ?? null,
               id: item.id,
               language: item.language,
               language_count: item.language_count,

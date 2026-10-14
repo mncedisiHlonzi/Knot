@@ -173,6 +173,16 @@ type Payload struct {
 	// FirstMediaType is that item's kind — "image" or "video". Set alongside
 	// MediaPreviewURL, and empty when there is no media to preview.
 	FirstMediaType string `json:"first_media_type,omitempty"`
+	// FirstMediaWidth and FirstMediaHeight are that item's pixel dimensions, so a
+	// card can frame it at its natural width:height ratio instead of a fixed one
+	// and a portrait photo or video is not cropped (KNOT-020g-fix5).
+	//
+	// They are absent when the media carries no dimensions — the uploader's client
+	// did not report them — so a consumer falls back to its own default ratio.
+	// Like MediaPreviewURL they are attached at the HTTP layer, not projected in
+	// SQL.
+	FirstMediaWidth  *int `json:"first_media_width,omitempty"`
+	FirstMediaHeight *int `json:"first_media_height,omitempty"`
 	// InquiryID is the inquiry an answer belongs to. Set for KindInquiryAnswer.
 	InquiryID string `json:"inquiry_id,omitempty"`
 	// InquiryTitle is the title of the inquiry an answer belongs to, so an answer

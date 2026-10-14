@@ -328,7 +328,9 @@ func TestNewProfileHandlerRejectsMissingDependencies(t *testing.T) {
 
 // TestGetProfileAttachesStoryMediaPreview proves the wall's story and version
 // cards carry the story's first media item, attached in one batched read, and that
-// a story with no media carries neither field (KNOT-020g-fix3).
+// a story with no media carries neither field (KNOT-020g-fix3). It also proves the
+// dimensions travel with the preview, so a card frames the media at its natural
+// ratio (KNOT-020g-fix5).
 func TestGetProfileAttachesStoryMediaPreview(t *testing.T) {
 	const (
 		storyID     = "d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b"
@@ -366,6 +368,8 @@ func TestGetProfileAttachesStoryMediaPreview(t *testing.T) {
 			ID:        "33333333-3333-4333-8333-333333333333",
 			StoryID:   storyID,
 			MediaType: storymedia.MediaTypeImage,
+			Width:     intPtr(900),
+			Height:    intPtr(1600),
 		},
 	}}
 
@@ -380,6 +384,8 @@ func TestGetProfileAttachesStoryMediaPreview(t *testing.T) {
 	for _, want := range []string{
 		`"media_preview_url":"/stories/` + storyID + `/media/`,
 		`"first_media_type":"image"`,
+		`"first_media_width":900`,
+		`"first_media_height":1600`,
 	} {
 		if !strings.Contains(recorder.Body.String(), want) {
 			t.Errorf("body = %s, want it to contain %s", recorder.Body.String(), want)
@@ -396,16 +402,26 @@ func TestGetProfileAttachesStoryMediaPreview(t *testing.T) {
 	if story.FirstMediaType != "image" || !strings.HasSuffix(story.MediaPreviewURL, "/content") {
 		t.Errorf("story media = %q/%q, want the first item's image type and content path", story.FirstMediaType, story.MediaPreviewURL)
 	}
+	if story.FirstMediaWidth == nil || *story.FirstMediaWidth != 900 || story.FirstMediaHeight == nil || *story.FirstMediaHeight != 1600 {
+		t.Errorf("story media dimensions = %v/%v, want 900/1600", story.FirstMediaWidth, story.FirstMediaHeight)
+	}
 
-	// A version has no media of its own, so it previews its story's.
+	// A version has no media of its own, so it previews its story's — including its
+	// dimensions, so the two cards agree on the frame.
 	version := body.Activities[1].Payload
 	if version.FirstMediaType != "image" || version.MediaPreviewURL != story.MediaPreviewURL {
 		t.Errorf("version media = %q/%q, want its story's preview %q", version.FirstMediaType, version.MediaPreviewURL, story.MediaPreviewURL)
+	}
+	if version.FirstMediaWidth == nil || *version.FirstMediaWidth != 900 {
+		t.Errorf("version media width = %v, want 900", version.FirstMediaWidth)
 	}
 
 	bare := body.Activities[2].Payload
 	if bare.FirstMediaType != "" || bare.MediaPreviewURL != "" {
 		t.Errorf("story without media = %q/%q, want both empty", bare.FirstMediaType, bare.MediaPreviewURL)
+	}
+	if bare.FirstMediaWidth != nil || bare.FirstMediaHeight != nil {
+		t.Errorf("story without media dimensions = %v/%v, want nil/nil", bare.FirstMediaWidth, bare.FirstMediaHeight)
 	}
 }
 

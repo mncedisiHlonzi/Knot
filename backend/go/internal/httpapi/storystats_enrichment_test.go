@@ -13,6 +13,10 @@ import (
 	"github.com/knot/backend/internal/storystats"
 )
 
+// intPtr returns a pointer to a copy of value, for a fixture whose field is a
+// nullable integer on the wire (media dimensions).
+func intPtr(value int) *int { return &value }
+
 // fakeStoryStatsLookup is a StoryStatsLookup a test can seed with per-story
 // counts. Left unseeded it is inert: every story reads as the zero Counts, which
 // is what a router assembled for another handler's tests wants.
@@ -43,8 +47,8 @@ func (f *fakeStoryStatsLookup) CountsForStories(_ context.Context, storyIDs []st
 const testStatsStoryID = "22222222-2222-4222-8222-222222222222"
 
 // TestStoryListCarriesAggregateCounts proves GET /stories attaches the version,
-// language, comment, and media counts and the first media item's type and URL in
-// one batched read (KNOT-020c-fix).
+// language, comment, and media counts and the first media item's kind, URL, and
+// dimensions in one batched read (KNOT-020c-fix, KNOT-020g-fix5).
 func TestStoryListCarriesAggregateCounts(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -54,6 +58,8 @@ func TestStoryListCarriesAggregateCounts(t *testing.T) {
 			ID:        "33333333-3333-4333-8333-333333333333",
 			StoryID:   testStatsStoryID,
 			MediaType: storymedia.MediaTypeVideo,
+			Width:     intPtr(1080),
+			Height:    intPtr(1920),
 		},
 	}}
 	stats := &fakeStoryStatsLookup{byStory: map[string]storystats.Counts{
@@ -74,6 +80,8 @@ func TestStoryListCarriesAggregateCounts(t *testing.T) {
 		`"comment_count":14`,
 		`"media_count":5`,
 		`"first_media_type":"video"`,
+		`"first_media_width":1080`,
+		`"first_media_height":1920`,
 	} {
 		if !strings.Contains(recorder.Body.String(), want) {
 			t.Errorf("list body = %s, want it to contain %s", recorder.Body.String(), want)
@@ -95,6 +103,14 @@ func TestStoryListCarriesAggregateCounts(t *testing.T) {
 	}
 	if got.FirstMediaURL == nil || !strings.HasSuffix(*got.FirstMediaURL, "/content") {
 		t.Errorf("first_media_url = %v, want the media content path", got.FirstMediaURL)
+	}
+	// The dimensions travel with the preview so a feed entry can frame the media
+	// at its natural ratio instead of a fixed one (KNOT-020g-fix5).
+	if got.FirstMediaWidth == nil || *got.FirstMediaWidth != 1080 {
+		t.Errorf("first_media_width = %v, want 1080", got.FirstMediaWidth)
+	}
+	if got.FirstMediaHeight == nil || *got.FirstMediaHeight != 1920 {
+		t.Errorf("first_media_height = %v, want 1920", got.FirstMediaHeight)
 	}
 
 	// The counts are one batched read for the whole page, not one per story.
@@ -134,6 +150,9 @@ func TestStoryDetailCarriesAggregateCounts(t *testing.T) {
 	}
 	if body.Story.FirstMediaType != nil || body.Story.FirstMediaURL != nil {
 		t.Errorf("first media = %v/%v, want null/null with no media", body.Story.FirstMediaType, body.Story.FirstMediaURL)
+	}
+	if body.Story.FirstMediaWidth != nil || body.Story.FirstMediaHeight != nil {
+		t.Errorf("first media dimensions = %v/%v, want null/null with no media", body.Story.FirstMediaWidth, body.Story.FirstMediaHeight)
 	}
 }
 

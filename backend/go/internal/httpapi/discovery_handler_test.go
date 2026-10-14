@@ -552,6 +552,8 @@ func TestDiscoveryPlaceStoriesCarriesFeedEnrichment(t *testing.T) {
 			ID:        "33333333-3333-4333-8333-333333333333",
 			StoryID:   storyID,
 			MediaType: storymedia.MediaTypeVideo,
+			Width:     intPtr(1080),
+			Height:    intPtr(1920),
 		},
 	}}
 	lookups.stats = &fakeStoryStatsLookup{byStory: map[string]storystats.Counts{
@@ -592,6 +594,14 @@ func TestDiscoveryPlaceStoriesCarriesFeedEnrichment(t *testing.T) {
 	}
 	if got.FirstMediaURL == nil || !strings.HasSuffix(*got.FirstMediaURL, "/content") {
 		t.Errorf("first_media_url = %v, want the media content path", got.FirstMediaURL)
+	}
+	// The dimensions ride along with the preview, so a place page frames its media
+	// at the natural ratio exactly as the feed does (KNOT-020g-fix5).
+	if got.FirstMediaWidth == nil || *got.FirstMediaWidth != 1080 {
+		t.Errorf("first_media_width = %v, want 1080", got.FirstMediaWidth)
+	}
+	if got.FirstMediaHeight == nil || *got.FirstMediaHeight != 1920 {
+		t.Errorf("first_media_height = %v, want 1920", got.FirstMediaHeight)
 	}
 	if got.Reactions.RingsTrue != 2 {
 		t.Errorf("reactions.rings_true = %d, want 2", got.Reactions.RingsTrue)

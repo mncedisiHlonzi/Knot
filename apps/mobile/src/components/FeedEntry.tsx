@@ -4,6 +4,7 @@ import { Images } from 'phosphor-react-native';
 
 import { API_BASE_URL } from '../config/api';
 import { colors, layout, radius, spacing, tabularNums, typeScale } from '../theme';
+import { mediaAspectRatio } from '../utils/mediaFrame';
 import AuthorLine from './AuthorLine';
 import { feedMetaLine } from './feedEntryMeta';
 import FeedVideo, { VIDEO_MUTE_BUTTON_SIZE } from './FeedVideo';
@@ -29,6 +30,14 @@ type FeedEntryStory = {
   readonly first_media_type?: 'image' | 'video' | null;
   /** The first media item's relative path on the API, or null/empty for none. */
   readonly first_media_url?: string | null;
+  /**
+   * The first media item's pixel dimensions, or null when the uploader's client
+   * did not report them. They let the media render at its natural width:height
+   * ratio, so a portrait photo is shown whole rather than cropped into a fixed
+   * frame (KNOT-020g-fix5).
+   */
+  readonly first_media_width?: number | null;
+  readonly first_media_height?: number | null;
   readonly reactions?: {
     readonly rings_true: number;
     readonly know_it_differently: number;
@@ -57,11 +66,6 @@ type FeedEntryProps = {
   /** Test identifier. */
   readonly testID?: string;
 };
-
-/**
- * The media preview's aspect ratio (16:9), matching Story Detail's media strip.
- */
-const MEDIA_ASPECT_RATIO = 16 / 9;
 
 /** The preview's line limit. */
 const PREVIEW_LINES = 3;
@@ -104,6 +108,12 @@ function resolveMediaUrl(path: string | null | undefined): string {
  * entry is the visible one. The count badge stacks above the video's mute control
  * so the two never collide.
  *
+ * The media's frame takes the **media's own aspect ratio** when the server
+ * reported its pixel dimensions, so a portrait photo renders tall and a landscape
+ * one renders wide; when the shape is unknown it falls back to 16:9. The media is
+ * fitted with `contain`, so an unknown shape is letterboxed rather than cropped
+ * (KNOT-020g-fix5).
+ *
  * This component stays **hookless** on purpose — the tests call it as a plain
  * function — so all playback logic lives in `FeedVideo`.
  */
@@ -119,6 +129,8 @@ export default function FeedEntry({
   const mediaUrl = resolveMediaUrl(story.first_media_url);
   const isVideo = story.first_media_type === 'video';
   const mediaCount = story.media_count ?? 0;
+  // The media's own shape when the server knows it, 16:9 when it does not.
+  const mediaFrame = mediaAspectRatio(story.first_media_width, story.first_media_height);
 
   const metaLine = feedMetaLine({
     commentCount: story.comment_count,
@@ -157,7 +169,7 @@ export default function FeedEntry({
       </View>
 
       {mediaUrl !== '' ? (
-        <View style={styles.mediaFrame}>
+        <View style={[styles.mediaFrame, { aspectRatio: mediaFrame }]}>
           {isVideo ? (
             <FeedVideo
               uri={mediaUrl}
@@ -169,7 +181,7 @@ export default function FeedEntry({
             <Image
               source={{ uri: mediaUrl }}
               style={styles.media}
-              resizeMode="cover"
+              resizeMode="contain"
               accessibilityIgnoresInvertColors
             />
           )}
@@ -233,9 +245,9 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   // Full-bleed: no horizontal inset and no rounding, so the media runs edge to
-  // edge (KNOT-020c-fix2).
+  // edge (KNOT-020c-fix2). The ratio is set per entry from the media's own
+  // dimensions, so it is not fixed here (KNOT-020g-fix5).
   mediaFrame: {
-    aspectRatio: MEDIA_ASPECT_RATIO,
     backgroundColor: colors.bg.sunken,
     marginTop: spacing.md,
     overflow: 'hidden',

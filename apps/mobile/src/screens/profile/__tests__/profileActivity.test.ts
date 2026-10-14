@@ -22,6 +22,8 @@ const story: Activity = {
     preview: 'Every morning she tied a knot in a cord…',
     media_preview_url: '/stories/story-1/media/media-1/content',
     first_media_type: 'image',
+    first_media_width: 1080,
+    first_media_height: 1920,
   },
 };
 
@@ -38,6 +40,8 @@ const version: Activity = {
     preview: 'The telling opens with the cord…',
     media_preview_url: '/stories/story-1/media/media-1/content',
     first_media_type: 'image',
+    first_media_width: 1600,
+    first_media_height: 900,
   },
 };
 
@@ -150,6 +154,8 @@ describe('activityCard', () => {
       preview: 'Every morning she tied a knot in a cord…',
       mediaUrl: '/stories/story-1/media/media-1/content',
       mediaType: 'image',
+      mediaWidth: 1080,
+      mediaHeight: 1920,
     });
   });
 
@@ -163,6 +169,22 @@ describe('activityCard', () => {
     expect(card?.mediaUrl).toBeUndefined();
     expect(card?.mediaType).toBeUndefined();
     expect(card?.meta).toBe('English · 2 days ago');
+  });
+
+  it('reads zero dimensions for a payload that reports none, so a card can fall back', () => {
+    const legacy = {
+      ...story,
+      payload: {
+        title: 'A story uploaded before dimensions were reported',
+        pillar: 'wonder',
+        language: 'eng',
+        media_preview_url: '/stories/story-1/media/media-1/content',
+        first_media_type: 'image',
+      },
+    } as Activity;
+
+    expect(activityCard(legacy, 'now')?.mediaWidth).toBe(0);
+    expect(activityCard(legacy, 'now')?.mediaHeight).toBe(0);
   });
 
   it('reads an empty preview for a payload that carries none', () => {
@@ -206,6 +228,8 @@ describe('activityCard', () => {
       preview: 'The telling opens with the cord…',
       mediaUrl: '/stories/story-1/media/media-1/content',
       mediaType: 'image',
+      mediaWidth: 1600,
+      mediaHeight: 900,
     });
   });
 
@@ -229,6 +253,9 @@ describe('activityCard', () => {
       preview: 'The masons left them so.',
       mediaUrl: undefined,
       mediaType: undefined,
+      // A question carries no media, so there is never a frame to shape.
+      mediaWidth: 0,
+      mediaHeight: 0,
     });
 
     const one = { ...inquiry, payload: { title: 'One answer', answer_count: 1 } } as Activity;

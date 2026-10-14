@@ -174,6 +174,14 @@ export type ProfileCard = {
    * when there is no media.
    */
   readonly mediaType: 'image' | 'video' | undefined;
+  /**
+   * The media's pixel dimensions, or 0 for either when the payload carries none —
+   * the uploader's client did not report them, or the media predates the columns.
+   * A card frames the media at `width / height` and falls back to 16:9 when either
+   * is not a positive number (KNOT-020g-fix5).
+   */
+  readonly mediaWidth: number;
+  readonly mediaHeight: number;
 };
 
 /** The preview kind a payload names, or undefined when it names none. */
@@ -219,6 +227,8 @@ export function activityCard(activity: Activity, relativeTime: string): ProfileC
         preview: asText(activity.payload.preview),
         mediaUrl: asOptionalText(activity.payload.media_preview_url),
         mediaType: asMediaType(activity.payload.first_media_type),
+        mediaWidth: asCount(activity.payload.first_media_width),
+        mediaHeight: asCount(activity.payload.first_media_height),
       };
     }
     case 'version': {
@@ -233,6 +243,8 @@ export function activityCard(activity: Activity, relativeTime: string): ProfileC
         preview: asText(activity.payload.preview),
         mediaUrl: asOptionalText(activity.payload.media_preview_url),
         mediaType: asMediaType(activity.payload.first_media_type),
+        mediaWidth: asCount(activity.payload.first_media_width),
+        mediaHeight: asCount(activity.payload.first_media_height),
       };
     }
     case 'inquiry': {
@@ -246,6 +258,9 @@ export function activityCard(activity: Activity, relativeTime: string): ProfileC
         preview: asText(activity.payload.preview),
         mediaUrl: undefined,
         mediaType: undefined,
+        // An inquiry carries no media, so there is never a frame to shape.
+        mediaWidth: 0,
+        mediaHeight: 0,
       };
     }
     default:
