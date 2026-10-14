@@ -392,13 +392,21 @@ KNOT-020g; see the scope notes at the end of [`docs/DECISIONS.md`](DECISIONS.md)
 
 `apps/mobile/src/screens/profile/UserProfileScreen.tsx` shows a user's public wall from
 `GET /users/{id}/profile` (`src/api/profile.ts`): a centred header (avatar, name, Rooted badge,
-"Joined …", and a stories/versions/answers stats line) above six activity tabs and a compact
-activity list, with pull-to-refresh and cursor paging. Each row shows a kind icon, a headline,
-and a relative time, and opens the entity it names — a story activity opens the story, a
-comment opens its thread, and a bridge resolves its source comment through `GET /comments/{id}`
-first. The stats line and the per-tab filtering are reduced from the activities loaded so far
+"Joined …", and a stories/versions/answers stats line) above three activity tabs — Stories,
+Versions, and Inquiries — and a list of rich cards, with pull-to-refresh and cursor paging. Each
+card carries an overline (a story leads with its plain pillar tag) and the title over a meta line,
+closed by a full-bleed hairline, and opens the entity it names — a story card opens the story, a
+version card opens the story it belongs to, and an inquiry card opens the question. The wall shows
+only what a person authored themselves: comments, bridges, and answers still arrive on the
+activity stream but are filtered out of the display and given no tab (KNOT-020g-fix). The stats
+line, the per-tab filtering, and the card copy are reduced from the activities loaded so far
 (`src/screens/profile/profileActivity.ts`), because the endpoint returns one page and no totals;
 both grow as the wall is paged (KNOT-020c).
+
+The header's overflow control opens a **bottom-sheet options menu** (`Modal`, rounded top corners,
+a drag handle, and a hairline between rows): Edit avatar, Set Rooted, Blocked users, and a
+destructive Sign out for the owner, and Block user for a visitor. It dismisses on a backdrop tap,
+the Android back button, or a downward drag of its handle (KNOT-020g-fix).
 
 The same screen serves the owner: `isOwnProfile` adds the avatar upload, the Set Rooted
 shortcut, and sign-out, so tapping your own author line opens your wall. `AuthorLine`'s

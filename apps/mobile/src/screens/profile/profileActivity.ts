@@ -1,7 +1,7 @@
 /**
  * Profile activity-wall logic (KNOT-020c).
  *
- * The Profile screen groups a person's wall into six tabs and shows a headline
+ * The Profile screen groups a person's wall into three tabs and shows a headline
  * stats row. Both are pure reductions over the activities the wall has loaded, so
  * they live here rather than in the screen and are covered without a renderer.
  *
@@ -11,6 +11,8 @@
  * client-side approximation, not a server count (KNOT-020c disclosure).
  */
 import type { Activity, ActivityKind } from '../../api/profile';
+import type { Pillar } from '../../components/PillarTag';
+import { languageName } from '../../data/languages';
 
 /** One activity tab: the kind it filters to and the word shown on it. */
 export type ProfileTab = {
@@ -18,14 +20,18 @@ export type ProfileTab = {
   readonly label: string;
 };
 
-/** The tabs, in the order they appear left to right. */
+/**
+ * The three tabs, in the order they appear left to right.
+ *
+ * The wall shows only what a person authored themselves — the stories they told,
+ * the versions they adapted, and the questions they asked. Comments, bridges, and
+ * answers are still on the activity stream (the API is unchanged); they are simply
+ * not given a tab (KNOT-020g-fix).
+ */
 export const PROFILE_TABS: readonly ProfileTab[] = [
   { kind: 'story', label: 'Stories' },
   { kind: 'version', label: 'Versions' },
-  { kind: 'comment', label: 'Comments' },
-  { kind: 'bridge', label: 'Bridges' },
   { kind: 'inquiry', label: 'Inquiries' },
-  { kind: 'inquiry_answer', label: 'Answers' },
 ];
 
 /** The tab shown first. */
@@ -75,4 +81,92 @@ export function profileStats(activities: readonly Activity[]): ProfileStats {
  */
 export function statsLine(stats: ProfileStats): string {
   return `${stats.stories} stories · ${stats.versions} versions · ${stats.answers} answers`;
+}
+
+/** The pillars the tag accepts. Anything else is dropped rather than rendered. */
+function asPillar(value: string | undefined): Pillar | undefined {
+  return value === 'wonder' || value === 'heritage' ? value : undefined;
+}
+
+/** Joins the parts that are present with " · ", dropping the empty ones. */
+function joinParts(parts: readonly string[]): string {
+  return parts.filter((part) => part !== '').join(' · ');
+}
+
+/**
+ * The rendered content of one card on the wall.
+ *
+ * A card carries only what the activity's payload holds: the profile endpoint
+ * sends a small, kind-specific payload per activity and no derived counts
+ * (KNOT-020g-fix).
+ */
+export type ProfileCard = {
+  /**
+   * The overline above the title, or '' when the card has none — a story card
+   * leads with its pillar tag instead.
+   */
+  readonly overline: string;
+  /** The card's title. */
+  readonly title: string;
+  /** The pillar, for the story card's plain pillar tag; undefined otherwise. */
+  readonly pillar: Pillar | undefined;
+  /** The meta line under the title, or '' when there is nothing to show. */
+  readonly meta: string;
+};
+
+/**
+ * The card for one activity, or undefined for a kind the wall does not show.
+ *
+ * A **story** card shows the pillar tag, the title, and `{language} · {time}` —
+ * its payload carries no place and no version count, so neither is shown. A
+ * **version** card shows `Version · {language}` over the story's title and the
+ * time beneath it — the payload carries no place and no version number. An
+ * **inquiry** card shows `Inquiry · {place}` over the question and the time — the
+ * payload carries no answer count. Missing fields are omitted, never faked.
+ *
+ * `relativeTime` is passed in already formatted, so this stays a pure function of
+ * its inputs and is testable without a wall clock.
+ */
+export function activityCard(activity: Activity, relativeTime: string): ProfileCard | undefined {
+  switch (activity.kind) {
+    case 'story':
+      return {
+        overline: '',
+        title: activity.payload.title,
+        pillar: asPillar(activity.payload.pillar),
+        meta: joinParts([languageName(activity.payload.language), relativeTime]),
+      };
+    case 'version':
+      return {
+        overline: `Version · ${languageName(activity.payload.language)}`,
+        title: activity.payload.story_title,
+        pillar: undefined,
+        meta: relativeTime,
+      };
+    case 'inquiry': {
+      const place = typeof activity.payload.place === 'string' ? activity.payload.place.trim() : '';
+      return {
+        overline: place === '' ? 'Inquiry' : `Inquiry · ${place}`,
+        title: activity.payload.title,
+        pillar: undefined,
+        meta: relativeTime,
+      };
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** The empty state's headline for one tab. */
+export function profileTabEmptyHeadline(kind: ActivityKind): string {
+  switch (kind) {
+    case 'story':
+      return 'No stories yet.';
+    case 'version':
+      return 'No versions yet.';
+    case 'inquiry':
+      return 'No inquiries yet.';
+    default:
+      return 'Nothing here yet.';
+  }
 }

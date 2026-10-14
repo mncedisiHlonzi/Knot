@@ -1,8 +1,11 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   FlatList,
+  Modal,
+  PanResponder,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -12,13 +15,12 @@ import {
 } from 'react-native';
 import {
   ArrowLeft,
-  ArrowsLeftRight,
-  Books,
-  ChatCircle,
-  CheckCircle,
+  Camera,
+  CaretRight,
   DotsThree,
-  LinkSimple,
-  Question,
+  Plant,
+  Prohibit,
+  SignOut,
   type Icon,
 } from 'phosphor-react-native';
 
@@ -38,16 +40,18 @@ import Button from '../../components/Button';
 import EmptyState from '../../components/EmptyState';
 import Header from '../../components/Header';
 import MediaPickerSheet, { PickedMedia } from '../../components/MediaPickerSheet';
+import PillarTag from '../../components/PillarTag';
 import RootedBadge from '../../components/RootedBadge';
 import { API_BASE_URL } from '../../config/api';
-import { languageName } from '../../data/languages';
-import { colors, layout, spacing, tabularNums, typeScale } from '../../theme';
+import { colors, elevation, layout, radius, spacing, tabularNums, typeScale } from '../../theme';
 import { formatRelativeTime } from '../../utils/time';
 import {
   DEFAULT_PROFILE_TAB,
   PROFILE_TABS,
+  activityCard,
   filterActivities,
   profileStats,
+  profileTabEmptyHeadline,
   statsLine,
 } from './profileActivity';
 
@@ -89,45 +93,75 @@ type UserProfileScreenProps = {
   readonly showBackButton?: boolean;
 };
 
-/** The Phosphor icon that marks each activity kind in the wall. */
-const KIND_ICONS: Readonly<Record<ActivityKind, Icon>> = {
-  story: Books,
-  version: ArrowsLeftRight,
-  comment: ChatCircle,
-  bridge: LinkSimple,
-  inquiry: Question,
-  inquiry_answer: CheckCircle,
-};
+/** How far the options sheet must be dragged down before it dismisses. */
+const SHEET_CLOSE_DISTANCE = 96;
 
-/** The headline for one activity: the most useful single line of its payload. */
-function activityHeadline(activity: Activity): string {
-  switch (activity.kind) {
-    case 'story':
-      return activity.payload.title;
-    case 'version':
-      return activity.payload.story_title;
-    case 'comment':
-      return activity.payload.body_preview;
-    case 'bridge':
-      return `Bridged into ${languageName(activity.payload.target_language)}`;
-    case 'inquiry':
-      return activity.payload.title;
-    case 'inquiry_answer':
-      return activity.payload.inquiry_title;
-    default:
-      return '';
-  }
+/** The empty-state illustration for one tab. Versions reuse the stories artwork. */
+function emptyIllustration(kind: ActivityKind): 'no-stories' | 'no-inquiries' {
+  return kind === 'inquiry' ? 'no-inquiries' : 'no-stories';
 }
 
 /**
- * One person's wall: who they are, and everything they have authored —
- * stories, adaptations, comments, bridges, questions, and answers — newest first.
+ * One row in the profile options sheet: a leading icon, a label, and a trailing
+ * chevron — swapped for a spinner while the row's action is in flight.
+ *
+ * It is local to this file rather than a shared component, because the options
+ * sheet is the only menu the profile draws (KNOT-020g-fix).
+ */
+function OptionRow({
+  icon,
+  label,
+  danger = false,
+  busy = false,
+  onPress,
+}: {
+  readonly icon: Icon;
+  readonly label: string;
+  readonly danger?: boolean;
+  readonly busy?: boolean;
+  readonly onPress: () => void;
+}): React.ReactElement {
+  const IconComponent = icon;
+  return (
+    <Pressable
+      style={styles.option}
+      onPress={onPress}
+      disabled={busy}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ busy, disabled: busy }}
+    >
+      <IconComponent color={danger ? colors.state.danger : colors.text.tertiary} size={20} />
+      <Text
+        style={[typeScale.body, styles.optionLabel, danger ? styles.optionLabelDanger : null]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+      {busy ? (
+        <ActivityIndicator size="small" color={colors.text.tertiary} />
+      ) : (
+        <CaretRight color={colors.text.tertiary} size={20} />
+      )}
+    </Pressable>
+  );
+}
+
+/**
+ * One person's wall: who they are, and what they authored — the stories they
+ * told, the adaptations they wrote, and the questions they asked — newest first.
  *
  * The header block is centred: avatar, name, the Rooted badge when there is one,
  * when they joined, and a stats line. The owner sees "Edit profile" and an
- * overflow control carrying Set Rooted, their blocked-users list, and sign-out; a
- * visitor sees Block instead. Below the block, six tabs filter the wall, each
- * activity shown as a compact row (kind icon, headline, relative time).
+ * overflow control that opens a bottom-sheet menu — Edit avatar, Set Rooted,
+ * Blocked users, and Sign out — while a visitor's opens Block user. Below the
+ * block, three tabs (Stories, Versions, Inquiries) filter the wall, and each
+ * entry is a card: an overline (or the story's pillar tag), the title, and a meta
+ * line, closed by a full-bleed hairline — the design reference's tab content.
+ *
+ * The wall shows only what the person authored themselves. The other activity kinds
+ * — comments, bridges, and answers — still arrive on the stream (the API is
+ * unchanged) but are filtered out of the display and given no tab (KNOT-020g-fix).
  *
  * The stats and the per-tab lists are computed over the activities loaded so far
  * — the profile API returns no totals and no per-kind filter, so both grow as the
@@ -173,6 +207,34 @@ export default function UserProfileScreen({
   const [showBlocked, setShowBlocked] = useState(false);
   const [blockedUsers, setBlockedUsers] = useState<readonly BlockedUser[]>([]);
   const [blockedLoading, setBlockedLoading] = useState(false);
+
+  // The options sheet. It dismisses on a downward drag of the handle, in addition
+  // to the backdrop tap and the Android hardware back button.
+  const dragY = useRef(new Animated.Value(0)).current;
+  const closeMenu = useCallback((): void => {
+    dragY.setValue(0);
+    setMenuOpen(false);
+  }, [dragY]);
+  const sheetPan = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_event, gesture) => gesture.dy > 2,
+        onPanResponderMove: (_event, gesture) => {
+          if (gesture.dy > 0) {
+            dragY.setValue(gesture.dy);
+          }
+        },
+        onPanResponderRelease: (_event, gesture) => {
+          if (gesture.dy > SHEET_CLOSE_DISTANCE || gesture.vy > 0.5) {
+            closeMenu();
+          } else {
+            Animated.spring(dragY, { toValue: 0, useNativeDriver: true }).start();
+          }
+        },
+      }),
+    [closeMenu, dragY],
+  );
 
   const loadFirstPage = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -393,7 +455,7 @@ export default function UserProfileScreen({
         right={
           <Pressable
             style={styles.iconButton}
-            onPress={() => setMenuOpen((current) => !current)}
+            onPress={() => setMenuOpen(true)}
             accessibilityRole="button"
             accessibilityLabel="Profile options"
           >
@@ -459,41 +521,6 @@ export default function UserProfileScreen({
                         setPickerVisible(true);
                       }}
                     />
-                  </View>
-                ) : null}
-
-                {menuOpen ? (
-                  <View style={styles.menu}>
-                    {isOwnProfile ? (
-                      <>
-                        <Button
-                          variant="secondary"
-                          fullWidth
-                          label="Set Rooted"
-                          onPress={() => {
-                            setMenuOpen(false);
-                            onSetRooted();
-                          }}
-                        />
-                        <View style={styles.menuGap} />
-                        <Button
-                          variant="secondary"
-                          fullWidth
-                          label={showBlocked ? 'Hide blocked users' : 'Blocked users'}
-                          onPress={toggleBlockedUsers}
-                        />
-                        <View style={styles.menuGap} />
-                        <Button variant="ghost" fullWidth label="Sign out" onPress={onSignOut} />
-                      </>
-                    ) : (
-                      <Button
-                        variant="danger"
-                        fullWidth
-                        label="Block"
-                        loading={blocking}
-                        onPress={handleBlock}
-                      />
-                    )}
                   </View>
                 ) : null}
 
@@ -572,35 +599,116 @@ export default function UserProfileScreen({
           </View>
         }
         renderItem={({ item }) => {
-          const IconComponent = KIND_ICONS[item.kind];
-          const headline = activityHeadline(item);
+          const card = activityCard(item, formatRelativeTime(item.created_at));
+          if (card === undefined) {
+            return null;
+          }
           return (
             <Pressable
-              style={styles.row}
+              style={styles.card}
               onPress={() => handleOpenActivity(item)}
               accessibilityRole="button"
-              accessibilityLabel={headline}
+              accessibilityLabel={card.title}
             >
-              <IconComponent color={colors.text.tertiary} size={20} />
-              <View style={styles.rowText}>
-                <Text style={[typeScale.bodyS, styles.rowTitle]} numberOfLines={2}>
-                  {headline}
+              {card.pillar === undefined ? (
+                card.overline === '' ? null : (
+                  <Text style={[typeScale.overline, styles.cardOverline]} numberOfLines={1}>
+                    {card.overline}
+                  </Text>
+                )
+              ) : (
+                <View style={styles.cardPillar}>
+                  <PillarTag pillar={card.pillar} variant="plain" />
+                </View>
+              )}
+
+              <Text style={[typeScale.h3, styles.cardTitle]} numberOfLines={2}>
+                {card.title}
+              </Text>
+
+              {card.meta === '' ? null : (
+                <Text style={[typeScale.caption, styles.cardMeta]} numberOfLines={1}>
+                  {card.meta}
                 </Text>
-                <Text style={[typeScale.caption, styles.rowTime]}>
-                  {formatRelativeTime(item.created_at)}
-                </Text>
-              </View>
-              <View style={styles.rowHairline} />
+              )}
             </Pressable>
           );
         }}
         ListEmptyComponent={
           !loading && error === undefined ? (
-            <EmptyState illustrationName="no-stories" headline="Nothing here yet." />
+            <EmptyState
+              illustrationName={emptyIllustration(activeTab)}
+              headline={profileTabEmptyHeadline(activeTab)}
+            />
           ) : null
         }
         ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.spinner} /> : null}
       />
+
+      <Modal visible={menuOpen} transparent animationType="slide" onRequestClose={closeMenu}>
+        <Pressable
+          style={styles.sheetBackdrop}
+          onPress={closeMenu}
+          accessibilityRole="button"
+          accessibilityLabel="Close the options"
+        >
+          <Animated.View style={[styles.sheet, { transform: [{ translateY: dragY }] }]}>
+            {/* The handle is the drag target: a downward fling dismisses the
+                sheet, anything else springs it back. */}
+            <View style={styles.sheetHandleArea} {...sheetPan.panHandlers}>
+              <View style={styles.sheetHandle} />
+            </View>
+
+            <Pressable style={styles.sheetBody} onPress={() => undefined}>
+              {isOwnProfile ? (
+                <>
+                  <OptionRow
+                    icon={Camera}
+                    label="Edit avatar"
+                    onPress={() => {
+                      setMenuOpen(false);
+                      setAvatarError(undefined);
+                      setPickerVisible(true);
+                    }}
+                  />
+                  <OptionRow
+                    icon={Plant}
+                    label="Set Rooted"
+                    onPress={() => {
+                      setMenuOpen(false);
+                      onSetRooted();
+                    }}
+                  />
+                  <OptionRow
+                    icon={Prohibit}
+                    label="Blocked users"
+                    onPress={() => {
+                      setMenuOpen(false);
+                      toggleBlockedUsers();
+                    }}
+                  />
+                  <OptionRow
+                    icon={SignOut}
+                    label="Sign out"
+                    danger
+                    onPress={() => {
+                      setMenuOpen(false);
+                      onSignOut();
+                    }}
+                  />
+                </>
+              ) : (
+                <OptionRow
+                  icon={Prohibit}
+                  label="Block user"
+                  busy={blocking}
+                  onPress={handleBlock}
+                />
+              )}
+            </Pressable>
+          </Animated.View>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -627,12 +735,36 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingVertical: spacing.sm,
   },
+  // One activity card: the pillar tag or overline, the title, and the meta line,
+  // closed by a full-bleed hairline (the design reference's tab content).
+  card: {
+    borderBottomColor: colors.border.hairline,
+    borderBottomWidth: 1,
+    marginHorizontal: -layout.screenPaddingFeed,
+    paddingHorizontal: layout.screenPaddingFeed,
+    paddingVertical: spacing.lg,
+  },
+  cardMeta: {
+    color: colors.text.tertiary,
+    marginTop: spacing.xs,
+  },
+  cardOverline: {
+    color: colors.brand.primary,
+  },
+  cardPillar: {
+    alignSelf: 'flex-start',
+  },
+  cardTitle: {
+    color: colors.text.primary,
+    marginTop: spacing.xs,
+  },
   container: {
     backgroundColor: colors.bg.canvas,
     flex: 1,
   },
   content: {
     paddingBottom: spacing.xxxl,
+    paddingHorizontal: layout.screenPaddingFeed,
   },
   editProfile: {
     alignSelf: 'stretch',
@@ -641,7 +773,6 @@ const styles = StyleSheet.create({
   error: {
     color: colors.state.danger,
     marginTop: spacing.lg,
-    paddingHorizontal: layout.screenPaddingFeed,
     textAlign: 'center',
   },
   hint: {
@@ -659,50 +790,63 @@ const styles = StyleSheet.create({
     color: colors.text.tertiary,
     marginTop: spacing.md,
   },
-  menu: {
-    alignSelf: 'stretch',
-    marginTop: spacing.lg,
-  },
-  menuGap: {
-    height: spacing.sm,
-  },
   name: {
     color: colors.text.primary,
     marginTop: spacing.lg,
     textAlign: 'center',
   },
+  // One row of the options sheet: a leading icon, the label, and a trailing
+  // chevron, separated from its neighbour by a hairline.
+  option: {
+    alignItems: 'center',
+    borderTopColor: colors.border.hairline,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
+    minHeight: 44,
+    paddingVertical: spacing.md,
+  },
+  optionLabel: {
+    color: colors.text.primary,
+    flex: 1,
+  },
+  optionLabelDanger: {
+    color: colors.state.danger,
+  },
   profileBlock: {
     alignItems: 'center',
-    paddingHorizontal: layout.screenPaddingFeed,
     paddingTop: spacing.md,
   },
   rootedRow: {
     marginTop: spacing.sm,
   },
-  row: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.md,
-    paddingHorizontal: layout.screenPaddingFeed,
-    paddingVertical: spacing.lg,
+  // The options bottom sheet: rounded top corners, the canvas fill, and the
+  // floating-bar shadow (elevation 3, whose offset points up).
+  sheet: {
+    ...elevation[3],
+    backgroundColor: colors.bg.canvas,
+    borderTopLeftRadius: radius.xxl,
+    borderTopRightRadius: radius.xxl,
+    paddingBottom: spacing.xl,
   },
-  rowHairline: {
-    backgroundColor: colors.border.hairline,
-    bottom: 0,
-    height: 1,
-    left: layout.screenPaddingFeed,
-    position: 'absolute',
-    right: layout.screenPaddingFeed,
-  },
-  rowText: {
+  sheetBackdrop: {
+    backgroundColor: colors.scrim.overlay,
     flex: 1,
+    justifyContent: 'flex-end',
   },
-  rowTime: {
-    color: colors.text.tertiary,
-    marginTop: spacing.xs,
+  sheetBody: {
+    paddingHorizontal: spacing.lg,
   },
-  rowTitle: {
-    color: colors.text.primary,
+  sheetHandle: {
+    backgroundColor: colors.border.hairline,
+    borderRadius: radius.pill,
+    height: 4,
+    width: 32,
+  },
+  sheetHandleArea: {
+    alignItems: 'center',
+    paddingBottom: spacing.sm,
+    paddingTop: spacing.sm,
   },
   spinner: {
     marginVertical: spacing.xl,
@@ -730,10 +874,10 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border.hairline,
     borderBottomWidth: 1,
     flexGrow: 0,
+    marginHorizontal: -layout.screenPaddingFeed,
     marginTop: spacing.xl,
   },
   tabsContent: {
     gap: spacing.xl,
-    paddingHorizontal: layout.screenPaddingFeed,
   },
 });

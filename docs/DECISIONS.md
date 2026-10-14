@@ -2228,3 +2228,25 @@ answer, and search responses (KNOT-ADR-017, KNOT-ADR-041); the rule is purely wh
 draws it. `AuthorLine` still renders the badge whenever a caller passes a `rooted` summary, so the
 Profile keeps it in both own and visitor modes (the profile is a detail view of a person, and the
 badge describes them).
+
+## Scope note — the profile wall shows three tabs, not six (KNOT-020g-fix)
+
+**Not a new ADR.** This records a display decision for the profile wall, so the missing
+Comments / Bridges / Answers tabs are not mistaken for a regression.
+
+**Decision.** `UserProfileScreen` shows only **Stories, Versions, and Inquiries** — what a person
+authored themselves. Comments, bridges, and answers still arrive on `GET /users/{id}/profile` (the
+API is unchanged) but get no tab and are filtered out of the display. Each tab renders a rich card
+(an overline — a story leads with its plain pillar tag — over the title, then a meta line, closed
+by a full-bleed hairline), and the header's overflow control opens a bottom-sheet options menu
+rather than the inline text list it replaced.
+
+**Why.** On-device review of KNOT-020g found the wall spread across six tabs with plain title rows,
+where the design reference (18/19) shows three focused tabs over rich cards. The wall is about what
+a person created, not what they discussed.
+
+**Consequences.** The reduction is display-only: `filterActivities` still filters by any kind, so
+restoring a tab is a change to `PROFILE_TABS` alone. The activity payload carries no `place` or
+`version_count` for a story, no place or version number for a version, and no answer count for an
+inquiry, so a card shows only the fields it has — a card missing a meta segment is expected, not a
+bug — and no backend endpoint was added to fill the gap.

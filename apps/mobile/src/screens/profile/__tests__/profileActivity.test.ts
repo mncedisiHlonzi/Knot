@@ -2,8 +2,10 @@ import type { Activity } from '../../../api/profile';
 import {
   DEFAULT_PROFILE_TAB,
   PROFILE_TABS,
+  activityCard,
   filterActivities,
   profileStats,
+  profileTabEmptyHeadline,
   statsLine,
 } from '../profileActivity';
 
@@ -56,16 +58,13 @@ const answer: Activity = {
 const wall: readonly Activity[] = [story, version, comment, bridge, inquiry, answer];
 
 describe('profile tabs', () => {
-  it('lists the six tabs in order, starting on stories', () => {
-    expect(PROFILE_TABS.map((tab) => tab.label)).toEqual([
-      'Stories',
-      'Versions',
-      'Comments',
-      'Bridges',
-      'Inquiries',
-      'Answers',
-    ]);
+  it('lists the three tabs in order, starting on stories', () => {
+    expect(PROFILE_TABS.map((tab) => tab.label)).toEqual(['Stories', 'Versions', 'Inquiries']);
     expect(DEFAULT_PROFILE_TAB).toBe('story');
+  });
+
+  it('filters on the three authored kinds only', () => {
+    expect(PROFILE_TABS.map((tab) => tab.kind)).toEqual(['story', 'version', 'inquiry']);
   });
 });
 
@@ -97,5 +96,68 @@ describe('profileStats', () => {
     expect(statsLine({ stories: 12, versions: 8, answers: 21 })).toBe(
       '12 stories · 8 versions · 21 answers',
     );
+  });
+});
+
+describe('activityCard', () => {
+  it('builds a story card from its pillar, language, and time', () => {
+    expect(activityCard(story, '2 days ago')).toEqual({
+      overline: '',
+      title: 'How my grandmother counted the days',
+      pillar: 'heritage',
+      meta: 'English · 2 days ago',
+    });
+  });
+
+  it('drops a pillar it does not recognise', () => {
+    const odd: Activity = {
+      ...story,
+      payload: { ...story.payload, pillar: 'mystery' },
+    } as Activity;
+    expect(activityCard(odd, 'now')?.pillar).toBeUndefined();
+  });
+
+  it('builds a version card naming the language it was told in', () => {
+    expect(activityCard(version, '3 weeks ago')).toEqual({
+      overline: 'Version · Zulu',
+      title: 'How my grandmother…',
+      pillar: undefined,
+      meta: '3 weeks ago',
+    });
+  });
+
+  it('builds an inquiry card, reading a place-less question as just "Inquiry"', () => {
+    expect(activityCard(inquiry, '1 hour ago')).toEqual({
+      overline: 'Inquiry',
+      title: 'Why the stairs are uneven',
+      pillar: undefined,
+      meta: '1 hour ago',
+    });
+  });
+
+  it('names the place on an inquiry card when the payload carries one', () => {
+    const placed: Activity = {
+      ...inquiry,
+      payload: { title: inquiry.payload.title, place: 'Oaxaca, Mexico' },
+    } as Activity;
+    expect(activityCard(placed, '1 hour ago')?.overline).toBe('Inquiry · Oaxaca, Mexico');
+  });
+
+  it('is undefined for a kind the wall does not show', () => {
+    expect(activityCard(comment, 'now')).toBeUndefined();
+    expect(activityCard(bridge, 'now')).toBeUndefined();
+    expect(activityCard(answer, 'now')).toBeUndefined();
+  });
+});
+
+describe('profileTabEmptyHeadline', () => {
+  it('names the tab', () => {
+    expect(profileTabEmptyHeadline('story')).toBe('No stories yet.');
+    expect(profileTabEmptyHeadline('version')).toBe('No versions yet.');
+    expect(profileTabEmptyHeadline('inquiry')).toBe('No inquiries yet.');
+  });
+
+  it('falls back for a kind without a tab', () => {
+    expect(profileTabEmptyHeadline('comment')).toBe('Nothing here yet.');
   });
 });
