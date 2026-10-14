@@ -4,6 +4,7 @@ import {
   markerCountLabel,
   markerSize,
   placeCountLabel,
+  placeMapPoint,
   placeSummaryLabel,
   placeTotalsLabel,
   storyCountLabel,
@@ -63,6 +64,33 @@ describe('placeTotalsLabel', () => {
 
   it('is places and stories alone when no pillar is counted', () => {
     expect(placeTotalsLabel(2, 2, {})).toBe('2 places · 2 stories');
+  });
+});
+
+describe('placeMapPoint', () => {
+  it('returns the point when both numbers are present', () => {
+    expect(placeMapPoint(39.9042, 116.4074)).toEqual({ latitude: 39.9042, longitude: 116.4074 });
+  });
+
+  it('accepts the extreme of each axis', () => {
+    expect(placeMapPoint(90, 180)).toEqual({ latitude: 90, longitude: 180 });
+    expect(placeMapPoint(-90, -180)).toEqual({ latitude: -90, longitude: -180 });
+  });
+
+  it('returns undefined when either coordinate is missing', () => {
+    // A place told only by name has no coordinate, so the strip is skipped.
+    expect(placeMapPoint(null, 116.4074)).toBeUndefined();
+    expect(placeMapPoint(39.9042, null)).toBeUndefined();
+    expect(placeMapPoint(undefined, undefined)).toBeUndefined();
+  });
+
+  it('rejects non-finite and out-of-range values', () => {
+    // A marker at NaN or outside the globe would break the native map, so these
+    // mean "no strip" rather than a point at 0,0.
+    expect(placeMapPoint(Number.NaN, 116.4074)).toBeUndefined();
+    expect(placeMapPoint(39.9042, Number.POSITIVE_INFINITY)).toBeUndefined();
+    expect(placeMapPoint(90.1, 0)).toBeUndefined();
+    expect(placeMapPoint(0, 180.1)).toBeUndefined();
   });
 });
 

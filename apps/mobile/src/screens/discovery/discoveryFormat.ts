@@ -94,6 +94,45 @@ export function placeTotalsLabel(
 }
 
 /**
+ * A point the map can plot. It mirrors the shape `../data/placeCoordinates`
+ * exposes, so a value from either source is interchangeable.
+ */
+export type PlaceMapPoint = {
+  readonly latitude: number;
+  readonly longitude: number;
+};
+
+/**
+ * Reports whether a value is a usable coordinate within `bound` degrees.
+ *
+ * A type predicate, so a guarded pair narrows to plain numbers without a cast.
+ */
+function isCoordinate(value: number | null | undefined, bound: number): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= bound;
+}
+
+/**
+ * The point the Place Stories map strip plots, or `undefined` when the strip must
+ * not be drawn at all.
+ *
+ * A cluster's coordinate is nullable — a place told only by name has none — and a
+ * non-finite or out-of-range value would be rejected by the native map, so the
+ * point is returned only when both numbers are present, finite, and inside the
+ * coordinate range. Anything else means "no strip" rather than a marker dropped
+ * at [0°, 0°] in the Gulf of Guinea (KNOT-020e-fix3).
+ */
+export function placeMapPoint(
+  latitude: number | null | undefined,
+  longitude: number | null | undefined,
+): PlaceMapPoint | undefined {
+  if (!isCoordinate(latitude, 90) || !isCoordinate(longitude, 180)) {
+    return undefined;
+  }
+
+  return { latitude, longitude };
+}
+
+/**
  * The diameter of a cluster's map marker.
  *
  * The busiest cluster takes the largest marker and every other cluster scales

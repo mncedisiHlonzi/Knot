@@ -76,6 +76,14 @@ type Overlay =
        * the page's list matches the story count in its header (KNOT-020e-fix2).
        */
       readonly country: string | null;
+      /**
+       * The cluster's coordinate (the average of its stories' points), or null when
+       * it has none. It positions the place screen's decorative map strip, so the
+       * strip costs no extra request; null means no strip is drawn
+       * (KNOT-020e-fix3).
+       */
+      readonly latitude: number | null;
+      readonly longitude: number | null;
       readonly storyCount: number;
       readonly pillarCounts: Readonly<Record<string, number>>;
     }
@@ -255,6 +263,8 @@ export default function App(): React.ReactElement {
                   name: 'placeStories',
                   place: cluster.place,
                   country: cluster.place_country,
+                  latitude: cluster.latitude,
+                  longitude: cluster.longitude,
                   storyCount: cluster.story_count,
                   pillarCounts: cluster.pillar_counts,
                 }),
@@ -546,6 +556,8 @@ export default function App(): React.ReactElement {
           <PlaceStoriesScreen
             place={overlay.place}
             country={overlay.country}
+            latitude={overlay.latitude}
+            longitude={overlay.longitude}
             storyCount={overlay.storyCount}
             pillarCounts={overlay.pillarCounts}
             token={current.accessToken}

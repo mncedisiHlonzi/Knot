@@ -291,6 +291,14 @@ marker's ring is the navy ink rather than the canvas white, which disappeared in
 basemap. The `?country=` contract is in [API.md](API.md) and the rationale in
 [DECISIONS.md](DECISIONS.md).
 
+**KNOT-020e-fix3** added the reference's compact map header to Place Stories: a 100-point,
+edge-to-edge, fully non-interactive Mapbox strip (`StyleURL.Light`, city-level camera, one indigo
+dot ringed in the navy ink) between the place block and the story list. It is positioned from the
+cluster's averaged coordinate, which the `placeStories` overlay now carries, so it costs no extra
+request; `placeMapPoint()` (in `screens/discovery/discoveryFormat.ts`) returns `undefined` for a
+missing or nonsensical pair, and the strip is then not rendered at all. The strip is a sibling of
+the list, not a list header, so it never scrolls with the stories.
+
 The `typeScale` **weights** are one step heavier than the reference snapshot for every token but
 the three body styles (`reading`, `body`, `bodyS`), which stay at 400 so prose keeps its
 readability — a deliberate divergence from `docs/design-reference/tokens.json` requested by the

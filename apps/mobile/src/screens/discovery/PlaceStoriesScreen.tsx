@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { ArrowLeft } from 'phosphor-react-native';
+import Mapbox, { Camera, MapView, PointAnnotation } from '@rnmapbox/maps';
 
 import { describeError } from '../../api/client';
 import { PLACE_PAGE_SIZE, discoveryApi } from '../../api/discovery';
@@ -16,8 +17,34 @@ import { Story } from '../../api/stories';
 import EmptyState from '../../components/EmptyState';
 import FeedEntry from '../../components/FeedEntry';
 import Header from '../../components/Header';
+import { KNOT_MAPBOX_TOKEN } from '../../config/dev';
 import { colors, layout, spacing, typeScale } from '../../theme';
-import { placeSummaryLabel } from './discoveryFormat';
+import { placeMapPoint, placeSummaryLabel } from './discoveryFormat';
+
+/**
+ * The compact map strip's height, in points. The reference draws a 96-point
+ * strip between the place block and the story list (KNOT-020e-fix3).
+ */
+const STRIP_HEIGHT = 100;
+
+/**
+ * City-level zoom, so the strip reads as "here is the town" rather than a country
+ * or a single street.
+ */
+const STRIP_ZOOM = 11;
+
+/**
+ * The strip's marker: the Discovery Map's marker in miniature — an indigo dot
+ * ringed in the navy ink, with no story count to show.
+ */
+const STRIP_MARKER_SIZE = 14;
+const STRIP_MARKER_BORDER = 2;
+
+// Mapbox needs its access token before any map mounts. Setting it once, at module
+// load, keeps it out of the component and off every render. The token is public
+// (see `config/dev.ts`); setting it twice, as DiscoveryMapScreen also does, is
+// idempotent.
+void Mapbox.setAccessToken(KNOT_MAPBOX_TOKEN);
 
 type PlaceStoriesScreenProps = {
   /** The place whose stories are shown, as it was named by the server. */
@@ -30,6 +57,14 @@ type PlaceStoriesScreenProps = {
    * (KNOT-020e-fix2).
    */
   readonly country?: string | null;
+  /**
+   * The place's coordinate, averaged across its cluster's stories, or null when
+   * the cluster has none — a place told only by name has no point to plot. Both
+   * are handed over from the cluster, so the strip costs no extra request; when
+   * either is null the strip is not rendered at all (KNOT-020e-fix3).
+   */
+  readonly latitude?: number | null;
+  readonly longitude?: number | null;
   /**
    * How many stories the place holds, and how they split across the two pillars.
    *
@@ -65,16 +100,21 @@ type PlaceStoriesScreenProps = {
  * pull-to-refresh starts again from the newest story. A place with no stories is a
  * normal empty state, not an error — the server answers 200 with an empty list.
  *
- * The design is the reference's (KNOT-020e): the place is the screen's headline
- * with its totals beneath it, and its stories are the same `FeedEntry` the Feed
- * renders — carrying the same author, media, and count enrichment the feed does
- * (KNOT-020e-fix2) — so a story reads the same in both places. Nothing here
- * auto-plays: the Feed is the only screen that does (KNOT-ADR-068), so a video
- * entry renders on its paused frame.
+ * The design is the reference's (KNOT-020e, KNOT-020e-fix3): the place is the
+ * screen's headline with its totals beneath it, a compact **non-interactive map
+ * strip** pinning where the place is, and the stories below as the same
+ * `FeedEntry` the Feed renders — carrying the same author, media, and count
+ * enrichment the feed does (KNOT-020e-fix2) — so a story reads the same in both
+ * places. The strip is drawn only when the cluster carried a coordinate; the
+ * reference's pillar tabs are still not built (disclosed in KNOT-020e), so the
+ * strip sits directly on the list. Nothing here auto-plays: the Feed is the only
+ * screen that does (KNOT-ADR-068), so a video entry renders on its paused frame.
  */
 export default function PlaceStoriesScreen({
   place,
   country,
+  latitude,
+  longitude,
   storyCount,
   pillarCounts,
   token,
@@ -148,6 +188,11 @@ export default function PlaceStoriesScreen({
     }
   }, [country, loadingMore, nextCursor, place, token]);
 
+  // The strip is drawn only when the cluster carried a usable coordinate; a place
+  // told only by name has none, so the header then sits straight on the list with
+  // no gap. The guard also rejects a non-finite or out-of-range pair.
+  const mapPoint = placeMapPoint(latitude, longitude);
+
   return (
     <View style={styles.container}>
       <Header
@@ -174,7 +219,41 @@ export default function PlaceStoriesScreen({
         </Text>
       </View>
 
+      {/* The reference's compact map strip (KNOT-020e-fix3): a decorative preview
+          of where the place is. It is a sibling of the list rather than a list
+          header, so it stays put while the stories scroll beneath it, and it is
+          fully non-interactive — no pan, zoom, rotate, or pitch. */}
+      {mapPoint === undefined ? null : (
+        <View style={styles.strip}>
+          <MapView
+            style={styles.stripMap}
+            styleURL={Mapbox.StyleURL.Light}
+            scrollEnabled={false}
+            zoomEnabled={false}
+            rotateEnabled={false}
+            pitchEnabled={false}
+          >
+            <Camera
+              defaultSettings={{
+                centerCoordinate: [mapPoint.longitude, mapPoint.latitude],
+                zoomLevel: STRIP_ZOOM,
+              }}
+            />
+            {/* PointAnnotation renders its child as the marker. The strip has no
+                count to show, so it is the Discovery Map's marker stripped to
+                its indigo fill and navy ring. */}
+            <PointAnnotation
+              id="place-strip-marker"
+              coordinate={[mapPoint.longitude, mapPoint.latitude]}
+            >
+              <View style={styles.stripMarker} />
+            </PointAnnotation>
+          </MapView>
+        </View>
+      )}
+
       <FlatList
+        style={styles.list}
         data={stories}
         keyExtractor={(story) => story.id}
         contentContainerStyle={styles.content}
@@ -270,11 +349,34 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 44,
   },
+  // The list takes whatever the header, the place block, and the map strip leave,
+  // so the strip never pushes it off screen and never becomes part of its scroll.
+  list: {
+    flex: 1,
+  },
   place: {
     color: colors.text.primary,
   },
   spinner: {
     marginTop: spacing.xl,
+  },
+  // The compact map strip: full width, a fixed height, and outside the list so it
+  // never scrolls with the stories (KNOT-020e-fix3).
+  strip: {
+    height: STRIP_HEIGHT,
+    width: '100%',
+  },
+  stripMap: {
+    flex: 1,
+  },
+  // The Discovery Map's marker in miniature: indigo fill, navy ring, no count.
+  stripMarker: {
+    backgroundColor: colors.brand.primary,
+    borderColor: colors.text.primary,
+    borderRadius: STRIP_MARKER_SIZE / 2,
+    borderWidth: STRIP_MARKER_BORDER,
+    height: STRIP_MARKER_SIZE,
+    width: STRIP_MARKER_SIZE,
   },
   summary: {
     color: colors.text.tertiary,
