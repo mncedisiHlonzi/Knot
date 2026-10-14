@@ -26,7 +26,7 @@ import {
 
 import { User, describeError } from '../../api/client';
 import { conversationsApi } from '../../api/conversations';
-import { BlockedUser, blocksApi, describeModerationError } from '../../api/moderation';
+import { blocksApi, describeModerationError } from '../../api/moderation';
 import {
   Activity,
   ActivityKind,
@@ -43,7 +43,16 @@ import MediaPickerSheet, { PickedMedia } from '../../components/MediaPickerSheet
 import PillarTag from '../../components/PillarTag';
 import RootedBadge from '../../components/RootedBadge';
 import { API_BASE_URL } from '../../config/api';
-import { colors, elevation, layout, radius, spacing, tabularNums, typeScale } from '../../theme';
+import {
+  colors,
+  elevation,
+  fontWeights,
+  layout,
+  radius,
+  spacing,
+  tabularNums,
+  typeScale,
+} from '../../theme';
 import { formatRelativeTime } from '../../utils/time';
 import {
   DEFAULT_PROFILE_TAB,
@@ -75,6 +84,8 @@ type UserProfileScreenProps = {
   readonly onUserUpdated: (user: User) => void;
   /** Called when the owner wants to set or replace their Rooted signal. */
   readonly onSetRooted: () => void;
+  /** Called when the owner wants to see and manage the people they have blocked. */
+  readonly onOpenBlockedUsers: () => void;
   /** Called when the owner chooses to sign out. */
   readonly onSignOut: () => void;
   /**
@@ -131,7 +142,11 @@ function OptionRow({
       accessibilityLabel={label}
       accessibilityState={{ busy, disabled: busy }}
     >
-      <IconComponent color={danger ? colors.state.danger : colors.text.tertiary} size={20} />
+      <IconComponent
+        color={danger ? colors.state.danger : colors.text.tertiary}
+        size={20}
+        weight="bold"
+      />
       <Text
         style={[typeScale.body, styles.optionLabel, danger ? styles.optionLabelDanger : null]}
         numberOfLines={1}
@@ -141,7 +156,7 @@ function OptionRow({
       {busy ? (
         <ActivityIndicator size="small" color={colors.text.tertiary} />
       ) : (
-        <CaretRight color={colors.text.tertiary} size={20} />
+        <CaretRight color={colors.text.tertiary} size={20} weight="bold" />
       )}
     </Pressable>
   );
@@ -184,6 +199,7 @@ export default function UserProfileScreen({
   onOpenInquiry,
   onUserUpdated,
   onSetRooted,
+  onOpenBlockedUsers,
   onSignOut,
   onBack,
   showBackButton = true,
@@ -204,9 +220,6 @@ export default function UserProfileScreen({
 
   const [blocking, setBlocking] = useState(false);
   const [blockError, setBlockError] = useState<string | undefined>(undefined);
-  const [showBlocked, setShowBlocked] = useState(false);
-  const [blockedUsers, setBlockedUsers] = useState<readonly BlockedUser[]>([]);
-  const [blockedLoading, setBlockedLoading] = useState(false);
 
   // The options sheet. It dismisses on a downward drag of the handle, in addition
   // to the backdrop tap and the Android hardware back button.
@@ -341,43 +354,6 @@ export default function UserProfileScreen({
       ],
     );
   }, [onBack, profile, token, userId]);
-
-  /** Loads the owner's block list, used by the "Blocked users" section. */
-  const loadBlockedUsers = useCallback(async (): Promise<void> => {
-    setBlockedLoading(true);
-    setBlockError(undefined);
-    try {
-      const page = await blocksApi.listBlocks(token, undefined, 50);
-      setBlockedUsers(page.blocks.map((entry) => entry.user));
-    } catch (caught) {
-      setBlockError(describeModerationError(caught));
-    } finally {
-      setBlockedLoading(false);
-    }
-  }, [token]);
-
-  const toggleBlockedUsers = useCallback((): void => {
-    setShowBlocked((current) => {
-      const next = !current;
-      if (next) {
-        void loadBlockedUsers();
-      }
-      return next;
-    });
-  }, [loadBlockedUsers]);
-
-  const handleUnblock = useCallback(
-    async (blockedID: string): Promise<void> => {
-      setBlockError(undefined);
-      try {
-        await blocksApi.unblock(blockedID, token);
-        setBlockedUsers((current) => current.filter((user) => user.id !== blockedID));
-      } catch (caught) {
-        setBlockError(describeModerationError(caught));
-      }
-    },
-    [token],
-  );
 
   /**
    * Opens the entity an activity points at.
@@ -527,29 +503,6 @@ export default function UserProfileScreen({
                 {blockError !== undefined ? <Text style={styles.error}>{blockError}</Text> : null}
                 {avatarError !== undefined ? <Text style={styles.error}>{avatarError}</Text> : null}
 
-                {isOwnProfile && showBlocked ? (
-                  <View style={styles.blockedList}>
-                    {blockedLoading ? <ActivityIndicator /> : null}
-                    {blockedUsers.map((user) => (
-                      <View key={user.id} style={styles.blockedRow}>
-                        <Text style={styles.blockedName} numberOfLines={1}>
-                          {user.display_name}
-                        </Text>
-                        <Button
-                          variant="secondary"
-                          label="Unblock"
-                          onPress={() => {
-                            void handleUnblock(user.id);
-                          }}
-                        />
-                      </View>
-                    ))}
-                    {!blockedLoading && blockedUsers.length === 0 ? (
-                      <Text style={styles.hint}>You have not blocked anyone.</Text>
-                    ) : null}
-                  </View>
-                ) : null}
-
                 <MediaPickerSheet
                   visible={pickerVisible}
                   allowVideo={false}
@@ -618,7 +571,7 @@ export default function UserProfileScreen({
                 )
               ) : (
                 <View style={styles.cardPillar}>
-                  <PillarTag pillar={card.pillar} variant="plain" />
+                  <PillarTag pillar={card.pillar} place={card.place} variant="plain" />
                 </View>
               )}
 
@@ -684,7 +637,7 @@ export default function UserProfileScreen({
                     label="Blocked users"
                     onPress={() => {
                       setMenuOpen(false);
-                      toggleBlockedUsers();
+                      onOpenBlockedUsers();
                     }}
                   />
                   <OptionRow
@@ -717,23 +670,6 @@ const styles = StyleSheet.create({
   avatarWrap: {
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  blockedList: {
-    marginTop: spacing.md,
-    width: '100%',
-  },
-  blockedName: {
-    color: colors.text.primary,
-    flex: 1,
-    marginRight: spacing.md,
-  },
-  blockedRow: {
-    alignItems: 'center',
-    borderTopColor: colors.border.hairline,
-    borderTopWidth: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: spacing.sm,
   },
   // One activity card: the pillar tag or overline, the title, and the meta line,
   // closed by a full-bleed hairline (the design reference's tab content).
@@ -775,11 +711,6 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
     textAlign: 'center',
   },
-  hint: {
-    color: colors.text.secondary,
-    marginTop: spacing.md,
-    textAlign: 'center',
-  },
   iconButton: {
     alignItems: 'center',
     height: 44,
@@ -809,6 +740,9 @@ const styles = StyleSheet.create({
   optionLabel: {
     color: colors.text.primary,
     flex: 1,
+    // The brief asks for a heavier label than the body composite's 400; 700 is the
+    // weight every other label in the app carries (KNOT-020g-fix2).
+    fontWeight: fontWeights.bold,
   },
   optionLabelDanger: {
     color: colors.state.danger,
@@ -879,5 +813,9 @@ const styles = StyleSheet.create({
   },
   tabsContent: {
     gap: spacing.xl,
+    // The row is full-bleed (so its hairline spans the screen) but its content is
+    // inset to the screen's gutter, so the first tab is not flush at the edge
+    // (KNOT-020g-fix2).
+    paddingHorizontal: layout.screenPaddingFeed,
   },
 });

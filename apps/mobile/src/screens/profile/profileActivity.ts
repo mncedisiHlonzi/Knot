@@ -88,17 +88,44 @@ function asPillar(value: string | undefined): Pillar | undefined {
   return value === 'wonder' || value === 'heritage' ? value : undefined;
 }
 
+/**
+ * A payload string, trimmed, or '' when it is absent. The response types describe
+ * an optimistic wire format, so a field may be missing at runtime (KNOT-015b-fix).
+ */
+function asText(value: string | undefined): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/**
+ * A payload count as a number, or 0 when it is absent. `omitempty` on the server
+ * drops a zero count from the wire entirely, so a missing count means zero.
+ */
+function asCount(value: number | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
 /** Joins the parts that are present with " · ", dropping the empty ones. */
 function joinParts(parts: readonly string[]): string {
   return parts.filter((part) => part !== '').join(' · ');
 }
 
+/** How many versions a story has, in words: "1 version" / "4 versions". */
+function versionCountLabel(count: number): string {
+  return count === 1 ? '1 version' : `${count} versions`;
+}
+
+/** How many answers a question has, in words: "1 answer" / "6 answers". */
+function answerCountLabel(count: number): string {
+  return count === 1 ? '1 answer' : `${count} answers`;
+}
+
 /**
  * The rendered content of one card on the wall.
  *
- * A card carries only what the activity's payload holds: the profile endpoint
- * sends a small, kind-specific payload per activity and no derived counts
- * (KNOT-020g-fix).
+ * A card carries only what the activity's payload holds. The server enriches each
+ * activity with the counts and places the reference draws (KNOT-020g-fix2), but
+ * the payload is still a small, kind-specific subset, so a card renders only the
+ * segments it has.
  */
 export type ProfileCard = {
   /**
@@ -110,6 +137,12 @@ export type ProfileCard = {
   readonly title: string;
   /** The pillar, for the story card's plain pillar tag; undefined otherwise. */
   readonly pillar: Pillar | undefined;
+  /**
+   * The place a story's pillar tag shows, when the payload carries one. A version's
+   * place lives in the meta line and an inquiry's in the overline, so this is
+   * undefined for both.
+   */
+  readonly place: string | undefined;
   /** The meta line under the title, or '' when there is nothing to show. */
   readonly meta: string;
 };
@@ -117,39 +150,53 @@ export type ProfileCard = {
 /**
  * The card for one activity, or undefined for a kind the wall does not show.
  *
- * A **story** card shows the pillar tag, the title, and `{language} · {time}` —
- * its payload carries no place and no version count, so neither is shown. A
- * **version** card shows `Version · {language}` over the story's title and the
- * time beneath it — the payload carries no place and no version number. An
- * **inquiry** card shows `Inquiry · {place}` over the question and the time — the
- * payload carries no answer count. Missing fields are omitted, never faked.
+ * A **story** card leads with its plain pillar tag — `PILLAR · PLACE` when the
+ * story names a place — over the title, and its meta reads
+ * `{language} · {N versions} · {time}`. A **version** card leads with
+ * `Version {n} · {language}` over the story's title, and its meta reads
+ * `{place} · {time}`. An **inquiry** card leads with `Inquiry · {place}` over the
+ * question, and its meta reads `{N answers} · {time}`. A segment whose field is
+ * absent is omitted, never faked.
  *
  * `relativeTime` is passed in already formatted, so this stays a pure function of
  * its inputs and is testable without a wall clock.
  */
 export function activityCard(activity: Activity, relativeTime: string): ProfileCard | undefined {
   switch (activity.kind) {
-    case 'story':
+    case 'story': {
+      const place = asText(activity.payload.place);
+      const versions = asCount(activity.payload.version_count);
       return {
         overline: '',
         title: activity.payload.title,
         pillar: asPillar(activity.payload.pillar),
-        meta: joinParts([languageName(activity.payload.language), relativeTime]),
+        place: place === '' ? undefined : place,
+        meta: joinParts([
+          languageName(activity.payload.language),
+          versions > 0 ? versionCountLabel(versions) : '',
+          relativeTime,
+        ]),
       };
-    case 'version':
+    }
+    case 'version': {
+      const language = languageName(activity.payload.language);
+      const number = asCount(activity.payload.version_number);
       return {
-        overline: `Version · ${languageName(activity.payload.language)}`,
+        overline: number > 0 ? `Version ${number} · ${language}` : `Version · ${language}`,
         title: activity.payload.story_title,
         pillar: undefined,
-        meta: relativeTime,
+        place: undefined,
+        meta: joinParts([asText(activity.payload.place), relativeTime]),
       };
+    }
     case 'inquiry': {
-      const place = typeof activity.payload.place === 'string' ? activity.payload.place.trim() : '';
+      const place = asText(activity.payload.place);
       return {
         overline: place === '' ? 'Inquiry' : `Inquiry · ${place}`,
         title: activity.payload.title,
         pillar: undefined,
-        meta: relativeTime,
+        place: undefined,
+        meta: joinParts([answerCountLabel(asCount(activity.payload.answer_count)), relativeTime]),
       };
     }
     default:

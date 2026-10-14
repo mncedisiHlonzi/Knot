@@ -2246,7 +2246,31 @@ where the design reference (18/19) shows three focused tabs over rich cards. The
 a person created, not what they discussed.
 
 **Consequences.** The reduction is display-only: `filterActivities` still filters by any kind, so
-restoring a tab is a change to `PROFILE_TABS` alone. The activity payload carries no `place` or
+restoring a tab is a change to `PROFILE_TABS` alone. The activity payload carried no `place` or
 `version_count` for a story, no place or version number for a version, and no answer count for an
-inquiry, so a card shows only the fields it has — a card missing a meta segment is expected, not a
-bug — and no backend endpoint was added to fill the gap.
+inquiry, so a card could show only the fields it had — **addressed by KNOT-020g-fix2**, which
+enriched the payload in the same single query.
+
+## Scope note — the profile activity payload is enriched, and answers still get no tab (KNOT-020g-fix2)
+
+**Not a new ADR.** This records what the profile activity payload now carries and reaffirms the
+display rule from KNOT-020g-fix, so neither is re-litigated.
+
+**Decision.** `GET /users/{id}/profile` enriches each activity in the one query that builds the
+page: a `story` payload gains `place` and `version_count`, a `version` payload gains `place` and
+`version_number` (its ordinal among its story's versions, counting the root as 1 — so a story's
+first adaptation is 2), and an `inquiry` payload gains `answer_count`. The wall still shows only
+**Stories, Versions, and Inquiries**: `inquiry_answer`, like `comment` and `bridge`, has no tab and
+is filtered out of the display.
+
+**Why.** KNOT-020g-fix disclosed that the payload carried none of the fields the reference cards
+draw, so every card rendered thin. The enrichment is additive and needs no migration — the columns
+already existed.
+
+**Consequences.** All four fields are resolved inside the existing single statement (correlated
+`COUNT`s plus one bounded `ROW_NUMBER` window joined on version id), so a page is still one query,
+never N+1, and the counts ride the existing `story_versions(story_id)` and
+`inquiry_answers(inquiry_id)` indexes. `omitempty` drops a zero count, so a client reads a missing
+count as zero. The version ordinal's window is bounded to the author's own stories, so it is sized
+by the page's subject rather than by the whole table. Because `inquiry_answer` still has no tab, an
+answer can never appear on the Inquiries tab — a display rule, not a data change.

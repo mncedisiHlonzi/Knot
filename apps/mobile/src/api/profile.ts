@@ -21,6 +21,10 @@ export type StoryActivityPayload = {
   readonly title: string;
   readonly pillar: string;
   readonly language: string;
+  /** The story's coarse place, or absent when it names none. */
+  readonly place?: string;
+  /** How many versions the story has, its root included (always at least 1). */
+  readonly version_count?: number;
 };
 
 /** The context of an adaptation activity. */
@@ -28,6 +32,13 @@ export type VersionActivityPayload = {
   readonly story_id: string;
   readonly story_title: string;
   readonly language: string;
+  /** The parent story's coarse place, or absent when it names none. */
+  readonly place?: string;
+  /**
+   * The adaptation's ordinal among its story's versions, counting the root as 1,
+   * so the first adaptation is 2.
+   */
+  readonly version_number?: number;
 };
 
 /** The context of a comment activity. */
@@ -49,6 +60,8 @@ export type InquiryActivityPayload = {
   readonly title: string;
   /** The place asked about, or absent when the question names none. */
   readonly place?: string;
+  /** How many answers the question has drawn. */
+  readonly answer_count?: number;
 };
 
 /** The context of an inquiry_answer activity: the question the owner answered. */

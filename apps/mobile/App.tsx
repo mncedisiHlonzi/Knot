@@ -32,6 +32,7 @@ import InquiryListScreen from './src/screens/inquiries/InquiryListScreen';
 import NotificationsScreen from './src/screens/notifications/NotificationsScreen';
 import OnboardingScreen from './src/screens/onboarding/OnboardingScreen';
 import RootedSetupScreen from './src/screens/profile/RootedSetupScreen';
+import BlockedUsersScreen from './src/screens/profile/BlockedUsersScreen';
 import UserProfileScreen from './src/screens/profile/UserProfileScreen';
 import SearchScreen from './src/screens/search/SearchScreen';
 import SplashScreen from './src/screens/splash/SplashScreen';
@@ -90,6 +91,7 @@ type Overlay =
   | { readonly name: 'inquiry'; readonly inquiryId: string }
   | { readonly name: 'askInquiry' }
   | { readonly name: 'search' }
+  | { readonly name: 'blockedUsers' }
   | { readonly name: 'userProfile'; readonly userId: string };
 
 /** The two auth screens, shown before there is a session. Login is the default. */
@@ -316,6 +318,9 @@ export default function App(): React.ReactElement {
               setOverlays((stack) => pushOverlay(stack, { name: 'inquiry', inquiryId }))
             }
             onSetRooted={() => setOverlays((stack) => pushOverlay(stack, { name: 'rootedSetup' }))}
+            onOpenBlockedUsers={() =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'blockedUsers' }))
+            }
             onUserUpdated={handleUserUpdated}
             onSignOut={handleSignOut}
           />
@@ -613,6 +618,8 @@ export default function App(): React.ReactElement {
             onBack={handleBack}
           />
         );
+      case 'blockedUsers':
+        return <BlockedUsersScreen token={current.accessToken} onBack={handleBack} />;
       case 'userProfile':
         return (
           <UserProfileScreen
@@ -630,6 +637,9 @@ export default function App(): React.ReactElement {
             }
             onUserUpdated={handleUserUpdated}
             onSetRooted={() => setOverlays((stack) => pushOverlay(stack, { name: 'rootedSetup' }))}
+            onOpenBlockedUsers={() =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'blockedUsers' }))
+            }
             onSignOut={handleSignOut}
             onBack={handleBack}
           />

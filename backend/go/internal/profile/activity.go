@@ -98,11 +98,11 @@ const (
 // to the activity's Kind are populated; the JSON tags carry `omitempty` so the
 // wire form is exactly the subset a client needs for that kind:
 //
-//	story          { title, pillar, language }
-//	version        { story_id, story_title, language }
+//	story          { title, pillar, language, place, version_count }
+//	version        { story_id, story_title, language, place, version_number }
 //	comment        { version_id, story_id, body_preview }
 //	bridge         { source_comment_id, version_id, target_language }
-//	inquiry        { title, place }
+//	inquiry        { title, place, answer_count }
 //	inquiry_answer { inquiry_id, inquiry_title, body_preview }
 //
 // The payload is context, not authorship: everything in it is already public on
@@ -136,13 +136,22 @@ type Payload struct {
 	// TargetLanguage is the language a bridge was made into. Set for KindBridge.
 	TargetLanguage string `json:"target_language,omitempty"`
 
-	// Place is the place an inquiry is about, at the precision the asker gave. Set
-	// for KindInquiry, and empty for an inquiry that names no place.
+	// Place is the place the activity is about, at the precision the author gave.
+	// Set for KindStory and KindVersion (the story's coarse place) and for
+	// KindInquiry (the place asked about, empty when the question names none).
 	//
-	// A JSON null from the database (a place-less inquiry) unmarshals to the empty
-	// string, which `omitempty` then drops: an inquiry with no place carries no
-	// place field at all, rather than an explicit null.
+	// A JSON null from the database (a place-less story or inquiry) unmarshals to
+	// the empty string, which `omitempty` then drops: content with no place
+	// carries no place field at all, rather than an explicit null.
 	Place string `json:"place,omitempty"`
+	// VersionCount is how many versions the story has, its root included, so it is
+	// always at least 1. Set for KindStory, so a card can say "4 versions".
+	VersionCount int `json:"version_count,omitempty"`
+	// VersionNumber is the version's ordinal among its story's versions, counting
+	// the root as 1 — so a story's first adaptation is 2. Set for KindVersion.
+	VersionNumber int `json:"version_number,omitempty"`
+	// AnswerCount is how many answers the question has drawn. Set for KindInquiry.
+	AnswerCount int `json:"answer_count,omitempty"`
 	// InquiryID is the inquiry an answer belongs to. Set for KindInquiryAnswer.
 	InquiryID string `json:"inquiry_id,omitempty"`
 	// InquiryTitle is the title of the inquiry an answer belongs to, so an answer

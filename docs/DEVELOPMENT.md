@@ -408,6 +408,21 @@ a drag handle, and a hairline between rows): Edit avatar, Set Rooted, Blocked us
 destructive Sign out for the owner, and Block user for a visitor. It dismisses on a backdrop tap,
 the Android back button, or a downward drag of its handle (KNOT-020g-fix).
 
+**KNOT-020g-fix2** filled the two gaps that pass left. The profile endpoint now enriches each
+activity in the same query that builds the page (`internal/profile/postgres_store.go`): a story
+carries `place` and `version_count`, an adaptation `place` and `version_number` (its ordinal among
+its story's versions, counting the root as 1), and a question `answer_count`. A card therefore
+reads `HERITAGE · Manguzi` over the title with `English · 4 versions · 2 days ago` beneath it,
+`Version 2 · Zulu` with `Manguzi · 3 weeks ago`, and `Inquiry · Manguzi` with
+`6 answers · 2 days ago`; a segment whose field is absent is omitted, never faked. The profile's
+options sheet and the media picker (`MediaPickerSheet`, shared with the story composer) now draw
+the **same sheet**: a canvas fill with `radius.xxl` top corners, `elevation[3]`, a draggable 32×4
+handle, icon rows with bold labels and hairline separators at a 44-point minimum height, and a
+text-only Cancel. The three tabs gained the screen's gutter, so the first underline is no longer
+clipped. Finally, the blocked-users list left the wall for its own overlay screen
+(`screens/profile/BlockedUsersScreen.tsx`), reached from the options sheet: an avatar, a name, and
+an Unblock action per row, with pull-to-refresh and an empty state.
+
 The same screen serves the owner: `isOwnProfile` adds the avatar upload, the Set Rooted
 shortcut, and sign-out, so tapping your own author line opens your wall. `AuthorLine`'s
 `onPress` is how the app reaches it — a nested `Pressable` handles the author tap without

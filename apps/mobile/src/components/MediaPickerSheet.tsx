@@ -1,10 +1,11 @@
-import React, { useCallback } from 'react';
-import { Modal, Pressable, StyleSheet, Text } from 'react-native';
+import React, { useCallback, useMemo, useRef } from 'react';
+import { Animated, Modal, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { ImagePickerResponse, launchCamera, launchImageLibrary } from 'react-native-image-picker';
+import { Camera, FilmStrip, Images, VideoCamera, type Icon } from 'phosphor-react-native';
 
 import type { MediaSource } from '../api/stories';
 import { MEDIA_LIMIT_MESSAGE } from '../utils/mediaLimit';
-import { colors, fontSizes, fontWeights, radius, spacing } from '../theme';
+import { colors, elevation, fontWeights, radius, spacing, typeScale } from '../theme';
 
 /** The kind of file a picker produced. */
 export type PickedMediaType = 'image' | 'video';
@@ -47,6 +48,9 @@ type MediaPickerSheetProps = {
    */
   readonly maxSelection?: number;
 };
+
+/** How far the sheet must be dragged down before it dismisses. */
+const SHEET_CLOSE_DISTANCE = 96;
 
 /**
  * A bottom sheet offering to capture or choose an image or a video.
@@ -156,93 +160,172 @@ export default function MediaPickerSheet({
     [handleResponse, maxSelection, onClose, onError, reportFailure],
   );
 
+  // The sheet drags down to dismiss from its handle, matching the profile's
+  // options sheet (KNOT-020g-fix2).
+  const dragY = useRef(new Animated.Value(0)).current;
+  const close = useCallback((): void => {
+    dragY.setValue(0);
+    onClose();
+  }, [dragY, onClose]);
+  const sheetPan = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_event, gesture) => gesture.dy > 2,
+        onPanResponderMove: (_event, gesture) => {
+          if (gesture.dy > 0) {
+            dragY.setValue(gesture.dy);
+          }
+        },
+        onPanResponderRelease: (_event, gesture) => {
+          if (gesture.dy > SHEET_CLOSE_DISTANCE || gesture.vy > 0.5) {
+            close();
+          } else {
+            Animated.spring(dragY, { toValue: 0, useNativeDriver: true }).start();
+          }
+        },
+      }),
+    [close, dragY],
+  );
+
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={styles.sheet} onPress={() => undefined}>
-          <Text style={styles.title}>Add media</Text>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
+      <Pressable
+        style={styles.backdrop}
+        onPress={close}
+        accessibilityRole="button"
+        accessibilityLabel="Close the media picker"
+      >
+        <Animated.View style={[styles.sheet, { transform: [{ translateY: dragY }] }]}>
+          {/* The handle is the drag target: a downward fling dismisses the
+              sheet, anything else springs it back. */}
+          <View style={styles.handleArea} {...sheetPan.panHandlers}>
+            <View style={styles.handle} />
+          </View>
 
-          <Option label="Take Photo" onPress={() => runCamera('image', 'camera')} />
-          {allowVideo ? (
-            <Option label="Record Video" onPress={() => runCamera('video', 'camera')} />
-          ) : null}
-          <Option
-            label="Choose Photo from Gallery"
-            onPress={() => runLibrary('image', 'gallery')}
-          />
-          {allowVideo ? (
-            <Option
-              label="Choose Video from Gallery"
-              onPress={() => runLibrary('video', 'gallery')}
+          <Pressable style={styles.body} onPress={() => undefined}>
+            <SheetRow
+              icon={Camera}
+              label="Take Photo"
+              onPress={() => runCamera('image', 'camera')}
             />
-          ) : null}
+            {allowVideo ? (
+              <SheetRow
+                icon={VideoCamera}
+                label="Record Video"
+                onPress={() => runCamera('video', 'camera')}
+              />
+            ) : null}
+            <SheetRow
+              icon={Images}
+              label="Choose Photo from Gallery"
+              onPress={() => runLibrary('image', 'gallery')}
+            />
+            {allowVideo ? (
+              <SheetRow
+                icon={FilmStrip}
+                label="Choose Video from Gallery"
+                onPress={() => runLibrary('video', 'gallery')}
+              />
+            ) : null}
 
-          <Pressable style={styles.cancel} onPress={onClose} accessibilityRole="button">
-            <Text style={styles.cancelText}>Cancel</Text>
+            <Pressable
+              style={styles.cancel}
+              onPress={close}
+              accessibilityRole="button"
+              accessibilityLabel="Cancel"
+            >
+              <Text style={[typeScale.body, styles.cancelText]}>Cancel</Text>
+            </Pressable>
           </Pressable>
-        </Pressable>
+        </Animated.View>
       </Pressable>
     </Modal>
   );
 }
 
-/** One tappable row in the sheet. */
-function Option({
+/** One row in the sheet: a leading icon and a bold label. */
+function SheetRow({
+  icon,
   label,
   onPress,
 }: {
+  readonly icon: Icon;
   readonly label: string;
   readonly onPress: () => void;
 }): React.ReactElement {
+  const IconComponent = icon;
   return (
-    <Pressable style={styles.option} onPress={onPress} accessibilityRole="button">
-      <Text style={styles.optionText}>{label}</Text>
+    <Pressable
+      style={styles.row}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <IconComponent color={colors.text.tertiary} size={20} weight="bold" />
+      <Text style={[typeScale.body, styles.rowLabel]} numberOfLines={1}>
+        {label}
+      </Text>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   backdrop: {
-    backgroundColor: colors.overlay,
+    backgroundColor: colors.scrim.overlay,
     flex: 1,
     justifyContent: 'flex-end',
   },
+  body: {
+    paddingHorizontal: spacing.lg,
+  },
+  // A text-only Cancel below the last hairline, in the same 44-point rows.
   cancel: {
     alignItems: 'center',
-    marginTop: spacing.md,
+    borderTopColor: colors.border.hairline,
+    borderTopWidth: 1,
+    justifyContent: 'center',
+    minHeight: 44,
     paddingVertical: spacing.md,
   },
   cancelText: {
     color: colors.text.secondary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
-  },
-  option: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginTop: spacing.sm,
-    paddingVertical: 14,
-  },
-  optionText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    fontWeight: fontWeights.medium,
-    textAlign: 'center',
-  },
-  sheet: {
-    backgroundColor: colors.bg.primary,
-    borderTopLeftRadius: radius['2xl'],
-    borderTopRightRadius: radius['2xl'],
-    padding: spacing.xl,
-    paddingBottom: spacing['2xl'],
-  },
-  title: {
-    color: colors.text.primary,
-    fontSize: fontSizes.lg,
     fontWeight: fontWeights.bold,
-    marginBottom: spacing.sm,
-    textAlign: 'center',
+  },
+  handle: {
+    backgroundColor: colors.border.hairline,
+    borderRadius: radius.pill,
+    height: 4,
+    width: 32,
+  },
+  handleArea: {
+    alignItems: 'center',
+    paddingBottom: spacing.sm,
+    paddingTop: spacing.sm,
+  },
+  // One choice: a leading icon and its label, separated from its neighbour by a
+  // hairline (the same row the profile's options sheet draws).
+  row: {
+    alignItems: 'center',
+    borderTopColor: colors.border.hairline,
+    borderTopWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
+    minHeight: 44,
+    paddingVertical: spacing.md,
+  },
+  rowLabel: {
+    color: colors.text.primary,
+    flex: 1,
+    fontWeight: fontWeights.bold,
+  },
+  // The sheet: rounded top corners, the canvas fill, and the floating-bar shadow
+  // (elevation 3, whose offset points up).
+  sheet: {
+    ...elevation[3],
+    backgroundColor: colors.bg.canvas,
+    borderTopLeftRadius: radius.xxl,
+    borderTopRightRadius: radius.xxl,
+    paddingBottom: spacing.xl,
   },
 });

@@ -38,10 +38,18 @@ var bodyPreviewCharsSQL = strconv.Itoa(MaxBodyPreviewChars)
 // common (kind, id, created_at, payload) columns.
 //
 // The payload is built in SQL with jsonb_build_object, so the context a card
-// needs (a story's title, an adaptation's story title, a comment's preview, a
-// bridge's source, an inquiry's place, an answer's question) travels with the row
-// rather than being fetched per activity: the whole page is one query, never N+1
+// needs (a story's title, place, and version count; an adaptation's story title,
+// place, and version number; a comment's preview, a bridge's source, an inquiry's
+// place and answer count, an answer's question) travels with the row rather than
+// being fetched per activity: the whole page is one query, never N+1
 // (KNOT-ADR-042).
+//
+// The story branch counts its versions with a correlated COUNT over
+// story_versions(story_id) — an index-only lookup for the handful of rows on a
+// page. The version branch's ordinal (see `ranked` below) is a ROW_NUMBER over the
+// author's own stories' versions, so the window is sized by the author's
+// adaptations rather than by the whole table. The inquiry branch counts its
+// answers the same way, over inquiry_answers(inquiry_id).
 //
 // The version branch excludes root versions (parent_version_id IS NOT NULL): a
 // story's root version is the story itself, so counting it again as a "version"
@@ -67,7 +75,13 @@ var activityUnion = `
 		jsonb_build_object(
 			'title', rv.title,
 			'pillar', s.pillar,
-			'language', rv.language
+			'language', rv.language,
+			'place', s.approximate_location,
+			'version_count', (
+				SELECT COUNT(*)
+				FROM story_versions sv
+				WHERE sv.story_id = s.id
+			)
 		) AS payload
 	FROM stories s
 	JOIN story_versions rv ON rv.id = s.root_version_id
@@ -82,11 +96,35 @@ var activityUnion = `
 		jsonb_build_object(
 			'story_id', v.story_id,
 			'story_title', rv.title,
-			'language', v.language
+			'language', v.language,
+			'place', s.approximate_location,
+			'version_number', ranked.version_number
 		) AS payload
 	FROM story_versions v
 	JOIN stories s ON s.id = v.story_id
 	JOIN story_versions rv ON rv.id = s.root_version_id
+	-- The ranked derived table below numbers every version of the stories this
+	-- author adapted, counting the root as 1, so an adaptation's version_number is
+	-- its true "vN". The window is partitioned per story and ordered oldest-first,
+	-- with the id as a tiebreaker (a story and its root version share a timestamp),
+	-- so it is deterministic. It is joined on id rather than filtered inline
+	-- because a window function is evaluated after WHERE: filtering by author
+	-- first would number only that author's rows and lose the root's position.
+	JOIN (
+		SELECT
+			sv.id AS id,
+			ROW_NUMBER() OVER (
+				PARTITION BY sv.story_id
+				ORDER BY sv.created_at, sv.id
+			) AS version_number
+		FROM story_versions sv
+		WHERE sv.story_id IN (
+			SELECT DISTINCT v2.story_id
+			FROM story_versions v2
+			WHERE v2.author_id = $1
+			  AND v2.parent_version_id IS NOT NULL
+		)
+	) ranked ON ranked.id = v.id
 	WHERE v.author_id = $1
 	  AND v.parent_version_id IS NOT NULL
 
@@ -129,7 +167,12 @@ var activityUnion = `
 		i.created_at AS created_at,
 		jsonb_build_object(
 			'title', i.title,
-			'place', i.place
+			'place', i.place,
+			'answer_count', (
+				SELECT COUNT(*)
+				FROM inquiry_answers ans
+				WHERE ans.inquiry_id = i.id
+			)
 		) AS payload
 	FROM inquiries i
 	WHERE i.author_id = $1

@@ -173,6 +173,27 @@ func createStory(t *testing.T, env integrationEnv, author, name string) (storyID
 	return story.ID, story.RootVersionID
 }
 
+// createStoryAtPlace creates a story carrying a coarse place, so the wall can
+// prove its story and version branches travel with that place.
+func createStoryAtPlace(t *testing.T, env integrationEnv, author, name, place string) (storyID, rootVersionID string) {
+	t.Helper()
+
+	story, err := env.storyStore.CreateStory(context.Background(), stories.Story{
+		AuthorID:            author,
+		Pillar:              stories.PillarWonder,
+		Language:            "eng",
+		Title:               "Story " + name,
+		Body:                "Body for " + name,
+		ApproximateLocation: place,
+		MediaURLs:           []string{},
+	})
+	if err != nil {
+		t.Fatalf("CreateStory(%q) error = %v, want nil", name, err)
+	}
+
+	return story.ID, story.RootVersionID
+}
+
 // createVersion creates an adaptation of parentVersionID into language.
 func createVersion(t *testing.T, env integrationEnv, author, storyID, parentVersionID, language string) string {
 	t.Helper()
@@ -551,4 +572,97 @@ func TestPostgresStoreListForUserPlaceLessInquiryHasNoPlace(t *testing.T) {
 		}
 	}
 	t.Error("the place-less inquiry is missing from the wall")
+}
+
+// TestPostgresStoreListForUserEnrichesCardFields proves the wall's activity
+// payload carries the fields the profile cards render: a story's place and version
+// count, an adaptation's place and ordinal version number, and an inquiry's answer
+// count (KNOT-020g-fix2).
+func TestPostgresStoreListForUserEnrichesCardFields(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	storyID, rootVersionID := createStoryAtPlace(t, env, env.userA, "enriched", "Manguzi")
+	// Distinct timestamps keep the ordinal deterministic: the window orders by
+	// (created_at, id) and a shared timestamp would fall back to the random id.
+	time.Sleep(2 * time.Millisecond)
+	// Two adaptations, so the story's version count is 3 (root plus two) and the
+	// adaptations are v2 and v3.
+	secondID := createVersion(t, env, env.userA, storyID, rootVersionID, "fra")
+	time.Sleep(2 * time.Millisecond)
+	thirdID := createVersion(t, env, env.userA, storyID, secondID, "zul")
+
+	place := "Manguzi"
+	inquiry, err := env.inquiryStore.CreateInquiry(ctx, inquiries.Inquiry{
+		AuthorID: env.userA,
+		Title:    "Where does the rain come from?",
+		Body:     "Asked of the people who live there.",
+		Language: "eng",
+		Place:    &place,
+	})
+	if err != nil {
+		t.Fatalf("CreateInquiry() error = %v, want nil", err)
+	}
+	// Two answers from another user, so the question's answer count is 2.
+	for i := 0; i < 2; i++ {
+		if _, _, err := env.inquiryStore.CreateAnswer(ctx, inquiries.Answer{
+			InquiryID: inquiry.ID,
+			AuthorID:  env.userB,
+			Language:  "eng",
+			Body:      fmt.Sprintf("An answer, %d.", i),
+		}); err != nil {
+			t.Fatalf("CreateAnswer() error = %v, want nil", err)
+		}
+	}
+
+	page, _, err := env.store.ListForUser(ctx, env.userA, nil, 50)
+	if err != nil {
+		t.Fatalf("ListForUser() error = %v, want nil", err)
+	}
+
+	byKind := make(map[Kind]Activity, len(page))
+	versions := make(map[string]Activity)
+	for _, activity := range page {
+		if activity.Kind == KindVersion {
+			versions[activity.ID] = activity
+		}
+		if _, seen := byKind[activity.Kind]; !seen {
+			byKind[activity.Kind] = activity
+		}
+	}
+
+	story, ok := byKind[KindStory]
+	if !ok {
+		t.Fatalf("no story activity on the wall: %+v", page)
+	}
+	if story.Payload.Place != "Manguzi" {
+		t.Errorf("story place = %q, want Manguzi", story.Payload.Place)
+	}
+	if story.Payload.VersionCount != 3 {
+		t.Errorf("story version_count = %d, want 3 (root plus two adaptations)", story.Payload.VersionCount)
+	}
+
+	for id, wantNumber := range map[string]int{secondID: 2, thirdID: 3} {
+		activity, ok := versions[id]
+		if !ok {
+			t.Fatalf("adaptation %s is missing from the wall: %+v", id, page)
+		}
+		if activity.Payload.Place != "Manguzi" {
+			t.Errorf("version %s place = %q, want its story's place Manguzi", id, activity.Payload.Place)
+		}
+		if activity.Payload.VersionNumber != wantNumber {
+			t.Errorf("version %s number = %d, want %d", id, activity.Payload.VersionNumber, wantNumber)
+		}
+	}
+
+	inquiryActivity, ok := byKind[KindInquiry]
+	if !ok {
+		t.Fatalf("no inquiry activity on the wall: %+v", page)
+	}
+	if inquiryActivity.Payload.Place != "Manguzi" {
+		t.Errorf("inquiry place = %q, want Manguzi", inquiryActivity.Payload.Place)
+	}
+	if inquiryActivity.Payload.AnswerCount != 2 {
+		t.Errorf("inquiry answer_count = %d, want 2", inquiryActivity.Payload.AnswerCount)
+	}
 }

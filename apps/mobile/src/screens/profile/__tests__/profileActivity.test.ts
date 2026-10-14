@@ -13,14 +13,26 @@ const story: Activity = {
   kind: 'story',
   id: 'story-1',
   created_at: '2025-03-01T00:00:00Z',
-  payload: { title: 'How my grandmother counted the days', pillar: 'heritage', language: 'eng' },
+  payload: {
+    title: 'How my grandmother counted the days',
+    pillar: 'heritage',
+    language: 'eng',
+    place: 'Oaxaca, Mexico',
+    version_count: 4,
+  },
 };
 
 const version: Activity = {
   kind: 'version',
   id: 'version-1',
   created_at: '2025-03-02T00:00:00Z',
-  payload: { story_id: 'story-1', story_title: 'How my grandmother…', language: 'zul' },
+  payload: {
+    story_id: 'story-1',
+    story_title: 'How my grandmother…',
+    language: 'zul',
+    place: 'Oaxaca, Mexico',
+    version_number: 2,
+  },
 };
 
 const comment: Activity = {
@@ -41,7 +53,7 @@ const inquiry: Activity = {
   kind: 'inquiry',
   id: 'inquiry-1',
   created_at: '2025-03-05T00:00:00Z',
-  payload: { title: 'Why the stairs are uneven' },
+  payload: { title: 'Why the stairs are uneven', answer_count: 6 },
 };
 
 const answer: Activity = {
@@ -81,6 +93,11 @@ describe('filterActivities', () => {
   it('returns an empty list when nothing matches', () => {
     expect(filterActivities([story], 'bridge')).toEqual([]);
   });
+
+  it('shows only questions on the Inquiries tab, never the answers', () => {
+    const wallWithAnswers = [story, version, inquiry, answer];
+    expect(filterActivities(wallWithAnswers, 'inquiry')).toEqual([inquiry]);
+  });
 });
 
 describe('profileStats', () => {
@@ -100,13 +117,24 @@ describe('profileStats', () => {
 });
 
 describe('activityCard', () => {
-  it('builds a story card from its pillar, language, and time', () => {
+  it('builds a story card from its pillar, place, language, version count, and time', () => {
     expect(activityCard(story, '2 days ago')).toEqual({
       overline: '',
       title: 'How my grandmother counted the days',
       pillar: 'heritage',
-      meta: 'English · 2 days ago',
+      place: 'Oaxaca, Mexico',
+      meta: 'English · 4 versions · 2 days ago',
     });
+  });
+
+  it('omits the version count and place when the payload carries neither', () => {
+    const bare = {
+      ...story,
+      payload: { title: 'A story with nothing extra', pillar: 'wonder', language: 'eng' },
+    } as Activity;
+    const card = activityCard(bare, '2 days ago');
+    expect(card?.place).toBeUndefined();
+    expect(card?.meta).toBe('English · 2 days ago');
   });
 
   it('drops a pillar it does not recognise', () => {
@@ -117,22 +145,37 @@ describe('activityCard', () => {
     expect(activityCard(odd, 'now')?.pillar).toBeUndefined();
   });
 
-  it('builds a version card naming the language it was told in', () => {
+  it('builds a version card with its number, language, place, and time', () => {
     expect(activityCard(version, '3 weeks ago')).toEqual({
-      overline: 'Version · Zulu',
+      overline: 'Version 2 · Zulu',
       title: 'How my grandmother…',
       pillar: undefined,
-      meta: '3 weeks ago',
+      place: undefined,
+      meta: 'Oaxaca, Mexico · 3 weeks ago',
     });
   });
 
-  it('builds an inquiry card, reading a place-less question as just "Inquiry"', () => {
+  it('drops the version number and place when the payload carries neither', () => {
+    const bare = {
+      ...version,
+      payload: { story_id: 'story-1', story_title: 'A bare adaptation', language: 'zul' },
+    } as Activity;
+    const card = activityCard(bare, '3 weeks ago');
+    expect(card?.overline).toBe('Version · Zulu');
+    expect(card?.meta).toBe('3 weeks ago');
+  });
+
+  it('builds an inquiry card with its answer count and pluralises one answer', () => {
     expect(activityCard(inquiry, '1 hour ago')).toEqual({
       overline: 'Inquiry',
       title: 'Why the stairs are uneven',
       pillar: undefined,
-      meta: '1 hour ago',
+      place: undefined,
+      meta: '6 answers · 1 hour ago',
     });
+
+    const one = { ...inquiry, payload: { title: 'One answer', answer_count: 1 } } as Activity;
+    expect(activityCard(one, 'now')?.meta).toBe('1 answer · now');
   });
 
   it('names the place on an inquiry card when the payload carries one', () => {
