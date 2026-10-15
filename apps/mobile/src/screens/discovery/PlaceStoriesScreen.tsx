@@ -20,7 +20,7 @@ import EmptyState from '../../components/EmptyState';
 import FeedEntry from '../../components/FeedEntry';
 import Header from '../../components/Header';
 import { KNOT_MAPBOX_TOKEN } from '../../config/dev';
-import { colors, layout, spacing, typeScale } from '../../theme';
+import { colors, elevation, layout, radius, spacing, typeScale } from '../../theme';
 import {
   PILLAR_TABS,
   type PillarFilter,
@@ -218,9 +218,9 @@ export default function PlaceStoriesScreen({
   // told only by name has none, so the header then sits straight on the list with
   // no gap. The guard also rejects a non-finite or out-of-range pair.
   const mapPoint = placeMapPoint(latitude, longitude);
-  // The status bar is translucent on this screen so the strip reaches the top
-  // edge behind it, which means the floating header has to clear the bar itself
-  // (KNOT-020g-fix9).
+  // The status bar is transparent on this screen so the strip shows through it,
+  // which means the back control has to keep clear of the bar itself
+  // (KNOT-020g-fix9, KNOT-020g-fix11).
   const topInset = mapTopInset(Platform.OS, StatusBar.currentHeight);
   // The map band: the strip plus the status bar it reaches under.
   const stripHeight = topInset + STRIP_HEIGHT;
@@ -238,11 +238,11 @@ export default function PlaceStoriesScreen({
 
   return (
     <View style={styles.container}>
-      {/* The status bar goes translucent on this screen only, so the strip can run
-          behind it. Because the app is then laid out from the physical top, the
-          bar is painted opaque in the canvas colour — the map is behind it, and
-          the icons stay dark on white rather than over the map (KNOT-020g-fix9). */}
-      <StatusBar backgroundColor={colors.bg.canvas} barStyle="dark-content" translucent />
+      {/* A **transparent** status bar on this screen, so the strip is visible right
+          up to the top edge (KNOT-020g-fix11). It is the same treatment the
+          Discovery Map uses. Before this, the bar was painted in the canvas
+          colour, which is what put a white band above the map. */}
+      <StatusBar backgroundColor="transparent" barStyle="dark-content" translucent />
 
       {mapPoint === undefined ? null : (
         <View style={[styles.strip, { height: stripHeight }]}>
@@ -287,13 +287,14 @@ export default function PlaceStoriesScreen({
             </PointAnnotation>
           </MapView>
 
-          {/* The header floats over the top of the strip, on an opaque canvas
-              card: the back control has to stay legible whatever the map draws
-              beneath it (KNOT-020g-fix9). The place's own name is not moved up
-              here — it is the reference's place block immediately below the
-              strip, and lifting it into the card would cover the very map it
-              introduces. */}
-          <View style={[styles.floatingHeader, { paddingTop: topInset }]}>{backButton}</View>
+          {/* The back control floats over the top-left of the strip. There is no
+              band behind it: an opaque card across the width is what put a white
+              strip over the map before, so the control carries its own small
+              canvas pill instead — legible over any map, without hiding one
+              (KNOT-020g-fix11). The place's own name is not moved up here — it is
+              the reference's place block immediately below the strip, and lifting
+              it into the overlay would cover the very map it introduces. */}
+          <View style={[styles.floatingHeader, { top: topInset }]}>{backButton}</View>
         </View>
       )}
 
@@ -437,11 +438,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: layout.screenPaddingFeed,
     paddingTop: spacing.xs,
   },
+  // The back control: a 44-point round canvas button. It carries a solid fill and
+  // the design's raised shadow rather than a hairline, because a ring drawn on a
+  // map reads as a map artefact — and the fill is what keeps a dark arrow legible
+  // over an unknown tile (KNOT-020g-fix11).
   iconButton: {
     alignItems: 'center',
+    backgroundColor: colors.bg.canvas,
+    borderRadius: radius.pill,
     height: 44,
     justifyContent: 'center',
     width: 44,
+    ...elevation[2],
   },
   // The list takes whatever the header, the place block, the map strip, and the
   // tab row leave, so nothing pushes it off screen and it scrolls in the
@@ -481,18 +489,17 @@ const styles = StyleSheet.create({
     // (tabs) > 0 (list) (KNOT-020e-fix6, KNOT-020g-fix9).
     zIndex: 2,
   },
-  // The back header, floating over the strip on an opaque canvas card so the
-  // control stays legible whatever the map draws beneath it. `paddingTop` is set
-  // from the status bar's height at render time, so the control clears the bar on
-  // a device that reports one and sits flush where there is none — including a
-  // place with no coordinate, where the header is not rendered at all
-  // (KNOT-020g-fix9).
+  // The back control's overlay: a bare positioning box in the strip's top-left
+  // corner, starting below the status bar. It paints **nothing** — the button it
+  // holds is the only thing drawn there, so the map stays visible up to the top
+  // edge. Before this the box carried a canvas fill across the whole width, which
+  // is what put a white band over the top of the map (KNOT-020g-fix9,
+  // KNOT-020g-fix11).
   floatingHeader: {
-    backgroundColor: colors.bg.canvas,
     left: 0,
+    paddingHorizontal: layout.screenPaddingFeed,
     position: 'absolute',
     right: 0,
-    top: 0,
     zIndex: 3,
   },
   // The map gets explicit dimensions rather than `flex: 1`: a native map view is

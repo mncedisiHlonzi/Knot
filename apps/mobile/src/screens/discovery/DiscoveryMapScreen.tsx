@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import Mapbox, { Camera, MapView, PointAnnotation } from '@rnmapbox/maps';
-import { CaretRight } from 'phosphor-react-native';
+import { CaretRight, MapPin } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { PlaceCluster, discoveryApi } from '../../api/discovery';
@@ -56,6 +56,18 @@ const FILTERS: readonly { readonly value: PillarFilter; readonly label: string }
  */
 const INITIAL_CENTER: [number, number] = [10, 10];
 const INITIAL_ZOOM = 1.2;
+
+/** The location pin's glyph size in a place row. */
+const ICON_SIZE = 20;
+
+/**
+ * The disc behind that pin.
+ *
+ * Sized to the two-line text it sits beside, so every row is the same height
+ * whatever its subtitle says — and so the row clears the 44-point touch target on
+ * its own height rather than on a hit-slop (KNOT-020g-fix11).
+ */
+const PLACE_ICON_SIZE = 36;
 
 /**
  * The share of the screen height the bottom sheet occupies.
@@ -354,8 +366,16 @@ export default function DiscoveryMapScreen({
                 accessibilityRole="button"
                 accessibilityLabel={`${item.place}, ${storyCountLabel(item.story_count)}`}
               >
+                {/* The location pin, in the sunken disc the design system uses
+                    for a small leading glyph. A place is a place whether or not it
+                    plots, so the pin is on every row rather than only on the ones
+                    the map drew (KNOT-020g-fix11). */}
+                <View style={styles.placeIcon}>
+                  <MapPin color={colors.text.tertiary} size={ICON_SIZE} weight="fill" />
+                </View>
+
                 <View style={styles.placeText}>
-                  <Text style={[typeScale.button, styles.placeName]} numberOfLines={1}>
+                  <Text style={[typeScale.h3, styles.placeName]} numberOfLines={1}>
                     {item.place}
                   </Text>
                   {subtitle === '' ? null : (
@@ -366,7 +386,7 @@ export default function DiscoveryMapScreen({
                 </View>
 
                 <View style={styles.placeCount}>
-                  <Text style={[typeScale.bodyS, tabularNums, styles.placeCountText]}>
+                  <Text style={[typeScale.caption, tabularNums, styles.placeCountText]}>
                     {storyCountLabel(item.story_count)}
                   </Text>
                   <CaretRight color={colors.text.tertiary} size={18} />
@@ -456,8 +476,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.xs,
   },
+  // The count is the quieter half of the row: the place's name is what a reader is
+  // scanning for, so the number recedes to the tertiary ink (KNOT-020g-fix11).
   placeCountText: {
-    color: colors.text.secondary,
+    color: colors.text.tertiary,
+  },
+  // The leading location pin, in a sunken disc the size of the two-line text
+  // beside it, so the rows read as one column of places (KNOT-020g-fix11).
+  placeIcon: {
+    alignItems: 'center',
+    backgroundColor: colors.bg.sunken,
+    borderRadius: radius.pill,
+    height: PLACE_ICON_SIZE,
+    justifyContent: 'center',
+    width: PLACE_ICON_SIZE,
   },
   placeMeta: {
     color: colors.text.tertiary,
@@ -466,10 +498,11 @@ const styles = StyleSheet.create({
   placeName: {
     color: colors.text.primary,
   },
+  // One place. **No separator**: the rows are told apart by their own height and
+  // padding, which is the sheet's pattern — a rule between them is the one thing
+  // the reference does not draw (KNOT-020g-fix11).
   placeRow: {
     alignItems: 'center',
-    borderTopColor: colors.border.hairline,
-    borderTopWidth: 1,
     flexDirection: 'row',
     gap: spacing.md,
     justifyContent: 'space-between',

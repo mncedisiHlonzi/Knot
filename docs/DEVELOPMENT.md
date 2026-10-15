@@ -565,6 +565,26 @@ is why the `mapTopInset` call was removed here; Place Stories keeps its own. Map
 left open: the logo sits bottom-left and the attribution bottom-right, both on the one line of map
 the sheet does not cover (`{ bottom: sheetHeight + spacing.sm }`), and the scale bar stays off.
 
+**KNOT-020g-fix11** gave Place Stories the map-to-top treatment the Discovery Map already had, and polished
+the Discovery Map's place rows. On Place Stories the strip **already** ran to `y = 0` and behind the
+status bar — what the founder saw as "the map strip does not reach the top — there is a white band"
+was chrome painting over it: `styles.floatingHeader` was a full-width box with a `colors.bg.canvas`
+fill, and the status bar itself was still the opaque canvas from KNOT-020g-fix9. Both are gone: the
+bar is now `backgroundColor="transparent"` (matching the Discovery Map), the overlay paints nothing
+and starts at `top: mapTopInset(...)`, and the back control carries its own 44-point **round canvas
+pill** with `elevation[2]` instead of sitting on a band. That is the same trade the Discovery Map
+makes — a small opaque control rather than a full-width strip, so the map is visible right up to the
+top edge while the arrow stays legible over any tile.
+
+In the Discovery Map's sheet the place rows lost their `borderTopColor`/`borderTopWidth` hairline; the
+rows are told apart by their own padding, which is the sheet's pattern. The name moved from
+`typeScale.button` to **`typeScale.h3`**, the count from `bodyS`/`text.secondary` to
+`caption`/`text.tertiary` so it recedes behind the name, and each row gained a leading
+**`MapPin`** (20pt, `weight="fill"`, `text.tertiary`) in a 36-point `bg.sunken` disc — the first map
+pin in the app, so there was no existing treatment to follow. With the row's `spacing.md` vertical
+padding that makes a row about 68 points when it carries a subtitle and about 60 when it does not, so
+the 44-point touch target is met by the row's own height rather than by a hit-slop.
+
 The same screen serves the owner: `isOwnProfile` adds the avatar upload, the Set Rooted
 shortcut, and sign-out, so tapping your own author line opens your wall. `AuthorLine`'s
 `onPress` is how the app reaches it — a nested `Pressable` handles the author tap without
