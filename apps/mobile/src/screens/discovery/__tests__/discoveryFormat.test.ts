@@ -1,10 +1,7 @@
 import {
-  MARKER_MAX_SIZE,
-  MARKER_MIN_SIZE,
   PILLAR_TABS,
+  filterPlacesByQuery,
   mapTopInset,
-  markerCountLabel,
-  markerSize,
   pillarEmptyHeadline,
   placeCountLabel,
   placeMapPoint,
@@ -141,35 +138,29 @@ describe('placeMapPoint', () => {
   });
 });
 
-describe('markerSize', () => {
-  it('gives the busiest cluster the largest marker', () => {
-    expect(markerSize(24, 24)).toBe(MARKER_MAX_SIZE);
+describe('filterPlacesByQuery', () => {
+  const places = [
+    { place: 'Oaxaca', place_country: 'Mexico' },
+    { place: 'Manguzi', place_country: 'South Africa' },
+    { place: 'Cape Town', place_country: 'South Africa' },
+  ];
+
+  it('returns every place for a blank query, so clearing the field restores the list', () => {
+    expect(filterPlacesByQuery(places, '')).toEqual(places);
+    expect(filterPlacesByQuery(places, '   ')).toEqual(places);
   });
 
-  it('scales a smaller cluster between the bounds', () => {
-    const size = markerSize(12, 24);
-    expect(size).toBeGreaterThan(MARKER_MIN_SIZE);
-    expect(size).toBeLessThan(MARKER_MAX_SIZE);
+  it('matches a place name case-insensitively, anywhere in the name', () => {
+    expect(filterPlacesByQuery(places, 'oax')).toEqual([places[0]]);
+    expect(filterPlacesByQuery(places, 'OAXACA')).toEqual([places[0]]);
+    expect(filterPlacesByQuery(places, ' town ')).toEqual([places[2]]);
   });
 
-  it('clamps a count above the maximum', () => {
-    expect(markerSize(30, 24)).toBe(MARKER_MAX_SIZE);
+  it('matches the name only, not the country shown beside it', () => {
+    expect(filterPlacesByQuery(places, 'South Africa')).toEqual([]);
   });
 
-  it('falls back to the smallest marker when there is no maximum', () => {
-    expect(markerSize(3, 0)).toBe(MARKER_MIN_SIZE);
-    expect(markerSize(0, 0)).toBe(MARKER_MIN_SIZE);
-    expect(markerSize(Number.NaN, 10)).toBe(MARKER_MIN_SIZE);
-  });
-});
-
-describe('markerCountLabel', () => {
-  it('prints the count', () => {
-    expect(markerCountLabel(24)).toBe('24');
-  });
-
-  it('keeps 99 and caps beyond it', () => {
-    expect(markerCountLabel(99)).toBe('99');
-    expect(markerCountLabel(120)).toBe('99+');
+  it('returns nothing when no place matches, so the sheet can say so', () => {
+    expect(filterPlacesByQuery(places, 'Atlantis')).toEqual([]);
   });
 });

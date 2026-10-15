@@ -1,3 +1,4 @@
+import { MAX_PORTRAIT_ASPECT_RATIO } from '../mediaFrame';
 import { useMediaAspectRatio } from '../useMediaAspectRatio';
 
 /**
@@ -22,7 +23,8 @@ describe('useMediaAspectRatio', () => {
   it('takes its ratio from the payload before anything has loaded', () => {
     const { aspectRatio } = useMediaAspectRatio(1080, 1920);
 
-    expect(aspectRatio).toBeCloseTo(0.5625, 4);
+    // A 9:16 payload is capped to 4:5, so the frame never runs off the page.
+    expect(aspectRatio).toBe(MAX_PORTRAIT_ASPECT_RATIO);
   });
 
   it('reports no ratio when the payload cannot describe the media', () => {

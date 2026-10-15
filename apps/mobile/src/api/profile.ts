@@ -27,6 +27,8 @@ export type StoryActivityPayload = {
   readonly version_count?: number;
   /** The story's opening lines, with an ellipsis when the body was truncated. */
   readonly preview?: string;
+  /** True when `preview` is an excerpt rather than the whole body (KNOT-020g-fix12). */
+  readonly preview_truncated?: boolean;
   /** The API-relative path of the story's first media item, or absent when none. */
   readonly media_preview_url?: string;
   /** The first media item's kind, or absent when the story has no media. */
@@ -55,6 +57,8 @@ export type VersionActivityPayload = {
   readonly version_number?: number;
   /** The adaptation's opening lines, with an ellipsis when the body was truncated. */
   readonly preview?: string;
+  /** True when `preview` is an excerpt rather than the whole body (KNOT-020g-fix12). */
+  readonly preview_truncated?: boolean;
   /**
    * The API-relative path of the parent story's first media item, or absent when
    * it has none. An adaptation has no media of its own, so it previews its
@@ -95,6 +99,8 @@ export type InquiryActivityPayload = {
   readonly answer_count?: number;
   /** The question's opening lines, with an ellipsis when the body was truncated. */
   readonly preview?: string;
+  /** True when `preview` is an excerpt rather than the whole body (KNOT-020g-fix12). */
+  readonly preview_truncated?: boolean;
 };
 
 /** The context of an inquiry_answer activity: the question the owner answered. */

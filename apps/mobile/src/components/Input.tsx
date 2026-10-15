@@ -15,7 +15,7 @@ type InputProps = {
   /** Grows the field for long-form text (uses the reading type style). */
   readonly multiline?: boolean;
   /** The keyboard to raise. Defaults to the platform default. */
-  readonly keyboardType?: 'default' | 'email-address' | 'numeric' | 'phone-pad';
+  readonly keyboardType?: 'default' | 'email-address' | 'numeric' | 'phone-pad' | 'url';
   /** Masks the value, for a password. */
   readonly secureTextEntry?: boolean;
   /** Focuses the field on mount. */

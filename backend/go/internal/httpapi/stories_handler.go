@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/knot/backend/internal/reactions"
 	"github.com/knot/backend/internal/stories"
@@ -158,6 +159,13 @@ type storyResponse struct {
 	// ratio when either is null (KNOT-020g-fix5).
 	FirstMediaWidth  *int `json:"first_media_width"`
 	FirstMediaHeight *int `json:"first_media_height"`
+	// PreviewTruncated is true when the story's body is longer than the preview
+	// window a feed entry shows, so the entry can offer "read more" instead of
+	// ending on a bare ellipsis. The feed still carries the whole body — clamping
+	// it to three lines is the client's job — so this is the server's answer to
+	// "is there more here than a preview shows", and it keeps the client from
+	// inferring truncation from the text (KNOT-020g-fix12).
+	PreviewTruncated bool `json:"preview_truncated"`
 }
 
 // storyEnvelope wraps a single story, so the response shape can gain sibling
@@ -327,6 +335,25 @@ func (h *StoriesHandler) writeServiceError(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// previewWindowChars is the number of body characters a preview shows.
+//
+// A feed entry draws the story's body under a three-line clamp, which on a phone
+// is roughly 40 characters a line, so a body past 150 characters is comfortably
+// longer than anything the clamp can show and there is certainly more to read.
+// 150 is the same window the profile wall's SQL excerpt uses
+// (profile.MaxPreviewChars), so the feed and a profile card agree about what "a
+// preview" is (KNOT-020g-fix12).
+const previewWindowChars = 150
+
+// bodyExceedsPreviewWindow reports whether a body is longer than the preview
+// window, so an entry can offer a "read more" link.
+//
+// It counts characters rather than bytes, matching the profile wall's SQL
+// `length(body)`, so a multi-byte body is measured the same way on both paths.
+func bodyExceedsPreviewWindow(body string) bool {
+	return utf8.RuneCountInString(body) > previewWindowChars
+}
+
 // newStoryResponse projects a domain story onto the wire format.
 func newStoryResponse(story stories.Story) storyResponse {
 	media := story.MediaURLs
@@ -351,6 +378,7 @@ func newStoryResponse(story stories.Story) storyResponse {
 		Sensitive:           story.Sensitive,
 		CreatedAt:           story.CreatedAt,
 		UpdatedAt:           story.UpdatedAt,
+		PreviewTruncated:    bodyExceedsPreviewWindow(story.Body),
 		// Emit [] rather than null until the enrichment fills it in.
 		Media:       []storyMediaResponse{},
 		MyReactions: []string{},

@@ -15,7 +15,7 @@ import { colors, layout, radius, spacing, tabularNums, typeScale } from '../them
 import { PLACEHOLDER_MEDIA_ASPECT_RATIO } from '../utils/mediaFrame';
 import { useMediaAspectRatio } from '../utils/useMediaAspectRatio';
 import AuthorLine from './AuthorLine';
-import { feedMetaLine } from './feedEntryMeta';
+import { feedMetaLine, isPreviewTruncated } from './feedEntryMeta';
 import FeedVideo, { VIDEO_MUTE_BUTTON_SIZE } from './FeedVideo';
 import PillarTag from './PillarTag';
 
@@ -25,6 +25,13 @@ type FeedEntryStory = {
   readonly title: string;
   readonly pillar: 'wonder' | 'heritage';
   readonly preview: string;
+  /**
+   * Whether `preview` is an excerpt rather than the whole body, as the server
+   * reports it (`preview_truncated`). When absent the entry falls back to reading
+   * a trailing ellipsis off the text, so a response from an older server still
+   * reads correctly (KNOT-020g-fix12).
+   */
+  readonly preview_truncated?: boolean;
   readonly language: string;
   readonly place?: string | null;
   readonly author_display_name?: string | null;
@@ -151,6 +158,11 @@ export default function FeedEntry({
   // does. Never a fixed landscape frame — that is the crop this rule removes.
   const mediaFrame = aspectRatio ?? PLACEHOLDER_MEDIA_ASPECT_RATIO;
 
+  // The server's answer when it sent one; otherwise the text's own trailing
+  // ellipsis decides. A feed entry renders the whole body under a three-line
+  // clamp, so the clamp draws the "…" the link follows (KNOT-020g-fix12).
+  const previewTruncated = story.preview_truncated ?? isPreviewTruncated(story.preview);
+
   /** Takes the shape off a decoded image, for media the payload could not size. */
   const handleImageLoad = (event: NativeSyntheticEvent<ImageLoadEventData>): void => {
     const { width, height } = event.nativeEvent.source;
@@ -191,6 +203,22 @@ export default function FeedEntry({
         <Text style={[typeScale.body, styles.preview]} numberOfLines={PREVIEW_LINES}>
           {story.preview}
         </Text>
+
+        {/* "Read more" continues the truncated preview. It is a second tap target
+            on the same handler as the entry, so tapping it opens the story — and a
+            tap that misses it still opens the story, because the whole entry is
+            the outer target (KNOT-020g-fix12). */}
+        {previewTruncated ? (
+          <Pressable
+            style={styles.readMore}
+            onPress={onPress}
+            hitSlop={spacing.sm}
+            accessibilityRole="link"
+            accessibilityLabel={`Read more of ${story.title}`}
+          >
+            <Text style={[typeScale.label, styles.readMoreText]}>Read more</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       {mediaUrl !== '' ? (
@@ -291,6 +319,15 @@ const styles = StyleSheet.create({
   preview: {
     color: colors.text.secondary,
     marginTop: spacing.xs,
+  },
+  // The "read more" affordance under a truncated preview: a text link in the brand
+  // ink, with hit slop taking the small label up to a comfortable touch target.
+  readMore: {
+    alignSelf: 'flex-start',
+    marginTop: spacing.xs,
+  },
+  readMoreText: {
+    color: colors.brand.primary,
   },
   tagRow: {
     marginTop: spacing.md,

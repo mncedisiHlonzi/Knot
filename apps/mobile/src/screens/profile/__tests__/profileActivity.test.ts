@@ -152,6 +152,8 @@ describe('activityCard', () => {
       place: 'Oaxaca, Mexico',
       meta: 'English · 4 versions · 2 days ago',
       preview: 'Every morning she tied a knot in a cord…',
+      // The excerpt ends in an ellipsis, so the card offers "read more".
+      previewTruncated: true,
       mediaUrl: '/stories/story-1/media/media-1/content',
       mediaType: 'image',
       mediaWidth: 1080,
@@ -226,6 +228,7 @@ describe('activityCard', () => {
       place: undefined,
       meta: 'Oaxaca, Mexico · 3 weeks ago',
       preview: 'The telling opens with the cord…',
+      previewTruncated: true,
       mediaUrl: '/stories/story-1/media/media-1/content',
       mediaType: 'image',
       mediaWidth: 1600,
@@ -243,6 +246,24 @@ describe('activityCard', () => {
     expect(card?.meta).toBe('3 weeks ago');
   });
 
+  it('trusts the server flag over the text, so an excerpt is marked even without an ellipsis', () => {
+    const flagged: Activity = {
+      ...story,
+      payload: { ...story.payload, preview: 'A cut excerpt', preview_truncated: true },
+    } as Activity;
+
+    expect(activityCard(flagged, 'now')?.previewTruncated).toBe(true);
+  });
+
+  it('reads a whole body as untruncated even when the flag is absent, since omitempty drops false', () => {
+    const whole: Activity = {
+      ...story,
+      payload: { ...story.payload, preview: 'A whole body.' },
+    } as Activity;
+
+    expect(activityCard(whole, 'now')?.previewTruncated).toBe(false);
+  });
+
   it('builds an inquiry card with its answer count, preview, no media, and pluralises one answer', () => {
     expect(activityCard(inquiry, '1 hour ago')).toEqual({
       overline: 'Inquiry',
@@ -251,6 +272,8 @@ describe('activityCard', () => {
       place: undefined,
       meta: '6 answers · 1 hour ago',
       preview: 'The masons left them so.',
+      // A whole body with no ellipsis is not truncated.
+      previewTruncated: false,
       mediaUrl: undefined,
       mediaType: undefined,
       // A question carries no media, so there is never a frame to shape.

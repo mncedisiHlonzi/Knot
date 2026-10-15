@@ -585,6 +585,46 @@ pin in the app, so there was no existing treatment to follow. With the row's `sp
 padding that makes a row about 68 points when it carries a subtitle and about 60 when it does not, so
 the 44-point touch target is met by the row's own height rather than by a hit-slop.
 
+**KNOT-020g-fix12** finished the Discovery Map sheet, capped list media, and polished the Create Story
+screen. In the sheet's place rows the text column went from `flexShrink: 1` to **`flex: 1`** — that was
+the whole bug: a content-hugging column let `justifyContent: 'space-between'` push the name into the
+middle of the row, so rows read as centred. The column now takes every point between the pin and the
+count, which is what left-aligns it. The pin lost both its `bg.sunken` disc and its fill: it is a
+**`MapPinLine`** outline glyph at 20pt in `text.tertiary`, sitting straight on the row. The sheet also
+gained a **place search** above the list — an `Input` with a `leadingIcon` magnifier and a *sibling*
+clear control, because `Input` has one leading slot and no trailing one — which filters the
+**already-loaded** clusters by name, client-side, and never re-queries the server. The search narrows the
+list, the map markers and the totals line together, so the three can never disagree; a search that
+matches nothing is told apart from "no places yet" by its own `No places match` line. The markers became
+**filled indigo pins** (30pt `MapPin`, `weight="fill"`) centred in a transparent 44-point box: the count
+left the marker, and with it the "size by busiest cluster" rule, so `markerSize`/`markerCountLabel` and
+their tests were **deleted** rather than left dead.
+
+List media gained a **maximum height**. `mediaFrame.ts` exports **`MAX_PORTRAIT_ASPECT_RATIO = 4 / 5`** and
+`mediaAspectRatio` now returns `Math.max(width / height, 4 / 5)`: a portrait media taller than 4:5 is framed
+at 4:5 (width × 1.25) and cropped top and bottom by its `cover` fill, while landscape media — every
+landscape ratio is already wider than 4:5 — passes through untouched. It applies to the payload ratio *and*
+to the ratio learned from a loaded image or video, because both go through `mediaAspectRatio`.
+
+Story previews can now say **"Read more"**. The server marks a body as truncated: `profile.Payload` gained
+`preview_truncated`, computed in the *same* SQL expression that cuts the excerpt (`length(body) > 150`), and
+the feed's `storyResponse` gained one computed in Go (`bodyExceedsPreviewWindow`, by characters, matching
+SQL's `length`). `FeedEntry` renders a brand-ink "Read more" link under a truncated preview, wired to the
+entry's own handler — so the link and the card open the same story, and a tap that misses the link still
+opens the card. The server's flag wins when it sends one; when it is absent the link is driven by the
+excerpt's own trailing `…` (`isPreviewTruncated`), which is what the profile wall's SQL excerpt already
+carries.
+
+The Create Story screen was the last unmigrated form. It now uses the design system: the shared `Header`
+(a Cancel, because the screen is a tab), a `typeScale.h1` headline with a `body` subtitle, an `overline`
+label above each control, the underline `Input`s, `Chip`s for Wonder/Heritage, the existing language, place
+and media pickers, and a full-width primary `Button` "Publish story". The media strip's tiles are
+`bg.sunken` with a `radius.md` frame, the "add" slot is a dashed hairline with an indigo `Plus`, and a
+picked video shows a `FilmStrip` glyph instead of a text arrow. That file's **21** deprecated-typography
+references and **16** deprecated colour aliases went to **0** (so the 35 such references left across
+`src/screens` are now 21, in Login, Register and Rooted Setup — parts 8-10). `Input`'s `keyboardType` union
+gained `'url'` so the media-link field keeps its keyboard.
+
 The same screen serves the owner: `isOwnProfile` adds the avatar upload, the Set Rooted
 shortcut, and sign-out, so tapping your own author line opens your wall. `AuthorLine`'s
 `onPress` is how the app reaches it — a nested `Pressable` handles the author tap without

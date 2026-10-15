@@ -5,6 +5,19 @@ export function countLabel(count: number, singular: string, plural: string): str
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+/**
+ * Whether a preview string was cut short, judged from the text itself.
+ *
+ * The profile wall's excerpt is cut in SQL and given an ellipsis, so the text
+ * carries its own "there is more" mark. This is the **fallback** for a response
+ * that predates the `preview_truncated` flag: when the server does send the flag,
+ * that answer wins, because a body could legitimately end in an ellipsis without
+ * having been cut (KNOT-020g-fix12).
+ */
+export function isPreviewTruncated(preview: string): boolean {
+  return preview.trimEnd().endsWith('…');
+}
+
 /** The total of the four perspective signals on one entity. */
 export function totalReactions(counts: ReactionCounts): number {
   return (

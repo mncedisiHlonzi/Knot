@@ -5,7 +5,9 @@
  * (`first_media_width` / `first_media_height`, KNOT-020g-fix5). When it does, the
  * frame takes the media's own width:height ratio, so a portrait photo renders
  * tall and a landscape one renders wide, and the media is shown whole rather than
- * cropped into a fixed window.
+ * cropped into a fixed window. The frame is **capped at 4:5**, so a very tall
+ * portrait is cropped to a sane list height instead of running off the page
+ * (`MAX_PORTRAIT_ASPECT_RATIO`, KNOT-020g-fix12).
  *
  * The server does not always know the shape. Its dimensions are client-reported
  * and the upload pipeline cannot measure everything — a video asset is the common
@@ -34,12 +36,29 @@ export const PLACEHOLDER_MEDIA_ASPECT_RATIO = 1;
 export const FALLBACK_MEDIA_ASPECT_RATIO = 16 / 9;
 
 /**
+ * The narrowest ratio a frame may take — the maximum height a frame may have.
+ *
+ * A frame is the media's own shape, but **uncapped** that means a 9:16 phone video
+ * renders a screen-and-a-half tall in a feed, so one entry pushes every other off
+ * the page. 4:5 (Instagram's portrait cap) is the tallest shape a list frame takes:
+ * a portrait media taller than 4:5 is framed at 4:5 and cropped at its top and
+ * bottom, which a full-bleed `cover` frame does symmetrically. Landscape media is
+ * unaffected, because every landscape ratio is already wider than 4:5.
+ *
+ * It is a **minimum** ratio and therefore a **maximum** height:
+ * `height = width / aspectRatio`, so `4/5` caps the height at `width * 1.25`
+ * (KNOT-020g-fix12).
+ */
+export const MAX_PORTRAIT_ASPECT_RATIO = 4 / 5;
+
+/**
  * The aspect ratio (width / height) to frame media with.
  *
  * Returns the media's own ratio when both dimensions are known positive numbers,
- * and `FALLBACK_MEDIA_ASPECT_RATIO` otherwise — including when only one of the two
- * is known, because half a pair cannot describe a shape, and when a dimension is
- * zero or negative, which is not a shape either.
+ * capped at `MAX_PORTRAIT_ASPECT_RATIO` so no frame is taller than 4:5, and
+ * `FALLBACK_MEDIA_ASPECT_RATIO` otherwise — including when only one of the two is
+ * known, because half a pair cannot describe a shape, and when a dimension is zero
+ * or negative, which is not a shape either.
  *
  * A caller frames the media with this ratio and fits it with `cover`, so the media
  * always fills its frame. It is the last resort, for a frame that has no other
@@ -49,7 +68,9 @@ export const FALLBACK_MEDIA_ASPECT_RATIO = 16 / 9;
  */
 export function mediaAspectRatio(width?: number | null, height?: number | null): number {
   if (typeof width === 'number' && typeof height === 'number' && width > 0 && height > 0) {
-    return width / height;
+    // `max` against the portrait cap: a wider (landscape) ratio is already above
+    // it and passes through untouched, while a taller one is lifted to the cap.
+    return Math.max(width / height, MAX_PORTRAIT_ASPECT_RATIO);
   }
 
   return FALLBACK_MEDIA_ASPECT_RATIO;

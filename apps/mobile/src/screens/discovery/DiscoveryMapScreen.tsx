@@ -11,17 +11,18 @@ import {
   View,
 } from 'react-native';
 import Mapbox, { Camera, MapView, PointAnnotation } from '@rnmapbox/maps';
-import { CaretRight, MapPin } from 'phosphor-react-native';
+import { CaretRight, MagnifyingGlass, MapPin, MapPinLine, X } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { PlaceCluster, discoveryApi } from '../../api/discovery';
 import { Pillar } from '../../api/stories';
 import Chip from '../../components/Chip';
 import EmptyState from '../../components/EmptyState';
+import Input from '../../components/Input';
 import { KNOT_MAPBOX_TOKEN } from '../../config/dev';
 import { PlaceCoordinate, coordinatesForPlace } from '../../data/placeCoordinates';
 import { colors, elevation, layout, radius, spacing, tabularNums, typeScale } from '../../theme';
-import { markerCountLabel, markerSize, placeTotalsLabel, storyCountLabel } from './discoveryFormat';
+import { filterPlacesByQuery, placeTotalsLabel, storyCountLabel } from './discoveryFormat';
 
 type DiscoveryMapScreenProps = {
   /**
@@ -60,14 +61,27 @@ const INITIAL_ZOOM = 1.2;
 /** The location pin's glyph size in a place row. */
 const ICON_SIZE = 20;
 
+/** The magnifier inside the place search field. */
+const SEARCH_ICON_SIZE = 18;
+
 /**
- * The disc behind that pin.
+ * The map marker: one filled indigo pin per place.
  *
- * Sized to the two-line text it sits beside, so every row is the same height
- * whatever its subtitle says — and so the row clears the 44-point touch target on
- * its own height rather than on a hit-slop (KNOT-020g-fix11).
+ * It carries no story count. A count inside a marker made every place look like a
+ * badge to read rather than a place to tap, and it forced the markers to change
+ * size with the busiest cluster; a single pin shape reads as "a place is here" at
+ * a glance, whatever it holds (KNOT-020g-fix12).
  */
-const PLACE_ICON_SIZE = 36;
+const MARKER_ICON_SIZE = 30;
+
+/**
+ * The marker's touch target.
+ *
+ * The pin is invisible at touch level, so it is centred in a 44-point box — the
+ * design system's minimum target — and the box is transparent, so the pin still
+ * looks like a pin (KNOT-020g-fix12).
+ */
+const MARKER_TOUCH_SIZE = 44;
 
 /**
  * The share of the screen height the bottom sheet occupies.
@@ -145,13 +159,18 @@ function clusterKey(cluster: PlaceCluster): string {
  * The layout is **map-first** (KNOT-020g-fix10): the map IS the screen, edge to
  * edge and running behind the translucent status bar, and there is no header, no
  * title and no tab row above it. Everything the screen offers lives in the bottom
- * sheet — a drag handle, the headline, the pillar filter as a chip row, the
- * aggregate totals, and the scrollable place list — which is the shape Bolt's and
- * Uber's home screens use. The filter is the same server-side query it always was;
- * only the control that sets it moved. The reference's map search control and its
- * location button are deliberately not built — the location button would need a
+ * sheet — a drag handle, the headline, the pillar filter as a chip row, a search
+ * over the places already loaded, the aggregate totals, and the scrollable place
+ * list — which is the shape Bolt's and Uber's home screens use. The filter is the
+ * same server-side query it always was; only the control that sets it moved.
+ *
+ * The search is **local**: it narrows the clusters this screen has already loaded
+ * and never re-queries the server, so it can only ever show fewer places than the
+ * filter returned. A server-side place search would be a follow-up. The
+ * reference's *map* search control (a floating button over the map) and its
+ * location button are still not built — the location button would need a
  * permission and a behaviour the app does not have — and the sheet's drag handle
- * is decorative for the MVP, with no drag-to-expand.
+ * is decorative for the MVP, with no drag-to-expand (KNOT-020g-fix12).
  */
 export default function DiscoveryMapScreen({
   onOpenPlace,
@@ -159,6 +178,7 @@ export default function DiscoveryMapScreen({
 }: DiscoveryMapScreenProps): React.ReactElement {
   const [clusters, setClusters] = useState<readonly PlaceCluster[]>([]);
   const [filter, setFilter] = useState<PillarFilter>('all');
+  const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -200,37 +220,42 @@ export default function DiscoveryMapScreen({
     void load('refresh');
   }, [load]);
 
+  // The places the search leaves. It is a local filter over the clusters already
+  // loaded — the sheet never re-queries the server — so a search can only narrow
+  // what the pillar filter returned (KNOT-020g-fix12). Both the list and the map
+  // read it, so the markers can never disagree with the rows.
+  const visible = useMemo(() => filterPlacesByQuery(clusters, query), [clusters, query]);
+
   // The clusters the map can actually plot. A cluster with no coordinate is still
   // listed below the map, so a place told before structured place data existed is
   // never hidden.
   const plotted = useMemo(
-    () => clusters.filter((cluster) => coordinateForCluster(cluster) !== undefined),
-    [clusters],
+    () => visible.filter((cluster) => coordinateForCluster(cluster) !== undefined),
+    [visible],
   );
 
-  // The busiest plotted cluster sets the scale every marker is sized against.
-  const maxCount = useMemo(
-    () => plotted.reduce((max, cluster) => Math.max(max, cluster.story_count), 0),
-    [plotted],
-  );
-
-  // The sheet header's totals, summed over every cluster the sheet has loaded, so
-  // the line describes exactly the list beneath it. The endpoint returns one page
-  // (up to its cluster limit), so these are the totals for what is shown, not
-  // necessarily for every place in the world (KNOT-020e-fix).
+  // The sheet header's totals, summed over the places the sheet is showing, so the
+  // line describes exactly the list beneath it — including after a search. The
+  // endpoint returns one page (up to its cluster limit), so these are the totals
+  // for what is shown, not necessarily for every place in the world
+  // (KNOT-020e-fix).
   const totals = useMemo(() => {
     let stories = 0;
     const pillars: Record<string, number> = {};
 
-    for (const cluster of clusters) {
+    for (const cluster of visible) {
       stories += cluster.story_count;
       for (const [pillar, count] of Object.entries(cluster.pillar_counts)) {
         pillars[pillar] = (pillars[pillar] ?? 0) + count;
       }
     }
 
-    return { places: clusters.length, stories, pillars };
-  }, [clusters]);
+    return { places: visible.length, stories, pillars };
+  }, [visible]);
+
+  // A search that matched nothing is told apart from a place with no stories, so
+  // the sheet can say which of the two happened.
+  const searching = query.trim() !== '';
 
   return (
     <View style={styles.container}>
@@ -277,8 +302,6 @@ export default function DiscoveryMapScreen({
             return null;
           }
 
-          const size = markerSize(cluster.story_count, maxCount);
-
           return (
             <PointAnnotation
               key={clusterKey(cluster)}
@@ -287,14 +310,13 @@ export default function DiscoveryMapScreen({
               title={cluster.place}
               onSelected={() => onOpenPlace(cluster)}
             >
-              {/* PointAnnotation renders its child as the marker: the place's story
-                  count in an indigo circle, ringed in the navy ink so it reads on
-                  the light map. The count is now the whole place's, not one
-                  coordinate's, so fewer and larger markers appear (KNOT-020e-fix). */}
-              <View style={[styles.marker, { borderRadius: size / 2, height: size, width: size }]}>
-                <Text style={[typeScale.caption, tabularNums, styles.markerCount]}>
-                  {markerCountLabel(cluster.story_count)}
-                </Text>
+              {/* PointAnnotation renders its child as the marker: one filled indigo
+                  pin per place, with no count inside it and no disc behind it. The
+                  pin is centred in a transparent 44-point box so it keeps the
+                  design system's minimum touch target without looking like a
+                  button (KNOT-020g-fix12). */}
+              <View style={styles.marker}>
+                <MapPin color={colors.brand.primary} size={MARKER_ICON_SIZE} weight="fill" />
               </View>
             </PointAnnotation>
           );
@@ -328,18 +350,47 @@ export default function DiscoveryMapScreen({
               />
             ))}
           </View>
+
+          {/* The place search. It filters the places this sheet has already
+              loaded — the clusters the pillar filter returned — and never
+              re-queries the server, so it can only narrow what is on screen
+              (KNOT-020g-fix12). The clear control is a sibling rather than a prop
+              on `Input`, which has one leading slot and no trailing one. */}
+          <View style={styles.searchRow}>
+            <Input
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Search places"
+              leadingIcon={<MagnifyingGlass color={colors.text.tertiary} size={SEARCH_ICON_SIZE} />}
+              autoCapitalize="none"
+              autoCorrect={false}
+              returnKeyType="search"
+              accessibilityLabel="Search places"
+            />
+            {query === '' ? null : (
+              <Pressable
+                style={styles.searchClear}
+                onPress={() => setQuery('')}
+                hitSlop={spacing.sm}
+                accessibilityRole="button"
+                accessibilityLabel="Clear the place search"
+              >
+                <X color={colors.text.tertiary} size={16} weight="bold" />
+              </Pressable>
+            )}
+          </View>
         </View>
 
         {/* What the list below holds, in the same wording the sheet has always
-            used. It sits between the filter and the list because it describes the
-            list rather than the screen. */}
+            used — recomputed over the searched places, so it describes the rows
+            under it rather than a count the reader cannot see. */}
         <Text style={[typeScale.caption, styles.totals]}>
           {placeTotalsLabel(totals.places, totals.stories, totals.pillars)}
         </Text>
 
         <FlatList
           style={styles.list}
-          data={clusters}
+          data={visible}
           keyExtractor={(cluster) => clusterKey(cluster)}
           contentContainerStyle={styles.listContent}
           refreshControl={
@@ -366,13 +417,13 @@ export default function DiscoveryMapScreen({
                 accessibilityRole="button"
                 accessibilityLabel={`${item.place}, ${storyCountLabel(item.story_count)}`}
               >
-                {/* The location pin, in the sunken disc the design system uses
-                    for a small leading glyph. A place is a place whether or not it
-                    plots, so the pin is on every row rather than only on the ones
-                    the map drew (KNOT-020g-fix11). */}
-                <View style={styles.placeIcon}>
-                  <MapPin color={colors.text.tertiary} size={ICON_SIZE} weight="fill" />
-                </View>
+                {/* The location pin, drawn as a **line** glyph (not a filled one)
+                    and with no disc behind it, so it reads as a quiet marker for
+                    the row rather than as a button — the sheet's own chips are the
+                    only filled shapes in it (KNOT-020g-fix12). A place is a place
+                    whether or not it plots, so the pin is on every row rather than
+                    only on the ones the map drew. */}
+                <MapPinLine color={colors.text.tertiary} size={ICON_SIZE} />
 
                 <View style={styles.placeText}>
                   <Text style={[typeScale.h3, styles.placeName]} numberOfLines={1}>
@@ -396,11 +447,15 @@ export default function DiscoveryMapScreen({
           }}
           ListEmptyComponent={
             !loading && error === undefined ? (
-              <EmptyState
-                illustrationName="no-stories"
-                headline="No places yet."
-                body="When people tell stories about a place, it appears on the map and in this list."
-              />
+              searching ? (
+                <Text style={styles.noMatches}>No places match</Text>
+              ) : (
+                <EmptyState
+                  illustrationName="no-stories"
+                  headline="No places yet."
+                  body="When people tell stories about a place, it appears on the map and in this list."
+                />
+              )
             ) : null
           }
         />
@@ -458,18 +513,21 @@ const styles = StyleSheet.create({
   map: {
     ...StyleSheet.absoluteFillObject,
   },
+  // The map marker's touch target: a transparent 44-point box with one filled pin
+  // centred in it. The box carries no fill or ring, so the marker reads as a pin on
+  // the map rather than as a badge (KNOT-020g-fix12).
   marker: {
     alignItems: 'center',
-    backgroundColor: colors.brand.primary,
-    // A navy ring rather than the canvas white: on Mapbox's Light style a white
-    // ring disappears into the pale basemap, so the marker's edge uses the
-    // primary ink instead (KNOT-020e-fix2).
-    borderColor: colors.text.primary,
-    borderWidth: 2,
+    height: MARKER_TOUCH_SIZE,
     justifyContent: 'center',
+    width: MARKER_TOUCH_SIZE,
   },
-  markerCount: {
-    color: colors.text.onBrand,
+  // The line drawn under a search that matched nothing, in the list's own inset.
+  noMatches: {
+    color: colors.text.tertiary,
+    paddingHorizontal: layout.screenPaddingFeed,
+    paddingVertical: spacing.lg,
+    textAlign: 'center',
   },
   placeCount: {
     alignItems: 'center',
@@ -481,16 +539,8 @@ const styles = StyleSheet.create({
   placeCountText: {
     color: colors.text.tertiary,
   },
-  // The leading location pin, in a sunken disc the size of the two-line text
-  // beside it, so the rows read as one column of places (KNOT-020g-fix11).
-  placeIcon: {
-    alignItems: 'center',
-    backgroundColor: colors.bg.sunken,
-    borderRadius: radius.pill,
-    height: PLACE_ICON_SIZE,
-    justifyContent: 'center',
-    width: PLACE_ICON_SIZE,
-  },
+  // The leading location pin sits straight on the row's canvas: there is no disc
+  // behind it, so the row is a plain icon-text-count line (KNOT-020g-fix12).
   placeMeta: {
     color: colors.text.tertiary,
     marginTop: spacing.xs,
@@ -505,12 +555,31 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     gap: spacing.md,
-    justifyContent: 'space-between',
     paddingHorizontal: layout.screenPaddingFeed,
     paddingVertical: spacing.md,
   },
+  // The name and country take every point between the pin and the count, so they
+  // are **left-aligned** beside the pin and the count sits at the far right. Before
+  // this the column hugged its text, which pushed it into the middle of the row and
+  // made a row look centred (KNOT-020g-fix12).
   placeText: {
+    flex: 1,
     flexShrink: 1,
+  },
+  // The place search, above the list it narrows. The clear control is absolutely
+  // positioned over the field's right edge, so it cannot shift the field's width
+  // when it appears (KNOT-020g-fix12).
+  searchClear: {
+    alignItems: 'center',
+    bottom: 0,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: spacing.sm,
+    top: 0,
+    width: 24,
+  },
+  searchRow: {
+    marginTop: spacing.lg,
   },
   // The sheet: rounded top corners, the canvas surface, and the design's upward
   // shadow (elevation Level 3, whose offset-Y is negative — exactly this use

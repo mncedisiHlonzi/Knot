@@ -369,6 +369,14 @@ letterboxing inside it (KNOT-020g-fix5, KNOT-020g-fix6). The same pair is on
 `first_media_height` (omitted rather than `null` when unknown), and on
 `GET /discovery/places/{place}` by the same enrichment.
 
+`preview_truncated` is `true` when the story's `body` is longer than the **150**-character
+preview window a list draws, and `false` otherwise. The feed still carries the whole
+`body` — clamping it to a few lines is the client's job — so this answers the only question
+the server can: is there more here than a preview shows? A body of exactly 150 characters
+is **not** marked, because the window is exceeded, not met. It is always present as a
+boolean (never `null`), so a client can render a "read more" link without inferring
+truncation from the text (KNOT-020g-fix12).
+
 Both the feed (`GET /stories`, on every story in the page) and the detail
 (`GET /stories/{id}`) carry `author_rooted`, the author's inline Rooted summary, or `null`.
 See [`author_rooted` on content responses](#author_rooted-on-content-responses).
@@ -1107,6 +1115,7 @@ authored — stories, adaptations, comments, and bridges. It is how the app answ
         "place": "Manguzi",
         "version_count": 3,
         "preview": "When the first rain came, the herd turned for home before anyone…",
+        "preview_truncated": true,
         "media_preview_url": "/stories/d6b53a2c-2e2f-4a4d-9b0f-3f6f4e0f1a2b/media/9f1c/content",
         "first_media_type": "image",
         "first_media_width": 1080,
@@ -1142,11 +1151,11 @@ kind:
 
 | `kind`           | `id` names     | `payload`                                                                                          |
 | ---------------- | -------------- | -------------------------------------------------------------------------------------------------- |
-| `story`          | the story      | `{ title, pillar, language, place, version_count, preview, media_preview_url, first_media_type, first_media_width, first_media_height }`             |
-| `version`        | the adaptation | `{ story_id, story_title, language, place, version_number, preview, media_preview_url, first_media_type, first_media_width, first_media_height }`    |
+| `story`          | the story      | `{ title, pillar, language, place, version_count, preview, preview_truncated, media_preview_url, first_media_type, first_media_width, first_media_height }`             |
+| `version`        | the adaptation | `{ story_id, story_title, language, place, version_number, preview, preview_truncated, media_preview_url, first_media_type, first_media_width, first_media_height }`    |
 | `comment`        | the comment    | `{ version_id, story_id, body_preview }`                                                             |
 | `bridge`         | the bridge     | `{ source_comment_id, version_id, target_language }`                                                 |
-| `inquiry`        | the question   | `{ title, place, answer_count, preview }`                                                             |
+| `inquiry`        | the question   | `{ title, place, answer_count, preview, preview_truncated }`                                          |
 | `inquiry_answer` | the answer     | `{ inquiry_id, inquiry_title, body_preview }`                                                        |
 
 `place` is the content's coarse place, **omitted** (not `null`) when it names
@@ -1164,6 +1173,14 @@ body is longer than that, and no ellipsis when it fits. It is **omitted** (not
 — so a page never ships a full body to draw a two-line excerpt (KNOT-020g-fix4).
 `body_preview` on a comment or an answer is the separate 200-character excerpt
 used by a thread, and is unchanged.
+
+`preview_truncated` is `true` when `preview` is an excerpt rather than the whole
+body. It is computed in the same SQL expression that cuts the excerpt
+(`length(body) > 150`), so it can never disagree with the text, and it is what a
+card's "read more" link keys off. It is **omitted** (not `false`) when false,
+because of `omitempty` — a client reads an absent flag as "no more to read", and
+falls back to the excerpt's own trailing `…` when the field is missing altogether
+from an older server (KNOT-020g-fix12).
 
 `media_preview_url` is the path to the story's first media item's content and
 `first_media_type` is that item's kind (`image` or `video`); both are **omitted**

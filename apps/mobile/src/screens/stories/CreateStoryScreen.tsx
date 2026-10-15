@@ -1,14 +1,6 @@
 import React, { useState } from 'react';
-import {
-  Image,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  View,
-} from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { FilmStrip, Plus, X } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import {
@@ -20,7 +12,11 @@ import {
   uploadStoryMedia,
 } from '../../api/stories';
 import { DEFAULT_LANGUAGE_CODE } from '../../config/language';
+import Button from '../../components/Button';
 import CameraCaptureBadge from '../../components/CameraCaptureBadge';
+import Chip from '../../components/Chip';
+import Header from '../../components/Header';
+import Input from '../../components/Input';
 import LanguagePicker from '../../components/LanguagePicker';
 import LocationPicker, { PickedPlace } from '../../components/LocationPicker';
 import MediaPickerSheet, { PickedMedia } from '../../components/MediaPickerSheet';
@@ -31,7 +27,7 @@ import {
   mediaCountLabel,
   remainingMediaSlots,
 } from '../../utils/mediaLimit';
-import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
+import { colors, layout, radius, spacing, typeScale } from '../../theme';
 
 type CreateStoryScreenProps = {
   /** The signed-in user's access token. The server derives the author from it. */
@@ -48,6 +44,9 @@ const DEFAULT_LANGUAGE = DEFAULT_LANGUAGE_CODE;
 /** Field limits, mirroring the server's rules so the user is told early. */
 const MAX_TITLE_LENGTH = 200;
 const MAX_LOCATION_LENGTH = 100;
+
+/** The media tile's edge length, so a picked item and the "add" slot line up. */
+const THUMBNAIL_SIZE = 88;
 
 /**
  * Returns the first client-side validation problem, or undefined when the form is
@@ -84,11 +83,23 @@ function validateForm(
   return undefined;
 }
 
+/** The word a pillar chip shows, so the chip reads as a label rather than a code. */
+function pillarLabel(pillar: Pillar): string {
+  return pillar === 'wonder' ? 'Wonder' : 'Heritage';
+}
+
 /**
  * The story composer.
  *
  * There is no author field: the author is the signed-in account, decided by the
  * server from the access token. The form therefore cannot publish as someone else.
+ *
+ * It is built from the design system: the shared `Header` (a Cancel, because the
+ * screen is a tab rather than a pushed page), the underline `Input`s, the pillar
+ * as a row of `Chip`s, the existing language, place, and media pickers, and a
+ * full-width primary `Button` to publish. The headline is the screen's own, in
+ * `typeScale.h1`, so the bar stays quiet and the form announces itself the way the
+ * Discovery sheet does (KNOT-020g-fix12).
  */
 export default function CreateStoryScreen({
   token,
@@ -203,289 +214,273 @@ export default function CreateStoryScreen({
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <Pressable style={styles.link} onPress={onCancel}>
-        <Text style={styles.linkText}>Cancel</Text>
-      </Pressable>
-
-      <Text style={styles.title}>Tell a story</Text>
-
-      <Text style={styles.label}>Media</Text>
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.thumbnails}
-        contentContainerStyle={styles.thumbnailsContent}
-      >
-        <Pressable
-          style={[styles.addMedia, atMediaCap ? styles.buttonDisabled : null]}
-          onPress={() => setPickerVisible(true)}
-          disabled={atMediaCap}
-          accessibilityRole="button"
-          accessibilityLabel="Add media"
-          accessibilityState={{ disabled: atMediaCap }}
-        >
-          <Text style={styles.addMediaText}>+ Add media</Text>
-        </Pressable>
-
-        {media.map((item, index) => (
-          <View key={`${item.uri}-${index}`} style={styles.thumbnail}>
-            {item.type === 'image' ? (
-              <Image style={styles.thumbnailImage} source={{ uri: item.uri }} />
-            ) : (
-              <View style={[styles.thumbnailImage, styles.videoPlaceholder]}>
-                <Text style={styles.playIcon}>▶</Text>
-              </View>
-            )}
-            {item.source === 'camera' ? <CameraCaptureBadge style={styles.badge} /> : null}
-            <Pressable
-              style={styles.removeButton}
-              onPress={() => removeMedia(index)}
-              accessibilityRole="button"
-              accessibilityLabel="Remove media"
-            >
-              <Text style={styles.removeText}>×</Text>
-            </Pressable>
-          </View>
-        ))}
-      </ScrollView>
-      <Text style={styles.mediaCount}>{mediaCountLabel(media.length)}</Text>
-      {mediaNotice !== undefined ? <Text style={styles.mediaNotice}>{mediaNotice}</Text> : null}
-
-      <Text style={styles.label}>Pillar</Text>
-      <View style={styles.pillars}>
-        {PILLARS.map((option) => (
+    <View style={styles.container}>
+      {/* The screen's own bar. The form is reached from the tab bar, so leaving it
+          is a Cancel rather than a back arrow (KNOT-020g-fix12). */}
+      <Header
+        left={
           <Pressable
-            key={option}
-            style={[styles.pillar, pillar === option ? styles.pillarSelected : null]}
-            onPress={() => setPillar(option)}
+            style={styles.cancel}
+            onPress={onCancel}
+            hitSlop={spacing.sm}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel the story"
           >
-            <Text style={pillar === option ? styles.pillarTextSelected : styles.pillarText}>
-              {option}
-            </Text>
+            <Text style={[typeScale.button, styles.cancelText]}>Cancel</Text>
           </Pressable>
-        ))}
-      </View>
-
-      <Text style={styles.label}>Title</Text>
-      <TextInput
-        style={styles.input}
-        value={title}
-        onChangeText={setTitle}
-        placeholder="A short headline"
-        placeholderTextColor={colors.text.secondary}
+        }
       />
 
-      <Text style={styles.label}>Story</Text>
-      <TextInput
-        style={[styles.input, styles.multiline]}
-        value={body}
-        onChangeText={setBody}
-        placeholder="Tell it the way you would tell it out loud"
-        placeholderTextColor={colors.text.secondary}
-        multiline
-        numberOfLines={8}
-        textAlignVertical="top"
-      />
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <Text style={[typeScale.h1, styles.headline]}>Tell a story.</Text>
+        <Text style={[typeScale.body, styles.subtitle]}>
+          Say what happened in your own words. It is published under your name.
+        </Text>
 
-      <Text style={styles.label}>Language</Text>
-      <LanguagePicker
-        mode="single"
-        selected={language}
-        onSelect={(chosen) => setLanguage(chosen.code)}
-        onClear={() => setLanguage('')}
-        placeholder="Search, e.g. Zulu or zul"
-      />
+        <Text style={[typeScale.overline, styles.label]}>Media</Text>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.thumbnails}
+          contentContainerStyle={styles.thumbnailsContent}
+        >
+          <Pressable
+            style={[styles.addMedia, atMediaCap ? styles.buttonDisabled : null]}
+            onPress={() => setPickerVisible(true)}
+            disabled={atMediaCap}
+            accessibilityRole="button"
+            accessibilityLabel="Add media"
+            accessibilityState={{ disabled: atMediaCap }}
+          >
+            <Plus color={colors.brand.primary} size={20} weight="bold" />
+            <Text style={[typeScale.caption, styles.addMediaText]}>Add media</Text>
+          </Pressable>
 
-      <Text style={styles.label}>Approximate place (optional)</Text>
-      <LocationPicker
-        text={locationText}
-        selected={selectedPlace}
-        onChangeText={(next) => {
-          setLocationText(next);
-          // Typing after a selection invalidates it until a new one is chosen.
-          setSelectedPlace(null);
-        }}
-        onSelect={(place) => {
-          setSelectedPlace(place);
-          setLocationText(place.place);
-        }}
-        onClear={() => {
-          setLocationText('');
-          setSelectedPlace(null);
-        }}
-        placeholder="Search for a place"
-      />
+          {media.map((item, index) => (
+            <View key={`${item.uri}-${index}`} style={styles.thumbnail}>
+              {item.type === 'image' ? (
+                <Image style={styles.thumbnailImage} source={{ uri: item.uri }} />
+              ) : (
+                <View style={[styles.thumbnailImage, styles.videoPlaceholder]}>
+                  <FilmStrip color={colors.text.tertiary} size={24} />
+                </View>
+              )}
+              {item.source === 'camera' ? <CameraCaptureBadge style={styles.badge} /> : null}
+              <Pressable
+                style={styles.removeButton}
+                onPress={() => removeMedia(index)}
+                hitSlop={spacing.sm}
+                accessibilityRole="button"
+                accessibilityLabel="Remove media"
+              >
+                <X color={colors.text.onBrand} size={12} weight="bold" />
+              </Pressable>
+            </View>
+          ))}
+        </ScrollView>
+        <Text style={[typeScale.caption, styles.mediaCount]}>{mediaCountLabel(media.length)}</Text>
+        {mediaNotice === undefined ? null : (
+          <Text style={[typeScale.caption, styles.mediaNotice]}>{mediaNotice}</Text>
+        )}
 
-      <Text style={styles.label}>One media link (optional)</Text>
-      <TextInput
-        style={styles.input}
-        value={mediaUrl}
-        onChangeText={setMediaUrl}
-        autoCapitalize="none"
-        autoCorrect={false}
-        keyboardType="url"
-        placeholder="https://example.com/photo.jpg"
-        placeholderTextColor={colors.text.secondary}
-      />
+        <Text style={[typeScale.overline, styles.label]}>Pillar</Text>
+        <View style={styles.chipRow}>
+          {PILLARS.map((option) => (
+            <Chip
+              key={option}
+              label={pillarLabel(option)}
+              selected={pillar === option}
+              onPress={() => setPillar(option)}
+            />
+          ))}
+        </View>
 
-      <View style={styles.switchRow}>
-        <Text style={styles.label}>Sensitive story</Text>
-        <Switch value={sensitive} onValueChange={setSensitive} />
-      </View>
-      <Text style={styles.hint}>
-        Mark a story sensitive when it should not be surfaced without care.
-      </Text>
+        <View style={styles.field}>
+          <Input
+            label="Title"
+            value={title}
+            onChangeText={setTitle}
+            accessibilityLabel="The story's title"
+            placeholder="A short headline"
+          />
+        </View>
 
-      {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
+        <View style={styles.field}>
+          <Input
+            label="Story"
+            value={body}
+            onChangeText={setBody}
+            multiline
+            accessibilityLabel="The story"
+            placeholder="Tell it the way you would tell it out loud"
+          />
+        </View>
 
-      <Pressable
-        style={[styles.button, submitting ? styles.buttonDisabled : null]}
-        onPress={handleSubmit}
-        disabled={submitting}
-      >
-        <Text style={styles.buttonText}>{submitting ? 'Publishing…' : 'Publish story'}</Text>
-      </Pressable>
+        <Text style={[typeScale.overline, styles.label]}>Language</Text>
+        <LanguagePicker
+          mode="single"
+          selected={language}
+          onSelect={(chosen) => setLanguage(chosen.code)}
+          onClear={() => setLanguage('')}
+          placeholder="Search, e.g. Zulu or zul"
+        />
 
-      <MediaPickerSheet
-        visible={pickerVisible}
-        onClose={() => setPickerVisible(false)}
-        onPicked={addMedia}
-        onError={setError}
-        maxSelection={remainingMediaSlots(media.length)}
-      />
-    </ScrollView>
+        <Text style={[typeScale.overline, styles.label]}>Approximate place (optional)</Text>
+        <LocationPicker
+          text={locationText}
+          selected={selectedPlace}
+          onChangeText={(next) => {
+            setLocationText(next);
+            // Typing after a selection invalidates it until a new one is chosen.
+            setSelectedPlace(null);
+          }}
+          onSelect={(place) => {
+            setSelectedPlace(place);
+            setLocationText(place.place);
+          }}
+          onClear={() => {
+            setLocationText('');
+            setSelectedPlace(null);
+          }}
+          placeholder="Search for a place"
+        />
+
+        <View style={styles.field}>
+          <Input
+            label="One media link (optional)"
+            value={mediaUrl}
+            onChangeText={setMediaUrl}
+            keyboardType="url"
+            autoCapitalize="none"
+            autoCorrect={false}
+            accessibilityLabel="A link to one media item"
+            placeholder="https://example.com/photo.jpg"
+          />
+        </View>
+
+        <View style={styles.switchRow}>
+          <View style={styles.switchText}>
+            <Text style={[typeScale.overline, styles.switchLabel]}>Sensitive story</Text>
+            <Text style={[typeScale.caption, styles.hint]}>
+              Mark a story sensitive when it should not be surfaced without care.
+            </Text>
+          </View>
+          <Switch value={sensitive} onValueChange={setSensitive} />
+        </View>
+
+        {error === undefined ? null : <Text style={[typeScale.bodyS, styles.error]}>{error}</Text>}
+
+        <View style={styles.submit}>
+          <Button
+            variant="primary"
+            fullWidth
+            label="Publish story"
+            loading={submitting}
+            accessibilityLabel="Publish the story"
+            onPress={() => {
+              void handleSubmit();
+            }}
+          />
+        </View>
+
+        <MediaPickerSheet
+          visible={pickerVisible}
+          onClose={() => setPickerVisible(false)}
+          onPicked={addMedia}
+          onError={setError}
+          maxSelection={remainingMediaSlots(media.length)}
+        />
+      </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  // The "add media" tile: a dashed outline in the hairline ink, so it reads as an
+  // empty slot rather than as a button, with the indigo plus as its one strong mark.
   addMedia: {
     alignItems: 'center',
-    borderColor: colors.border.default,
+    borderColor: colors.border.hairline,
     borderRadius: radius.md,
     borderStyle: 'dashed',
     borderWidth: 1,
-    height: 88,
+    gap: spacing.xs,
+    height: THUMBNAIL_SIZE,
     justifyContent: 'center',
-    paddingHorizontal: spacing.md,
-    width: 88,
+    paddingHorizontal: spacing.sm,
+    width: THUMBNAIL_SIZE,
   },
   addMediaText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.semiBold,
+    color: colors.brand.primary,
     textAlign: 'center',
   },
   badge: {
     position: 'absolute',
-    right: spacing.xs,
+    left: spacing.xs,
     top: spacing.xs,
-  },
-  button: {
-    alignItems: 'center',
-    backgroundColor: colors.brand.purple,
-    borderRadius: radius.md,
-    marginTop: spacing.xl,
-    paddingVertical: 14,
   },
   buttonDisabled: {
     opacity: 0.5,
   },
-  buttonText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    fontWeight: fontWeights.semiBold,
+  // The header's Cancel: a text control rather than a glyph, because leaving a tab
+  // is not a "close".
+  cancel: {
+    paddingRight: spacing.sm,
+  },
+  cancelText: {
+    color: colors.brand.primary,
+  },
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
+  container: {
+    backgroundColor: colors.bg.canvas,
+    flex: 1,
   },
   content: {
-    backgroundColor: colors.bg.primary,
-    padding: spacing.xl,
-    paddingBottom: spacing['3xl'],
+    paddingBottom: spacing.xxxl,
+    paddingHorizontal: layout.screenPaddingReading,
+    paddingTop: spacing.sm,
   },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.base,
+    color: colors.state.danger,
+    marginTop: spacing.md,
+  },
+  // One labelled field, with the inquiry form's vertical rhythm.
+  field: {
     marginTop: spacing.lg,
   },
+  headline: {
+    color: colors.text.primary,
+  },
   hint: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
+    color: colors.text.tertiary,
     marginTop: spacing.xs,
   },
-  input: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    marginTop: 6,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-  },
   label: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
-    marginTop: 20,
-  },
-  link: {
-    marginBottom: spacing.md,
-  },
-  linkText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.base,
+    color: colors.text.secondary,
+    marginBottom: spacing.sm,
+    marginTop: spacing.xl,
   },
   // The "N / 10" counter under the strip, and the notice when a pick was cut
   // down to the free slots (KNOT-ADR-054).
   mediaCount: {
-    color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    marginTop: spacing.xs,
+    color: colors.text.tertiary,
+    marginTop: spacing.sm,
   },
   mediaNotice: {
-    color: colors.state.error,
-    fontSize: fontSizes.sm,
+    color: colors.state.danger,
     marginTop: spacing.xs,
   },
-  multiline: {
-    minHeight: 160,
-  },
-  pillar: {
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginRight: spacing.md,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: 10,
-  },
-  pillarSelected: {
-    backgroundColor: colors.brand.purple,
-    borderColor: colors.brand.purple,
-  },
-  pillarText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
-  },
-  pillarTextSelected: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
-  },
-  pillars: {
-    flexDirection: 'row',
-    marginTop: 6,
-  },
-  playIcon: {
-    color: colors.text.primary,
-    fontSize: fontSizes.lg,
-  },
+  // The thumbnail's remove control: a filled indigo dot on the tile's corner, with
+  // hit slop taking it past the 44-point target the 22-point dot cannot reach on
+  // its own.
   removeButton: {
     alignItems: 'center',
-    backgroundColor: colors.bg.secondary,
-    borderColor: colors.border.default,
+    backgroundColor: colors.brand.primary,
     borderRadius: radius.pill,
-    borderWidth: 1,
     height: 22,
     justifyContent: 'center',
     position: 'absolute',
@@ -493,40 +488,45 @@ const styles = StyleSheet.create({
     top: -6,
     width: 22,
   },
-  removeText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.bold,
-    lineHeight: 18,
+  submit: {
+    marginTop: spacing.xl,
+  },
+  subtitle: {
+    color: colors.text.secondary,
+    marginTop: spacing.xs,
   },
   switchRow: {
     alignItems: 'center',
     flexDirection: 'row',
-    gap: spacing.md,
+    gap: spacing.lg,
+    justifyContent: 'space-between',
+    marginTop: spacing.xl,
+  },
+  switchText: {
+    flex: 1,
+  },
+  // The switch's own label: the row already carries the top margin, so this one
+  // only needs the gap beneath it.
+  switchLabel: {
+    color: colors.text.secondary,
+    marginBottom: spacing.xs,
   },
   thumbnail: {
-    height: 88,
+    height: THUMBNAIL_SIZE,
     marginLeft: spacing.md,
-    width: 88,
+    width: THUMBNAIL_SIZE,
   },
   thumbnailImage: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
+    backgroundColor: colors.bg.sunken,
     borderRadius: radius.md,
-    borderWidth: 1,
-    height: 88,
-    width: 88,
+    height: THUMBNAIL_SIZE,
+    width: THUMBNAIL_SIZE,
   },
   thumbnails: {
-    marginTop: 6,
+    marginTop: spacing.sm,
   },
   thumbnailsContent: {
     paddingRight: spacing.sm,
-  },
-  title: {
-    color: colors.text.primary,
-    fontSize: fontSizes.xl,
-    fontWeight: fontWeights.bold,
   },
   videoPlaceholder: {
     alignItems: 'center',

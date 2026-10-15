@@ -714,8 +714,75 @@ func TestPostgresStoreListForUserTruncatesThePreview(t *testing.T) {
 					len(want),
 				)
 			}
+			if !activity.Payload.PreviewTruncated {
+				t.Error("preview_truncated = false, want true for a cut preview")
+			}
 			return
 		}
 	}
 	t.Error("the long story is missing from the wall")
+}
+
+// TestPostgresStoreListForUserMarksAPreviewOnlyWhenItIsCut proves the flag a card's
+// "read more" link keys off: true only when the preview is an excerpt. A body
+// exactly as long as the window is not cut — `length(body) > n` is false at `n` —
+// so the flag and the text can never disagree (KNOT-020g-fix12).
+func TestPostgresStoreListForUserMarksAPreviewOnlyWhenItIsCut(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	exact, err := env.storyStore.CreateStory(ctx, stories.Story{
+		AuthorID: env.userA,
+		Pillar:   stories.PillarWonder,
+		Language: "eng",
+		Title:    "Exactly the preview window",
+		Body:     strings.Repeat("a", MaxPreviewChars),
+	})
+	if err != nil {
+		t.Fatalf("CreateStory() error = %v, want nil", err)
+	}
+
+	short, err := env.storyStore.CreateStory(ctx, stories.Story{
+		AuthorID: env.userA,
+		Pillar:   stories.PillarWonder,
+		Language: "eng",
+		Title:    "A short story",
+		Body:     "A body that fits in the preview.",
+	})
+	if err != nil {
+		t.Fatalf("CreateStory() error = %v, want nil", err)
+	}
+
+	long, err := env.storyStore.CreateStory(ctx, stories.Story{
+		AuthorID: env.userA,
+		Pillar:   stories.PillarWonder,
+		Language: "eng",
+		Title:    "One character past the window",
+		Body:     strings.Repeat("b", MaxPreviewChars+1),
+	})
+	if err != nil {
+		t.Fatalf("CreateStory() error = %v, want nil", err)
+	}
+
+	page, _, err := env.store.ListForUser(ctx, env.userA, nil, 50)
+	if err != nil {
+		t.Fatalf("ListForUser() error = %v, want nil", err)
+	}
+
+	payloads := make(map[string]Payload, len(page))
+	for _, activity := range page {
+		if activity.Kind == KindStory {
+			payloads[activity.ID] = activity.Payload
+		}
+	}
+
+	if got := payloads[long.ID]; !got.PreviewTruncated {
+		t.Errorf("one char past the window: preview_truncated = false, want true")
+	}
+	if got := payloads[exact.ID]; got.PreviewTruncated {
+		t.Errorf("exactly the window: preview_truncated = true, want false (the body is whole)")
+	}
+	if got := payloads[short.ID]; got.PreviewTruncated {
+		t.Errorf("short body: preview_truncated = true, want false")
+	}
 }

@@ -5,7 +5,7 @@ import EmptyState from '../EmptyState';
 import PillarTag from '../PillarTag';
 import RootedBadge from '../RootedBadge';
 import TabBar from '../TabBar';
-import { countLabel, feedMetaLine, totalReactions } from '../feedEntryMeta';
+import { countLabel, feedMetaLine, isPreviewTruncated, totalReactions } from '../feedEntryMeta';
 
 /**
  * These are the hookless components of the KNOT-020b library. The project has no
@@ -276,5 +276,22 @@ describe('feedMetaLine helper', () => {
     expect(feedMetaLine({ versionCount: 0, languageCount: 0, commentCount: 0 })).toBe('');
     expect(feedMetaLine({})).toBe('');
     expect(feedMetaLine({ versionCount: 1 })).toBe('1 version');
+  });
+});
+
+describe('isPreviewTruncated helper', () => {
+  it('reads the excerpt server-side: the ellipsis is the mark that there is more', () => {
+    expect(isPreviewTruncated('Every morning she tied a knot in a cord…')).toBe(true);
+    // Trailing whitespace does not hide the mark.
+    expect(isPreviewTruncated('A cut excerpt… ')).toBe(true);
+  });
+
+  it('treats a whole body as untruncated', () => {
+    expect(isPreviewTruncated('A whole body.')).toBe(false);
+    expect(isPreviewTruncated('')).toBe(false);
+  });
+
+  it('does not mistake a mid-text ellipsis for a truncation mark', () => {
+    expect(isPreviewTruncated('He paused… then went on.')).toBe(false);
   });
 });

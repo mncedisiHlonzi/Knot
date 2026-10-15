@@ -925,6 +925,72 @@ func TestStoryFeedIncludesMediaPreview(t *testing.T) {
 	}
 }
 
+// TestStoryFeedMarksALongBodyAsATruncatedPreview pins the flag a feed entry's
+// "read more" link keys off. The feed carries the whole body — clamping it to
+// three lines is the client's job — so the server answers the only question it
+// can: is this body longer than the preview window? A body exactly at the window
+// is not marked, so the flag never claims there is more to read than there is
+// (KNOT-020g-fix12).
+func TestStoryFeedMarksALongBodyAsATruncatedPreview(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	store := &memoryStoryStore{}
+	bodies := map[string]string{
+		"short": "A body that fits in the preview.",
+		"exact": strings.Repeat("a", previewWindowChars),
+		"long":  strings.Repeat("b", previewWindowChars+1),
+	}
+
+	ids := make(map[string]string, len(bodies))
+	for name, body := range bodies {
+		created, err := store.CreateStory(context.Background(), stories.Story{
+			AuthorID: testUserID,
+			Pillar:   stories.PillarWonder,
+			Language: "eng",
+			Title:    name,
+			Body:     body,
+		})
+		if err != nil {
+			t.Fatalf("CreateStory(%s) error = %v, want nil", name, err)
+		}
+		ids[name] = created.ID
+	}
+
+	service, err := stories.NewService(store)
+	if err != nil {
+		t.Fatalf("stories.NewService() error = %v, want nil", err)
+	}
+	handler := newRouter(t, logger, service)
+
+	recorder := doRequest(handler, http.MethodGet, "/stories", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body listStoriesResponse
+	decodeBody(t, recorder, &body)
+
+	got := make(map[string]bool, len(body.Stories))
+	for _, story := range body.Stories {
+		got[story.ID] = story.PreviewTruncated
+	}
+
+	if !got[ids["long"]] {
+		t.Error("one character past the window: preview_truncated = false, want true")
+	}
+	if got[ids["exact"]] {
+		t.Error("exactly the window: preview_truncated = true, want false, the body is whole")
+	}
+	if got[ids["short"]] {
+		t.Error("short body: preview_truncated = true, want false")
+	}
+	// The field is not `omitempty`: a client reads it without having to tell absent
+	// from false.
+	if !strings.Contains(recorder.Body.String(), `"preview_truncated":false`) {
+		t.Errorf("body = %s, want preview_truncated present on every story", recorder.Body.String())
+	}
+}
+
 // TestStoryMediaEnrichmentFailureIsSwallowed pins that a media lookup error does
 // not make a story unreadable: the media is supplementary.
 func TestStoryMediaEnrichmentFailureIsSwallowed(t *testing.T) {

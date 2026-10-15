@@ -1,5 +1,6 @@
 import type { ImageLoadEventData, NativeSyntheticEvent } from 'react-native';
 
+import { MAX_PORTRAIT_ASPECT_RATIO } from '../../utils/mediaFrame';
 import AuthorLine from '../AuthorLine';
 import FeedEntry from '../FeedEntry';
 import FeedVideo from '../FeedVideo';
@@ -101,28 +102,29 @@ function findElementByType(
   return undefined;
 }
 
-describe('FeedEntry', () => {
-  const story = {
-    id: 'story-1',
-    title: 'How my grandmother counted the days',
-    pillar: 'heritage' as const,
-    preview: 'She kept a string of knots.',
-    language: 'zap',
-    place: 'Oaxaca, Mexico',
-    author_display_name: 'Nomsa Khan',
-    author_avatar_url: null,
-    author_rooted: { place: 'Oaxaca', duration_bucket: 'many_years' },
-    created_at: '2026-10-09T12:00:00.000Z',
-    version_count: 4,
-    comment_count: 14,
-    reactions: {
-      rings_true: 128,
-      know_it_differently: 19,
-      adds_something_new: 7,
-      needs_a_source: 2,
-    },
-  };
+/** The entry every assertion below is built from. */
+const story = {
+  id: 'story-1',
+  title: 'How my grandmother counted the days',
+  pillar: 'heritage' as const,
+  preview: 'She kept a string of knots.',
+  language: 'zap',
+  place: 'Oaxaca, Mexico',
+  author_display_name: 'Nomsa Khan',
+  author_avatar_url: null,
+  author_rooted: { place: 'Oaxaca', duration_bucket: 'many_years' },
+  created_at: '2026-10-09T12:00:00.000Z',
+  version_count: 4,
+  comment_count: 14,
+  reactions: {
+    rings_true: 128,
+    know_it_differently: 19,
+    adds_something_new: 7,
+    needs_a_source: 2,
+  },
+};
 
+describe('FeedEntry', () => {
   it('renders a full entry without invoking the press handlers', () => {
     const onPress = jest.fn();
     const onOpenAuthor = jest.fn();
@@ -275,13 +277,24 @@ describe('FeedEntry', () => {
     first_media_url: '/stories/x/media/y/content',
   };
 
-  it('frames media at the payload ratio, so a portrait photo is tall', () => {
-    const element = FeedEntry({
+  it('frames media at the payload ratio up to the 4:5 cap, so no frame is taller than that', () => {
+    const portrait = FeedEntry({
       story: { ...withMedia, first_media_width: 1080, first_media_height: 1920 },
       onPress: () => undefined,
     });
 
-    expect(frameAspectRatio(element)).toBeCloseTo(1080 / 1920, 6);
+    // 9:16 is taller than a list frame may be, so it is capped at 4:5 — the frame
+    // is at most `width x 1.25` (KNOT-020g-fix12).
+    expect(frameAspectRatio(portrait)).toBe(MAX_PORTRAIT_ASPECT_RATIO);
+  });
+
+  it('leaves a 4:5 photo exactly as it is, so the cap only bites where it must', () => {
+    const element = FeedEntry({
+      story: { ...withMedia, first_media_width: 1000, first_media_height: 1250 },
+      onPress: () => undefined,
+    });
+
+    expect(frameAspectRatio(element)).toBeCloseTo(0.8, 6);
   });
 
   it('frames media at the payload ratio when it is landscape', () => {
@@ -321,5 +334,85 @@ describe('FeedEntry', () => {
 
     expect(video).toBeDefined();
     expect(typeof video?.props?.onLoadSize).toBe('function');
+  });
+});
+
+/**
+ * Finds the first element whose accessibility label satisfies the predicate, so a
+ * link can be asserted by what a screen reader would announce rather than by its
+ * position in the tree (KNOT-020g-fix12).
+ */
+function findByLabel(
+  node: unknown,
+  matches: (label: string) => boolean,
+): { props?: Record<string, unknown> } | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findByLabel(child, matches);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+  if (node === null || node === undefined || typeof node !== 'object') {
+    return undefined;
+  }
+
+  const element = node as { props?: { accessibilityLabel?: unknown; children?: unknown } };
+  const label = element.props?.accessibilityLabel;
+  if (typeof label === 'string' && matches(label)) {
+    return element as { props?: Record<string, unknown> };
+  }
+  if (element.props !== undefined) {
+    return findByLabel(element.props.children, matches);
+  }
+  return undefined;
+}
+
+/** The "Read more" link, or undefined when the entry did not draw one. */
+function readMoreLink(element: unknown): { props?: Record<string, unknown> } | undefined {
+  return findByLabel(element, (label) => label.startsWith('Read more'));
+}
+
+describe('FeedEntry read more', () => {
+  it('offers a link when the server marks the preview as truncated', () => {
+    const onPress = jest.fn();
+    const element = FeedEntry({ story: { ...story, preview_truncated: true }, onPress });
+
+    const link = readMoreLink(element);
+    expect(link).toBeDefined();
+
+    // It is the entry's own handler, so the link opens the same thing the card
+    // does — and the link's label names the story.
+    expect(link?.props?.accessibilityLabel).toBe(
+      'Read more of How my grandmother counted the days',
+    );
+    (link?.props?.onPress as () => void)();
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers no link for a body the server did not truncate', () => {
+    const element = FeedEntry({ story, onPress: () => undefined });
+
+    expect(readMoreLink(element)).toBeUndefined();
+  });
+
+  it('falls back to the text, so a server without the flag still gets a link', () => {
+    const element = FeedEntry({
+      story: { ...story, preview: 'A cut excerpt…' },
+      onPress: () => undefined,
+    });
+
+    expect(readMoreLink(element)).toBeDefined();
+  });
+
+  it('lets the flag win over the text, so an ellipsis in a whole body is not a link', () => {
+    const element = FeedEntry({
+      story: { ...story, preview: 'He paused… then went on.', preview_truncated: false },
+      onPress: () => undefined,
+    });
+
+    expect(readMoreLink(element)).toBeUndefined();
   });
 });

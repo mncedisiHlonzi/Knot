@@ -1,11 +1,11 @@
 /**
- * The pure formatting and sizing helpers the two Discovery screens share.
+ * The pure formatting and filtering helpers the two Discovery screens share.
  *
  * The map's place list and the place screen's header both count a place's stories,
  * and the place header also breaks them down by pillar. Keeping that wording in one
  * place means the two screens can never disagree about how
- * "24 stories · 14 Heritage · 10 Wonder" is spelled, and the map's marker geometry
- * stays out of the component that draws it.
+ * "24 stories · 14 Heritage · 10 Wonder" is spelled, and the map sheet's place
+ * search filters with the same rule the list it describes uses.
  *
  * Nothing here touches React or React Native, so it is exercised directly by
  * `__tests__/discoveryFormat.test.ts` — the project's renderer-less test pattern.
@@ -87,14 +87,6 @@ export function pillarEmptyHeadline(pillar: PillarFilter): string {
       return 'No stories here yet.';
   }
 }
-
-/**
- * The smallest and largest map-marker diameters, in points. A cluster's marker
- * scales between them by how its story count compares with the busiest cluster on
- * screen, so a place with many stories reads larger at a glance.
- */
-export const MARKER_MIN_SIZE = 28;
-export const MARKER_MAX_SIZE = 44;
 
 /**
  * Renders a story count with the right noun: "1 story" / "24 stories".
@@ -197,30 +189,24 @@ export function placeMapPoint(
 }
 
 /**
- * The diameter of a cluster's map marker.
+ * The places that match a search, case-insensitively, by name.
  *
- * The busiest cluster takes the largest marker and every other cluster scales
- * linearly towards the smallest, so the sizes stay comparable within one screen
- * (and re-scale when a pillar filter changes which clusters are plotted). A
- * missing or nonsensical count falls back to the smallest marker rather than
- * dividing by zero.
+ * The search is **local**: it narrows the clusters this screen has already loaded
+ * and never re-queries the server, so it can only show fewer places, never more. A
+ * blank query matches everything, so clearing the field restores the whole list.
+ *
+ * The match is on the place's name only. The country is shown beside it, but
+ * matching that too would make "Mexico" return every Mexican place, which is a
+ * different question from "where is Oaxaca" (KNOT-020g-fix12).
  */
-export function markerSize(count: number, maxCount: number): number {
-  const safeMax = Number.isFinite(maxCount) && maxCount > 0 ? maxCount : 0;
-  if (safeMax === 0) {
-    return MARKER_MIN_SIZE;
+export function filterPlacesByQuery<T extends { readonly place: string }>(
+  clusters: readonly T[],
+  query: string,
+): readonly T[] {
+  const needle = query.trim().toLowerCase();
+  if (needle === '') {
+    return clusters;
   }
 
-  const safeCount = Number.isFinite(count) && count > 0 ? count : 0;
-  const ratio = Math.min(safeCount / safeMax, 1);
-
-  return Math.round(MARKER_MIN_SIZE + (MARKER_MAX_SIZE - MARKER_MIN_SIZE) * ratio);
-}
-
-/**
- * The number drawn inside a map marker, capped at "99+" so a busy place cannot
- * overflow its circle.
- */
-export function markerCountLabel(count: number): string {
-  return count > 99 ? '99+' : String(count);
+  return clusters.filter((cluster) => cluster.place.toLowerCase().includes(needle));
 }

@@ -295,6 +295,7 @@ export default function FeedScreen({
               pillar: item.pillar,
               place: item.approximate_location,
               preview: item.body,
+              preview_truncated: item.preview_truncated,
               reactions: item.reactions,
               title: item.title,
               version_count: item.version_count,

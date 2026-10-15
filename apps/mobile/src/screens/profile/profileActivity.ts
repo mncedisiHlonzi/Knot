@@ -12,6 +12,7 @@
  */
 import type { Activity, ActivityKind } from '../../api/profile';
 import type { Pillar } from '../../components/PillarTag';
+import { isPreviewTruncated } from '../../components/feedEntryMeta';
 import { languageName } from '../../data/languages';
 
 /** One activity tab: the kind it filters to and the word shown on it. */
@@ -116,7 +117,18 @@ function asText(value: string | undefined): string {
 function asCount(value: number | undefined): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
-
+/**
+ * Whether a card's preview is an excerpt, from the server's flag or the text.
+ *
+ * The flag is authoritative when the server sent one, because only it knows
+ * whether the body was cut. `omitempty` means a false flag is absent rather than
+ * `false`, so an absent flag falls back to the excerpt's own trailing ellipsis —
+ * which also covers a response from a server that predates the flag
+ * (KNOT-020g-fix12).
+ */
+function asPreviewTruncated(flag: boolean | undefined, preview: string): boolean {
+  return flag === true || isPreviewTruncated(preview);
+}
 /** Joins the parts that are present with " · ", dropping the empty ones. */
 function joinParts(parts: readonly string[]): string {
   return parts.filter((part) => part !== '').join(' · ');
@@ -163,6 +175,12 @@ export type ProfileCard = {
    * opening lines of the story, the adaptation, or the question (KNOT-020g-fix4).
    */
   readonly preview: string;
+  /**
+   * Whether `preview` is an excerpt rather than the whole body, so the card can
+   * offer a "read more" link instead of ending on a bare ellipsis
+   * (KNOT-020g-fix12).
+   */
+  readonly previewTruncated: boolean;
   /**
    * The card's media preview path (API-relative), or undefined when there is
    * nothing to draw. A story and a version carry the story's first media item; an
@@ -214,6 +232,7 @@ export function activityCard(activity: Activity, relativeTime: string): ProfileC
     case 'story': {
       const place = asText(activity.payload.place);
       const versions = asCount(activity.payload.version_count);
+      const preview = asText(activity.payload.preview);
       return {
         overline: '',
         title: activity.payload.title,
@@ -224,7 +243,8 @@ export function activityCard(activity: Activity, relativeTime: string): ProfileC
           versions > 0 ? versionCountLabel(versions) : '',
           relativeTime,
         ]),
-        preview: asText(activity.payload.preview),
+        preview,
+        previewTruncated: asPreviewTruncated(activity.payload.preview_truncated, preview),
         mediaUrl: asOptionalText(activity.payload.media_preview_url),
         mediaType: asMediaType(activity.payload.first_media_type),
         mediaWidth: asCount(activity.payload.first_media_width),
@@ -234,13 +254,15 @@ export function activityCard(activity: Activity, relativeTime: string): ProfileC
     case 'version': {
       const language = languageName(activity.payload.language);
       const number = asCount(activity.payload.version_number);
+      const preview = asText(activity.payload.preview);
       return {
         overline: number > 0 ? `Version ${number} · ${language}` : `Version · ${language}`,
         title: activity.payload.story_title,
         pillar: undefined,
         place: undefined,
         meta: joinParts([asText(activity.payload.place), relativeTime]),
-        preview: asText(activity.payload.preview),
+        preview,
+        previewTruncated: asPreviewTruncated(activity.payload.preview_truncated, preview),
         mediaUrl: asOptionalText(activity.payload.media_preview_url),
         mediaType: asMediaType(activity.payload.first_media_type),
         mediaWidth: asCount(activity.payload.first_media_width),
@@ -249,13 +271,15 @@ export function activityCard(activity: Activity, relativeTime: string): ProfileC
     }
     case 'inquiry': {
       const place = asText(activity.payload.place);
+      const preview = asText(activity.payload.preview);
       return {
         overline: place === '' ? 'Inquiry' : `Inquiry · ${place}`,
         title: activity.payload.title,
         pillar: undefined,
         place: undefined,
         meta: joinParts([answerCountLabel(asCount(activity.payload.answer_count)), relativeTime]),
-        preview: asText(activity.payload.preview),
+        preview,
+        previewTruncated: asPreviewTruncated(activity.payload.preview_truncated, preview),
         mediaUrl: undefined,
         mediaType: undefined,
         // An inquiry carries no media, so there is never a frame to shape.

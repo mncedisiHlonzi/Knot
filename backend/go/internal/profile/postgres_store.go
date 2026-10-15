@@ -36,17 +36,20 @@ var bodyPreviewCharsSQL = strconv.Itoa(MaxBodyPreviewChars)
 // previewCharsSQL is MaxPreviewChars rendered as a SQL integer, on the same terms.
 var previewCharsSQL = strconv.Itoa(MaxPreviewChars)
 
-// activityPreviewSQL builds the payload entry for a card's body excerpt: the
+// activityPreviewSQL builds the payload entries for a card's body excerpt: the
 // column's first MaxPreviewChars characters, with an ellipsis appended when the
-// body is longer. It is enforced here rather than in the client so a full body
-// never travels over the wall (KNOT-020g-fix4). `column` is always a
-// compile-time literal written in the union below — never client input — so
-// interpolating it carries no injection risk.
+// body is longer, and a boolean saying whether that happened. Both are enforced
+// here rather than in the client so a full body never travels over the wall
+// (KNOT-020g-fix4), and so no client has to infer truncation from the text
+// (KNOT-020g-fix12). `column` is always a compile-time literal written in the
+// union below — never client input — so interpolating it carries no injection
+// risk.
 func activityPreviewSQL(column string) string {
 	return `'preview', CASE
 				WHEN length(` + column + `) > ` + previewCharsSQL + ` THEN left(` + column + `, ` + previewCharsSQL + `) || '…'
 				ELSE ` + column + `
-			END`
+			END,
+			'preview_truncated', length(` + column + `) > ` + previewCharsSQL
 }
 
 // activityUnion is the merged activity stream: one UNION ALL branch per entity a

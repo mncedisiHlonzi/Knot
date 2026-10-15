@@ -139,6 +139,11 @@ type Payload struct {
 	// appended when the body is longer than that. Set for KindStory, KindVersion,
 	// and KindInquiry.
 	Preview string `json:"preview,omitempty"`
+	// PreviewTruncated is true when Preview is an excerpt rather than the whole
+	// body, so a card can offer a "read more" link instead of ending on a bare
+	// ellipsis. It is computed in SQL beside Preview, so the client never has to
+	// infer truncation from the text (KNOT-020g-fix12).
+	PreviewTruncated bool `json:"preview_truncated,omitempty"`
 
 	// SourceCommentID is the comment a bridge was made from. Set for KindBridge.
 	SourceCommentID string `json:"source_comment_id,omitempty"`

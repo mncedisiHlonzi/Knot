@@ -124,6 +124,14 @@ export type Story = {
    */
   readonly first_media_width?: number | null;
   readonly first_media_height?: number | null;
+  /**
+   * Whether `body` is longer than the preview window a feed entry draws, so the
+   * entry can offer a "read more" link. The server computes it from the body
+   * length, so the client never has to infer truncation from the text
+   * (KNOT-020g-fix12). Optional because the API types describe the wire format
+   * optimistically; when absent the client falls back to inspecting the text.
+   */
+  readonly preview_truncated?: boolean;
 };
 
 /** The request body for POST /stories. */

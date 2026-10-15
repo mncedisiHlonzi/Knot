@@ -662,6 +662,22 @@ export default function UserProfileScreen({
                     {card.preview}
                   </Text>
                 )}
+
+                {/* "Read more" continues a truncated excerpt. It is a second tap
+                    target on the card's own handler, so it opens exactly what the
+                    card does — and a tap that misses it still opens the card
+                    (KNOT-020g-fix12). */}
+                {card.preview !== '' && card.previewTruncated ? (
+                  <Pressable
+                    style={styles.cardReadMore}
+                    onPress={() => handleOpenActivity(item)}
+                    hitSlop={spacing.sm}
+                    accessibilityRole="link"
+                    accessibilityLabel={`Read more of ${card.title}`}
+                  >
+                    <Text style={[typeScale.label, styles.cardReadMoreText]}>Read more</Text>
+                  </Pressable>
+                ) : null}
               </View>
 
               <CardMedia card={card} />
@@ -801,6 +817,15 @@ const styles = StyleSheet.create({
   cardPreview: {
     color: colors.text.secondary,
     marginTop: spacing.xs,
+  },
+  // The "read more" affordance under a truncated excerpt: a text link in the brand
+  // ink, with hit slop taking the small label to a comfortable touch target.
+  cardReadMore: {
+    alignSelf: 'flex-start',
+    marginTop: spacing.xs,
+  },
+  cardReadMoreText: {
+    color: colors.brand.primary,
   },
   cardTitle: {
     color: colors.text.primary,
