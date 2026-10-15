@@ -1,5 +1,12 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { BackHandler, SafeAreaView, StyleSheet, View } from 'react-native';
+import {
+  BackHandler,
+  SafeAreaView,
+  StatusBar,
+  StyleSheet,
+  View,
+  type StatusBarProps,
+} from 'react-native';
 
 import type { AuthResponse, User } from './src/api/client';
 import { conversationsApi, type Comment } from './src/api/conversations';
@@ -54,6 +61,24 @@ import StoryVersionScreen from './src/screens/stories/StoryVersionScreen';
  * target. Each variant's payload is compile-time checked, which a loose
  * `{ name, props }` shape would not give.
  */
+/**
+ * The system status bar, in the app's canvas colour with dark icons.
+ *
+ * It is rendered by every root below rather than once, because the roots are
+ * mutually exclusive phases — and React Native keeps a single status bar, so
+ * whichever one is mounted is the one that applies. `translucent` is false so the
+ * bar is a solid colour above the content rather than an overlay, which is what
+ * the opaque canvas and the dark icons depend on. On iOS `backgroundColor` is
+ * ignored — the platform has no bar to colour — and `barStyle` carries it, so the
+ * same declaration is correct on both platforms. `StatusBar` cannot reach the
+ * Android navigation bar; that is set in the native theme (KNOT-020g-fix8).
+ */
+const STATUS_BAR: StatusBarProps = {
+  backgroundColor: colors.bg.canvas,
+  barStyle: 'dark-content',
+  translucent: false,
+};
+
 type Overlay =
   | { readonly name: 'detail'; readonly storyId: string }
   | { readonly name: 'adapt'; readonly storyId: string; readonly parentVersionId: string }
@@ -652,6 +677,7 @@ export default function App(): React.ReactElement {
   if (bootPhase === 'splash') {
     return (
       <SafeAreaView style={styles.bootContainer}>
+        <StatusBar {...STATUS_BAR} />
         <SplashScreen />
       </SafeAreaView>
     );
@@ -660,6 +686,7 @@ export default function App(): React.ReactElement {
   if (bootPhase === 'onboarding') {
     return (
       <SafeAreaView style={styles.bootContainer}>
+        <StatusBar {...STATUS_BAR} />
         <OnboardingScreen onDone={handleOnboardingDone} />
       </SafeAreaView>
     );
@@ -668,6 +695,7 @@ export default function App(): React.ReactElement {
   if (session === null) {
     return (
       <SafeAreaView style={styles.authContainer}>
+        <StatusBar {...STATUS_BAR} />
         {authMode === 'login' ? (
           <LoginScreen
             onAuthenticated={handleAuthenticated}
@@ -685,6 +713,7 @@ export default function App(): React.ReactElement {
 
   return (
     <SafeAreaView style={styles.storyContainer}>
+      <StatusBar {...STATUS_BAR} />
       <View style={styles.body}>{renderOverlay(session)}</View>
       {overlays.length === 0 ? <TabBar activeTab={tab} onSelect={setTab} /> : null}
     </SafeAreaView>

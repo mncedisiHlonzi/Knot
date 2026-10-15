@@ -127,9 +127,12 @@ function emptyIllustration(kind: ActivityKind): 'no-stories' | 'no-inquiries' {
  * feed's media is. A video never plays here — the wall is a browse surface, and
  * playback belongs to the Feed (KNOT-020g-fix4).
  *
- * The frame is **full-bleed** (it escapes the card's gutter) and is the **media's
- * own shape**: full width, with a height that follows the media's natural
- * width:height ratio, so a portrait photo is tall and a landscape one is short. The
+ * The frame is **full-bleed** and is the **media's own shape**: full width, with a
+ * height that follows the media's natural width:height ratio, so a portrait photo
+ * is tall and a landscape one is short. The width is free — the card this sits in
+ * carries no horizontal padding, and the text around it keeps its own — which is
+ * the structure `FeedEntry` uses and the reason its media is edge to edge while
+ * this one used to stop 32 points short of the right edge (KNOT-020g-fix8). The
  * ratio comes from the payload when the server reported the item's dimensions, and
  * otherwise from the media itself, which reports its natural size on load — which
  * is the case that matters for video, since the picker reports no size for most
@@ -634,34 +637,41 @@ export default function UserProfileScreen({
               accessibilityRole="button"
               accessibilityLabel={card.title}
             >
-              {card.pillar === undefined ? (
-                card.overline === '' ? null : (
-                  <Text style={[typeScale.overline, styles.cardOverline]} numberOfLines={1}>
-                    {card.overline}
-                  </Text>
-                )
-              ) : (
-                <View style={styles.cardPillar}>
-                  <PillarTag pillar={card.pillar} place={card.place} variant="plain" />
-                </View>
-              )}
+              {/* The text blocks carry the gutter, not the card, so the media in
+                  the middle can be a plain full-width child — the structure
+                  FeedEntry uses (KNOT-020g-fix8). */}
+              <View style={styles.cardPadded}>
+                {card.pillar === undefined ? (
+                  card.overline === '' ? null : (
+                    <Text style={[typeScale.overline, styles.cardOverline]} numberOfLines={1}>
+                      {card.overline}
+                    </Text>
+                  )
+                ) : (
+                  <View style={styles.cardPillar}>
+                    <PillarTag pillar={card.pillar} place={card.place} variant="plain" />
+                  </View>
+                )}
 
-              <Text style={[typeScale.h3, styles.cardTitle]} numberOfLines={2}>
-                {card.title}
-              </Text>
-
-              {card.preview === '' ? null : (
-                <Text style={[typeScale.bodyS, styles.cardPreview]} numberOfLines={2}>
-                  {card.preview}
+                <Text style={[typeScale.h3, styles.cardTitle]} numberOfLines={2}>
+                  {card.title}
                 </Text>
-              )}
+
+                {card.preview === '' ? null : (
+                  <Text style={[typeScale.bodyS, styles.cardPreview]} numberOfLines={2}>
+                    {card.preview}
+                  </Text>
+                )}
+              </View>
 
               <CardMedia card={card} />
 
               {card.meta === '' ? null : (
-                <Text style={[typeScale.caption, styles.cardMeta]} numberOfLines={1}>
-                  {card.meta}
-                </Text>
+                <View style={styles.cardPadded}>
+                  <Text style={[typeScale.caption, styles.cardMeta]} numberOfLines={1}>
+                    {card.meta}
+                  </Text>
+                </View>
               )}
             </Pressable>
           );
@@ -750,28 +760,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // One activity card: the pillar tag or overline, the title, and the meta line,
-  // closed by a full-bleed hairline (the design reference's tab content).
+  // One activity card: the pillar tag or overline with the title and the body
+  // excerpt, then the media, then the meta line, closed by a full-bleed hairline
+  // (the design reference's tab content). The card has **no horizontal padding of
+  // its own** — the text blocks inside carry the gutter (`cardPadded`), which
+  // leaves the media frame a plain full-width child. The negative margin still
+  // cancels the list's gutter so the hairline spans the screen (KNOT-020g-fix8).
   card: {
     borderBottomColor: colors.border.hairline,
     borderBottomWidth: 1,
     marginHorizontal: -layout.screenPaddingFeed,
-    paddingHorizontal: layout.screenPaddingFeed,
     paddingVertical: spacing.lg,
   },
   cardMeta: {
     color: colors.text.tertiary,
     marginTop: spacing.xs,
   },
-  // The card's media preview: full-bleed and never a player — a still image, or
-  // a video's first frame (KNOT-020g-fix3, KNOT-020g-fix5). It escapes the card's
-  // gutter so the media runs edge to edge, and its ratio is set per card from the
-  // media's own dimensions, so it is not fixed here.
+  // The card's media preview: full-bleed, full-width, and never a player — a
+  // still image, or a video's first frame (KNOT-020g-fix3, KNOT-020g-fix5). Its
+  // width is simply the card's, because the card no longer pads; the ratio is set
+  // per card from the media's own shape, so it is not fixed here
+  // (KNOT-020g-fix7, KNOT-020g-fix8).
   cardMedia: {
-    marginHorizontal: -layout.screenPaddingFeed,
     marginTop: spacing.sm,
     overflow: 'hidden',
     width: '100%',
+  },
+  // The card's text column: it carries the gutter the card gave up, so the media
+  // between the two text blocks can run edge to edge.
+  cardPadded: {
+    paddingHorizontal: layout.screenPaddingFeed,
   },
   cardOverline: {
     color: colors.brand.primary,

@@ -503,6 +503,28 @@ Its tests moved to `components/__tests__/FeedEntry.test.ts`, which stubs React's
 pure rule. The profile card's media follows the same rule and is now a file-local `CardMedia`
 component, because the hook cannot live in a helper a parent calls mid-render.
 
+**KNOT-020g-fix8** closed a right-edge gap on the profile wall and coloured the two system bars.
+The gap was arithmetic, not styling taste: a profile card sits inside the wall's 16-point list
+gutter, so its content box is `screen − 32`, and `cardMedia` asked for `width: '100%'` **and** a
+`-16` horizontal margin — the width resolved against the padded box and the margin then shifted it
+left, leaving the media flush at `x = 0` and 32 points short at the right. A negative margin and a
+percentage width cannot both be right. The card now has **no horizontal padding of its own**: the
+two text blocks around the media carry the gutter (`cardPadded`), which leaves the media a plain
+full-width child with no margin at all — the structure `FeedEntry` has, and the reason the feed's
+media was already correct. The hairline still spans the screen, because the card keeps the negative
+margin that cancels the list's gutter.
+
+The system bars are painted by the **Android window**, so they are set in the native theme
+(`android/app/src/main/res/values/styles.xml`) with a `knot_canvas` colour resource alongside
+`knot_splash_background`. They take effect before React Native mounts and survive every screen.
+`windowLightStatusBar` and `windowLightNavigationBar` supply the dark icons a light bar needs; the
+navigation-bar attribute is API 27+, so on API 24-26 the bar is white with its default light icons.
+`App.tsx` also renders `<StatusBar backgroundColor={colors.bg.canvas} barStyle="dark-content"
+translucent={false} />` in each of its four roots so the JavaScript layer agrees with the theme once
+it runs — the value is declared in both layers deliberately, because each can only read its own.
+**`StatusBar` cannot reach the navigation bar**; only the theme can, and only while the app targets
+below API 35 (see the note below).
+
 The same screen serves the owner: `isOwnProfile` adds the avatar upload, the Set Rooted
 shortcut, and sign-out, so tapping your own author line opens your wall. `AuthorLine`'s
 `onPress` is how the app reaches it — a nested `Pressable` handles the author tap without

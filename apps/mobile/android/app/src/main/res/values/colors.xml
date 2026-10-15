@@ -3,4 +3,11 @@
          colour shown before React Native mounts; a proper splash is a future
          task. -->
     <color name="knot_splash_background">#7B3FE4</color>
+
+    <!-- The app's canvas, `colors.bg.canvas` in src/theme/colors.ts (which reads
+         `palette.light.canvas`). Declared here as well because the system bars
+         are painted by the Android window before any JavaScript runs, so they
+         cannot read a theme token: the value is duplicated in the two layers that
+         each need it, and the two must be changed together (KNOT-020g-fix8). -->
+    <color name="knot_canvas">#FFFFFF</color>
 </resources>

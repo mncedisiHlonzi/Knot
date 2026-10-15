@@ -7,6 +7,19 @@
         <!-- Solid brand background shown before React Native mounts (splash).
              The colour is defined in res/values/colors.xml (BRAND.md Purple). -->
         <item name="android:windowBackground">@color/knot_splash_background</item>
+
+        <!-- The system bars, in the app's canvas colour (knot_canvas). Both are
+             painted by the window, so they take effect before React Native mounts
+             and survive every screen; App.tsx also declares the status bar so the
+             two agree once JavaScript runs. `windowLightStatusBar` and
+             `windowLightNavigationBar` add the dark icons that a light bar needs —
+             without them the clock and the gesture pill would be white on white.
+             The navigation bar's attribute is API 27+, so on API 24-26 the bar is
+             still white but keeps its default light icons (KNOT-020g-fix8). -->
+        <item name="android:statusBarColor">@color/knot_canvas</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@color/knot_canvas</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
 
 </resources>
