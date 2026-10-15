@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
-  Platform,
   Pressable,
   RefreshControl,
   StatusBar,
@@ -17,18 +16,12 @@ import { CaretRight } from 'phosphor-react-native';
 import { describeError } from '../../api/client';
 import { PlaceCluster, discoveryApi } from '../../api/discovery';
 import { Pillar } from '../../api/stories';
+import Chip from '../../components/Chip';
 import EmptyState from '../../components/EmptyState';
-import Header from '../../components/Header';
 import { KNOT_MAPBOX_TOKEN } from '../../config/dev';
 import { PlaceCoordinate, coordinatesForPlace } from '../../data/placeCoordinates';
 import { colors, elevation, layout, radius, spacing, tabularNums, typeScale } from '../../theme';
-import {
-  mapTopInset,
-  markerCountLabel,
-  markerSize,
-  placeTotalsLabel,
-  storyCountLabel,
-} from './discoveryFormat';
+import { markerCountLabel, markerSize, placeTotalsLabel, storyCountLabel } from './discoveryFormat';
 
 type DiscoveryMapScreenProps = {
   /**
@@ -65,13 +58,15 @@ const INITIAL_CENTER: [number, number] = [10, 10];
 const INITIAL_ZOOM = 1.2;
 
 /**
- * The share of the screen height the bottom sheet occupies. The reference gives
- * the map the screen and the sheet the bottom of it, overlapping the map's lower
- * edge (KNOT-020e-fix). The map behind the sheet is not sized explicitly: it
- * simply fills the space between the tabs and the bottom of the screen, so it
- * always extends behind the sheet whatever the device's height.
+ * The share of the screen height the bottom sheet occupies.
+ *
+ * The sheet carries the whole screen's chrome now — the headline, the pillar
+ * filter and the place list — so it takes half the screen rather than the 44% it
+ * held when a header and a tab row floated above it (KNOT-020g-fix10). The map
+ * keeps the rest and still extends behind the sheet, so the sheet's own height is
+ * the only thing this controls.
  */
-const SHEET_HEIGHT_RATIO = 0.44;
+const SHEET_HEIGHT_RATIO = 0.5;
 
 // Mapbox needs its access token before any map mounts. Setting it once, at module
 // load, keeps it out of the component and off every render. The token is public
@@ -135,13 +130,16 @@ function clusterKey(cluster: PlaceCluster): string {
  * no user location and no permission prompt: the map is a way in to places, not a
  * way to find the user.
  *
- * The layout is the design reference's (KNOT-020e, KNOT-020e-fix): a static header
- * and the pillar tabs, the map filling the screen behind a rounded bottom sheet,
- * and the sheet carrying the aggregate totals and the scrollable place list over
- * the map's lower edge. The reference's map search control and its location
- * button are deliberately not built — the location button would need a permission
- * and a behaviour the app does not have — and the sheet's drag handle is
- * decorative for the MVP, with no drag-to-expand.
+ * The layout is **map-first** (KNOT-020g-fix10): the map IS the screen, edge to
+ * edge and running behind the translucent status bar, and there is no header, no
+ * title and no tab row above it. Everything the screen offers lives in the bottom
+ * sheet — a drag handle, the headline, the pillar filter as a chip row, the
+ * aggregate totals, and the scrollable place list — which is the shape Bolt's and
+ * Uber's home screens use. The filter is the same server-side query it always was;
+ * only the control that sets it moved. The reference's map search control and its
+ * location button are deliberately not built — the location button would need a
+ * permission and a behaviour the app does not have — and the sheet's drag handle
+ * is decorative for the MVP, with no drag-to-expand.
  */
 export default function DiscoveryMapScreen({
   onOpenPlace,
@@ -155,9 +153,6 @@ export default function DiscoveryMapScreen({
 
   const { height } = useWindowDimensions();
   const sheetHeight = Math.round(height * SHEET_HEIGHT_RATIO);
-  // The status bar is translucent here so the map runs behind it, which means the
-  // floating bands below it have to keep clear of it themselves (KNOT-020g-fix9).
-  const topInset = mapTopInset(Platform.OS, StatusBar.currentHeight);
 
   const load = useCallback(
     async (mode: 'initial' | 'refresh'): Promise<void> => {
@@ -227,11 +222,13 @@ export default function DiscoveryMapScreen({
 
   return (
     <View style={styles.container}>
-      {/* The status bar goes translucent on this screen only, so the map can run
-          behind it. Because the app is then laid out from the physical top, the
-          bar is painted opaque in the canvas colour — the map is behind it, and
-          the icons stay dark on white rather than over the map (KNOT-020g-fix9). */}
-      <StatusBar backgroundColor={colors.bg.canvas} barStyle="dark-content" translucent />
+      {/* A **transparent** status bar on this screen only, so the map shows
+          through it — the map-first look (KNOT-020g-fix10). The icons stay dark,
+          which reads on Mapbox's pale Light basemap. Nothing else on the screen
+          has to clear the bar: there is no header or tab row above the map, and
+          the sheet is pinned to the bottom. The app-wide bar takes over again on
+          unmount. */}
+      <StatusBar backgroundColor="transparent" barStyle="dark-content" translucent />
 
       {/*
        * The map is drawn natively with Mapbox (`@rnmapbox/maps`), superseding
@@ -240,23 +237,24 @@ export default function DiscoveryMapScreen({
        * cannot send identifying headers, so its tiles never rendered; Mapbox draws
        * tiles from its own native SDK using an access token.
        *
-       * It is the **whole screen**, from the top edge behind the status bar to the
-       * bottom, with the header, the tabs and the sheet floating over it
-       * (KNOT-020g-fix9).
+       * It is the **whole screen**, edge to edge and from the physical top behind
+       * the status bar to the bottom behind the sheet, which is the whole point of
+       * the layout (KNOT-020g-fix9, KNOT-020g-fix10).
        *
-       * The token is the *public* one from `src/config/dev.ts`. The Light style is
-       * used so the map reads as the reference's light canvas (KNOT-020e-fix), and
-       * Mapbox's logo is left enabled, as its terms require. The scale bar and the
-       * attribution button are off: neither is part of the design, and the logo
-       * alone is the mark the terms mandate (KNOT-020g-fix9). The logo sits just
-       * above the sheet, because every lower corner of the map is behind it and a
-       * hidden logo would not satisfy those terms at all.
+       * The token is the *public* one from `src/config/dev.ts`, and the Light style
+       * keeps the map reading as the reference's light canvas (KNOT-020e-fix). The
+       * scale bar is off — it is not part of the design. The logo and the
+       * attribution button are both **on**, as Mapbox's terms require, and both sit
+       * on the one line of map the sheet does not cover: a lower corner of this map
+       * is behind the sheet, and a mark the user cannot see satisfies nothing
+       * (KNOT-020g-fix10).
        */}
       <MapView
         style={styles.map}
         styleURL={Mapbox.StyleURL.Light}
         scaleBarEnabled={false}
-        attributionEnabled={false}
+        attributionEnabled
+        attributionPosition={{ bottom: sheetHeight + spacing.sm, right: spacing.sm }}
         logoEnabled
         logoPosition={{ bottom: sheetHeight + spacing.sm, left: spacing.sm }}
       >
@@ -291,55 +289,41 @@ export default function DiscoveryMapScreen({
         })}
       </MapView>
 
-      {/* The header and the pillar tabs, floating over the map on one opaque
-          canvas card: the title has to stay legible whatever the map draws
-          beneath it, so the card is solid rather than translucent
-          (KNOT-020g-fix9). The tabs keep the reference's underline treatment — the
-          active tab pairs the primary ink with the indigo underline, so the row
-          never depends on weight alone (KNOT-020e). */}
-      <View style={[styles.bands, { paddingTop: topInset }]}>
-        <Header title="Discover" />
-
-        <View style={styles.tabs}>
-          {FILTERS.map((option) => {
-            const active = option.value === filter;
-            return (
-              <Pressable
-                key={option.value}
-                style={[styles.tab, active ? styles.tabActive : null]}
-                onPress={() => setFilter(option.value)}
-                accessibilityRole="button"
-                accessibilityState={{ selected: active }}
-                accessibilityLabel={option.label}
-              >
-                <Text
-                  style={[typeScale.button, styles.tabLabel, active ? styles.tabLabelActive : null]}
-                  numberOfLines={1}
-                >
-                  {option.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      </View>
-
-      {/* The place list as a bottom sheet (KNOT-020e-fix): rounded top corners, the
-          canvas surface, the design's upward shadow (elevation Level 3), a
-          decorative drag handle, the aggregate totals, then the scrollable list.
-          It is pinned to the bottom of the screen and overlaps the map's lower
-          edge; the map keeps rendering behind it, and a marker beneath the sheet
-          is covered rather than tappable. No drag gesture: the handle is
-          decorative for the MVP. */}
+      {/* Everything the screen offers, in one sheet over the map's lower half: the
+          drag handle, the headline, the pillar filter as a chip row, the aggregate
+          totals, then the scrollable place list. The sheet is opaque and rounded,
+          so the map reads as the backdrop rather than as a layer the content is
+          fighting (KNOT-020g-fix10). Its `zIndex` keeps it above the map. */}
       <View style={[styles.sheet, { height: sheetHeight }]}>
         <View style={styles.handle} />
 
         <View style={styles.sheetHeader}>
-          <Text style={[typeScale.h2, styles.sheetTitle]}>Places</Text>
-          <Text style={[typeScale.caption, styles.sheetSubtitle]}>
-            {placeTotalsLabel(totals.places, totals.stories, totals.pillars)}
+          <Text style={[typeScale.h1, styles.headline]}>Discover places.</Text>
+          <Text style={[typeScale.body, styles.subtitle]}>
+            Explore stories by place around the world.
           </Text>
+
+          {/* The pillar filter, moved here from the tab row that used to float
+              above the map. It is the same server-side query it always was: a chip
+              is a `?pillar=` value, and "All" sends none (KNOT-020e-fix6). */}
+          <View style={styles.chipRow}>
+            {FILTERS.map((option) => (
+              <Chip
+                key={option.value}
+                label={option.label}
+                selected={option.value === filter}
+                onPress={() => setFilter(option.value)}
+              />
+            ))}
+          </View>
         </View>
+
+        {/* What the list below holds, in the same wording the sheet has always
+            used. It sits between the filter and the list because it describes the
+            list rather than the screen. */}
+        <Text style={[typeScale.caption, styles.totals]}>
+          {placeTotalsLabel(totals.places, totals.stories, totals.pillars)}
+        </Text>
 
         <FlatList
           style={styles.list}
@@ -406,17 +390,15 @@ export default function DiscoveryMapScreen({
 }
 
 const styles = StyleSheet.create({
-  // The header and the tabs as one floating card, pinned to the top of the screen
-  // and above the map. `paddingTop` is set from the status bar's height at render
-  // time, so the title clears the bar on a device that reports one and sits flush
-  // where there is none (KNOT-020g-fix9).
-  bands: {
-    backgroundColor: colors.bg.canvas,
-    left: 0,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-    zIndex: 2,
+  // The pillar filter as a row of chips, under the headline. It wraps rather than
+  // scrolls: three short labels fit one line on any phone, and a row that could
+  // not wrap would clip a fourth pillar if the server ever grows one
+  // (KNOT-020g-fix10).
+  chipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.lg,
   },
   container: {
     backgroundColor: colors.bg.canvas,
@@ -428,16 +410,21 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     textAlign: 'center',
   },
-  // The decorative drag handle: a 32x4 pill in the hairline colour. No gesture
-  // is attached — drag-to-expand is out of scope for the MVP (KNOT-020e-fix).
+  // The decorative drag handle: a 32x4 pill in the hairline colour. No gesture is
+  // attached — drag-to-expand is out of scope for the MVP (KNOT-020e-fix).
   handle: {
     alignSelf: 'center',
     backgroundColor: colors.border.hairline,
-    borderRadius: radius.xs,
+    borderRadius: radius.pill,
     height: 4,
-    marginBottom: spacing.md,
-    marginTop: spacing.sm,
+    marginBottom: spacing.lg,
+    marginTop: spacing.md,
     width: 32,
+  },
+  // The sheet's headline: the screen's only large type now that the title bar is
+  // gone, so it takes the display face at h1 (KNOT-020g-fix10).
+  headline: {
+    color: colors.text.primary,
   },
   list: {
     flex: 1,
@@ -496,10 +483,9 @@ const styles = StyleSheet.create({
   // shadow (elevation Level 3, whose offset-Y is negative — exactly this use
   // case). Pinned to the bottom so it overlaps the map's lower edge. No
   // `overflow: hidden`, so the shadow is not clipped; the corners are above the
-  // list, which never reaches them (KNOT-020e-fix). `zIndex` makes the stack
-  // sheet (3) > floating header and tabs (2) > map (0) explicit, so the two bands
-  // still order correctly on a screen short enough for them to meet
-  // (KNOT-020g-fix9).
+  // list, which never reaches them (KNOT-020e-fix). `zIndex` keeps it above the
+  // map, which now has nothing else over it in this screen's stack
+  // (KNOT-020g-fix9, KNOT-020g-fix10).
   sheet: {
     backgroundColor: colors.bg.canvas,
     borderTopLeftRadius: radius.xxl,
@@ -508,45 +494,27 @@ const styles = StyleSheet.create({
     left: 0,
     position: 'absolute',
     right: 0,
-    zIndex: 3,
+    zIndex: 1,
     ...elevation[3],
   },
+  // The sheet's fixed head: everything above the list, which never scrolls away
+  // with it.
   sheetHeader: {
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.sm,
     paddingHorizontal: layout.screenPaddingFeed,
   },
-  sheetSubtitle: {
-    color: colors.text.tertiary,
+  subtitle: {
+    color: colors.text.secondary,
     marginTop: spacing.xs,
-  },
-  sheetTitle: {
-    color: colors.text.primary,
   },
   spinner: {
     marginTop: spacing.lg,
   },
-  // One tab, as wide as its label: the reference draws the three filters
-  // left-aligned with a 24-point gap, and underlines only the active one.
-  tab: {
-    borderBottomColor: 'transparent',
-    borderBottomWidth: 2,
-    paddingBottom: spacing.sm,
-    paddingTop: spacing.md,
-  },
-  tabActive: {
-    borderBottomColor: colors.brand.primary,
-  },
-  tabLabel: {
+  // What the list below holds. Indented to the screen's gutter like the rows it
+  // describes, so the two read as one block (KNOT-020g-fix10).
+  totals: {
     color: colors.text.tertiary,
-  },
-  tabLabelActive: {
-    color: colors.text.primary,
-  },
-  tabs: {
-    borderBottomColor: colors.border.hairline,
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.xl,
+    paddingBottom: spacing.sm,
     paddingHorizontal: layout.screenPaddingFeed,
   },
 });

@@ -546,6 +546,25 @@ Mapbox's scale bar and its attribution button are off on both maps (`scaleBarEna
 `logoPosition` so it cannot be hidden — just above the sheet on the Discovery Map, whose every lower
 corner is behind the sheet, and in the strip's lower left on Place Stories.
 
+**KNOT-020g-fix10** made the Discovery Map **map-first**, the shape Bolt's and Uber's home screens use, and
+undid the floating bands KNOT-020g-fix9 had put over it. The screen is now the map plus a sheet: the
+`MapView` keeps `StyleSheet.absoluteFillObject` and **nothing floats above it** — the title bar, the
+pillar tab row, `styles.bands` and the `mapTopInset` read are all gone from this screen. Everything the
+screen offers moved into the bottom sheet, which grew from 44% to **50%** of the screen height: a
+decorative drag handle (now `radius.pill`, with the reference's roomier `spacing.md`/`spacing.lg`
+margins around it), a `typeScale.h1` headline ("Discover places."), a `typeScale.body` subtitle,
+the pillar filter as a **`Chip` row** (All / Wonder / Heritage, `selected` marking the active one),
+the `placeTotalsLabel` aggregate line, and then the place list. The filter is still the same
+server-side `?pillar=` query — only the control that sets it moved, so chips replaced the underline
+tabs without touching the fetch.
+
+The status bar on this screen is now **transparent** (`backgroundColor="transparent"`, still
+`translucent` and `dark-content`), so the map shows through it. Nothing needs to clear the bar, which
+is why the `mapTopInset` call was removed here; Place Stories keeps its own. Mapbox's
+**attribution button is restored** (`attributionEnabled`), settling the compliance question fix9
+left open: the logo sits bottom-left and the attribution bottom-right, both on the one line of map
+the sheet does not cover (`{ bottom: sheetHeight + spacing.sm }`), and the scale bar stays off.
+
 The same screen serves the owner: `isOwnProfile` adds the avatar upload, the Set Rooted
 shortcut, and sign-out, so tapping your own author line opens your wall. `AuthorLine`'s
 `onPress` is how the app reaches it — a nested `Pressable` handles the author tap without
