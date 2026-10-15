@@ -9,7 +9,31 @@
  *
  * Nothing here touches React or React Native, so it is exercised directly by
  * `__tests__/discoveryFormat.test.ts` — the project's renderer-less test pattern.
+ * The one thing that reads a platform value is `mapTopInset`, and it takes that
+ * value as an argument rather than importing it, so the rule stays pure
+ * (KNOT-020g-fix9).
  */
+
+/**
+ * How far a map screen's floating bands must sit below the top of the screen.
+ *
+ * The discovery screens make the status bar translucent so their map can run
+ * behind it, which means Android stops insetting the app: the screen's own top is
+ * the physical top, and anything that must not be hidden by the bar has to pad
+ * itself by the bar's height. iOS is the other way round — the root `SafeAreaView`
+ * has already inset the screen past the notch, and `StatusBar.currentHeight` is
+ * `undefined` there — so nothing is added (KNOT-020g-fix9).
+ *
+ * A missing height is read as "no inset" rather than as a failure, so a platform
+ * that does not report one cannot push a band off the screen.
+ */
+export function mapTopInset(platform: string, statusBarHeight: number | undefined): number {
+  if (platform !== 'android') {
+    return 0;
+  }
+
+  return typeof statusBarHeight === 'number' && statusBarHeight > 0 ? statusBarHeight : 0;
+}
 
 /**
  * The pillars the discovery API counts, in the order the summary line reads them

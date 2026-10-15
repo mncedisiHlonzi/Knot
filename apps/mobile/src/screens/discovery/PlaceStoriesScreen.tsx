@@ -2,8 +2,10 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Platform,
   Pressable,
   RefreshControl,
+  StatusBar,
   StyleSheet,
   Text,
   View,
@@ -22,18 +24,21 @@ import { colors, layout, spacing, typeScale } from '../../theme';
 import {
   PILLAR_TABS,
   type PillarFilter,
+  mapTopInset,
   pillarEmptyHeadline,
   placeMapPoint,
   placeSummaryLabel,
 } from './discoveryFormat';
 
 /**
- * The compact map strip's height, in points.
+ * The compact map strip's height, in points, **excluding** the status bar it
+ * reaches under.
  *
- * The reference draws a 96-point strip; this is taller so Mapbox's mandated logo
- * and attribution, which sit inside the strip, do not crowd it — the follow-up the
- * KNOT-020e-fix3 note proposed. The strip is a plain normal-flow box of exactly
- * this height and clips its map, so nothing it holds can draw over the list below
+ * The reference draws a 96-point strip; this is taller so Mapbox's mandated logo,
+ * which sits inside the strip, does not crowd it — the follow-up the
+ * KNOT-020e-fix3 note proposed. The rendered box is this plus the status bar's
+ * height, so the map runs from the physical top of the screen (KNOT-020g-fix9).
+ * The strip clips its map, so nothing it holds can draw over the list below
  * (KNOT-020e-fix5).
  */
 const STRIP_HEIGHT = 140;
@@ -213,46 +218,45 @@ export default function PlaceStoriesScreen({
   // told only by name has none, so the header then sits straight on the list with
   // no gap. The guard also rejects a non-finite or out-of-range pair.
   const mapPoint = placeMapPoint(latitude, longitude);
+  // The status bar is translucent on this screen so the strip reaches the top
+  // edge behind it, which means the floating header has to clear the bar itself
+  // (KNOT-020g-fix9).
+  const topInset = mapTopInset(Platform.OS, StatusBar.currentHeight);
+  // The map band: the strip plus the status bar it reaches under.
+  const stripHeight = topInset + STRIP_HEIGHT;
+
+  const backButton = (
+    <Pressable
+      style={styles.iconButton}
+      onPress={onBack}
+      accessibilityRole="button"
+      accessibilityLabel="Back"
+    >
+      <ArrowLeft color={colors.text.primary} size={24} />
+    </Pressable>
+  );
 
   return (
     <View style={styles.container}>
-      <Header
-        left={
-          <Pressable
-            style={styles.iconButton}
-            onPress={onBack}
-            accessibilityRole="button"
-            accessibilityLabel="Back"
-          >
-            <ArrowLeft color={colors.text.primary} size={24} />
-          </Pressable>
-        }
-      />
+      {/* The status bar goes translucent on this screen only, so the strip can run
+          behind it. Because the app is then laid out from the physical top, the
+          bar is painted opaque in the canvas colour — the map is behind it, and
+          the icons stay dark on white rather than over the map (KNOT-020g-fix9). */}
+      <StatusBar backgroundColor={colors.bg.canvas} barStyle="dark-content" translucent />
 
-      {/* The reference's place block: the place as the screen's headline, with its
-          story and pillar totals as the quiet line beneath it. */}
-      <View style={styles.heading}>
-        <Text style={[typeScale.h1, styles.place]} numberOfLines={2}>
-          {place}
-        </Text>
-        <Text style={[typeScale.caption, styles.summary]}>
-          {placeSummaryLabel(storyCount, pillarCounts)}
-        </Text>
-      </View>
-
-      {/* The reference's compact map strip (KNOT-020e-fix3): a decorative preview
-          of where the place is. It is a sibling of the list rather than a list
-          header, so it stays put while the stories scroll beneath it, and it is
-          fully non-interactive — no pan, zoom, rotate, or pitch. The wrapper
-          clips its map, so the map can never draw over the stories
-          (KNOT-020e-fix5). */}
       {mapPoint === undefined ? null : (
-        <View style={styles.strip}>
+        <View style={[styles.strip, { height: stripHeight }]}>
           {/* A `TextureView`, not the Android default `GLSurfaceView`: a surface
               view is punched through the RN view hierarchy, so it ignores this
               wrapper's clipping and paints over the tab row and the list whatever
               the z-order says. A texture view is an ordinary view, clipped and
-              stacked with everything else (KNOT-020e-fix6). */}
+              stacked with everything else (KNOT-020e-fix6).
+
+              The map is left non-interactive: the strip is a decorative preview
+              and the reference gives it no controls. Mapbox's scale bar and its
+              attribution button are off — neither is part of the design — while
+              the logo stays, as Mapbox's terms require; it keeps the strip's lower
+              left, which the floating header does not cover (KNOT-020g-fix9). */}
           <MapView
             style={styles.stripMap}
             styleURL={Mapbox.StyleURL.Light}
@@ -261,6 +265,10 @@ export default function PlaceStoriesScreen({
             zoomEnabled={false}
             rotateEnabled={false}
             pitchEnabled={false}
+            scaleBarEnabled={false}
+            attributionEnabled={false}
+            logoEnabled
+            logoPosition={{ bottom: spacing.sm, left: spacing.sm }}
           >
             <Camera
               defaultSettings={{
@@ -278,8 +286,35 @@ export default function PlaceStoriesScreen({
               <View style={styles.stripMarker} />
             </PointAnnotation>
           </MapView>
+
+          {/* The header floats over the top of the strip, on an opaque canvas
+              card: the back control has to stay legible whatever the map draws
+              beneath it (KNOT-020g-fix9). The place's own name is not moved up
+              here — it is the reference's place block immediately below the
+              strip, and lifting it into the card would cover the very map it
+              introduces. */}
+          <View style={[styles.floatingHeader, { paddingTop: topInset }]}>{backButton}</View>
         </View>
       )}
+
+      {/* Without a strip there is nothing to float over, so the header is the
+          screen's first band in the normal flow — the layout a place told only by
+          name already had. */}
+      {mapPoint === undefined ? <Header left={backButton} /> : null}
+      {/* The strip is out of flow, so its band is reserved here and the place
+          block, the tabs, and the list all start below it (KNOT-020g-fix9). */}
+      {mapPoint === undefined ? null : <View style={{ height: stripHeight }} />}
+
+      {/* The reference's place block: the place as the screen's headline, with its
+          story and pillar totals as the quiet line beneath it. */}
+      <View style={styles.heading}>
+        <Text style={[typeScale.h1, styles.place]} numberOfLines={2}>
+          {place}
+        </Text>
+        <Text style={[typeScale.caption, styles.summary]}>
+          {placeSummaryLabel(storyCount, pillarCounts)}
+        </Text>
+      </View>
 
       {/* The pillar filter, mirroring the Feed's tab row: every tab carries the
           button weight, and the active one is marked by ink and the indigo
@@ -424,22 +459,41 @@ const styles = StyleSheet.create({
   spinner: {
     marginTop: spacing.xl,
   },
-  // The compact map strip: a normal-flow box of a fixed height, fully outside the
-  // list so it never scrolls with the stories. `overflow: 'hidden'` is
-  // load-bearing rather than cosmetic — the MapView is a native view and React
-  // Native does not clip by default, so without it the map lays out and draws
-  // beyond these bounds and paints over the first stories. The canvas fill makes
-  // the box opaque even before the map has drawn, so nothing behind it shows
-  // through (KNOT-020e-fix5).
+  // The compact map strip: the topmost band of the screen, out of flow so it can
+  // start at the physical top edge and run behind the status bar. Its height is
+  // set at render time to the strip's own height plus the status bar's, so the map
+  // grows upward on a device with an inset and is unchanged where there is none
+  // (KNOT-020g-fix9). `overflow: 'hidden'` is load-bearing rather than cosmetic —
+  // the MapView is a native view and React Native does not clip by default, so
+  // without it the map lays out and draws beyond these bounds and paints over the
+  // first stories. The canvas fill makes the box opaque even before the map has
+  // drawn, so nothing behind it shows through (KNOT-020e-fix5).
   strip: {
     backgroundColor: colors.bg.canvas,
-    height: STRIP_HEIGHT,
+    left: 0,
     overflow: 'hidden',
+    position: 'absolute',
+    right: 0,
+    top: 0,
     width: '100%',
     // The strip is the topmost band, so a story scrolled under it is hidden rather
-    // than drawn across it. The stacking is 2 (strip) > 1 (tabs) > 0 (list)
-    // (KNOT-020e-fix6).
+    // than drawn across it. The stacking is 3 (floating header) > 2 (strip) > 1
+    // (tabs) > 0 (list) (KNOT-020e-fix6, KNOT-020g-fix9).
     zIndex: 2,
+  },
+  // The back header, floating over the strip on an opaque canvas card so the
+  // control stays legible whatever the map draws beneath it. `paddingTop` is set
+  // from the status bar's height at render time, so the control clears the bar on
+  // a device that reports one and sits flush where there is none — including a
+  // place with no coordinate, where the header is not rendered at all
+  // (KNOT-020g-fix9).
+  floatingHeader: {
+    backgroundColor: colors.bg.canvas,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    zIndex: 3,
   },
   // The map gets explicit dimensions rather than `flex: 1`: a native map view is
   // not a plain Yoga-measured View, and sizing it by flex alone is what let it lay

@@ -525,6 +525,27 @@ it runs — the value is declared in both layers deliberately, because each can 
 **`StatusBar` cannot reach the navigation bar**; only the theme can, and only while the app targets
 below API 35 (see the note below).
 
+**KNOT-020g-fix9** gave the two Discovery screens the modern map treatment. On the Discovery Map the
+map is no longer a band between the tabs and the sheet: it is the **screen**, positioned
+`absoluteFillObject`, and the header and the pillar tabs float over it in one opaque canvas card. On
+Place Stories the 140-point map strip left the flow and is pinned to the top of the screen with a
+drawing-order `zIndex` of 2, the back header floats over it at 3, and a spacer of the strip's height
+reserves its band so the place block, the tabs and the list all start below it. The strip's rendered
+height is `topInset + STRIP_HEIGHT`, so the map grows upward into the status bar area.
+
+Both screens make the status bar **translucent** with the canvas colour and `dark-content`, which is
+how the map reaches the physical top edge: with `translucent: false` (the app-wide default from
+KNOT-020g-fix8) Android reserves the bar's space and nothing can sit behind it. A translucent window
+means the app is laid out from `y = 0`, so the floating bands pad themselves by
+`mapTopInset(Platform.OS, StatusBar.currentHeight)` — the height on Android, nothing on iOS, whose
+root `SafeAreaView` has already inset the screen. The bar is still painted opaque white over the map,
+so the icons stay dark on white rather than over the map.
+
+Mapbox's scale bar and its attribution button are off on both maps (`scaleBarEnabled`,
+`attributionEnabled`); the **logo stays**, as Mapbox's terms require, and is positioned with
+`logoPosition` so it cannot be hidden — just above the sheet on the Discovery Map, whose every lower
+corner is behind the sheet, and in the strip's lower left on Place Stories.
+
 The same screen serves the owner: `isOwnProfile` adds the avatar upload, the Set Rooted
 shortcut, and sign-out, so tapping your own author line opens your wall. `AuthorLine`'s
 `onPress` is how the app reaches it — a nested `Pressable` handles the author tap without

@@ -2,8 +2,10 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Platform,
   Pressable,
   RefreshControl,
+  StatusBar,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -20,7 +22,13 @@ import Header from '../../components/Header';
 import { KNOT_MAPBOX_TOKEN } from '../../config/dev';
 import { PlaceCoordinate, coordinatesForPlace } from '../../data/placeCoordinates';
 import { colors, elevation, layout, radius, spacing, tabularNums, typeScale } from '../../theme';
-import { markerCountLabel, markerSize, placeTotalsLabel, storyCountLabel } from './discoveryFormat';
+import {
+  mapTopInset,
+  markerCountLabel,
+  markerSize,
+  placeTotalsLabel,
+  storyCountLabel,
+} from './discoveryFormat';
 
 type DiscoveryMapScreenProps = {
   /**
@@ -147,6 +155,9 @@ export default function DiscoveryMapScreen({
 
   const { height } = useWindowDimensions();
   const sheetHeight = Math.round(height * SHEET_HEIGHT_RATIO);
+  // The status bar is translucent here so the map runs behind it, which means the
+  // floating bands below it have to keep clear of it themselves (KNOT-020g-fix9).
+  const topInset = mapTopInset(Platform.OS, StatusBar.currentHeight);
 
   const load = useCallback(
     async (mode: 'initial' | 'refresh'): Promise<void> => {
@@ -216,33 +227,11 @@ export default function DiscoveryMapScreen({
 
   return (
     <View style={styles.container}>
-      <Header title="Discover" />
-
-      {/* The pillar filter, drawn as the reference's underline tabs: the active
-          tab pairs the primary ink with the indigo underline, so the row never
-          depends on weight alone (KNOT-020e). */}
-      <View style={styles.tabs}>
-        {FILTERS.map((option) => {
-          const active = option.value === filter;
-          return (
-            <Pressable
-              key={option.value}
-              style={[styles.tab, active ? styles.tabActive : null]}
-              onPress={() => setFilter(option.value)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-              accessibilityLabel={option.label}
-            >
-              <Text
-                style={[typeScale.button, styles.tabLabel, active ? styles.tabLabelActive : null]}
-                numberOfLines={1}
-              >
-                {option.label}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      {/* The status bar goes translucent on this screen only, so the map can run
+          behind it. Because the app is then laid out from the physical top, the
+          bar is painted opaque in the canvas colour — the map is behind it, and
+          the icons stay dark on white rather than over the map (KNOT-020g-fix9). */}
+      <StatusBar backgroundColor={colors.bg.canvas} barStyle="dark-content" translucent />
 
       {/*
        * The map is drawn natively with Mapbox (`@rnmapbox/maps`), superseding
@@ -251,12 +240,26 @@ export default function DiscoveryMapScreen({
        * cannot send identifying headers, so its tiles never rendered; Mapbox draws
        * tiles from its own native SDK using an access token.
        *
+       * It is the **whole screen**, from the top edge behind the status bar to the
+       * bottom, with the header, the tabs and the sheet floating over it
+       * (KNOT-020g-fix9).
+       *
        * The token is the *public* one from `src/config/dev.ts`. The Light style is
        * used so the map reads as the reference's light canvas (KNOT-020e-fix), and
-       * Mapbox's logo and attribution are left enabled (required by Mapbox's
-       * terms). A custom brand style is a separate task.
+       * Mapbox's logo is left enabled, as its terms require. The scale bar and the
+       * attribution button are off: neither is part of the design, and the logo
+       * alone is the mark the terms mandate (KNOT-020g-fix9). The logo sits just
+       * above the sheet, because every lower corner of the map is behind it and a
+       * hidden logo would not satisfy those terms at all.
        */}
-      <MapView style={styles.map} styleURL={Mapbox.StyleURL.Light}>
+      <MapView
+        style={styles.map}
+        styleURL={Mapbox.StyleURL.Light}
+        scaleBarEnabled={false}
+        attributionEnabled={false}
+        logoEnabled
+        logoPosition={{ bottom: sheetHeight + spacing.sm, left: spacing.sm }}
+      >
         <Camera defaultSettings={{ centerCoordinate: INITIAL_CENTER, zoomLevel: INITIAL_ZOOM }} />
         {plotted.map((cluster) => {
           const coordinate = coordinateForCluster(cluster);
@@ -287,6 +290,39 @@ export default function DiscoveryMapScreen({
           );
         })}
       </MapView>
+
+      {/* The header and the pillar tabs, floating over the map on one opaque
+          canvas card: the title has to stay legible whatever the map draws
+          beneath it, so the card is solid rather than translucent
+          (KNOT-020g-fix9). The tabs keep the reference's underline treatment — the
+          active tab pairs the primary ink with the indigo underline, so the row
+          never depends on weight alone (KNOT-020e). */}
+      <View style={[styles.bands, { paddingTop: topInset }]}>
+        <Header title="Discover" />
+
+        <View style={styles.tabs}>
+          {FILTERS.map((option) => {
+            const active = option.value === filter;
+            return (
+              <Pressable
+                key={option.value}
+                style={[styles.tab, active ? styles.tabActive : null]}
+                onPress={() => setFilter(option.value)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                accessibilityLabel={option.label}
+              >
+                <Text
+                  style={[typeScale.button, styles.tabLabel, active ? styles.tabLabelActive : null]}
+                  numberOfLines={1}
+                >
+                  {option.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
 
       {/* The place list as a bottom sheet (KNOT-020e-fix): rounded top corners, the
           canvas surface, the design's upward shadow (elevation Level 3), a
@@ -370,6 +406,18 @@ export default function DiscoveryMapScreen({
 }
 
 const styles = StyleSheet.create({
+  // The header and the tabs as one floating card, pinned to the top of the screen
+  // and above the map. `paddingTop` is set from the status bar's height at render
+  // time, so the title clears the bar on a device that reports one and sits flush
+  // where there is none (KNOT-020g-fix9).
+  bands: {
+    backgroundColor: colors.bg.canvas,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    zIndex: 2,
+  },
   container: {
     backgroundColor: colors.bg.canvas,
     flex: 1,
@@ -397,11 +445,11 @@ const styles = StyleSheet.create({
   listContent: {
     paddingBottom: spacing.xxxl,
   },
-  // The map fills the space between the tabs and the bottom of the screen, so it
-  // always extends behind the sheet whatever the device's height.
+  // The map is the screen, not a band in it: it spans from the top edge — behind
+  // the status bar — to the bottom, and everything else floats over it
+  // (KNOT-020g-fix9).
   map: {
-    flex: 1,
-    width: '100%',
+    ...StyleSheet.absoluteFillObject,
   },
   marker: {
     alignItems: 'center',
@@ -448,7 +496,10 @@ const styles = StyleSheet.create({
   // shadow (elevation Level 3, whose offset-Y is negative — exactly this use
   // case). Pinned to the bottom so it overlaps the map's lower edge. No
   // `overflow: hidden`, so the shadow is not clipped; the corners are above the
-  // list, which never reaches them (KNOT-020e-fix).
+  // list, which never reaches them (KNOT-020e-fix). `zIndex` makes the stack
+  // sheet (3) > floating header and tabs (2) > map (0) explicit, so the two bands
+  // still order correctly on a screen short enough for them to meet
+  // (KNOT-020g-fix9).
   sheet: {
     backgroundColor: colors.bg.canvas,
     borderTopLeftRadius: radius.xxl,
@@ -457,6 +508,7 @@ const styles = StyleSheet.create({
     left: 0,
     position: 'absolute',
     right: 0,
+    zIndex: 3,
     ...elevation[3],
   },
   sheetHeader: {

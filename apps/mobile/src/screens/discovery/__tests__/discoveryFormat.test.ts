@@ -2,6 +2,7 @@ import {
   MARKER_MAX_SIZE,
   MARKER_MIN_SIZE,
   PILLAR_TABS,
+  mapTopInset,
   markerCountLabel,
   markerSize,
   pillarEmptyHeadline,
@@ -20,6 +21,28 @@ describe('PILLAR_TABS', () => {
 
   it('starts on the unfiltered tab', () => {
     expect(PILLAR_TABS[0].value).toBe('all');
+  });
+});
+
+describe('mapTopInset', () => {
+  it('clears the status bar on Android, which lays the app out from the top edge', () => {
+    expect(mapTopInset('android', 24)).toBe(24);
+    expect(mapTopInset('android', 44)).toBe(44);
+  });
+
+  it('adds nothing on iOS, whose root safe area has already inset the screen', () => {
+    expect(mapTopInset('ios', undefined)).toBe(0);
+    expect(mapTopInset('ios', 59)).toBe(0);
+  });
+
+  it('reads a missing or nonsensical height as no inset rather than pushing a band off screen', () => {
+    expect(mapTopInset('android', undefined)).toBe(0);
+    expect(mapTopInset('android', 0)).toBe(0);
+    expect(mapTopInset('android', -24)).toBe(0);
+  });
+
+  it('is inert on a platform it does not know', () => {
+    expect(mapTopInset('web', 24)).toBe(0);
   });
 });
 
