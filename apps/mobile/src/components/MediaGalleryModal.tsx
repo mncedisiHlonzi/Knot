@@ -17,7 +17,7 @@ import Video from 'react-native-video';
 
 import type { StoryMedia } from '../api/stories';
 import { API_BASE_URL } from '../config/api';
-import { colors, fontSizes, fontWeights, radius, spacing } from '../theme';
+import { colors, radius, spacing, typeScale } from '../theme';
 import CameraCaptureBadge from './CameraCaptureBadge';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -224,7 +224,7 @@ function VideoPlayer({ uri }: VideoPlayerProps): React.ReactElement {
           accessibilityRole="button"
           accessibilityLabel={paused ? 'Play video' : 'Pause video'}
         >
-          <Text style={styles.playButtonText}>{paused ? '▶' : '❚❚'}</Text>
+          <Text style={[typeScale.bodyS, styles.playButtonText]}>{paused ? '▶' : '❚❚'}</Text>
         </Pressable>
 
         <Pressable
@@ -242,7 +242,9 @@ function VideoPlayer({ uri }: VideoPlayerProps): React.ReactElement {
           <View style={[styles.trackFill, { width: `${progress * 100}%` }]} />
         </Pressable>
 
-        <Text style={styles.time}>{`${formatTime(current)} / ${formatTime(duration)}`}</Text>
+        <Text
+          style={[typeScale.bodyS, styles.time]}
+        >{`${formatTime(current)} / ${formatTime(duration)}`}</Text>
       </View>
     </View>
   );
@@ -353,7 +355,9 @@ export default function MediaGalleryModal({
         ) : null}
 
         {media.length > 1 ? (
-          <Text style={styles.counter}>{`${index + 1} / ${media.length}`}</Text>
+          <Text
+            style={[typeScale.caption, styles.counter]}
+          >{`${index + 1} / ${media.length}`}</Text>
         ) : null}
 
         <Pressable
@@ -362,7 +366,7 @@ export default function MediaGalleryModal({
           accessibilityRole="button"
           accessibilityLabel="Close media viewer"
         >
-          <Text style={styles.closeText}>Close</Text>
+          <Text style={[typeScale.button, styles.closeText]}>Close</Text>
         </Pressable>
       </Animated.View>
     </Modal>
@@ -371,32 +375,30 @@ export default function MediaGalleryModal({
 
 const styles = StyleSheet.create({
   backdrop: {
-    backgroundColor: colors.bg.primary,
+    backgroundColor: colors.bg.canvas,
     flex: 1,
   },
   badge: {
     left: spacing.xl,
     position: 'absolute',
-    top: spacing['3xl'],
+    top: spacing.xxxl,
   },
   close: {
-    borderColor: colors.border.default,
+    borderColor: colors.border.hairline,
     borderRadius: radius.md,
     borderWidth: 1,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.sm,
     position: 'absolute',
     right: spacing.xl,
-    top: spacing['3xl'],
+    top: spacing.xxxl,
   },
   closeText: {
     color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
   },
   controls: {
     alignItems: 'center',
-    bottom: spacing['3xl'],
+    bottom: spacing.xxxl,
     flexDirection: 'row',
     left: spacing.xl,
     position: 'absolute',
@@ -406,7 +408,6 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     bottom: spacing.lg,
     color: colors.text.secondary,
-    fontSize: fontSizes.sm,
     position: 'absolute',
   },
   fullMedia: {
@@ -424,8 +425,8 @@ const styles = StyleSheet.create({
   },
   playButton: {
     alignItems: 'center',
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
+    backgroundColor: colors.bg.paper,
+    borderColor: colors.border.hairline,
     borderRadius: radius.pill,
     borderWidth: 1,
     height: 40,
@@ -434,17 +435,15 @@ const styles = StyleSheet.create({
   },
   playButtonText: {
     color: colors.text.primary,
-    fontSize: fontSizes.sm,
   },
   time: {
     color: colors.text.primary,
-    fontSize: fontSizes.sm,
     marginLeft: spacing.md,
     minWidth: 84,
     textAlign: 'right',
   },
   track: {
-    backgroundColor: colors.bg.surface,
+    backgroundColor: colors.bg.paper,
     borderRadius: radius.pill,
     flex: 1,
     height: 6,
@@ -452,7 +451,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   trackFill: {
-    backgroundColor: colors.brand.purple,
+    backgroundColor: colors.brand.primary,
     height: 6,
   },
 });

@@ -19,7 +19,7 @@ import {
   reportReasonError,
   reportsApi,
 } from '../api/moderation';
-import { colors, fontSizes, fontWeights, lineHeights, radius, spacing } from '../theme';
+import { colors, radius, spacing, typeScale } from '../theme';
 
 type ReportModalProps = {
   /** Whether the modal is shown. */
@@ -105,8 +105,8 @@ export default function ReportModal({
     <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
       <View style={styles.backdrop}>
         <View style={styles.card}>
-          <Text style={styles.title}>Report content</Text>
-          <Text style={styles.subtitle}>
+          <Text style={[typeScale.h2, styles.title]}>Report content</Text>
+          <Text style={[typeScale.bodyS, styles.subtitle]}>
             Tell the moderators what is wrong. Reports are private.
           </Text>
 
@@ -123,16 +123,16 @@ export default function ReportModal({
                 <View style={[styles.radio, category === option.value ? styles.radioOn : null]}>
                   {category === option.value ? <View style={styles.radioDot} /> : null}
                 </View>
-                <Text style={styles.categoryLabel}>{option.label}</Text>
+                <Text style={[typeScale.body, styles.categoryLabel]}>{option.label}</Text>
               </Pressable>
             ))}
           </ScrollView>
 
-          <Text style={styles.label}>
+          <Text style={[typeScale.label, styles.label]}>
             Reason {category === 'other' ? '(required)' : '(optional)'}
           </Text>
           <TextInput
-            style={[styles.input, styles.multiline]}
+            style={[typeScale.body, styles.input, styles.multiline]}
             value={reason}
             onChangeText={setReason}
             multiline
@@ -140,11 +140,13 @@ export default function ReportModal({
             placeholderTextColor={colors.text.secondary}
           />
 
-          {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
+          {error !== undefined ? (
+            <Text style={[typeScale.bodyS, styles.error]}>{error}</Text>
+          ) : null}
 
           <View style={styles.actions}>
             <Pressable style={[styles.button, styles.cancel]} onPress={close} disabled={submitting}>
-              <Text style={styles.cancelText}>Cancel</Text>
+              <Text style={[typeScale.button, styles.cancelText]}>Cancel</Text>
             </Pressable>
             <Pressable
               style={[styles.button, styles.submit, submitting ? styles.disabled : null]}
@@ -156,9 +158,9 @@ export default function ReportModal({
               accessibilityLabel="Submit report"
             >
               {submitting ? (
-                <ActivityIndicator color={colors.text.primary} />
+                <ActivityIndicator color={colors.text.onBrand} />
               ) : (
-                <Text style={styles.submitText}>Submit</Text>
+                <Text style={[typeScale.button, styles.submitText]}>Submit</Text>
               )}
             </Pressable>
           </View>
@@ -174,9 +176,11 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     marginTop: spacing.lg,
   },
+  // The modal scrim: the one documented overlay colour, so it is a token rather
+  // than a literal (KNOT-020g-fix15).
   backdrop: {
     alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    backgroundColor: colors.scrim.overlay,
     flex: 1,
     justifyContent: 'center',
     padding: spacing.lg,
@@ -190,17 +194,16 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   cancel: {
-    borderColor: colors.border.default,
+    borderColor: colors.border.hairline,
     borderWidth: 1,
     marginRight: spacing.sm,
   },
   cancelText: {
     color: colors.text.primary,
-    fontSize: fontSizes.md,
   },
   card: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.subtle,
+    backgroundColor: colors.bg.paper,
+    borderColor: colors.border.hairline,
     borderRadius: radius.lg,
     borderWidth: 1,
     maxHeight: '85%',
@@ -213,7 +216,6 @@ const styles = StyleSheet.create({
   },
   categoryLabel: {
     color: colors.text.primary,
-    fontSize: fontSizes.md,
     marginLeft: spacing.sm,
   },
   categoryRow: {
@@ -225,24 +227,20 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.sm,
+    color: colors.state.danger,
     marginTop: spacing.md,
   },
   input: {
-    backgroundColor: colors.bg.secondary,
-    borderColor: colors.border.default,
+    backgroundColor: colors.bg.sunken,
+    borderColor: colors.border.hairline,
     borderRadius: radius.md,
     borderWidth: 1,
     color: colors.text.primary,
-    fontSize: fontSizes.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
   label: {
     color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.medium,
     marginBottom: spacing.xs,
     marginTop: spacing.lg,
   },
@@ -252,7 +250,7 @@ const styles = StyleSheet.create({
   },
   radio: {
     alignItems: 'center',
-    borderColor: colors.border.default,
+    borderColor: colors.border.hairline,
     borderRadius: 10,
     borderWidth: 2,
     height: 20,
@@ -260,31 +258,27 @@ const styles = StyleSheet.create({
     width: 20,
   },
   radioDot: {
-    backgroundColor: colors.brand.purple,
+    backgroundColor: colors.brand.primary,
     borderRadius: 5,
     height: 10,
     width: 10,
   },
   radioOn: {
-    borderColor: colors.brand.purple,
+    borderColor: colors.brand.primary,
   },
   submit: {
-    backgroundColor: colors.brand.purple,
+    backgroundColor: colors.brand.primary,
   },
+  // A primary fill takes the on-brand ink, which is the design system's fix for
+  // the dark-on-indigo label this used to draw (KNOT-020b).
   submitText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    fontWeight: fontWeights.semiBold,
+    color: colors.text.onBrand,
   },
   subtitle: {
     color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    lineHeight: lineHeights.sm,
     marginTop: spacing.xs,
   },
   title: {
     color: colors.text.primary,
-    fontSize: fontSizes.xl,
-    fontWeight: fontWeights.bold,
   },
 });

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { KNOT_MAPBOX_TOKEN } from '../config/dev';
-import { colors, fontSizes, fontWeights, radius, spacing } from '../theme';
+import { colors, radius, spacing, typeScale } from '../theme';
 
 /** A place the user chose from the geocoding suggestions. */
 export type PickedPlace = {
@@ -202,7 +202,7 @@ export default function LocationPicker({
     <View>
       <View style={styles.inputRow}>
         <TextInput
-          style={styles.input}
+          style={[typeScale.body, styles.input]}
           value={text}
           onChangeText={onChangeText}
           placeholder={placeholder ?? 'Search for a place'}
@@ -217,13 +217,13 @@ export default function LocationPicker({
             accessibilityRole="button"
             accessibilityLabel="Clear place"
           >
-            <Text style={styles.clearText}>Clear</Text>
+            <Text style={[typeScale.label, styles.clearText]}>Clear</Text>
           </Pressable>
         ) : null}
       </View>
 
       {selected !== null ? (
-        <Text style={styles.selected}>
+        <Text style={[typeScale.bodyS, styles.selected]}>
           {`Selected: ${selected.place}${selected.country === null ? '' : `, ${selected.country}`}`}
         </Text>
       ) : null}
@@ -231,7 +231,7 @@ export default function LocationPicker({
       {searching ? (
         <ActivityIndicator style={styles.spinner} color={colors.text.secondary} />
       ) : null}
-      {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
+      {error !== undefined ? <Text style={[typeScale.bodyS, styles.error]}>{error}</Text> : null}
 
       {showResults ? (
         <View style={styles.results}>
@@ -242,9 +242,9 @@ export default function LocationPicker({
               onPress={() => onSelect(result)}
               accessibilityRole="button"
             >
-              <Text style={styles.resultName}>{result.place}</Text>
+              <Text style={[typeScale.h3, styles.resultName]}>{result.place}</Text>
               {result.contextLine !== '' ? (
-                <Text style={styles.resultContext}>{result.contextLine}</Text>
+                <Text style={[typeScale.bodyS, styles.resultContext]}>{result.contextLine}</Text>
               ) : null}
             </Pressable>
           ))}
@@ -261,23 +261,19 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
   },
   clearText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.semiBold,
+    color: colors.brand.primary,
   },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.sm,
+    color: colors.state.danger,
     marginTop: spacing.xs,
   },
   input: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
+    backgroundColor: colors.bg.paper,
+    borderColor: colors.border.hairline,
     borderRadius: radius.md,
     borderWidth: 1,
     color: colors.text.primary,
     flex: 1,
-    fontSize: fontSizes.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
   },
@@ -286,24 +282,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   result: {
-    borderTopColor: colors.border.subtle,
+    borderTopColor: colors.border.hairline,
     borderTopWidth: 1,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
   },
   resultContext: {
     color: colors.text.secondary,
-    fontSize: fontSizes.sm,
     marginTop: 2,
   },
   resultName: {
     color: colors.text.primary,
-    fontSize: fontSizes.md,
-    fontWeight: fontWeights.semiBold,
   },
   results: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
+    backgroundColor: colors.bg.paper,
+    borderColor: colors.border.hairline,
     borderRadius: radius.md,
     borderWidth: 1,
     marginTop: spacing.xs,
@@ -311,7 +304,6 @@ const styles = StyleSheet.create({
   },
   selected: {
     color: colors.text.secondary,
-    fontSize: fontSizes.sm,
     marginTop: spacing.xs,
   },
   spinner: {

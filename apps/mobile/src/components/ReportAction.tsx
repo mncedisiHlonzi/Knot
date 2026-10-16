@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
 
 import { ReportEntityType } from '../api/moderation';
-import { colors, fontSizes, spacing } from '../theme';
+import { colors, spacing, typeScale } from '../theme';
 import ReportModal from './ReportModal';
 
 type ReportActionProps = {
@@ -48,7 +48,7 @@ export default function ReportAction({
         accessibilityLabel="Report content"
         hitSlop={spacing.sm}
       >
-        <Text style={styles.triggerText}>⋯</Text>
+        <Text style={[typeScale.h2, styles.triggerText]}>⋯</Text>
       </Pressable>
       <ReportModal
         visible={visible}
@@ -74,7 +74,5 @@ const styles = StyleSheet.create({
   },
   triggerText: {
     color: colors.text.secondary,
-    fontSize: fontSizes.lg,
-    fontWeight: '700',
   },
 });

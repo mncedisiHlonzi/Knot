@@ -679,6 +679,20 @@ change handlers instead, which is what `maxLength` enforced. `KNOT-ADR-068`'s st
 only screen that auto-plays" sentence is corrected in place (the decision itself still holds, so it is
 not marked superseded).
 
+**KNOT-020g-fix15** finished the token migration. The six shared components that still read the
+deprecated tokens — `ReportModal`, `LanguagePicker`, `LocationPicker`, `MediaGalleryModal`,
+`CameraCaptureBadge` and `ReportAction` — are now on `typeScale` composites and the semantic colour
+roles, so **both `src/screens` and `src/components` are clean** of `typography.*` / `fontSizes.*` /
+`lineHeights.*`, of every deprecated colour alias, and of the mis-cased `fontWeights.semiBold` /
+`extraBold` spellings. The two pickers matter most: they are drawn inside the already-migrated Register
+and Rooted Setup screens, so those screens were clean in source but half-migrated on screen. The change
+is **token-level only** — no prop, no behaviour, no structural change — but it does align three things
+the design system fixes: a primary fill now takes `colors.text.onBrand` (the report modal's Submit
+label, which had been dark-on-indigo), the report modal's scrim is `colors.scrim.overlay` rather than a
+literal `rgba(0, 0, 0, 0.6)`, and `MediaGalleryModal`'s `spacing['3xl']` reads are the canonical
+`spacing.xxxl`. The pickers deliberately keep their own boxed fields instead of adopting the design
+system's underline `Input`, because that would be a visual redesign rather than a token change.
+
 The same screen serves the owner: `isOwnProfile` adds the avatar upload, the Set Rooted
 shortcut, and sign-out, so tapping your own author line opens your wall. `AuthorLine`'s
 `onPress` is how the app reaches it — a nested `Pressable` handles the author tap without

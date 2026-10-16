@@ -8,7 +8,7 @@ import {
   toggleLanguage,
   type Language,
 } from '../data/languages';
-import { colors, fontSizes, fontWeights, radius, spacing } from '../theme';
+import { colors, radius, spacing, typeScale } from '../theme';
 
 /** How many matches to list at once; the user narrows the list by typing. */
 const MAX_RESULTS = 20;
@@ -111,7 +111,7 @@ export default function LanguagePicker(props: LanguagePickerProps): React.ReactE
         <View style={styles.chips}>
           {selected.map((code) => (
             <View key={code} style={styles.chip}>
-              <Text style={styles.chipText}>{languageName(code)}</Text>
+              <Text style={[typeScale.label, styles.chipText]}>{languageName(code)}</Text>
               <Pressable
                 style={styles.chipRemove}
                 onPress={() => remove(code)}
@@ -119,7 +119,7 @@ export default function LanguagePicker(props: LanguagePickerProps): React.ReactE
                 accessibilityLabel={`Remove ${languageName(code)}`}
                 hitSlop={spacing.sm}
               >
-                <Text style={styles.chipRemoveText}>×</Text>
+                <Text style={[typeScale.label, styles.chipRemoveText]}>×</Text>
               </Pressable>
             </View>
           ))}
@@ -127,7 +127,7 @@ export default function LanguagePicker(props: LanguagePickerProps): React.ReactE
       ) : null}
 
       <TextInput
-        style={styles.input}
+        style={[typeScale.body, styles.input]}
         value={query}
         onChangeText={setQuery}
         placeholder={props.placeholder ?? 'Search for a language'}
@@ -138,13 +138,15 @@ export default function LanguagePicker(props: LanguagePickerProps): React.ReactE
       />
 
       {atMax ? (
-        <Text style={styles.hint}>
+        <Text style={[typeScale.bodyS, styles.hint]}>
           {`You can choose up to ${max} languages. Tap one to remove it.`}
         </Text>
       ) : null}
 
       {trimmedQuery !== '' && results.length === 0 ? (
-        <Text style={styles.empty}>{`No language matches “${trimmedQuery}”.`}</Text>
+        <Text
+          style={[typeScale.bodyS, styles.empty]}
+        >{`No language matches “${trimmedQuery}”.`}</Text>
       ) : null}
 
       {results.length > 0 ? (
@@ -159,8 +161,10 @@ export default function LanguagePicker(props: LanguagePickerProps): React.ReactE
                 accessibilityRole="button"
                 accessibilityState={{ selected: chosen }}
               >
-                <Text style={styles.resultName}>{language.name}</Text>
-                <Text style={chosen ? styles.resultCodeChosen : styles.resultCode}>
+                <Text style={[typeScale.h3, styles.resultName]}>{language.name}</Text>
+                <Text
+                  style={[typeScale.bodyS, chosen ? styles.resultCodeChosen : styles.resultCode]}
+                >
                   {chosen ? `${language.code} ✓` : language.code}
                 </Text>
               </Pressable>
@@ -175,8 +179,8 @@ export default function LanguagePicker(props: LanguagePickerProps): React.ReactE
 const styles = StyleSheet.create({
   chip: {
     alignItems: 'center',
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.brand.purple,
+    backgroundColor: colors.bg.paper,
+    borderColor: colors.brand.primary,
     borderRadius: radius.pill,
     borderWidth: 1,
     flexDirection: 'row',
@@ -191,13 +195,9 @@ const styles = StyleSheet.create({
   },
   chipRemoveText: {
     color: colors.text.secondary,
-    fontSize: fontSizes.md,
-    fontWeight: fontWeights.semiBold,
   },
   chipText: {
     color: colors.text.primary,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.semiBold,
   },
   chips: {
     flexDirection: 'row',
@@ -206,27 +206,24 @@ const styles = StyleSheet.create({
   },
   empty: {
     color: colors.text.secondary,
-    fontSize: fontSizes.sm,
     marginTop: spacing.xs,
   },
   hint: {
     color: colors.text.secondary,
-    fontSize: fontSizes.sm,
     marginTop: spacing.xs,
   },
   input: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
+    backgroundColor: colors.bg.paper,
+    borderColor: colors.border.hairline,
     borderRadius: radius.md,
     borderWidth: 1,
     color: colors.text.primary,
-    fontSize: fontSizes.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
   },
   result: {
     alignItems: 'center',
-    borderTopColor: colors.border.subtle,
+    borderTopColor: colors.border.hairline,
     borderTopWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -235,21 +232,16 @@ const styles = StyleSheet.create({
   },
   resultCode: {
     color: colors.text.secondary,
-    fontSize: fontSizes.sm,
   },
   resultCodeChosen: {
-    color: colors.text.brand,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.semiBold,
+    color: colors.brand.primary,
   },
   resultName: {
     color: colors.text.primary,
-    fontSize: fontSizes.md,
-    fontWeight: fontWeights.semiBold,
   },
   results: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
+    backgroundColor: colors.bg.paper,
+    borderColor: colors.border.hairline,
     borderRadius: radius.md,
     borderWidth: 1,
     marginTop: spacing.xs,

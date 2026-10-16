@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
 
-import { colors, fontSizes, fontWeights, radius, spacing } from '../theme';
+import { colors, radius, spacing, typeScale } from '../theme';
 
 type CameraCaptureBadgeProps = {
   /** Optional short label shown next to the icon. */
@@ -24,8 +24,10 @@ export default function CameraCaptureBadge({
 }: CameraCaptureBadgeProps): React.ReactElement {
   return (
     <View style={[styles.badge, style]} accessibilityLabel="Captured with the camera">
-      <Text style={styles.icon}>📷</Text>
-      {label !== undefined ? <Text style={styles.label}>{label}</Text> : null}
+      {/* The camera glyph is an emoji, so its ink is the glyph's own; only the
+          type scale applies (KNOT-020g-fix15). */}
+      <Text style={typeScale.bodyS}>📷</Text>
+      {label !== undefined ? <Text style={[typeScale.caption, styles.label]}>{label}</Text> : null}
     </View>
   );
 }
@@ -33,21 +35,16 @@ export default function CameraCaptureBadge({
 const styles = StyleSheet.create({
   badge: {
     alignItems: 'center',
-    backgroundColor: colors.bg.secondary,
-    borderColor: colors.border.subtle,
+    backgroundColor: colors.bg.sunken,
+    borderColor: colors.border.hairline,
     borderRadius: radius.pill,
     borderWidth: 1,
     flexDirection: 'row',
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
   },
-  icon: {
-    fontSize: fontSizes.sm,
-  },
   label: {
     color: colors.text.primary,
-    fontSize: fontSizes.sm,
-    fontWeight: fontWeights.medium,
     marginLeft: spacing.xs,
   },
 });
