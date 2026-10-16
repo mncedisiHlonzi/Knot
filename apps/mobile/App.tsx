@@ -358,6 +358,12 @@ export default function App(): React.ReactElement {
             onOpenStory={(id) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId: id }))
             }
+            // An adaptation entry opens the VERSION, not the story it adapts, so the
+            // reader lands on the version they tapped (KNOT-022). It pushes the same
+            // overlay the language tree uses for one version.
+            onOpenVersion={(versionId) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'storyVersion', versionId }))
+            }
             onOpenNotifications={() =>
               setOverlays((stack) => pushOverlay(stack, { name: 'notifications' }))
             }

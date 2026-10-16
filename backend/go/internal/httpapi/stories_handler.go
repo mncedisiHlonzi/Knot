@@ -28,8 +28,15 @@ const codeNotFound = "not_found"
 type StoriesService interface {
 	CreateStory(ctx context.Context, in stories.CreateStoryInput) (stories.Story, error)
 	GetStory(ctx context.Context, id string) (stories.Story, error)
-	ListStories(ctx context.Context, cursor string, limit int) ([]stories.Story, string, error)
+	ListFeed(ctx context.Context, cursor string, limit int) ([]stories.FeedItem, string, error)
 }
+
+// The feed's discriminator values. They mirror the domain's own literals so the
+// wire format cannot drift from what the store writes into the union.
+const (
+	feedKindStory   = string(stories.FeedKindStory)
+	feedKindVersion = string(stories.FeedKindVersion)
+)
 
 // StoriesHandler serves the story endpoints.
 type StoriesHandler struct {
@@ -39,6 +46,7 @@ type StoriesHandler struct {
 	media     StoryMediaLookup
 	reactions ReactionsLookup
 	stats     StoryStatsLookup
+	chains    VersionChainLookup
 	logger    *slog.Logger
 }
 
@@ -47,9 +55,10 @@ type StoriesHandler struct {
 // attaches that author's inline Rooted summary, the media lookup attaches the
 // story's media (in full on the detail, as a single preview on the feed), the
 // reactions lookup attaches the perspective-reaction counts and the reader's own
-// signals, and the stats lookup attaches the story's aggregate counts (versions,
-// languages, comments, media) in one batched read per response.
-func NewStoriesHandler(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, stats StoryStatsLookup, logger *slog.Logger) (*StoriesHandler, error) {
+// signals, the stats lookup attaches the story's aggregate counts (versions,
+// languages, comments, media) in one batched read per response, and the chain
+// lookup attributes the adaptations a feed page carries (KNOT-022).
+func NewStoriesHandler(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, stats StoryStatsLookup, chains VersionChainLookup, logger *slog.Logger) (*StoriesHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a service")
 	}
@@ -68,10 +77,13 @@ func NewStoriesHandler(service StoriesService, authors AuthorLookup, rooted Root
 	if stats == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a story stats lookup")
 	}
+	if chains == nil {
+		return nil, fmt.Errorf("httpapi: stories handler requires a version chain lookup")
+	}
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a logger")
 	}
-	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, stats: stats, logger: logger}, nil
+	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, stats: stats, chains: chains, logger: logger}, nil
 }
 
 // createStoryRequest is the POST /stories body.
@@ -167,12 +179,14 @@ type storyResponse struct {
 	// "is there more here than a preview shows", and it keeps the client from
 	// inferring truncation from the text (KNOT-020g-fix12).
 	PreviewTruncated bool `json:"preview_truncated"`
-	// AttributionLine is the root version's attribution sentence, and
-	// VersionDepth is how many adaptations separate the story from its original
-	// -- always 0, because a story IS its root version (KNOT-021). Both are
-	// pointers so that `omitempty` drops them from the FEED response entirely:
-	// this task attributes the story detail, and the feed's own attribution is
-	// separate work. A client must treat them as absent when they are missing.
+	// AttributionLine is the root version's attribution sentence for a story,
+	// and VersionDepth is how many adaptations separate it from its original --
+	// always 0, because a story IS its root version (KNOT-021). Both are
+	// pointers so that `omitempty` drops them from an entry whose attribution is
+	// carried elsewhere: a story entry in the feed omits them, because a story
+	// card is already attributed by its author line, while an ADAPTATION entry
+	// carries its own `attribution_line` (see feedVersionItem). A client must
+	// treat them as absent when they are missing (KNOT-022).
 	AttributionLine *string `json:"attribution_line,omitempty"`
 	VersionDepth    *int    `json:"version_depth,omitempty"`
 }
@@ -183,12 +197,143 @@ type storyEnvelope struct {
 	Story storyResponse `json:"story"`
 }
 
-// listStoriesResponse is the GET /stories body. NextCursor is the empty string
-// on the last page; the field is always present so a client can test it without
-// distinguishing absent from empty.
+// feedStoryItem is a story entry in the feed: the story projection plus the
+// discriminator a client switches on.
+//
+// storyResponse is embedded by value so every story field stays flat on the wire
+// and the story shape keeps exactly one definition. kind is the only addition,
+// and the embedded struct has no field of that name, so nothing is shadowed
+// (KNOT-022).
+type feedStoryItem struct {
+	Kind string `json:"kind"`
+	storyResponse
+}
+
+// feedVersionItem is an ADAPTATION entry in the feed: one version somebody wrote
+// of somebody else's story.
+//
+// It is the version-side counterpart of storyResponse, and it carries the same
+// card-shaped fields (author line, framing, media preview, counts, reactions) so
+// one feed component can render both kinds. What differs is identity: id is the
+// VERSION, story_id is the story it adapts, and everything the version itself
+// does not own -- place and media -- is inherited from that story, which is where
+// those columns live (KNOT-ADR-030, KNOT-ADR-034).
+//
+// There is no version_depth here. A feed entry is never a root, so its depth is
+// at least 1, and a card wants the number a reader says out loud ("this is the
+// third version"), which is version_number = depth + 1 (KNOT-021, KNOT-022).
+type feedVersionItem struct {
+	Kind string `json:"kind"`
+	// ID is the version's own id: it is what the reader opens, reacts to, and
+	// follows from here.
+	ID string `json:"id"`
+	// StoryID is the story being adapted, so a client can open the original or
+	// the language tree from the entry.
+	StoryID string `json:"story_id"`
+	// ParentVersionID is the version this one adapts. It is never null: a root
+	// version is the story and is not a feed entry of its own, so every version
+	// the feed carries has a parent (KNOT-022).
+	ParentVersionID string `json:"parent_version_id"`
+	// AuthorID is the ADAPTER, not the original author; the original is named in
+	// AttributionLine.
+	AuthorID string `json:"author_id"`
+	// AuthorDisplayName and AuthorAvatarURL are the adapter's inline attribution,
+	// filled by one batched lookup per response. AuthorAvatarURL is null when the
+	// author has none, so a client renders initials (KNOT-ADR-041).
+	AuthorDisplayName string         `json:"author_display_name"`
+	AuthorAvatarURL   *string        `json:"author_avatar_url"`
+	AuthorRooted      *rootedSummary `json:"author_rooted"`
+	Language          string         `json:"language"`
+	Title             string         `json:"title"`
+	Body              string         `json:"body"`
+	// Pillar is the story's pillar, inherited: a pillar frames the story, and an
+	// adaptation of a heritage story is still heritage.
+	Pillar stories.Pillar `json:"pillar"`
+	// ApproximateLocation, Latitude, Longitude, and PlaceCountry are the story's
+	// place, inherited for the same reason -- a version carries no place of its
+	// own in the data model.
+	ApproximateLocation string    `json:"approximate_location"`
+	Latitude            *float64  `json:"latitude"`
+	Longitude           *float64  `json:"longitude"`
+	PlaceCountry        *string   `json:"place_country"`
+	MediaURLs           []string  `json:"media_urls"`
+	Sensitive           bool      `json:"sensitive"`
+	CreatedAt           time.Time `json:"created_at"`
+	// MediaCount and the FirstMedia* fields describe the STORY's media preview, so
+	// an adaptation entry shows the story's pictures. The version's own text is
+	// what the card shows as content, and the card renders media from these fields
+	// rather than from a media array, so the entry carries no array.
+	MediaCount       int                    `json:"media_count"`
+	FirstMediaType   *string                `json:"first_media_type"`
+	FirstMediaURL    *string                `json:"first_media_url"`
+	FirstMediaWidth  *int                   `json:"first_media_width"`
+	FirstMediaHeight *int                   `json:"first_media_height"`
+	Reactions        reactionCountsResponse `json:"reactions"`
+	MyReactions      []string               `json:"my_reactions"`
+	// VersionCount, LanguageCount, and CommentCount describe the story, so the
+	// entry can say how much adaptation has already happened to it.
+	VersionCount  int `json:"version_count"`
+	LanguageCount int `json:"language_count"`
+	CommentCount  int `json:"comment_count"`
+	// VersionNumber is the entry's position in its lineage, counting the original
+	// as version 1. It is derived from the parent pointers at read time: a first
+	// adaptation is version 2.
+	VersionNumber int `json:"version_number"`
+	// AttributionLine is the human sentence tracing this version back to the
+	// original, rendered server-side; the client shows it verbatim. It is empty
+	// only when the lineage could not be resolved, because attribution must never
+	// fail a page (KNOT-021, KNOT-022).
+	AttributionLine string `json:"attribution_line"`
+	// PreviewTruncated answers "is there more of this version's body than a card
+	// shows", the same contract a story entry follows (KNOT-020g-fix12).
+	PreviewTruncated bool `json:"preview_truncated"`
+}
+
+// newFeedVersionItem projects a stored feed version onto the wire. Everything the
+// row answers is filled here; the enrichment fills the rest.
+func newFeedVersionItem(version stories.VersionFeedItem) feedVersionItem {
+	media := version.MediaURLs
+	if media == nil {
+		// Emit [] rather than null for an empty list.
+		media = []string{}
+	}
+
+	return feedVersionItem{
+		Kind:                feedKindVersion,
+		ID:                  version.ID,
+		StoryID:             version.StoryID,
+		ParentVersionID:     version.ParentVersionID,
+		AuthorID:            version.AuthorID,
+		Language:            version.Language,
+		Title:               version.Title,
+		Body:                version.Body,
+		Pillar:              version.Pillar,
+		ApproximateLocation: version.ApproximateLocation,
+		Latitude:            version.Latitude,
+		Longitude:           version.Longitude,
+		PlaceCountry:        version.PlaceCountry,
+		MediaURLs:           media,
+		Sensitive:           version.Sensitive,
+		CreatedAt:           version.CreatedAt,
+		PreviewTruncated:    bodyExceedsPreviewWindow(version.Body),
+		// Emit [] rather than null until the enrichment fills it in.
+		MyReactions: []string{},
+	}
+}
+
+// listStoriesResponse is the GET /stories body.
+//
+// Items is the merged feed: story entries and adaptation entries in one
+// newest-first stream, each carrying the "kind" that says which shape it is. The
+// field is named items rather than stories because a page is no longer only
+// stories (KNOT-022, KNOT-ADR-070); the concrete element types are feedStoryItem
+// and feedVersionItem.
+//
+// NextCursor is the empty string on the last page; the field is always present so
+// a client can test it without distinguishing absent from empty.
 type listStoriesResponse struct {
-	Stories    []storyResponse `json:"stories"`
-	NextCursor string          `json:"next_cursor"`
+	Items      []any  `json:"items"`
+	NextCursor string `json:"next_cursor"`
 }
 
 // Create handles POST /stories. The route is protected, so the author id comes
@@ -270,10 +415,18 @@ func (h *StoriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // List handles GET /stories. The route is public.
 //
-// Each page is enriched in one batched read per lookup — author attribution,
-// the author's inline Rooted summary, the media preview, the aggregate counts,
-// and the reactions — so a page of stories is a fixed number of queries rather
-// than one per row.
+// The page is a merged stream of two entry kinds (KNOT-022). Each page is
+// enriched in one batched read per lookup — author attribution, the author's
+// inline Rooted summary, the media preview, the aggregate counts, and the
+// reactions — so a page of entries is a fixed number of queries rather than one
+// per row.
+//
+// The two kinds are collected as two groups so each entry keeps its identity, then
+// enriched TOGETHER: the identity, Rooted, media, and count reads span both kinds
+// in one call each, because the keys they need (the entry's author, and the story
+// behind the entry) can be unioned without ambiguity. Reactions are the exception,
+// which feedPageLookups documents. The enriched groups are then interleaved back
+// into the order the store returned.
 func (h *StoriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
@@ -283,32 +436,47 @@ func (h *StoriesHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page, next, err := h.service.ListStories(r.Context(), query.Get("cursor"), limit)
+	page, next, err := h.service.ListFeed(r.Context(), query.Get("cursor"), limit)
 	if err != nil {
 		h.writeServiceError(w, r, err)
 		return
 	}
 
-	items := make([]storyResponse, 0, len(page))
-	for _, story := range page {
-		items = append(items, newStoryResponse(story))
+	storyItems := make([]storyResponse, 0, len(page))
+	storySlots := make([]int, 0, len(page))
+	versionItems := make([]feedVersionItem, 0, len(page))
+	versionSlots := make([]int, 0, len(page))
+
+	for i, entry := range page {
+		if entry.Kind == stories.FeedKindVersion {
+			versionItems = append(versionItems, newFeedVersionItem(entry.Version))
+			versionSlots = append(versionSlots, i)
+			continue
+		}
+
+		storyItems = append(storyItems, newStoryResponse(entry.Story))
+		storySlots = append(storySlots, i)
 	}
 
-	// One batched read per lookup decorates the whole page: author attribution,
-	// the author's inline Rooted summary, the media preview, the aggregate counts
-	// and first-media fields, and the reactions. The discovery place page enriches
-	// through this same helper, so a story carries identical fields wherever it is
-	// listed (KNOT-020e-fix2).
-	storyPageLookups{
+	feedPageLookups{
 		authors:   h.authors,
 		rooted:    h.rooted,
 		media:     h.media,
 		reactions: h.reactions,
 		stats:     h.stats,
+		chains:    h.chains,
 		logger:    h.logger,
-	}.enrich(r.Context(), items)
+	}.enrich(r.Context(), storyItems, versionItems)
 
-	writeJSON(w, http.StatusOK, listStoriesResponse{Stories: items, NextCursor: next})
+	items := make([]any, len(page))
+	for i, slot := range storySlots {
+		items[slot] = feedStoryItem{Kind: feedKindStory, storyResponse: storyItems[i]}
+	}
+	for i, slot := range versionSlots {
+		items[slot] = versionItems[i]
+	}
+
+	writeJSON(w, http.StatusOK, listStoriesResponse{Items: items, NextCursor: next})
 }
 
 // parseLimit reads the optional "limit" query parameter.

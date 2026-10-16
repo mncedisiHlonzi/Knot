@@ -18,7 +18,7 @@ type fakeStore struct {
 	createErr    error
 	getResult    Story
 	getErr       error
-	listResult   []Story
+	listResult   []FeedItem
 	listNext     *Cursor
 	listErr      error
 
@@ -57,11 +57,17 @@ func (f *fakeStore) GetStory(_ context.Context, id string) (Story, error) {
 	return f.getResult, f.getErr
 }
 
-func (f *fakeStore) ListStories(_ context.Context, cursor *Cursor, limit int) ([]Story, *Cursor, error) {
+func (f *fakeStore) ListFeed(_ context.Context, cursor *Cursor, limit int) ([]FeedItem, *Cursor, error) {
 	f.listCalls++
 	f.gotCursor = cursor
 	f.gotLimit = limit
 	return f.listResult, f.listNext, f.listErr
+}
+
+// storyEntry wraps a story as a story entry of the merged feed, so a test about
+// story behaviour does not have to spell out the discriminator (KNOT-022).
+func storyEntry(story Story) []FeedItem {
+	return []FeedItem{{Kind: FeedKindStory, Story: story}}
 }
 
 // newTestService returns a service over a fresh fake store.
@@ -410,17 +416,23 @@ func TestGetStoryStoreFailureIsWrapped(t *testing.T) {
 	}
 }
 
-func TestListStoriesFirstPageHasNoCursor(t *testing.T) {
+func TestListFeedFirstPageHasNoCursor(t *testing.T) {
 	service, store := newTestService(t)
-	store.listResult = []Story{{ID: authorID}}
+	store.listResult = storyEntry(Story{ID: authorID})
 
-	page, next, err := service.ListStories(context.Background(), "", DefaultListLimit)
+	page, next, err := service.ListFeed(context.Background(), "", DefaultListLimit)
 	if err != nil {
-		t.Fatalf("ListStories() error = %v, want nil", err)
+		t.Fatalf("ListFeed() error = %v, want nil", err)
 	}
 
 	if len(page) != 1 {
 		t.Errorf("len(page) = %d, want 1", len(page))
+	}
+	if page[0].Kind != FeedKindStory {
+		t.Errorf("kind = %q, want %q", page[0].Kind, FeedKindStory)
+	}
+	if page[0].Story.ID != authorID {
+		t.Errorf("story id = %q, want %q", page[0].Story.ID, authorID)
 	}
 	if next != "" {
 		t.Errorf("next cursor = %q, want an empty string on the last page", next)
@@ -430,16 +442,16 @@ func TestListStoriesFirstPageHasNoCursor(t *testing.T) {
 	}
 }
 
-func TestListStoriesDecodesCursorAndEncodesNext(t *testing.T) {
+func TestListFeedDecodesCursorAndEncodesNext(t *testing.T) {
 	service, store := newTestService(t)
 	resume := NewCursor(time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC), authorID)
 	next := NewCursor(time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC), authorID)
-	store.listResult = []Story{{ID: authorID}}
+	store.listResult = storyEntry(Story{ID: authorID})
 	store.listNext = &next
 
-	_, encoded, err := service.ListStories(context.Background(), resume.Encode(), 5)
+	_, encoded, err := service.ListFeed(context.Background(), resume.Encode(), 5)
 	if err != nil {
-		t.Fatalf("ListStories() error = %v, want nil", err)
+		t.Fatalf("ListFeed() error = %v, want nil", err)
 	}
 
 	if store.gotCursor == nil {
@@ -453,13 +465,12 @@ func TestListStoriesDecodesCursorAndEncodesNext(t *testing.T) {
 	}
 }
 
-func TestListStoriesEmptyPageIsAnEmptySliceNotNil(t *testing.T) {
+func TestListFeedEmptyPageIsAnEmptySliceNotNil(t *testing.T) {
 	service, store := newTestService(t)
 	store.listResult = nil
-
-	page, next, err := service.ListStories(context.Background(), "", DefaultListLimit)
+	page, next, err := service.ListFeed(context.Background(), "", DefaultListLimit)
 	if err != nil {
-		t.Fatalf("ListStories() error = %v, want nil", err)
+		t.Fatalf("ListFeed() error = %v, want nil", err)
 	}
 
 	if page == nil {
@@ -473,7 +484,7 @@ func TestListStoriesEmptyPageIsAnEmptySliceNotNil(t *testing.T) {
 	}
 }
 
-func TestListStoriesRejectsBadLimitWithoutQueryingTheStore(t *testing.T) {
+func TestListFeedRejectsBadLimitWithoutQueryingTheStore(t *testing.T) {
 	tests := []struct {
 		name  string
 		limit int
@@ -487,7 +498,7 @@ func TestListStoriesRejectsBadLimitWithoutQueryingTheStore(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			service, store := newTestService(t)
 
-			_, _, err := service.ListStories(context.Background(), "", test.limit)
+			_, _, err := service.ListFeed(context.Background(), "", test.limit)
 			if !errors.Is(err, ErrValidation) {
 				t.Errorf("errors.Is(err, ErrValidation) = false, want true (err = %v)", err)
 			}
@@ -506,10 +517,10 @@ func TestListStoriesRejectsBadLimitWithoutQueryingTheStore(t *testing.T) {
 	}
 }
 
-func TestListStoriesRejectsMalformedCursorWithoutQueryingTheStore(t *testing.T) {
+func TestListFeedRejectsMalformedCursorWithoutQueryingTheStore(t *testing.T) {
 	service, store := newTestService(t)
 
-	_, _, err := service.ListStories(context.Background(), "not-a-cursor", DefaultListLimit)
+	_, _, err := service.ListFeed(context.Background(), "not-a-cursor", DefaultListLimit)
 	if !errors.Is(err, ErrValidation) {
 		t.Errorf("errors.Is(err, ErrValidation) = false, want true (err = %v)", err)
 	}
@@ -518,11 +529,11 @@ func TestListStoriesRejectsMalformedCursorWithoutQueryingTheStore(t *testing.T) 
 	}
 }
 
-func TestListStoriesLimitIsPassedThroughUnchanged(t *testing.T) {
+func TestListFeedLimitIsPassedThroughUnchanged(t *testing.T) {
 	service, store := newTestService(t)
 
-	if _, _, err := service.ListStories(context.Background(), "", MaxListLimit); err != nil {
-		t.Fatalf("ListStories() error = %v, want nil", err)
+	if _, _, err := service.ListFeed(context.Background(), "", MaxListLimit); err != nil {
+		t.Fatalf("ListFeed() error = %v, want nil", err)
 	}
 
 	if store.gotLimit != MaxListLimit {
@@ -530,13 +541,13 @@ func TestListStoriesLimitIsPassedThroughUnchanged(t *testing.T) {
 	}
 }
 
-func TestListStoriesStoreFailureIsWrapped(t *testing.T) {
+func TestListFeedStoreFailureIsWrapped(t *testing.T) {
 	service, store := newTestService(t)
 	store.listErr = errors.New("connection reset")
 
-	page, next, err := service.ListStories(context.Background(), "", DefaultListLimit)
+	page, next, err := service.ListFeed(context.Background(), "", DefaultListLimit)
 	if err == nil {
-		t.Fatal("ListStories() error = nil, want the store error")
+		t.Fatal("ListFeed() error = nil, want the store error")
 	}
 	if page != nil || next != "" {
 		t.Errorf("page = %v, next = %q, want zero values alongside the error", page, next)

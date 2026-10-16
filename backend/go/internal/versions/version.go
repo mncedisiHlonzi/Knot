@@ -136,6 +136,11 @@ type VersionStore interface {
 	// returns ErrNotFound when no story has the given id, so a caller can tell
 	// "no such story" from "a story with no versions".
 	ListByStory(ctx context.Context, storyID string) ([]StoryVersion, error)
+	// ListAncestry returns every version in the ancestry closure of the given
+	// versions -- each of them, its parent, that parent's parent, and so on to
+	// each root. It is what lets a caller attribute a whole page of versions
+	// from one read instead of walking one chain per version (KNOT-022).
+	ListAncestry(ctx context.Context, versionIDs []string) ([]StoryVersion, error)
 }
 
 // Notifier records that a user adapted content. It is satisfied by the

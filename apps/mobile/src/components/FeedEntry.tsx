@@ -11,6 +11,7 @@ import {
 import { Images } from 'phosphor-react-native';
 
 import { API_BASE_URL } from '../config/api';
+import { languageName } from '../data/languages';
 import { colors, layout, radius, spacing, tabularNums, typeScale } from '../theme';
 import { PLACEHOLDER_MEDIA_ASPECT_RATIO } from '../utils/mediaFrame';
 import { useMediaAspectRatio } from '../utils/useMediaAspectRatio';
@@ -19,7 +20,14 @@ import { feedMetaLine, isPreviewTruncated } from './feedEntryMeta';
 import FeedVideo, { VIDEO_MUTE_BUTTON_SIZE } from './FeedVideo';
 import PillarTag from './PillarTag';
 
-/** The story shape a feed entry renders. */
+/**
+ * The content a feed entry renders, in the shape both kinds share: a story, and --
+ * since KNOT-022 -- somebody's adaptation of one.
+ *
+ * The name says "story" because every field here is story content that the server
+ * sends on both kinds of entry. What makes an entry an adaptation is not a field in
+ * this object but the `variant` prop, which says how to label it.
+ */
 type FeedEntryStory = {
   readonly id: string;
   readonly title: string;
@@ -65,6 +73,25 @@ type FeedEntryStory = {
 type FeedEntryProps = {
   /** The story to render. */
   readonly story: FeedEntryStory;
+  /**
+   * How to read the entry: `story` (the default) is somebody's own story, and
+   * `version` is an adaptation of somebody else's, which labels the entry with its
+   * position and language rather than its pillar, and shows the server's
+   * attribution sentence (KNOT-022).
+   */
+  readonly variant?: 'story' | 'version';
+  /**
+   * The entry's position in its lineage, counting the original as 1, for the
+   * `version` variant's badge. The server sends it as `version_number`.
+   */
+  readonly versionNumber?: number;
+  /**
+   * The server-rendered sentence tracing this version back to the original, for
+   * the `version` variant. It is shown verbatim -- the server owns the wording --
+   * and is absent (or empty) when the lineage could not be resolved, in which case
+   * the entry simply shows no line (KNOT-021).
+   */
+  readonly attributionLine?: string;
   /** Called when the entry is tapped. */
   readonly onPress: () => void;
   /** Called when the author's identity is tapped. */
@@ -85,6 +112,13 @@ type FeedEntryProps = {
 
 /** The preview's line limit. */
 const PREVIEW_LINES = 3;
+
+/**
+ * The attribution sentence's line limit. It is clamped rather than wrapped freely
+ * because a deep lineage produces a long sentence, and an entry must not grow
+ * taller than its content is worth (KNOT-022).
+ */
+const ATTRIBUTION_LINES = 2;
 
 /** The media-count badge's glyph size. */
 const COUNT_ICON_SIZE = 14;
@@ -140,6 +174,9 @@ function resolveMediaUrl(path: string | null | undefined): string {
  */
 export default function FeedEntry({
   story,
+  variant = 'story',
+  versionNumber,
+  attributionLine,
   onPress,
   onOpenAuthor,
   isVisible = false,
@@ -176,12 +213,23 @@ export default function FeedEntry({
     versionCount: story.version_count,
   });
 
+  const isVersion = variant === 'version';
+  // The badge names the version and the language it was written in, which is what
+  // makes an adaptation legible before the text is read: "Version 2 · Zulu". The
+  // style upper-cases it, so the wording is written in sentence case here.
+  const versionBadge =
+    versionNumber === undefined
+      ? `Version in ${languageName(story.language)}`
+      : `Version ${versionNumber} · ${languageName(story.language)}`;
+
   return (
     <Pressable
       style={styles.entry}
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={`Open the story: ${story.title}`}
+      accessibilityLabel={
+        isVersion ? `Open this version: ${story.title}` : `Open the story: ${story.title}`
+      }
       testID={testID}
     >
       <View style={styles.padded}>
@@ -195,11 +243,30 @@ export default function FeedEntry({
           onPress={onOpenAuthor}
         />
 
-        <View style={styles.tagRow}>
-          <PillarTag pillar={story.pillar} place={story.place} variant="plain" />
-        </View>
+        {/* An adaptation is labelled by its version and language where a story is
+            labelled by its pillar and place: the pillar is the story's, inherited,
+            so repeating it here would say nothing about this entry (KNOT-022). */}
+        {isVersion ? (
+          <View style={styles.tagRow}>
+            <Text style={[typeScale.overline, styles.versionBadge]}>{versionBadge}</Text>
+          </View>
+        ) : (
+          <View style={styles.tagRow}>
+            <PillarTag pillar={story.pillar} place={story.place} variant="plain" />
+          </View>
+        )}
 
         <Text style={[typeScale.title, styles.title]}>{story.title}</Text>
+
+        {/* The attribution sentence sits under the title: the title says what this
+            version is called, and the line under it says whose story it adapts. It
+            is rendered verbatim, because the server owns the wording (KNOT-021). */}
+        {isVersion && attributionLine !== undefined && attributionLine !== '' ? (
+          <Text style={[typeScale.caption, styles.attribution]} numberOfLines={ATTRIBUTION_LINES}>
+            {attributionLine}
+          </Text>
+        ) : null}
+
         <Text style={[typeScale.body, styles.preview]} numberOfLines={PREVIEW_LINES}>
           {story.preview}
         </Text>
@@ -267,6 +334,12 @@ export default function FeedEntry({
 }
 
 const styles = StyleSheet.create({
+  attribution: {
+    // Quiet: the attribution supports the entry, it does not compete with the
+    // title or the preview (KNOT-022).
+    color: colors.text.tertiary,
+    marginTop: spacing.xs,
+  },
   countBadge: {
     alignItems: 'center',
     backgroundColor: colors.scrim.overlay,
@@ -327,6 +400,11 @@ const styles = StyleSheet.create({
     marginTop: spacing.xs,
   },
   readMoreText: {
+    color: colors.brand.primary,
+  },
+  // The version badge: the overline voice in the brand ink, marking the entry as an
+  // adaptation at a glance (KNOT-022).
+  versionBadge: {
     color: colors.brand.primary,
   },
   tagRow: {

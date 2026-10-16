@@ -66,6 +66,9 @@ type memoryVersionStore struct {
 	created     versions.StoryVersion
 	createCalls int
 	listCalls   int
+	// ancestryCalls counts the batched walks, so a test can pin that attributing
+	// a page of adaptations costs one read rather than one per entry (KNOT-022).
+	ancestryCalls int
 }
 
 func newMemoryVersionStore() *memoryVersionStore {
@@ -123,6 +126,37 @@ func (m *memoryVersionStore) ListByStory(_ context.Context, storyID string) ([]v
 	return out, nil
 }
 
+// ListAncestry implements the batched walk the feed uses: from each seed it
+// follows parent pointers up to a root, so one call serves a whole page
+// (KNOT-022). It walks the same adjacency the SQL recursive query walks.
+func (m *memoryVersionStore) ListAncestry(_ context.Context, versionIDs []string) ([]versions.StoryVersion, error) {
+	m.ancestryCalls++
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	byID := make(map[string]versions.StoryVersion, len(m.versions))
+	for _, version := range m.versions {
+		byID[version.ID] = version
+	}
+
+	out := make([]versions.StoryVersion, 0)
+	seen := make(map[string]bool)
+	for _, id := range versionIDs {
+		for id != "" && !seen[id] {
+			version, ok := byID[id]
+			if !ok {
+				break
+			}
+			seen[id] = true
+			out = append(out, version)
+			id = version.ParentVersionID
+		}
+	}
+
+	return out, nil
+}
+
 // rootVersion is a well-formed root version for testStoryID.
 func rootVersion() versions.StoryVersion {
 	return versions.StoryVersion{
@@ -167,7 +201,7 @@ func newVersionsRouter(t *testing.T, logger *slog.Logger, service VersionsServic
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, logger)
+	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}

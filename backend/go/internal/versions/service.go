@@ -106,6 +106,42 @@ func (s *Service) BuildChain(ctx context.Context, versionID string) (Chain, erro
 	return BuildChain(ctx, s.store, versionID)
 }
 
+// ChainsFor returns the attribution lineage of every given version, keyed by
+// version id.
+//
+// It exists for the surfaces that attribute a whole page at once -- the feed
+// lists stories and their adaptations together -- and it is batched on purpose:
+// one read loads the **ancestry closure** of every id (the ids themselves, their
+// parents, and so on), and each chain is then resolved in memory from those rows.
+// A page of N versions therefore costs one query, not N walks
+// (KNOT-022, KNOT-ADR-069).
+//
+// A version whose chain cannot be resolved -- the parent pointers loop, or a
+// version is missing from the closure -- is simply absent from the map, and the
+// caller leaves that entry's attribution empty. Resolution is enrichment: it must
+// never fail a page that is otherwise readable.
+func (s *Service) ChainsFor(ctx context.Context, versionIDs []string) (map[string]Chain, error) {
+	chains := make(map[string]Chain, len(versionIDs))
+	if len(versionIDs) == 0 {
+		return chains, nil
+	}
+
+	rows, err := s.store.ListAncestry(ctx, versionIDs)
+	if err != nil {
+		return nil, fmt.Errorf("versions: list ancestry: %w", err)
+	}
+
+	for _, id := range versionIDs {
+		chain, chainErr := BuildChainFromVersions(id, rows)
+		if chainErr != nil {
+			continue
+		}
+		chains[id] = chain
+	}
+
+	return chains, nil
+}
+
 // GetTree returns every version of one story as a flat list ordered oldest
 // first, each carrying its parent pointer.
 //

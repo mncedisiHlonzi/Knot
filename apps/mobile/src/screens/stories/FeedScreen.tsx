@@ -12,7 +12,7 @@ import { Bell, MagnifyingGlass } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { notificationsApi } from '../../api/notifications';
-import { FEED_PAGE_SIZE, type Story, storiesApi } from '../../api/stories';
+import { FEED_PAGE_SIZE, type FeedItem, storiesApi } from '../../api/stories';
 import EmptyState from '../../components/EmptyState';
 import FeedEntry from '../../components/FeedEntry';
 import Header from '../../components/Header';
@@ -50,6 +50,11 @@ type FeedScreenProps = {
   readonly token: string;
   /** Called when a story is tapped. */
   readonly onOpenStory: (id: string) => void;
+  /**
+   * Called when an ADAPTATION entry is tapped, with the version's id, so the feed
+   * can open the version rather than the story it adapts (KNOT-022).
+   */
+  readonly onOpenVersion: (versionId: string) => void;
   /** Called when a story's author is tapped, to open their profile. */
   readonly onOpenUserProfile: (userId: string) => void;
   /** Called when the person opens their notifications. */
@@ -71,15 +76,21 @@ type FeedScreenProps = {
  *
  * Paging is keyset-based: each page returns an opaque `next_cursor` that is sent
  * back verbatim to fetch the following page; an empty cursor ends the list.
+ *
+ * The page is a MERGED stream: a story and somebody's adaptation of it are the same
+ * kind of entry, and each carries the `kind` that says which it is. The feed renders
+ * both through `FeedEntry` -- the card takes a `variant` -- and a tap opens what the
+ * entry actually is: the story, or the version (KNOT-022).
  */
 export default function FeedScreen({
   token,
   onOpenStory,
+  onOpenVersion,
   onOpenUserProfile,
   onOpenNotifications,
   onOpenSearch,
 }: FeedScreenProps): React.ReactElement {
-  const [stories, setStories] = useState<readonly Story[]>([]);
+  const [items, setItems] = useState<readonly FeedItem[]>([]);
   const [nextCursor, setNextCursor] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -113,7 +124,7 @@ export default function FeedScreen({
 
     try {
       const page = await storiesApi.listStories({ limit: FEED_PAGE_SIZE }, token);
-      setStories(page.stories);
+      setItems(page.items);
       setNextCursor(page.next_cursor);
     } catch (caught) {
       setError(describeError(caught));
@@ -155,7 +166,7 @@ export default function FeedScreen({
 
     try {
       const page = await storiesApi.listStories({ limit: FEED_PAGE_SIZE }, token);
-      setStories(page.stories);
+      setItems(page.items);
       setNextCursor(page.next_cursor);
     } catch (caught) {
       setError(describeError(caught));
@@ -178,8 +189,8 @@ export default function FeedScreen({
         token,
       );
       // Append rather than replace: the cursor is exclusive, so a page never
-      // repeats a story already on screen.
-      setStories((existing) => [...existing, ...page.stories]);
+      // repeats an entry already on screen.
+      setItems((existing) => [...existing, ...page.items]);
       setNextCursor(page.next_cursor);
     } catch (caught) {
       setError(describeError(caught));
@@ -268,8 +279,8 @@ export default function FeedScreen({
       </View>
 
       <FlatList
-        data={stories}
-        keyExtractor={(story) => story.id}
+        data={items}
+        keyExtractor={(item) => item.id}
         contentContainerStyle={styles.listContent}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
@@ -308,10 +319,15 @@ export default function FeedScreen({
               title: item.title,
               version_count: item.version_count,
             }}
+            variant={item.kind === 'version' ? 'version' : 'story'}
+            versionNumber={item.kind === 'version' ? item.version_number : undefined}
+            attributionLine={item.kind === 'version' ? item.attribution_line : undefined}
             isMuted={isMuted}
             isVisible={item.id === activeItemId}
             onToggleMute={toggleMute}
-            onPress={() => onOpenStory(item.id)}
+            onPress={() =>
+              item.kind === 'version' ? onOpenVersion(item.id) : onOpenStory(item.id)
+            }
             onOpenAuthor={() => onOpenUserProfile(item.author_id)}
           />
         )}
@@ -331,7 +347,7 @@ export default function FeedScreen({
         ListFooterComponent={
           loadingMore ? (
             <ActivityIndicator style={styles.footerSpinner} />
-          ) : error !== undefined && stories.length > 0 ? (
+          ) : error !== undefined && items.length > 0 ? (
             <Text style={styles.error}>{error}</Text>
           ) : null
         }

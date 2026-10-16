@@ -280,6 +280,48 @@ func attributionText(ctx context.Context, authors AuthorLookup, logger *slog.Log
 	return versions.FormatAttribution(chainWithNames(chain, authorAttributions(ctx, authors, logger, ids)))
 }
 
+// VersionChainLookup is the attribution-enrichment dependency for a page of
+// versions: the lineage of each requested version, keyed by version id.
+//
+// It exists because the feed lists stories and adaptations in one stream, so it
+// must attribute a whole page at once rather than walk one chain per entry. It is
+// deliberately narrower than the whole versions service — the feed only needs the
+// chains, never to write a version — and the implementation is expected to resolve
+// the whole batch from one read (KNOT-022, KNOT-ADR-069).
+type VersionChainLookup interface {
+	ChainsFor(ctx context.Context, versionIDs []string) (map[string]versions.Chain, error)
+}
+
+// versionChains loads the lineage of a page of versions in one batched call,
+// keyed by version id.
+//
+// It is the sibling of authorAttributions and loadReactions: one read per
+// response, never one per row.
+//
+// Attribution is supplementary, so a failure is logged and swallowed rather than
+// failing the whole response: an adaptation must stay readable when its lineage
+// cannot be resolved, and the caller simply shows no attribution sentence. A
+// version whose chain could not be built is absent from the map, which the caller
+// reads the same way.
+func versionChains(ctx context.Context, lookup VersionChainLookup, logger *slog.Logger, versionIDs []string) map[string]versions.Chain {
+	if len(versionIDs) == 0 {
+		return nil
+	}
+
+	chains, err := lookup.ChainsFor(ctx, versionIDs)
+	if err != nil {
+		logger.WarnContext(
+			ctx,
+			"version chain enrichment failed",
+			slog.String("request_id", RequestIDFromContext(ctx)),
+			slog.String("error", err.Error()),
+		)
+		return nil
+	}
+
+	return chains
+}
+
 // ReactionsLookup is the reaction-enrichment dependency: the counts for a page of
 // entities of one type, and the signals the current user holds on that page.
 //
@@ -487,49 +529,236 @@ func (l storyPageLookups) enrich(ctx context.Context, items []storyResponse) {
 	// One batched read names and pictures every author on the page, and one more
 	// attaches that author's inline Rooted summary.
 	attributions := authorAttributions(ctx, l.authors, l.logger, authorIDs)
-	for i := range items {
-		attribution := attributions[items[i].AuthorID]
-		items[i].AuthorDisplayName = attribution.DisplayName
-		items[i].AuthorAvatarURL = optionalString(attribution.AvatarURL)
-	}
-
 	rootedSummaries := authorRootedSummaries(ctx, l.rooted, l.logger, authorIDs)
-	for i := range items {
-		items[i].AuthorRooted = rootedSummaries[items[i].AuthorID]
-	}
 
-	// One batched read attaches a single-item media preview to each story.
+	// One batched read attaches a single-item media preview to each story, and one
+	// more the aggregate counts.
 	previews := storyMediaPreviews(ctx, l.media, l.logger, ids)
-	for i := range items {
-		if preview, ok := previews[items[i].ID]; ok {
-			items[i].Media = preview
-		}
-	}
-
-	// One batched read attaches the aggregate counts; the first media item's
-	// kind, URL, and dimensions come from the preview just attached, so the
-	// fields cannot disagree with the media array.
 	counts := storyStats(ctx, l.stats, l.logger, ids)
-	for i := range items {
-		entry := counts[items[i].ID]
-		items[i].VersionCount = entry.Versions
-		items[i].LanguageCount = entry.Languages
-		items[i].CommentCount = entry.Comments
-		items[i].MediaCount = entry.Media
-
-		first := firstMediaFields(items[i].Media)
-		items[i].FirstMediaType = first.mediaType
-		items[i].FirstMediaURL = first.url
-		items[i].FirstMediaWidth = first.width
-		items[i].FirstMediaHeight = first.height
-	}
 
 	// One batched pair of reads decorates the page with the reaction counts and,
 	// when a reader is signed in, the signals that reader holds.
 	readerID, _ := UserIDFromContext(ctx)
 	reactionData := loadReactions(ctx, l.reactions, l.logger, reactions.EntityStory, readerID, ids)
+
 	for i := range items {
+		applyStoryCardFields(&items[i], attributions, rootedSummaries, previews, counts)
 		items[i].Reactions = reactionData.Counts[items[i].ID]
 		items[i].MyReactions = orEmptyStrings(reactionData.Mine[items[i].ID])
 	}
+}
+
+// applyStoryCardFields fills one story-shaped entry's enriched fields from the
+// batched maps a caller has already loaded: the author's name and picture, their
+// inline Rooted summary, the media preview, and the aggregate counts with the
+// first-media fields derived from that preview.
+//
+// It is shared by the two surfaces that decorate a story entry -- the place page
+// and the feed -- so a story carries identical fields with identical values
+// wherever it is listed, even where the two surfaces batch their reads differently
+// (KNOT-020e-fix2, KNOT-022). Reactions are set by the caller, because the feed and
+// the place page read them for different entity sets.
+func applyStoryCardFields(
+	item *storyResponse,
+	attributions map[string]authorAttribution,
+	rootedSummaries map[string]*rootedSummary,
+	previews map[string][]storyMediaResponse,
+	counts map[string]storystats.Counts,
+) {
+	attribution := attributions[item.AuthorID]
+	item.AuthorDisplayName = attribution.DisplayName
+	item.AuthorAvatarURL = optionalString(attribution.AvatarURL)
+	item.AuthorRooted = rootedSummaries[item.AuthorID]
+
+	if preview, ok := previews[item.ID]; ok {
+		item.Media = preview
+	}
+
+	entry := counts[item.ID]
+	item.VersionCount = entry.Versions
+	item.LanguageCount = entry.Languages
+	item.CommentCount = entry.Comments
+	item.MediaCount = entry.Media
+
+	first := firstMediaFields(item.Media)
+	item.FirstMediaType = first.mediaType
+	item.FirstMediaURL = first.url
+	item.FirstMediaWidth = first.width
+	item.FirstMediaHeight = first.height
+}
+
+// feedPageLookups bundles the batched reads that decorate one page of the MERGED
+// feed: both entry kinds at once.
+//
+// It is separate from storyPageLookups because the feed's two kinds key
+// differently, and mixing the keys would silently attach the wrong rows:
+//
+//   - an entry's author is its own author: an adaptation's is the ADAPTER, not the
+//     story's original author, which is why the lineage's links are named in the
+//     same read;
+//   - media and counts key by the STORY, which for an adaptation is its parent --
+//     a version row carries no place or media of its own (KNOT-ADR-030);
+//   - reactions key by the VERSION for an adaptation and by the story for a story,
+//     because a reader reacts to the adaptation they are reading (KNOT-021).
+//
+// The story entries are still filled by applyStoryCardFields, the same function the
+// place page uses, so a story carries identical fields on both surfaces. What
+// differs is only how many reads the page's two kinds share: the identity, Rooted,
+// media, and count lookups span both kinds in one call each, because their keys can
+// be unioned without ambiguity. Reactions cannot -- an adaptation and a story are
+// different reaction entities -- so that lookup runs once per kind.
+type feedPageLookups struct {
+	authors   AuthorLookup
+	rooted    RootedLookup
+	media     StoryMediaLookup
+	reactions ReactionsLookup
+	stats     StoryStatsLookup
+	chains    VersionChainLookup
+	logger    *slog.Logger
+}
+
+// enrich decorates one page of the merged feed in place: the story entries and the
+// adaptation entries together, so a mixed page costs one read per lookup plus the
+// two reaction reads the two entity types need.
+//
+// Every enrichment is supplementary: a lookup failure is logged and swallowed by
+// the helper it belongs to, so an entry stays readable when a dependency is down.
+func (l feedPageLookups) enrich(ctx context.Context, stories []storyResponse, versions []feedVersionItem) {
+	if len(stories) == 0 && len(versions) == 0 {
+		return
+	}
+
+	storyIDs := make([]string, 0, len(stories))
+	authorIDs := make([]string, 0, len(stories)+len(versions))
+	mediaIDs := make([]string, 0, len(stories)+len(versions))
+	versionIDs := make([]string, 0, len(versions))
+	parentStoryIDs := make([]string, 0, len(versions))
+
+	for i := range stories {
+		storyIDs = append(storyIDs, stories[i].ID)
+		authorIDs = append(authorIDs, stories[i].AuthorID)
+		mediaIDs = append(mediaIDs, stories[i].ID)
+	}
+	for i := range versions {
+		versionIDs = append(versionIDs, versions[i].ID)
+		parentStoryIDs = append(parentStoryIDs, versions[i].StoryID)
+		authorIDs = append(authorIDs, versions[i].AuthorID)
+		mediaIDs = append(mediaIDs, versions[i].StoryID)
+	}
+
+	// The lineages are resolved FIRST, because each one names the people in it --
+	// the original authors an adaptation descends from -- and those names must ride
+	// in the same batched author read as the entries' own authors rather than
+	// becoming a read per link (KNOT-021, KNOT-022).
+	chains := versionChains(ctx, l.chains, l.logger, versionIDs)
+	for _, chain := range chains {
+		for _, link := range chain {
+			authorIDs = append(authorIDs, link.AuthorID)
+		}
+	}
+
+	// One read names and pictures every person the page mentions, and one more
+	// attaches the inline Rooted summary of every author who is ON the page. The
+	// originals named inside an attribution sentence are deliberately not looked up:
+	// only the person on the card has a Rooted signal shown next to their name
+	// (KNOT-ADR-017).
+	attributions := authorAttributions(ctx, l.authors, l.logger, authorIDs)
+	rootedSummaries := authorRootedSummaries(ctx, l.rooted, l.logger, append(append([]string{}, storyAuthorIDs(stories)...), versionAuthorIDs(versions)...))
+
+	// One read attaches the media preview of every story the page mentions -- the
+	// stories themselves and the stories the adaptations adapt -- and one more their
+	// aggregate counts. Two entries that resolve to the same story resolve to the
+	// same row, which is why both lookups key by story id.
+	previews := storyMediaPreviews(ctx, l.media, l.logger, mediaIDs)
+	counts := storyStats(ctx, l.stats, l.logger, mediaIDs)
+
+	for i := range stories {
+		applyStoryCardFields(&stories[i], attributions, rootedSummaries, previews, counts)
+	}
+	for i := range versions {
+		applyVersionCardFields(&versions[i], chains, attributions, rootedSummaries, previews, counts)
+	}
+
+	// Reactions are the one lookup that cannot span both kinds: a story entry
+	// reacts as a story and an adaptation as a version, so the page reads each
+	// entity set once. When a page carries one kind only, the other read is skipped
+	// rather than issued empty.
+	readerID, _ := UserIDFromContext(ctx)
+
+	storyReactions := loadReactions(ctx, l.reactions, l.logger, reactions.EntityStory, readerID, storyIDs)
+	for i := range stories {
+		stories[i].Reactions = storyReactions.Counts[stories[i].ID]
+		stories[i].MyReactions = orEmptyStrings(storyReactions.Mine[stories[i].ID])
+	}
+
+	versionReactions := loadReactions(ctx, l.reactions, l.logger, reactions.EntityVersion, readerID, versionIDs)
+	for i := range versions {
+		versions[i].Reactions = versionReactions.Counts[versions[i].ID]
+		versions[i].MyReactions = orEmptyStrings(versionReactions.Mine[versions[i].ID])
+	}
+}
+
+// applyVersionCardFields fills one adaptation entry's enriched fields from the
+// batched maps the caller loaded, and derives its version number and attribution
+// sentence from its lineage.
+//
+// The keys are the ones described on feedPageLookups: the story's media and counts,
+// the adapter's identity, and the version's own reactions (set by the caller).
+// Attribution is enrichment, so an entry whose lineage could not be resolved is
+// still filled -- it simply carries no number and no sentence (KNOT-021).
+func applyVersionCardFields(
+	item *feedVersionItem,
+	chains map[string]versions.Chain,
+	attributions map[string]authorAttribution,
+	rootedSummaries map[string]*rootedSummary,
+	previews map[string][]storyMediaResponse,
+	counts map[string]storystats.Counts,
+) {
+	attribution := attributions[item.AuthorID]
+	item.AuthorDisplayName = attribution.DisplayName
+	item.AuthorAvatarURL = optionalString(attribution.AvatarURL)
+	item.AuthorRooted = rootedSummaries[item.AuthorID]
+
+	// The story's media and counts: an adaptation entry shows the story behind it.
+	entry := counts[item.StoryID]
+	item.VersionCount = entry.Versions
+	item.LanguageCount = entry.Languages
+	item.CommentCount = entry.Comments
+	item.MediaCount = entry.Media
+
+	first := firstMediaFields(previews[item.StoryID])
+	item.FirstMediaType = first.mediaType
+	item.FirstMediaURL = first.url
+	item.FirstMediaWidth = first.width
+	item.FirstMediaHeight = first.height
+
+	chain, ok := chains[item.ID]
+	if !ok {
+		return
+	}
+
+	// VersionNumber counts the original as 1, so a chain of depth n -- n
+	// adaptations away from the root -- is version n+1.
+	item.VersionNumber = chain.Depth() + 1
+	item.AttributionLine = versions.FormatAttribution(chainWithNames(chain, attributions))
+}
+
+// storyAuthorIDs returns the author of each story entry.
+func storyAuthorIDs(stories []storyResponse) []string {
+	ids := make([]string, 0, len(stories))
+	for i := range stories {
+		ids = append(ids, stories[i].AuthorID)
+	}
+
+	return ids
+}
+
+// versionAuthorIDs returns the adapter of each adaptation entry.
+func versionAuthorIDs(versions []feedVersionItem) []string {
+	ids := make([]string, 0, len(versions))
+	for i := range versions {
+		ids = append(ids, versions[i].AuthorID)
+	}
+
+	return ids
 }

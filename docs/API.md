@@ -280,7 +280,7 @@ and the pillar it belongs to.
 | Route             | Auth       | Purpose                     |
 | ----------------- | ---------- | --------------------------- |
 | `POST /stories`   | `Bearer`   | Publish a story             |
-| `GET /stories`    | public     | Read the feed, newest first |
+| `GET /stories`    | public     | Read the feed: stories and adaptations of them, newest first |
 | `GET /stories/{id}` | public   | Read one story              |
 
 ### The story object
@@ -347,7 +347,9 @@ reads `Original story by {author} in {language}.` and the depth is always `0` (K
 The feed (`GET /stories`) and the place page **omit both keys entirely**: they share this
 object's shape, so the two fields are pointers carrying `omitempty`, which keeps their JSON
 byte-for-byte what it was before this feature. A client that consumes the feed must
-therefore treat the fields as absent. Attribution on the feed is separate work.
+therefore treat the fields as absent. An **adaptation entry** in the feed carries its own
+`attribution_line` instead, because a version is not a root and its lineage is a sentence
+rather than a constant (KNOT-022).
 
 `media` is the story's attached files (see [Story media](#story-media)). On
 `GET /stories/{id}` it is the full list in `display_order`. On the feed (`GET /stories`) it
@@ -387,8 +389,10 @@ is **not** marked, because the window is exceeded, not met. It is always present
 boolean (never `null`), so a client can render a "read more" link without inferring
 truncation from the text (KNOT-020g-fix12).
 
-Both the feed (`GET /stories`, on every story in the page) and the detail
+Both the feed (`GET /stories`, on every story entry in the page) and the detail
 (`GET /stories/{id}`) carry `author_rooted`, the author's inline Rooted summary, or `null`.
+On a **version** entry in the feed it is the adapter's summary, because the entry's author
+is the adapter (KNOT-022).
 See [`author_rooted` on content responses](#author_rooted-on-content-responses).
 
 `author_display_name` is the author's name, and `author_avatar_url` is a path on this API
@@ -459,10 +463,29 @@ id index instead of casting the column to text.
 
 ### GET /stories
 
-Returns **200** with one page of the feed, newest first:
+Returns **200** with one page of the feed, newest first. The page is a **merged stream of
+two entry kinds** — a story and somebody's adaptation of one — and every entry carries the
+`kind` that says which it is (KNOT-022):
 
 ```json
-{ "stories": [ { "id": "...", "title": "..." } ], "next_cursor": "MjAyNi0xMC0wN1QxODoyNjo0Mlo..." }
+{
+  "items": [
+    {
+      "kind": "version",
+      "id": "…",
+      "story_id": "…",
+      "parent_version_id": "…",
+      "author_id": "…",
+      "language": "zul",
+      "title": "Imvula yokuqala",
+      "version_number": 2,
+      "attribution_line": "Adapted from Nomsa Khan's original story in English into Zulu.",
+      "created_at": "…"
+    },
+    { "kind": "story", "id": "…", "title": "The first rain", "created_at": "…" }
+  ],
+  "next_cursor": "MjAyNi0xMC0wN1QxODoyNjo0Mlo..."
+}
 ```
 
 | Query    | Required | Rules                                              |
@@ -474,15 +497,64 @@ Returns **200** with one page of the feed, newest first:
 any other value is an opaque token to send back as `cursor` to fetch the next page.
 Treat it as opaque: it encodes the sort position, and its format may change.
 
-`stories` is always an array, never `null`, so an empty feed is `"stories": []`. Each story
-is the [story object](#the-story-object), including the inline `author_rooted` summary and
-the `author_display_name` / `author_avatar_url` attribution, so a feed card needs no
-follow-up request.
+`items` is always an array, never `null`, so an empty feed is `"items": []`. The key is
+`items` rather than `stories` because a page is no longer only stories (KNOT-ADR-070).
+The place page ([`GET /discovery/places/{place}`](#get-discoveryplacesplace)) still answers
+with `stories`, because it lists stories only.
+
+#### The two entry kinds
+
+A client switches on `kind` and then reads that shape. Never infer the kind from which
+fields happen to be present: both entries are flat objects, so an unknown field on one kind
+is a bug rather than a signal.
+
+| `kind`      | What it is                                            | Identity                                   |
+| ----------- | ----------------------------------------------------- | ------------------------------------------ |
+| `"story"`   | Somebody's own story, exactly the [story object](#the-story-object) | `id` is the story; open `GET /stories/{id}` |
+| `"version"` | One adaptation of another story                       | `id` is the **version**; open `GET /versions/{id}` |
+
+A **root version is never an entry of its own**. A story IS its root version: the story
+entry carries that content, so listing the root separately would show every story twice.
+
+An adaptation entry is the version-side counterpart of the story object, with the same
+card-shaped fields (author line, framing, media preview, aggregate counts, reactions) so
+one card component can draw both. What differs:
+
+| Field | On a `story` entry | On a `version` entry |
+| ----- | ------------------ | -------------------- |
+| `id` | the story | the **version** — the thing a reader opens, reacts to, and adapts from |
+| `story_id` | absent | the story being adapted |
+| `parent_version_id` | absent | the version this one adapts. Never `null`: a root is not a feed entry |
+| `author_id` | the story's author | the **adapter**. The original author is named in `attribution_line` |
+| `language`, `title`, `body` | the root version's content | the adapter's own text |
+| `pillar`, `approximate_location`, `latitude`, `longitude`, `place_country`, `media_urls`, `sensitive`, `media_count`, `first_media_*` | the story's own | **inherited from the story**: a version row carries no pillar, place, or media of its own (KNOT-ADR-030, KNOT-ADR-034) |
+| `version_count`, `language_count`, `comment_count` | the story's aggregates | the **story's** aggregates, so the entry can say how much adaptation it has |
+| `reactions`, `my_reactions` | the story's | the **version's**: a reader reacts to the adaptation they are reading (KNOT-021) |
+| `version_number` | absent | the entry's position in its lineage, counting the original as **1**, so a first adaptation is `2` |
+| `attribution_line` | absent | the server-rendered sentence tracing this version back to the original, shown **verbatim**; empty when the lineage could not be resolved |
+| `root_version_id`, `updated_at`, `version_depth`, `media` | present (`version_depth` is `0`) | absent |
+
+`attribution_line` is the same wording the version endpoints use (see
+[the attribution line](#the-attribution-line)). There is no `version_depth` on a feed
+entry because a feed entry is never a root, so its depth is at least 1; `version_number` is
+what a reader says out loud.
+
+`version_number` is `0` and `attribution_line` is empty when the lineage could not be
+resolved. Attribution is enrichment: a page that cannot resolve a lineage is still served,
+and the entry simply shows no sentence.
+
+Ordering is `(created_at DESC, id DESC)` over **both kinds**, keyed by each entry's own
+`created_at`: an adaptation appears where it was written, not where its story was published.
+
+The block filter applies to **each entry's own author**. A viewer who blocks A stops seeing
+A's story *and* stops seeing any version A wrote; a version B wrote of A's story stays
+visible. A block hides an author, not a lineage — the same rule the version endpoints
+follow (KNOT-ADR-060).
 
 Paging is keyset-based rather than offset-based, so a page is selected by the sort
-position rather than by counting rows. A story published between two requests does not
-shift the pages, and no story is skipped or repeated. The cursor is exclusive: it resumes
-**after** the last story of the previous page.
+position rather than by counting rows. An entry published between two requests does not
+shift the pages, and no entry is skipped or repeated. The cursor is exclusive: it resumes
+**after** the last entry of the previous page.
 
 **Errors:** `400 validation_error` (an unreadable `cursor`, or a `limit` that is not a
 positive integer), `500 internal_error`.

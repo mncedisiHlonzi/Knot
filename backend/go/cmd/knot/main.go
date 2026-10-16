@@ -232,11 +232,6 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	// The identity service doubles as the batched author lookup every content
 	// handler enriches with, so a response names and pictures its authors without
 	// a query per row (KNOT-ADR-041).
-	storiesHandler, err := httpapi.NewStoriesHandler(storiesService, service, rootedService, storyMediaService, reactionsService, storyStatsStore, logger)
-	if err != nil {
-		return err
-	}
-
 	storyMediaHandler, err := httpapi.NewStoryMediaHandler(storyMediaService, logger)
 	if err != nil {
 		return err
@@ -272,6 +267,15 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	versionsHandler, err := httpapi.NewVersionsHandler(versionsService, service, rootedService, reactionsService, logger)
+	if err != nil {
+		return err
+	}
+
+	// The stories handler serves the feed, which lists stories and their
+	// adaptations in one stream, so it is built after the versions service and
+	// takes it as its chain lookup: attributing a page of adaptations is a batched
+	// read of the version domain, not a query per entry (KNOT-022).
+	storiesHandler, err := httpapi.NewStoriesHandler(storiesService, service, rootedService, storyMediaService, reactionsService, storyStatsStore, versionsService, logger)
 	if err != nil {
 		return err
 	}

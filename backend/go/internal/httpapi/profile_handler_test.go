@@ -68,7 +68,7 @@ func newProfileRouterWithMedia(t *testing.T, service ProfileService, rooted Root
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, logger)
+	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}

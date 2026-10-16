@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/knot/backend/internal/stories"
 	"github.com/knot/backend/internal/storymedia"
+	"github.com/knot/backend/internal/versions"
 )
 
 // testUserID is the authenticated author id the fake token parser reports.
@@ -34,7 +36,12 @@ var testNow = time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
 // replaced; the keyset semantics match PostgresStore.
 type memoryStoryStore struct {
 	stories []stories.Story
-	err     error
+	// versions are adaptation entries the merged feed returns alongside the
+	// stories, so a handler test can drive a page that mixes both kinds without a
+	// database (KNOT-022). The real store takes them from story_versions; here a
+	// test seeds them directly.
+	versions []stories.VersionFeedItem
+	err      error
 
 	gotCreate  stories.Story
 	gotCursor  *stories.Cursor
@@ -71,7 +78,7 @@ func (m *memoryStoryStore) GetStory(_ context.Context, id string) (stories.Story
 	return stories.Story{}, stories.ErrNotFound
 }
 
-func (m *memoryStoryStore) ListStories(_ context.Context, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error) {
+func (m *memoryStoryStore) ListFeed(_ context.Context, cursor *stories.Cursor, limit int) ([]stories.FeedItem, *stories.Cursor, error) {
 	m.listCalls++
 	m.gotCursor = cursor
 	m.gotLimit = limit
@@ -79,18 +86,27 @@ func (m *memoryStoryStore) ListStories(_ context.Context, cursor *stories.Cursor
 		return nil, nil, m.err
 	}
 
-	ordered := make([]stories.Story, len(m.stories))
-	copy(ordered, m.stories)
+	ordered := make([]stories.FeedItem, 0, len(m.stories)+len(m.versions))
+	for _, story := range m.stories {
+		ordered = append(ordered, stories.FeedItem{Kind: stories.FeedKindStory, Story: story})
+	}
+	for _, version := range m.versions {
+		ordered = append(ordered, stories.FeedItem{Kind: stories.FeedKindVersion, Version: version})
+	}
+
+	// The merged stream is ordered by each entry's own sort key, exactly as the
+	// union does: an adaptation sorts where it was written, not where its story
+	// was (KNOT-022).
 	sort.SliceStable(ordered, func(i, j int) bool {
-		if !ordered[i].CreatedAt.Equal(ordered[j].CreatedAt) {
-			return ordered[i].CreatedAt.After(ordered[j].CreatedAt)
+		if !ordered[i].SortTime().Equal(ordered[j].SortTime()) {
+			return ordered[i].SortTime().After(ordered[j].SortTime())
 		}
-		return ordered[i].ID > ordered[j].ID
+		return ordered[i].SortID() > ordered[j].SortID()
 	})
 
 	start := 0
 	if cursor != nil {
-		for start < len(ordered) && !beforeCursor(ordered[start], *cursor) {
+		for start < len(ordered) && !beforeCursor(ordered[start].SortTime(), ordered[start].SortID(), *cursor) {
 			start++
 		}
 	}
@@ -101,21 +117,23 @@ func (m *memoryStoryStore) ListStories(_ context.Context, cursor *stories.Cursor
 	}
 
 	last := remaining[limit-1]
-	next := stories.NewCursor(last.CreatedAt, last.ID)
+	next := stories.NewCursor(last.SortTime(), last.SortID())
 
 	return remaining[:limit], &next, nil
 }
 
-// beforeCursor reports whether story sorts strictly after cursor in the feed
-// order (created_at DESC, id DESC), i.e. whether it belongs on a later page.
-func beforeCursor(story stories.Story, cursor stories.Cursor) bool {
-	if story.CreatedAt.Before(cursor.CreatedAt()) {
+// beforeCursor reports whether an entry with this sort key sorts strictly after
+// cursor in the feed order (created_at DESC, id DESC), i.e. whether it belongs on
+// a later page. It takes the key rather than the entry so the story store's
+// discovery page and the merged feed can share it.
+func beforeCursor(createdAt time.Time, id string, cursor stories.Cursor) bool {
+	if createdAt.Before(cursor.CreatedAt()) {
 		return true
 	}
-	if story.CreatedAt.After(cursor.CreatedAt()) {
+	if createdAt.After(cursor.CreatedAt()) {
 		return false
 	}
-	return story.ID < cursor.ID()
+	return id < cursor.ID()
 }
 
 // fakeStoriesService returns canned values, so the failure paths a real service
@@ -125,7 +143,7 @@ type fakeStoriesService struct {
 	createErr    error
 	getResult    stories.Story
 	getErr       error
-	listResult   []stories.Story
+	listResult   []stories.FeedItem
 	listNext     string
 	listErr      error
 }
@@ -138,8 +156,114 @@ func (f *fakeStoriesService) GetStory(_ context.Context, _ string) (stories.Stor
 	return f.getResult, f.getErr
 }
 
-func (f *fakeStoriesService) ListStories(_ context.Context, _ string, _ int) ([]stories.Story, string, error) {
+func (f *fakeStoriesService) ListFeed(_ context.Context, _ string, _ int) ([]stories.FeedItem, string, error) {
 	return f.listResult, f.listNext, f.listErr
+}
+
+// feedOf wraps stories as story entries of the merged feed, so a test that cares
+// about story fields does not have to spell out the discriminator (KNOT-022).
+func feedOf(storiesList ...stories.Story) []stories.FeedItem {
+	items := make([]stories.FeedItem, 0, len(storiesList))
+	for _, story := range storiesList {
+		items = append(items, stories.FeedItem{Kind: stories.FeedKindStory, Story: story})
+	}
+	return items
+}
+
+// fakeVersionChainLookup returns canned lineages, so the attribution a feed page
+// attaches to its adaptations can be asserted without the versions package.
+type fakeVersionChainLookup struct {
+	chains map[string]versions.Chain
+	err    error
+
+	calls  int
+	gotIDs []string
+}
+
+func (f *fakeVersionChainLookup) ChainsFor(_ context.Context, versionIDs []string) (map[string]versions.Chain, error) {
+	f.calls++
+	f.gotIDs = versionIDs
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.chains, nil
+}
+
+// feedPage is the GET /stories body as a test reads it: the entries kept raw, so
+// a test can decode either kind from the same page and can also assert the order
+// the two kinds appear in (KNOT-022).
+type feedPage struct {
+	Items      []json.RawMessage `json:"items"`
+	NextCursor string            `json:"next_cursor"`
+}
+
+// feedStories decodes the story entries of a page, in page order.
+func feedStories(t *testing.T, page feedPage) []storyResponse {
+	t.Helper()
+
+	out := make([]storyResponse, 0, len(page.Items))
+	for i, raw := range page.Items {
+		if kind := feedKindOf(t, raw); kind != feedKindStory {
+			continue
+		}
+		var story storyResponse
+		if err := json.Unmarshal(raw, &story); err != nil {
+			t.Fatalf("decode item %d as a story: %v", i, err)
+		}
+		out = append(out, story)
+	}
+
+	return out
+}
+
+// feedVersions decodes the adaptation entries of a page, in page order.
+func feedVersions(t *testing.T, page feedPage) []feedVersionItem {
+	t.Helper()
+
+	out := make([]feedVersionItem, 0, len(page.Items))
+	for i, raw := range page.Items {
+		if kind := feedKindOf(t, raw); kind != feedKindVersion {
+			continue
+		}
+		var version feedVersionItem
+		if err := json.Unmarshal(raw, &version); err != nil {
+			t.Fatalf("decode item %d as an adaptation: %v", i, err)
+		}
+		out = append(out, version)
+	}
+
+	return out
+}
+
+// feedKinds returns each entry's discriminator in page order, which is how a test
+// asserts that the merged stream interleaves as the store returned it.
+func feedKinds(t *testing.T, page feedPage) []string {
+	t.Helper()
+
+	kinds := make([]string, 0, len(page.Items))
+	for _, raw := range page.Items {
+		kinds = append(kinds, feedKindOf(t, raw))
+	}
+
+	return kinds
+}
+
+// feedKindOf reads one entry's discriminator, failing the test when the entry
+// carries none: an entry a client cannot classify is a bug in the response.
+func feedKindOf(t *testing.T, raw json.RawMessage) string {
+	t.Helper()
+
+	var envelope struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		t.Fatalf("decode entry kind: %v", err)
+	}
+	if envelope.Kind == "" {
+		t.Fatalf("entry %s has no kind, want %q or %q", raw, feedKindStory, feedKindVersion)
+	}
+
+	return envelope.Kind
 }
 
 // newStoriesHandler returns the composed router with the real stories service
@@ -186,12 +310,39 @@ func newRouterWithMediaLookup(t *testing.T, logger *slog.Logger, service Stories
 func newRouterWithLookups(t *testing.T, logger *slog.Logger, service StoriesService, lookup StoryMediaLookup, stats StoryStatsLookup) http.Handler {
 	t.Helper()
 
+	return newRouterWithFeedLookups(t, logger, service, feedLookups{
+		authors:   &fakeAuthorService{},
+		rooted:    &fakeRootedService{},
+		media:     lookup,
+		reactions: &fakeReactionsLookup{},
+		stats:     stats,
+		chains:    &fakeVersionChainLookup{},
+	})
+}
+
+// feedLookups are the enrichment dependencies the feed tests supply, so a test
+// can seed what a page's entries are decorated with and assert what each
+// decoration cost.
+type feedLookups struct {
+	authors   AuthorLookup
+	rooted    RootedLookup
+	media     StoryMediaLookup
+	reactions ReactionsLookup
+	stats     StoryStatsLookup
+	chains    VersionChainLookup
+}
+
+// newRouterWithFeedLookups assembles the full router with explicit feed
+// enrichment dependencies, so the merged feed can be exercised end to end.
+func newRouterWithFeedLookups(t *testing.T, logger *slog.Logger, service StoriesService, lookups feedLookups) http.Handler {
+	t.Helper()
+
 	authHandler, err := NewAuthHandler(&fakeAuthService{}, logger)
 	if err != nil {
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandler(service, &fakeAuthorService{}, &fakeRootedService{}, lookup, &fakeReactionsLookup{}, stats, logger)
+	storiesHandler, err := NewStoriesHandler(service, lookups.authors, lookups.rooted, lookups.media, lookups.reactions, lookups.stats, lookups.chains, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
@@ -568,19 +719,19 @@ func TestListStoriesEmptyFeedIsAnEmptyArray(t *testing.T) {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
 
-	var body listStoriesResponse
+	var body feedPage
 	decodeBody(t, recorder, &body)
 
-	if body.Stories == nil {
-		t.Error("stories = null, want an empty array")
+	if body.Items == nil {
+		t.Error("items = null, want an empty array")
 	}
-	if len(body.Stories) != 0 {
-		t.Errorf("len(stories) = %d, want 0", len(body.Stories))
+	if len(body.Items) != 0 {
+		t.Errorf("len(items) = %d, want 0", len(body.Items))
 	}
 	if body.NextCursor != "" {
 		t.Errorf("next cursor = %q, want an empty string on the last page", body.NextCursor)
 	}
-	if !strings.Contains(recorder.Body.String(), `"stories":[]`) {
+	if !strings.Contains(recorder.Body.String(), `"items":[]`) {
 		t.Errorf("body = %s, want it to contain an empty array", recorder.Body.String())
 	}
 }
@@ -678,11 +829,11 @@ func TestListStoriesPaginatesThroughTheFeed(t *testing.T) {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
 
-	var first listStoriesResponse
+	var first feedPage
 	decodeBody(t, recorder, &first)
 
-	if len(first.Stories) != 2 {
-		t.Fatalf("len(stories) = %d, want 2", len(first.Stories))
+	if len(first.Items) != 2 {
+		t.Fatalf("len(items) = %d, want 2", len(first.Items))
 	}
 	if first.NextCursor == "" {
 		t.Fatal("next cursor is empty, want a cursor for the second page")
@@ -694,17 +845,22 @@ func TestListStoriesPaginatesThroughTheFeed(t *testing.T) {
 		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
 
-	var second listStoriesResponse
+	var second feedPage
 	decodeBody(t, recorder, &second)
 
-	if len(second.Stories) != 1 {
-		t.Fatalf("len(stories) = %d, want 1", len(second.Stories))
+	if len(second.Items) != 1 {
+		t.Fatalf("len(items) = %d, want 1", len(second.Items))
 	}
 	if second.NextCursor != "" {
 		t.Errorf("next cursor = %q, want an empty string on the last page", second.NextCursor)
 	}
 
-	if second.Stories[0].ID == first.Stories[0].ID || second.Stories[0].ID == first.Stories[1].ID {
+	firstPage := feedStories(t, first)
+	secondPage := feedStories(t, second)
+	if len(firstPage) != 2 || len(secondPage) != 1 {
+		t.Fatalf("decoded stories = %d then %d, want 2 then 1", len(firstPage), len(secondPage))
+	}
+	if secondPage[0].ID == firstPage[0].ID || secondPage[0].ID == firstPage[1].ID {
 		t.Error("the second page repeated a row from the first page")
 	}
 }
@@ -726,26 +882,31 @@ func TestListStoriesUnexpectedFailureIsInternalError(t *testing.T) {
 func TestNewStoriesHandlerRejectsMissingDependencies(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	if _, err := NewStoriesHandler(nil, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, logger); err == nil {
-		t.Error("NewStoriesHandler(nil, authors, rooted, media, reactions, stats, logger) error = nil, want an error")
+	if _, err := NewStoriesHandler(nil, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger); err == nil {
+		t.Error("NewStoriesHandler(nil service) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, nil, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, logger); err == nil {
-		t.Error("NewStoriesHandler(service, nil authors, rooted, media, reactions, stats, logger) error = nil, want an error")
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, nil, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger); err == nil {
+		t.Error("NewStoriesHandler(nil authors) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, nil, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, logger); err == nil {
-		t.Error("NewStoriesHandler(service, authors, nil rooted, media, reactions, stats, logger) error = nil, want an error")
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, nil, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger); err == nil {
+		t.Error("NewStoriesHandler(nil rooted) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, nil, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, logger); err == nil {
-		t.Error("NewStoriesHandler(service, authors, rooted, nil media, reactions, stats, logger) error = nil, want an error")
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, nil, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger); err == nil {
+		t.Error("NewStoriesHandler(nil media) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, nil, &fakeStoryStatsLookup{}, logger); err == nil {
-		t.Error("NewStoriesHandler(service, authors, rooted, media, nil reactions, stats, logger) error = nil, want an error")
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, nil, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger); err == nil {
+		t.Error("NewStoriesHandler(nil reactions) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, nil, logger); err == nil {
-		t.Error("NewStoriesHandler(service, authors, rooted, media, reactions, nil stats, logger) error = nil, want an error")
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, nil, &fakeVersionChainLookup{}, logger); err == nil {
+		t.Error("NewStoriesHandler(nil stats) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, nil); err == nil {
-		t.Error("NewStoriesHandler(service, authors, rooted, media, reactions, stats, nil logger) error = nil, want an error")
+	// The chain lookup is what attributes an adaptation in the feed, so a handler
+	// without one would serve entries it cannot attribute (KNOT-022).
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, nil, logger); err == nil {
+		t.Error("NewStoriesHandler(nil chains) error = nil, want an error")
+	}
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, nil); err == nil {
+		t.Error("NewStoriesHandler(nil logger) error = nil, want an error")
 	}
 }
 
@@ -960,11 +1121,12 @@ func TestStoryFeedIncludesMediaPreview(t *testing.T) {
 		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
 
-	var body listStoriesResponse
+	var body feedPage
 	decodeBody(t, recorder, &body)
 
-	byID := make(map[string][]storyMediaResponse, len(body.Stories))
-	for _, story := range body.Stories {
+	storiesInPage := feedStories(t, body)
+	byID := make(map[string][]storyMediaResponse, len(storiesInPage))
+	for _, story := range storiesInPage {
 		byID[story.ID] = story.Media
 	}
 
@@ -1018,11 +1180,11 @@ func TestStoryFeedMarksALongBodyAsATruncatedPreview(t *testing.T) {
 		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
 
-	var body listStoriesResponse
+	var body feedPage
 	decodeBody(t, recorder, &body)
 
-	got := make(map[string]bool, len(body.Stories))
-	for _, story := range body.Stories {
+	got := make(map[string]bool, len(body.Items))
+	for _, story := range feedStories(t, body) {
 		got[story.ID] = story.PreviewTruncated
 	}
 

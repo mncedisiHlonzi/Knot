@@ -37,7 +37,7 @@ func TestStoryDetailCarriesReactionsAndMyReactions(t *testing.T) {
 	}
 	storiesService := &fakeStoriesService{getResult: stories.Story{ID: testEnrichedEntityID, AuthorID: testReactionAuthorID}}
 
-	handler, err := NewStoriesHandler(storiesService, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, lookup, &fakeStoryStatsLookup{}, logger)
+	handler, err := NewStoriesHandler(storiesService, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, lookup, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
@@ -70,7 +70,7 @@ func TestStoryDetailAnonymousHasEmptyMyReactions(t *testing.T) {
 	lookup := &fakeReactionsLookup{summaries: map[string]reactions.Summary{testEnrichedEntityID: {RingsTrue: 2}}}
 	storiesService := &fakeStoriesService{getResult: stories.Story{ID: testEnrichedEntityID, AuthorID: testReactionAuthorID}}
 
-	handler, err := NewStoriesHandler(storiesService, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, lookup, &fakeStoryStatsLookup{}, logger)
+	handler, err := NewStoriesHandler(storiesService, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, lookup, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
@@ -102,9 +102,9 @@ func TestStoryDetailAnonymousHasEmptyMyReactions(t *testing.T) {
 func TestStoryFeedBatchesReactionsOnce(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	lookup := &fakeReactionsLookup{summaries: map[string]reactions.Summary{testEnrichedEntityID: {AddsSomethingNew: 1}}}
-	storiesService := &fakeStoriesService{listResult: []stories.Story{{ID: testEnrichedEntityID, AuthorID: testReactionAuthorID}}}
+	storiesService := &fakeStoriesService{listResult: feedOf(stories.Story{ID: testEnrichedEntityID, AuthorID: testReactionAuthorID})}
 
-	handler, err := NewStoriesHandler(storiesService, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, lookup, &fakeStoryStatsLookup{}, logger)
+	handler, err := NewStoriesHandler(storiesService, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, lookup, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
@@ -117,12 +117,13 @@ func TestStoryFeedBatchesReactionsOnce(t *testing.T) {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
 	}
 
-	var body listStoriesResponse
+	var body feedPage
 	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if len(body.Stories) != 1 || body.Stories[0].Reactions.AddsSomethingNew != 1 {
-		t.Errorf("feed reactions = %+v, want adds_something_new 1", body.Stories)
+	page := feedStories(t, body)
+	if len(page) != 1 || page[0].Reactions.AddsSomethingNew != 1 {
+		t.Errorf("feed reactions = %+v, want adds_something_new 1", page)
 	}
 	if lookup.summaryCalls != 1 {
 		t.Errorf("summary lookup calls = %d, want exactly 1 batched call", lookup.summaryCalls)
@@ -226,7 +227,7 @@ func TestReactionEnrichmentSwallowsLookupFailure(t *testing.T) {
 	lookup := &fakeReactionsLookup{err: io.ErrUnexpectedEOF}
 	storiesService := &fakeStoriesService{getResult: stories.Story{ID: testEnrichedEntityID, AuthorID: testReactionAuthorID}}
 
-	handler, err := NewStoriesHandler(storiesService, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, lookup, &fakeStoryStatsLookup{}, logger)
+	handler, err := NewStoriesHandler(storiesService, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, lookup, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}

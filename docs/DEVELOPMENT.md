@@ -1817,6 +1817,41 @@ scoping: a test must pass even when a *previous* run's rows (or a real user's) a
 still present. Assertions are not weakened to `>=` a count when an exact count is
 what the test is about — the data is scoped, not the assertion.
 
+## The merged feed, and how to touch it (KNOT-022)
+
+`GET /stories` is not a list of stories any more: it is a **merged stream** of stories and
+human adaptations of them, one newest-first page, each entry carrying a `kind`
+(`"story"` or `"version"`). The page's key is `items`. See KNOT-ADR-070 and
+[the endpoint](API.md#get-stories) before changing anything here.
+
+Four things are easy to get wrong, and each is pinned by a test:
+
+1. **The two kinds key their enrichment differently.** In `internal/httpapi/enrich.go`, a
+   story entry is keyed by its own id for everything; a version entry is keyed by its
+   **version id** for reactions and by its **parent story id** for media and the aggregate
+   counts (`feedVersionLookups`). Mixing them silently attaches another entity's numbers to
+   a card. `feed_versions_test.go` asserts both.
+2. **A root version is never an entry.** The version branch filters
+   `parent_version_id IS NOT NULL`; without it every story appears twice.
+3. **Ordering uses each entry's own `created_at`.** `FeedItem.SortTime()` and `SortID()`
+   exist because `item.CreatedAt` on a version entry is the zero time — the embedded story
+   value is empty for that kind. Read the sort key through those accessors.
+4. **Attribution is enrichment, never a failure.** One batched ancestry read attributes the
+   whole page (`versions.Service.ChainsFor` → `ListAncestry`); a chain that cannot be
+   resolved leaves that entry's `version_number` at `0` and its `attribution_line` empty
+   while the page is still served.
+
+Migration `0017` adds `story_versions_created_at_id_idx`, the partial index the version
+branch is ordered by. It changes no data, so `migrate up` on an existing database is a
+no-op apart from the index.
+
+To smoke it by hand, register two accounts, publish a story, adapt it once or twice, then
+read `GET /stories`: the adaptations appear as `kind: "version"` entries above the story,
+each with its own `version_number` and `attribution_line`, and the story appears exactly
+once. A page with an adaptation costs one query more than a stories-only page (the ancestry
+read) plus a second reaction read, because adaptations and stories react as different
+entities.
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push and pull request. It has four jobs:

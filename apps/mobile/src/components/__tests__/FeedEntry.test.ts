@@ -4,6 +4,7 @@ import { MAX_PORTRAIT_ASPECT_RATIO } from '../../utils/mediaFrame';
 import AuthorLine from '../AuthorLine';
 import FeedEntry from '../FeedEntry';
 import FeedVideo from '../FeedVideo';
+import PillarTag from '../PillarTag';
 
 /**
  * FeedEntry resolves its media frame from the payload or from the media's own
@@ -414,5 +415,189 @@ describe('FeedEntry read more', () => {
     });
 
     expect(readMoreLink(element)).toBeUndefined();
+  });
+});
+
+/**
+ * Collects every string child in a directly-called component's element tree, so
+ * the text an entry draws can be asserted without a renderer (KNOT-022).
+ */
+function collectText(node: unknown, found: string[] = []): string[] {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      collectText(child, found);
+    }
+    return found;
+  }
+  if (typeof node === 'string') {
+    found.push(node);
+    return found;
+  }
+  if (typeof node === 'number') {
+    found.push(String(node));
+    return found;
+  }
+  if (node === null || node === undefined || typeof node !== 'object') {
+    return found;
+  }
+
+  const element = node as { props?: { children?: unknown } };
+  if (element.props !== undefined) {
+    collectText(element.props.children, found);
+  }
+
+  return found;
+}
+
+/** The first text element whose content matches the predicate, if any. */
+function findTextElement(
+  node: unknown,
+  matches: (text: string) => boolean,
+): { props?: Record<string, unknown> } | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findTextElement(child, matches);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+  if (node === null || node === undefined || typeof node !== 'object') {
+    return undefined;
+  }
+
+  const element = node as { type?: unknown; props?: { children?: unknown } };
+  const children = element.props?.children;
+  if (typeof children === 'string' && matches(children)) {
+    return element as { props?: Record<string, unknown> };
+  }
+  if (element.props !== undefined) {
+    return findTextElement(children, matches);
+  }
+
+  return undefined;
+}
+
+/** The fixture the version-variant assertions below are built from. */
+const version = {
+  ...story,
+  id: 'version-9',
+  title: 'Imvula yokuqala',
+  preview: 'Ugogo wathi imvula yokuqala ikhumbula wonke amagama.',
+  language: 'zul',
+};
+
+const ATTRIBUTION = "Adapted from Nomsa Khan's original story in English into Zulu.";
+
+describe('FeedEntry version variant', () => {
+  it('labels an adaptation with its version and language instead of the pillar tag', () => {
+    const element = FeedEntry({
+      story: version,
+      variant: 'version',
+      versionNumber: 2,
+      attributionLine: ATTRIBUTION,
+      onPress: () => undefined,
+    });
+
+    // The badge replaces the pillar tag: the pillar is the story's, inherited, so
+    // repeating it would say nothing about this entry (KNOT-022).
+    expect(elementTypes(element)).not.toContain(PillarTag);
+
+    const text = collectText(element);
+    expect(text).toContain('Version 2 · Zulu');
+    // The overline voice upper-cases the label, so the wording is sentence case.
+    expect(findTextElement(element, (value) => value === 'Version 2 · Zulu')?.props?.style).toEqual(
+      expect.arrayContaining([expect.objectContaining({ textTransform: 'uppercase' })]),
+    );
+  });
+
+  it('shows the attribution sentence verbatim, clamped to two lines', () => {
+    const element = FeedEntry({
+      story: version,
+      variant: 'version',
+      versionNumber: 3,
+      attributionLine: ATTRIBUTION,
+      onPress: () => undefined,
+    });
+
+    expect(collectText(element)).toContain(ATTRIBUTION);
+
+    const line = findTextElement(element, (value) => value === ATTRIBUTION);
+    expect(line?.props?.numberOfLines).toBe(2);
+  });
+
+  it('shows no attribution line when the server could not resolve one', () => {
+    const element = FeedEntry({
+      story: version,
+      variant: 'version',
+      versionNumber: 2,
+      attributionLine: '',
+      onPress: () => undefined,
+    });
+
+    expect(collectText(element)).not.toContain(ATTRIBUTION);
+    // The badge still marks the entry, so a reader knows it is an adaptation.
+    expect(collectText(element)).toContain('Version 2 · Zulu');
+  });
+
+  it('names the version without a number when the server sent none', () => {
+    const element = FeedEntry({
+      story: version,
+      variant: 'version',
+      attributionLine: ATTRIBUTION,
+      onPress: () => undefined,
+    });
+
+    expect(collectText(element)).toContain('Version in Zulu');
+  });
+
+  it('still renders the story shape when the variant is not given', () => {
+    const element = FeedEntry({ story, onPress: () => undefined });
+
+    expect(elementTypes(element)).toContain(PillarTag);
+    expect(collectText(element).some((value) => value.startsWith('Version '))).toBe(false);
+    expect(collectText(element)).toContain(story.preview);
+  });
+
+  it('announces what a tap opens: the version for an adaptation, the story for a story', () => {
+    const adaptation = FeedEntry({
+      story: version,
+      variant: 'version',
+      versionNumber: 2,
+      attributionLine: ATTRIBUTION,
+      onPress: () => undefined,
+    });
+    expect(findByLabel(adaptation, (label) => label.startsWith('Open this version'))).toBeDefined();
+    expect(
+      findByLabel(adaptation, (label) => label === 'Open this version: Imvula yokuqala'),
+    ).toBeDefined();
+
+    const original = FeedEntry({ story, onPress: () => undefined });
+    expect(
+      findByLabel(
+        original,
+        (label) => label === 'Open the story: How my grandmother counted the days',
+      ),
+    ).toBeDefined();
+  });
+
+  it('keeps the rest of the card, so an adaptation reads like any other entry', () => {
+    const element = FeedEntry({
+      story: { ...version, preview_truncated: true },
+      variant: 'version',
+      versionNumber: 2,
+      attributionLine: ATTRIBUTION,
+      onPress: () => undefined,
+      onOpenAuthor: () => undefined,
+    });
+
+    // The author line, the title, the preview, and the meta line are all still
+    // drawn: only the framing row and the attribution differ.
+    expect(findElementByType(element, AuthorLine)).toBeDefined();
+    const text = collectText(element);
+    expect(text).toContain(version.title);
+    expect(text).toContain(version.preview);
+    expect(findByLabel(element, (label) => label.startsWith('Read more'))).toBeDefined();
   });
 });

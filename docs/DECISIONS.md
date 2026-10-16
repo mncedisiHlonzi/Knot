@@ -2360,3 +2360,60 @@ one version's line empty rather than failing the page. Finally, a chain is **not
 for blocked authors: a lineage is structural heritage, hiding a link would make the sentence
 a lie, and the tree endpoint already returns every version of a story unfiltered, so the
 attribution exposes nothing the tree does not.
+
+## KNOT-ADR-070 — The feed is a merged stream of stories and adaptations, discriminated by a `kind` on each entry
+
+**Decision.** `GET /stories` returns one newest-first page of **two entry kinds**: a story
+and somebody's adaptation of one. Each entry flatly carries the `kind` that says which it
+is (`"story"` or `"version"`), and the page's key is `items` rather than `stories`.
+
+The two shapes are drawn from the same card fields, so a client renders both through one
+component: `StoryFeedItem` is the story object plus `kind`, and `VersionFeedItem` repeats
+the fields a card needs with version identity — `id` is the **version**, `story_id` is the
+story it adapts, and `version_number` and `attribution_line` describe its position in the
+lineage. Place, pillar, media, and the aggregate counts on a version entry are the story's,
+because a `story_versions` row owns none of them; reactions are the version's, because a
+reader reacts to the adaptation they are reading.
+
+Ordering is `(created_at DESC, id DESC)` over **both kinds**, keyed by each entry's own
+`created_at`. **A root version is never an entry of its own** — a story is its root, and
+the story branch already carries that content. The block filter is applied per branch, on
+each entry's own author.
+
+**Why this shape.** Tell My People only becomes an honest mechanic when a reader can see
+that a version exists as something *in the world* rather than as a subtree behind a story
+they already read. Hiding adaptations one tap deep made them look like metadata; putting
+them in the feed makes them the same kind of thing as the stories they came from, which is
+what they are. The alternative — a separate "adaptations" endpoint or a `?kind=` filter —
+would have kept the feed a list of stories and required the client to compose two streams
+itself, with no defined interleaving and two pagination cursors to coordinate.
+
+A single merged stream is also the only shape that can be paged honestly: one keyset over
+one sort order means the cursor resumes exactly where the page ended, whichever kind the
+last entry was. The store implements it as a `UNION ALL` of two branches that select the
+same columns in the same order, so the union can be ordered and scanned as one stream
+(migration `0017` adds the partial index that lets the version branch be read in feed
+order).
+
+**Consequences.** Every existing consumer of `GET /stories` had to be updated: the response
+key is `items`, and a client must now **switch on `kind`** rather than assume a story. That
+is a deliberate breaking change, taken at once rather than behind a compatibility key,
+because the product has one client. Migration `0017` adds
+`story_versions_created_at_id_idx`, a partial index on `(created_at DESC, id DESC)` where
+`parent_version_id IS NOT NULL`: without it the version branch is an unordered scan of every
+version row, including roots the feed never returns. On a small local dataset the planner
+sorts the union anyway, so the index is not observable here; it exists so the branch stays
+an index seek as the table grows.
+
+A page that mixes kinds costs **one more query than a stories-only page**, and one more
+again: the lineage read that attributes adaptations, and a second reaction read, because an
+adaptation's reactions key by version and a story's by story. Both are batched (one read per
+kind per page, never one per row). A page with no adaptations pays neither.
+
+Attribution stays enrichment: a lineage that cannot be resolved leaves that entry's
+`version_number` at `0` and its `attribution_line` empty, and the page is served anyway
+(KNOT-ADR-069). An adaptation entry labels itself with its version and language where a
+story entry shows its pillar and place — the pillar on a version is inherited, so repeating
+it would say nothing about the entry — and shows the attribution sentence under its title.
+Finally, a client that taps an adaptation opens the **version**, not the story, so the feed
+needs both destinations wired (`onOpenVersion` alongside `onOpenStory`).

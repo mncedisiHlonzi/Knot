@@ -1,11 +1,12 @@
 // Package stories implements the Knot stories domain: the cultural artefacts
-// users publish, and the feed that lists them.
+// users publish, and the feed that lists them alongside their adaptations.
 //
 // The package is deliberately layered, mirroring internal/identity:
 //
 //	story.go          domain types, limits, errors, and the store contract
+//	feed.go           the merged feed's entry kinds and item shapes
 //	cursor.go         opaque pagination cursors for the feed
-//	service.go        business rules (CreateStory, GetStory, ListStories)
+//	service.go        business rules (CreateStory, GetStory, ListFeed)
 //	postgres_store.go the PostgreSQL implementation of the store contract
 //
 // Nothing in this package knows about HTTP, JSON, or SQL types. User ids are
@@ -190,10 +191,11 @@ type StoryStore interface {
 	CreateStory(ctx context.Context, story Story) (Story, error)
 	// GetStory returns the story with the given id, or ErrNotFound.
 	GetStory(ctx context.Context, id string) (Story, error)
-	// ListStories returns at most limit stories newer-to-older, starting after
-	// cursor. A nil cursor starts at the newest story. The returned cursor is
-	// the position to resume from, or nil when the page is the last one.
-	ListStories(ctx context.Context, cursor *Cursor, limit int) ([]Story, *Cursor, error)
+	// ListFeed returns one page of the merged feed -- stories and their
+	// adaptations, newest first -- starting after cursor. A nil cursor starts at
+	// the newest entry. The returned cursor is the position to resume from, or
+	// nil when the page is the last one. See FeedItem for the two entry kinds.
+	ListFeed(ctx context.Context, cursor *Cursor, limit int) ([]FeedItem, *Cursor, error)
 }
 
 // Service holds the stories business rules.

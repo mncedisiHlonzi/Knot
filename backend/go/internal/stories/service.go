@@ -58,8 +58,8 @@ func (s *Service) GetStory(ctx context.Context, id string) (Story, error) {
 	return story, nil
 }
 
-// ListStories returns one page of the feed, newest first, plus the cursor that
-// resumes after it.
+// ListFeed returns one page of the merged feed — stories and their adaptations,
+// newest first — plus the cursor that resumes after it.
 //
 // An empty rawCursor asks for the first page. The returned next cursor is the
 // empty string when the page is the last one, which is how the HTTP layer
@@ -68,7 +68,7 @@ func (s *Service) GetStory(ctx context.Context, id string) (Story, error) {
 // The limit is validated rather than clamped so that a caller passing an
 // out-of-range value learns about it; the HTTP layer applies the
 // DefaultListLimit/MaxListLimit policy before calling in.
-func (s *Service) ListStories(ctx context.Context, rawCursor string, limit int) ([]Story, string, error) {
+func (s *Service) ListFeed(ctx context.Context, rawCursor string, limit int) ([]FeedItem, string, error) {
 	if limit < 1 || limit > MaxListLimit {
 		return nil, "", &ValidationError{
 			Field:   "limit",
@@ -85,15 +85,15 @@ func (s *Service) ListStories(ctx context.Context, rawCursor string, limit int) 
 		cursor = &decoded
 	}
 
-	page, next, err := s.store.ListStories(ctx, cursor, limit)
+	page, next, err := s.store.ListFeed(ctx, cursor, limit)
 	if err != nil {
-		return nil, "", fmt.Errorf("stories: list stories: %w", err)
+		return nil, "", fmt.Errorf("stories: list feed: %w", err)
 	}
 
 	if page == nil {
 		// Emit [] rather than null so a client never has to special-case an
 		// empty feed.
-		page = []Story{}
+		page = []FeedItem{}
 	}
 
 	nextCursor := ""

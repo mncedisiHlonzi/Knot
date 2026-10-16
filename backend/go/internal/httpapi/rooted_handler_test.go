@@ -128,7 +128,7 @@ func newRouterWithRooted(t *testing.T, logger *slog.Logger, enricher testEnriche
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandler(storiesService, enricher, enricher, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, logger)
+	storiesHandler, err := NewStoriesHandler(storiesService, enricher, enricher, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}

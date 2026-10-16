@@ -103,7 +103,7 @@ func (m *memoryDiscoveryStore) ListStoriesAtPlace(_ context.Context, placeLower 
 
 	start := 0
 	if cursor != nil {
-		for start < len(filtered) && !beforeCursor(filtered[start], *cursor) {
+		for start < len(filtered) && !beforeCursor(filtered[start].CreatedAt, filtered[start].ID, *cursor) {
 			start++
 		}
 	}

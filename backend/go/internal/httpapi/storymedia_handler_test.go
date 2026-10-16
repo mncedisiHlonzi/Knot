@@ -347,7 +347,7 @@ func (e *storyMediaTestEnv) router(t *testing.T, subject string) http.Handler {
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, e.service, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, e.logger)
+	storiesHandler, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, e.service, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, e.logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}

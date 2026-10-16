@@ -52,7 +52,7 @@ const testStatsStoryID = "22222222-2222-4222-8222-222222222222"
 func TestStoryListCarriesAggregateCounts(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	service := &fakeStoriesService{listResult: []stories.Story{{ID: testStatsStoryID, AuthorID: testUserID}}}
+	service := &fakeStoriesService{listResult: feedOf(stories.Story{ID: testStatsStoryID, AuthorID: testUserID})}
 	media := &fakeStoryMediaLookup{first: map[string]storymedia.StoryMedia{
 		testStatsStoryID: {
 			ID:        "33333333-3333-4333-8333-333333333333",
@@ -88,13 +88,14 @@ func TestStoryListCarriesAggregateCounts(t *testing.T) {
 		}
 	}
 
-	var body listStoriesResponse
+	var body feedPage
 	decodeBody(t, recorder, &body)
-	if len(body.Stories) != 1 {
-		t.Fatalf("stories = %d, want 1", len(body.Stories))
+	page := feedStories(t, body)
+	if len(page) != 1 {
+		t.Fatalf("stories = %d, want 1", len(page))
 	}
 
-	got := body.Stories[0]
+	got := page[0]
 	if got.VersionCount != 4 || got.LanguageCount != 3 || got.CommentCount != 14 || got.MediaCount != 5 {
 		t.Errorf("counts = %d/%d/%d/%d, want 4/3/14/5", got.VersionCount, got.LanguageCount, got.CommentCount, got.MediaCount)
 	}

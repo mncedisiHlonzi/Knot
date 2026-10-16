@@ -215,6 +215,7 @@ KNOT-ADR-012.
 | Name                                  | Kind                        | Columns                                   | Purpose                                                                 |
 | ------------------------------------- | --------------------------- | ----------------------------------------- | ----------------------------------------------------------------------- |
 | `story_versions_pkey`                 | Primary key                 | `id`                                      | Row identity                                                            |
+| `story_versions_created_at_id_idx`    | Partial Btree index (descending) | `(created_at DESC, id DESC)` where `parent_version_id IS NOT NULL` | Serves the feed's **version branch**: the adaptations ordered exactly as the merged page orders them, so the branch can be read as an ordered index scan (migration `0017`, KNOT-022) |
 | `story_versions_story_id_idx`         | Btree index                 | `story_id`                                | Reads every version of a story, and the cascade on story deletion        |
 | `story_versions_parent_version_id_idx`| Btree index                 | `parent_version_id`                       | Finds a version's children, and the cascade on parent deletion           |
 | `story_versions_author_id_idx`        | Btree index                 | `author_id`                               | "Versions by this person", and the cascade on user deletion              |
@@ -276,6 +277,43 @@ handful of reads, guarded against a cycle in the parent pointers), while
 chain from that in-memory list, so a page of N versions issues no attribution query at all.
 Author names are likewise resolved in one batched read per response rather than one per
 link.
+
+Attribution on the **feed** (`GET /stories`) is batched the same way, with one addition:
+the page's version entries are attributed from a single **ancestry closure** read. One
+recursive query walks `parent_version_id` from every requested version to its root and
+returns the union of those rows, so a page of N adaptations costs one read rather than N
+walks (migration `0017` adds the ordering index the feed's own query seeks by).
+
+### The feed reads both tables
+
+The feed is a **union of the two tables above**, not a query over `stories` alone:
+`GET /stories` returns stories and human adaptations of them in one newest-first stream,
+each entry tagged with a `kind` (`story` or `version`).
+
+- The **story branch** reads `stories`, joined to its root version for the content, exactly
+  as a story read always has. Its sort key is `stories.created_at`.
+- The **version branch** reads `story_versions` rows whose `parent_version_id IS NOT NULL`,
+  joined to their story for the pillar, place, and media the version row does not own. Its
+  sort key is the **version's own** `story_versions.created_at`, so an adaptation appears
+  where it was written rather than where its story was published.
+
+**A root version is never an entry of its own.** A story IS its root version — the story
+branch already carries that content — so the version branch excludes `parent_version_id IS
+NULL` rows. Without that predicate every story would appear twice, once as itself and once
+as its own "adaptation".
+
+The two branches select the same columns in the same order so the union can be ordered and
+scanned as one stream; a column that does not apply to a branch (a version's parent on a
+story entry, a story's root version on a version entry) is selected as an empty value
+rather than omitted. Paging is keyset over the merged stream, so the cursor is a position
+in `(created_at, id)` over both kinds and a page never repeats or skips an entry.
+
+The block filter is applied **per branch, on its own author**: a viewer who blocks A stops
+seeing A's story and stops seeing any version A wrote, while a version B wrote of A's story
+stays visible. A block hides an author, not a lineage (KNOT-ADR-060).
+
+This is also why the `media` and place fields on a version entry are the story's: a version
+row has no media, pillar, or place columns to read, so the branch joins the story for them.
 
 ## `comments`
 

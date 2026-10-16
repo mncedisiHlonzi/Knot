@@ -144,7 +144,96 @@ export type Story = {
   readonly version_depth?: number;
 };
 
-/** The request body for POST /stories. */
+/**
+ * One entry of the merged feed: a story, or somebody's adaptation of one
+ * (KNOT-022).
+ *
+ * The two kinds are told apart by `kind`, and each carries the fields its own card
+ * needs. Both are flat on the wire — `StoryFeedItem` is a `Story` plus the
+ * discriminator, and `VersionFeedItem` repeats the story-shaped fields a card
+ * renders — so a client switches on `kind` once and then reads the shape it picked.
+ */
+export type FeedItem = StoryFeedItem | VersionFeedItem;
+
+/** A story entry in the feed: the story, marked as one. */
+export type StoryFeedItem = Story & {
+  readonly kind: 'story';
+};
+
+/**
+ * An adaptation entry in the feed: one version somebody wrote of somebody else's
+ * story.
+ *
+ * It carries the story-shaped fields a card renders (author, framing, media, counts,
+ * reactions) so the feed's card can draw it, but its identity is the VERSION: `id`
+ * is the version to open, `story_id` is the story it adapts, and the language,
+ * title, and body are the adapter's text. Place and media are inherited from that
+ * story, because a version carries neither of its own.
+ *
+ * There is no `version_depth` here: a feed entry is never a root, so
+ * `version_number` — the position a reader says out loud, counting the original as
+ * 1 — is what a card shows.
+ */
+export type VersionFeedItem = {
+  readonly kind: 'version';
+  /** The version's own id: what the reader opens, reacts to, and adapts from. */
+  readonly id: string;
+  /** The story being adapted. */
+  readonly story_id: string;
+  /**
+   * The version this one adapts. It is never null: a root version is the story, so
+   * it is not a feed entry of its own.
+   */
+  readonly parent_version_id: string;
+  /** The ADAPTER. The original author is named in `attribution_line`. */
+  readonly author_id: string;
+  readonly author_display_name?: string;
+  readonly author_avatar_url?: string | null;
+  readonly author_rooted?: AuthorRooted | null;
+  readonly language: string;
+  readonly title: string;
+  readonly body: string;
+  /** The story's pillar, inherited: an adaptation of a heritage story is heritage. */
+  readonly pillar: Pillar;
+  /** The story's place and structured coordinates, inherited. */
+  readonly approximate_location: string;
+  readonly latitude?: number | null;
+  readonly longitude?: number | null;
+  readonly place_country?: string | null;
+  readonly media_urls: readonly string[];
+  /**
+   * Whether the STORY is flagged sensitive, inherited. A card consults it before
+   * showing the story's media.
+   */
+  readonly sensitive: boolean;
+  readonly created_at: string;
+  /**
+   * The STORY's media, so an adaptation entry shows the pictures the story came
+   * with. The card draws them from the first-media fields below.
+   */
+  readonly media_count?: number;
+  readonly first_media_type?: 'image' | 'video' | null;
+  readonly first_media_url?: string | null;
+  readonly first_media_width?: number | null;
+  readonly first_media_height?: number | null;
+  /** The VERSION's own counts: a reader reacts to the adaptation they are reading. */
+  readonly reactions?: ReactionCounts;
+  readonly my_reactions?: readonly string[];
+  /** The story's aggregates, so the entry can say how much adaptation it has. */
+  readonly version_count?: number;
+  readonly language_count?: number;
+  readonly comment_count?: number;
+  /** The entry's position in its lineage, counting the original as 1. */
+  readonly version_number: number;
+  /**
+   * The server-rendered sentence tracing this version back to the original, shown
+   * verbatim. Empty when the lineage could not be resolved; the card then shows no
+   * line.
+   */
+  readonly attribution_line: string;
+  /** Whether `body` is longer than the preview window a card draws. */
+  readonly preview_truncated?: boolean;
+};
 export type CreateStoryPayload = {
   readonly pillar: Pillar;
   readonly language: string;
@@ -167,21 +256,42 @@ export type StoryResponse = {
   readonly story: Story;
 };
 
-/** The body returned by GET /stories. */
+/**
+ * The body returned by GET /discovery/places/{place}: that place's stories.
+ *
+ * The place page lists stories only, so it keeps the stories-shaped body. The feed
+ * is a merged stream of stories and adaptations and answers with `items` instead
+ * (see FeedListResponse).
+ */
 export type StoryListResponse = {
   readonly stories: readonly Story[];
   /**
-   * The token that resumes the feed after this page, or an empty string when
-   * there are no more pages. The server always sends the field.
+   * The token that resumes the page after this one, or an empty string when there
+   * are no more pages. The server always sends the field.
    */
+  readonly next_cursor: string;
+};
+
+/**
+ * The body returned by GET /stories: one page of the merged feed, newest first.
+ *
+ * Each item carries the `kind` that says which shape it is -- a story or an
+ * adaptation of one -- so a client switches on it and never has to infer the kind
+ * from which fields happen to be present (KNOT-022).
+ */
+export type FeedListResponse = {
+  readonly items: readonly FeedItem[];
   readonly next_cursor: string;
 };
 
 /** Options for a feed page. */
 export type ListStoriesOptions = {
-  /** A cursor from a previous page. Omit it to start at the newest story. */
+  /** A cursor from a previous page. Omit it to start at the newest entry. */
   readonly cursor?: string;
-  /** How many stories to ask for. The server defaults to 20 and caps at 50. */
+  /**
+   * How many entries to ask for. The server defaults to 20 and caps at 50, and an
+   * entry is one story or one adaptation of a story (KNOT-022).
+   */
   readonly limit?: number;
 };
 
@@ -296,8 +406,13 @@ export const storiesApi = {
     return request<StoryResponse>(`/stories/${encodeURIComponent(id)}`, { method: 'GET', token });
   },
 
-  /** GET /stories — reads one page of the feed, newest first. Public. */
-  listStories(options: ListStoriesOptions = {}, token?: string): Promise<StoryListResponse> {
-    return request<StoryListResponse>(`/stories${feedQuery(options)}`, { method: 'GET', token });
+  /**
+   * GET /stories — reads one page of the merged feed, newest first. Public.
+   *
+   * The page carries stories and adaptations in one stream, each tagged with its
+   * `kind` (KNOT-022).
+   */
+  listStories(options: ListStoriesOptions = {}, token?: string): Promise<FeedListResponse> {
+    return request<FeedListResponse>(`/stories${feedQuery(options)}`, { method: 'GET', token });
   },
 };

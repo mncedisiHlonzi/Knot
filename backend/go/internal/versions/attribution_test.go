@@ -66,11 +66,31 @@ func (c *chainStore) ListByStory(_ context.Context, storyID string) ([]StoryVers
 	return out, nil
 }
 
+// ListAncestry walks from each seed to its root over the same parent pointers the
+// real store's recursive query follows.
+func (c *chainStore) ListAncestry(_ context.Context, versionIDs []string) ([]StoryVersion, error) {
+	out := make([]StoryVersion, 0)
+	seen := make(map[string]bool)
+	for _, id := range versionIDs {
+		for id != "" && !seen[id] {
+			row, ok := c.byID[id]
+			if !ok {
+				break
+			}
+			seen[id] = true
+			out = append(out, row)
+			id = row.ParentVersionID
+		}
+	}
+	return out, nil
+}
+
 // callCountingStore wraps a chainStore and counts the reads a walk makes, so a
 // test can prove the in-memory resolver never touches the store.
 type callCountingStore struct {
-	inner    *chainStore
-	getCalls int
+	inner     *chainStore
+	getCalls  int
+	listCalls int
 }
 
 func (c *callCountingStore) CreateVersion(ctx context.Context, version StoryVersion) (StoryVersion, error) {
@@ -84,6 +104,13 @@ func (c *callCountingStore) GetVersion(ctx context.Context, id string) (StoryVer
 
 func (c *callCountingStore) ListByStory(ctx context.Context, storyID string) ([]StoryVersion, error) {
 	return c.inner.ListByStory(ctx, storyID)
+}
+
+// listCalls counts the batched ancestry reads, so a test can prove ChainsFor
+// resolves a whole page of versions from one read (KNOT-022).
+func (c *callCountingStore) ListAncestry(ctx context.Context, versionIDs []string) ([]StoryVersion, error) {
+	c.listCalls++
+	return c.inner.ListAncestry(ctx, versionIDs)
 }
 
 // rootRow is a story's root version: no parent, so it is the original.

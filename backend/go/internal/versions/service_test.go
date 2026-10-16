@@ -25,14 +25,18 @@ type fakeStore struct {
 	createErr    error
 	listResult   []StoryVersion
 	listErr      error
+	ancestryRows []StoryVersion
+	ancestryErr  error
 
 	gotCreate      StoryVersion
 	gotGetID       string
 	gotListStoryID string
+	gotAncestryIDs []string
 
-	getCalls    int
-	createCalls int
-	listCalls   int
+	getCalls      int
+	createCalls   int
+	listCalls     int
+	ancestryCalls int
 }
 
 func (f *fakeStore) CreateVersion(_ context.Context, version StoryVersion) (StoryVersion, error) {
@@ -64,6 +68,12 @@ func (f *fakeStore) ListByStory(_ context.Context, storyID string) ([]StoryVersi
 	f.listCalls++
 	f.gotListStoryID = storyID
 	return f.listResult, f.listErr
+}
+
+func (f *fakeStore) ListAncestry(_ context.Context, versionIDs []string) ([]StoryVersion, error) {
+	f.ancestryCalls++
+	f.gotAncestryIDs = versionIDs
+	return f.ancestryRows, f.ancestryErr
 }
 
 // notificationCall is one notification the service asked its notifier to send.

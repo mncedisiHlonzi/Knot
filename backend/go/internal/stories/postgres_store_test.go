@@ -115,10 +115,10 @@ func newIntegrationStory(author, name string) Story {
 	}
 }
 
-// TestPostgresStoreListStoriesHidesExcludedAuthors proves the block filter: a
+// TestPostgresStoreListFeedHidesExcludedAuthors proves the block filter: a
 // story by an author on the viewer's block set is absent from the page, while a
 // story by anyone else is still present.
-func TestPostgresStoreListStoriesHidesExcludedAuthors(t *testing.T) {
+func TestPostgresStoreListFeedHidesExcludedAuthors(t *testing.T) {
 	env := integrationSetup(t)
 	ctx := context.Background()
 
@@ -148,31 +148,43 @@ func TestPostgresStoreListStoriesHidesExcludedAuthors(t *testing.T) {
 	}
 
 	// Unfiltered: both are present (the hidden one is newest, so it leads).
-	unfiltered, _, err := env.store.ListStories(ctx, nil, 50)
+	unfiltered, _, err := env.store.ListFeed(ctx, nil, 50)
 	if err != nil {
-		t.Fatalf("ListStories() error = %v, want nil", err)
+		t.Fatalf("ListFeed() error = %v, want nil", err)
 	}
-	if !storyPageHasID(unfiltered, hidden.ID) || !storyPageHasID(unfiltered, visible.ID) {
+	if !feedHasStory(unfiltered, hidden.ID) || !feedHasStory(unfiltered, visible.ID) {
 		t.Fatalf("unfiltered page did not contain both stories")
 	}
 
 	// Filtered: the hidden author's story is gone; the other remains.
-	filtered, _, err := env.store.ListStories(moderation.WithExcludedAuthors(ctx, []string{other}), nil, 50)
+	filtered, _, err := env.store.ListFeed(moderation.WithExcludedAuthors(ctx, []string{other}), nil, 50)
 	if err != nil {
-		t.Fatalf("ListStories(filtered) error = %v, want nil", err)
+		t.Fatalf("ListFeed(filtered) error = %v, want nil", err)
 	}
-	if storyPageHasID(filtered, hidden.ID) {
+	if feedHasStory(filtered, hidden.ID) {
 		t.Error("filtered page contains the blocked author's story")
 	}
-	if !storyPageHasID(filtered, visible.ID) {
+	if !feedHasStory(filtered, visible.ID) {
 		t.Error("filtered page is missing the unblocked author's story")
 	}
 }
 
-// storyPageHasID reports whether a page contains a story with the given id.
-func storyPageHasID(page []Story, id string) bool {
-	for _, story := range page {
-		if story.ID == id {
+// feedHasStory reports whether a page contains a STORY entry with the given id.
+// An adaptation entry is keyed by its own id, so it does not answer this question.
+func feedHasStory(page []FeedItem, id string) bool {
+	for _, entry := range page {
+		if entry.Kind == FeedKindStory && entry.Story.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// feedHasVersion reports whether a page contains an ADAPTATION entry with the
+// given version id.
+func feedHasVersion(page []FeedItem, id string) bool {
+	for _, entry := range page {
+		if entry.Kind == FeedKindVersion && entry.Version.ID == id {
 			return true
 		}
 	}
@@ -323,7 +335,7 @@ func authoredIDs(t *testing.T, env integrationStore) []string {
 	return ids
 }
 
-func TestPostgresStoreListStoriesPaginatesWithoutGapsOrRepeats(t *testing.T) {
+func TestPostgresStoreListFeedPaginatesWithoutGapsOrRepeats(t *testing.T) {
 	env := integrationSetup(t)
 	ctx := context.Background()
 
@@ -350,17 +362,19 @@ func TestPostgresStoreListStoriesPaginatesWithoutGapsOrRepeats(t *testing.T) {
 	)
 
 	for pages = 0; pages < 50 && len(seen) < len(want); pages++ {
-		page, next, err := env.store.ListStories(ctx, cursor, 2)
+		page, next, err := env.store.ListFeed(ctx, cursor, 2)
 		if err != nil {
-			t.Fatalf("ListStories() error = %v, want nil", err)
+			t.Fatalf("ListFeed() error = %v, want nil", err)
 		}
 
 		if len(page) > 2 {
 			t.Fatalf("page %d has %d rows, want at most 2", pages+1, len(page))
 		}
-		for _, story := range page {
-			if mine[story.ID] {
-				seen = append(seen, story.ID)
+		for _, entry := range page {
+			// The feed is a merged stream, so other authors' adaptations are
+			// interleaved with this author's stories; only the stories are compared.
+			if entry.Kind == FeedKindStory && mine[entry.Story.ID] {
+				seen = append(seen, entry.Story.ID)
 			}
 		}
 
@@ -380,7 +394,7 @@ func TestPostgresStoreListStoriesPaginatesWithoutGapsOrRepeats(t *testing.T) {
 	}
 }
 
-func TestPostgresStoreListStoriesStopsWithoutACursor(t *testing.T) {
+func TestPostgresStoreListFeedStopsWithoutACursor(t *testing.T) {
 	env := integrationSetup(t)
 	ctx := context.Background()
 
@@ -397,34 +411,34 @@ func TestPostgresStoreListStoriesStopsWithoutACursor(t *testing.T) {
 	// than a count: a page never exceeds the limit, and a cursor is returned
 	// exactly when the page is full.
 	for _, limit := range []int{created, 10} {
-		page, next, err := env.store.ListStories(ctx, nil, limit)
+		page, next, err := env.store.ListFeed(ctx, nil, limit)
 		if err != nil {
-			t.Fatalf("ListStories(limit=%d) error = %v, want nil", limit, err)
+			t.Fatalf("ListFeed(limit=%d) error = %v, want nil", limit, err)
 		}
 
 		if len(page) > limit {
-			t.Errorf("ListStories(limit=%d) returned %d rows, want at most %d", limit, len(page), limit)
+			t.Errorf("ListFeed(limit=%d) returned %d rows, want at most %d", limit, len(page), limit)
 		}
 		if next != nil && len(page) != limit {
-			t.Errorf("ListStories(limit=%d) returned a cursor with %d rows, want a cursor only when the page is full", limit, len(page))
+			t.Errorf("ListFeed(limit=%d) returned a cursor with %d rows, want a cursor only when the page is full", limit, len(page))
 		}
 	}
 
 	// The end of the feed must be reported explicitly rather than by an empty
 	// page: a limit larger than the feed returns every row and no cursor.
-	page, next, err := env.store.ListStories(ctx, nil, 1000)
+	page, next, err := env.store.ListFeed(ctx, nil, 1000)
 	if err != nil {
-		t.Fatalf("ListStories(limit=1000) error = %v, want nil", err)
+		t.Fatalf("ListFeed(limit=1000) error = %v, want nil", err)
 	}
 	if next != nil {
-		t.Errorf("ListStories(limit=1000) returned a cursor %+v, want nil at the end of the feed", next)
+		t.Errorf("ListFeed(limit=1000) returned a cursor %+v, want nil at the end of the feed", next)
 	}
 	if len(page) < created {
-		t.Errorf("ListStories(limit=1000) returned %d rows, want at least the %d this test created", len(page), created)
+		t.Errorf("ListFeed(limit=1000) returned %d rows, want at least the %d this test created", len(page), created)
 	}
 }
 
-func TestPostgresStoreListStoriesCursorIsExclusive(t *testing.T) {
+func TestPostgresStoreListFeedCursorIsExclusive(t *testing.T) {
 	env := integrationSetup(t)
 	ctx := context.Background()
 
@@ -434,32 +448,33 @@ func TestPostgresStoreListStoriesCursorIsExclusive(t *testing.T) {
 		}
 	}
 
-	first, next, err := env.store.ListStories(ctx, nil, 1)
+	first, next, err := env.store.ListFeed(ctx, nil, 1)
 	if err != nil {
-		t.Fatalf("ListStories() error = %v, want nil", err)
+		t.Fatalf("ListFeed() error = %v, want nil", err)
 	}
 	if len(first) != 1 || next == nil {
 		t.Fatalf("first page = %d rows with cursor %+v, want 1 row and a cursor", len(first), next)
 	}
 
-	second, _, err := env.store.ListStories(ctx, next, 1)
+	second, _, err := env.store.ListFeed(ctx, next, 1)
 	if err != nil {
-		t.Fatalf("ListStories() error = %v, want nil", err)
+		t.Fatalf("ListFeed() error = %v, want nil", err)
 	}
 	if len(second) != 1 {
 		t.Fatalf("len(second) = %d, want 1", len(second))
 	}
 
-	if second[0].ID == first[0].ID {
+	if second[0].SortID() == first[0].SortID() {
 		t.Error("the cursor row was returned again, want the comparison to be strictly exclusive")
 	}
 
-	// The resumed page must continue in feed order, not merely differ.
-	if second[0].CreatedAt.After(first[0].CreatedAt) {
-		t.Errorf("second page created at %v is newer than the first page %v, want older", second[0].CreatedAt, first[0].CreatedAt)
+	// The resumed page must continue in feed order, not merely differ. Both kinds
+	// sort by their own timestamp, which is what SortTime answers for either.
+	if second[0].SortTime().After(first[0].SortTime()) {
+		t.Errorf("second page created at %v is newer than the first page %v, want older", second[0].SortTime(), first[0].SortTime())
 	}
-	if second[0].CreatedAt.Equal(first[0].CreatedAt) && second[0].ID >= first[0].ID {
-		t.Errorf("second page id %s does not sort below %s, want the id tiebreaker to advance", second[0].ID, first[0].ID)
+	if second[0].SortTime().Equal(first[0].SortTime()) && second[0].SortID() >= first[0].SortID() {
+		t.Errorf("second page id %s does not sort below %s, want the id tiebreaker to advance", second[0].SortID(), first[0].SortID())
 	}
 }
 
@@ -467,6 +482,309 @@ func TestPostgresStoreRejectsNilPool(t *testing.T) {
 	if _, err := NewPostgresStore(nil); err == nil {
 		t.Error("NewPostgresStore(nil) error = nil, want an error")
 	}
+}
+
+// TestPostgresStoreListFeedMergesStoriesAndAdaptations is the central test of
+// KNOT-022: one page carries the story and the version somebody wrote of it, the
+// version is attributed to its own author, and the story's ROOT version is not an
+// entry of its own — a story is its root, so repeating it would show every story
+// twice.
+func TestPostgresStoreListFeedMergesStoriesAndAdaptations(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	adapter := createIntegrationAuthor(t, env, "adapter@example.test")
+
+	story, err := env.store.CreateStory(ctx, newIntegrationStory(env.author, "merged"))
+	if err != nil {
+		t.Fatalf("CreateStory() error = %v, want nil", err)
+	}
+
+	// Dated one second after the story, so the adaptation leads the page and the
+	// ordering assertion below cannot pass by accident.
+	adaptationID := insertIntegrationVersion(t, env, story.ID, story.RootVersionID, adapter, "zul", story.CreatedAt.Add(time.Second))
+
+	page, _, err := env.store.ListFeed(ctx, nil, 50)
+	if err != nil {
+		t.Fatalf("ListFeed() error = %v, want nil", err)
+	}
+
+	// Only this test's rows are inspected: the feed is global, so other rows may
+	// be interleaved.
+	mine := make([]FeedItem, 0, 2)
+	for _, entry := range page {
+		if entry.Kind == FeedKindStory && entry.Story.ID == story.ID {
+			mine = append(mine, entry)
+			continue
+		}
+		if entry.Kind == FeedKindVersion && entry.Version.ID == adaptationID {
+			mine = append(mine, entry)
+		}
+	}
+
+	if len(mine) != 2 {
+		t.Fatalf("this story contributed %d entries, want exactly 2 (the story and its adaptation)", len(mine))
+	}
+	for _, entry := range mine {
+		if entry.Kind == FeedKindVersion && entry.Version.ID == story.RootVersionID {
+			t.Error("the root version is an entry of its own, want the story to carry it")
+		}
+	}
+
+	if mine[0].Kind != FeedKindVersion {
+		t.Fatalf("first entry kind = %q, want the newer entry (%q) to lead", mine[0].Kind, FeedKindVersion)
+	}
+
+	adaptation := mine[0].Version
+	if adaptation.StoryID != story.ID {
+		t.Errorf("adaptation story id = %q, want %q", adaptation.StoryID, story.ID)
+	}
+	if adaptation.ParentVersionID != story.RootVersionID {
+		t.Errorf("adaptation parent version id = %q, want the story's root %q", adaptation.ParentVersionID, story.RootVersionID)
+	}
+	if adaptation.AuthorID != adapter {
+		t.Errorf("adaptation author id = %q, want the adapter %q rather than the story's author", adaptation.AuthorID, adapter)
+	}
+	if adaptation.Language != "zul" {
+		t.Errorf("adaptation language = %q, want %q", adaptation.Language, "zul")
+	}
+	// The framing an adaptation inherits from the story it adapts, because the
+	// version row carries no pillar, place, or media of its own.
+	if adaptation.Pillar != story.Pillar {
+		t.Errorf("adaptation pillar = %q, want the story's %q", adaptation.Pillar, story.Pillar)
+	}
+	if adaptation.ApproximateLocation != story.ApproximateLocation {
+		t.Errorf("adaptation location = %q, want the story's %q", adaptation.ApproximateLocation, story.ApproximateLocation)
+	}
+	if len(adaptation.MediaURLs) != 1 {
+		t.Errorf("adaptation media urls = %v, want the story's single item", adaptation.MediaURLs)
+	}
+
+	// The story still leads its own content, and it sorts by its own timestamp.
+	if mine[1].Kind != FeedKindStory {
+		t.Fatalf("second entry kind = %q, want %q", mine[1].Kind, FeedKindStory)
+	}
+	if mine[1].Story.Title != story.Title {
+		t.Errorf("story title = %q, want %q", mine[1].Story.Title, story.Title)
+	}
+	if !mine[0].SortTime().Equal(adaptation.CreatedAt) {
+		t.Errorf("adaptation sort time = %v, want its own created_at %v", mine[0].SortTime(), adaptation.CreatedAt)
+	}
+}
+
+// TestPostgresStoreListFeedBlockFilterAppliesPerAuthor pins the semantics of the
+// block filter on a merged stream: a block hides an AUTHOR, not a lineage. An
+// adaptation written by somebody the viewer can see stays visible even when the
+// story it adapts is hidden, and an adaptation by a blocked author disappears
+// even when its story stays.
+func TestPostgresStoreListFeedBlockFilterAppliesPerAuthor(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	adapter := createIntegrationAuthor(t, env, "blocked-adapter@example.test")
+
+	story, err := env.store.CreateStory(ctx, newIntegrationStory(env.author, "blocked-merge"))
+	if err != nil {
+		t.Fatalf("CreateStory() error = %v, want nil", err)
+	}
+	adaptationID := insertIntegrationVersion(t, env, story.ID, story.RootVersionID, adapter, "ssw", story.CreatedAt.Add(time.Second))
+
+	// The viewer blocks the ADAPTER: the story stays, the adaptation goes.
+	blockingAdapter, _, err := env.store.ListFeed(moderation.WithExcludedAuthors(ctx, []string{adapter}), nil, 50)
+	if err != nil {
+		t.Fatalf("ListFeed(blocking the adapter) error = %v, want nil", err)
+	}
+	if !feedHasStory(blockingAdapter, story.ID) {
+		t.Error("the story is missing, want a block on the adapter to leave the original visible")
+	}
+	if feedHasVersion(blockingAdapter, adaptationID) {
+		t.Error("the blocked adapter's version is still present")
+	}
+
+	// The viewer blocks the STORY's AUTHOR: the story goes, the adaptation stays,
+	// because its own author is not blocked.
+	blockingAuthor, _, err := env.store.ListFeed(moderation.WithExcludedAuthors(ctx, []string{env.author}), nil, 50)
+	if err != nil {
+		t.Fatalf("ListFeed(blocking the author) error = %v, want nil", err)
+	}
+	if feedHasStory(blockingAuthor, story.ID) {
+		t.Error("the blocked author's story is still present")
+	}
+	if !feedHasVersion(blockingAuthor, adaptationID) {
+		t.Error("the adaptation is missing, want a block on the story's author to leave another author's version visible")
+	}
+}
+
+// TestPostgresStoreListFeedPaginatesAcrossBothKinds proves the cursor walks the
+// MERGED stream: with a page size of one, the entries of this test's two lineages
+// come back one at a time, in (created_at DESC, id DESC) order over both kinds,
+// with nothing repeated and nothing skipped.
+func TestPostgresStoreListFeedPaginatesAcrossBothKinds(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	adapter := createIntegrationAuthor(t, env, "paging-adapter@example.test")
+
+	// Two lineages, with explicit timestamps so the expected order is exact rather
+	// than merely "probably": newest first, the two kinds alternate.
+	base := time.Now().UTC().Truncate(time.Second)
+
+	want := make([]string, 0, 4)
+	for i := 0; i < 2; i++ {
+		story, err := env.store.CreateStory(ctx, newIntegrationStory(env.author, fmt.Sprintf("paging-%d", i)))
+		if err != nil {
+			t.Fatalf("CreateStory(%d) error = %v, want nil", i, err)
+		}
+
+		// Story 0 at -4s, story 1 at -2s; each adaptation a second later.
+		storyAt := base.Add(-time.Duration(4-2*i) * time.Second)
+		setStoryCreatedAt(t, env, story.ID, storyAt)
+		versionEntryID := insertIntegrationVersion(t, env, story.ID, story.RootVersionID, adapter, "zul", storyAt.Add(time.Second))
+
+		want = append([]string{versionEntryID, story.ID}, want...)
+	}
+
+	mine := make(map[string]bool, len(want))
+	for _, id := range want {
+		mine[id] = true
+	}
+
+	var (
+		seen   []string
+		cursor *Cursor
+	)
+
+	for pages := 0; pages < 50 && len(seen) < len(want); pages++ {
+		page, next, err := env.store.ListFeed(ctx, cursor, 1)
+		if err != nil {
+			t.Fatalf("ListFeed() error = %v, want nil", err)
+		}
+		if len(page) > 1 {
+			t.Fatalf("page %d has %d entries, want at most 1", pages+1, len(page))
+		}
+
+		for _, entry := range page {
+			if mine[entry.SortID()] {
+				seen = append(seen, entry.SortID())
+			}
+		}
+
+		if next == nil {
+			break
+		}
+		cursor = next
+	}
+
+	if len(seen) != len(want) {
+		t.Fatalf("collected %d of this test's %d entries, want all of them", len(seen), len(want))
+	}
+	for i := range want {
+		if seen[i] != want[i] {
+			t.Fatalf("collected position %d = %s, want %s (pages must tile the merged feed in created_at DESC, id DESC order)", i, seen[i], want[i])
+		}
+	}
+}
+
+// TestPostgresStoreListFeedShowsARootOnlyStoryOnce is a guard on the version
+// branch's parent filter: a story whose root version is the only version it has
+// contributes exactly one entry, so publishing a story never shows up twice.
+func TestPostgresStoreListFeedShowsARootOnlyStoryOnce(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	story, err := env.store.CreateStory(ctx, newIntegrationStory(env.author, "root-only"))
+	if err != nil {
+		t.Fatalf("CreateStory() error = %v, want nil", err)
+	}
+
+	page, _, err := env.store.ListFeed(ctx, nil, 50)
+	if err != nil {
+		t.Fatalf("ListFeed() error = %v, want nil", err)
+	}
+
+	mine := 0
+	for _, entry := range page {
+		if entry.Kind == FeedKindStory && entry.Story.ID == story.ID {
+			mine++
+		}
+		if entry.Kind == FeedKindVersion && entry.Version.StoryID == story.ID {
+			mine++
+			t.Errorf("entry %s is an adaptation of a story with no adaptations", entry.Version.ID)
+		}
+	}
+
+	if mine != 1 {
+		t.Errorf("the story contributed %d entries, want exactly 1", mine)
+	}
+}
+
+// createIntegrationAuthor inserts an extra user in the test's namespace, so a
+// cleanup that deletes by prefix removes it (and cascades to their versions).
+func createIntegrationAuthor(t *testing.T, env integrationStore, email string) string {
+	t.Helper()
+
+	var id string
+	if err := env.pool.QueryRow(
+		context.Background(),
+		`INSERT INTO users (email, password_hash, display_name, preferred_languages)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id`,
+		env.prefix+email,
+		"$argon2id$v=19$m=65536,t=1,p=4$c2FsdA$a2V5",
+		"Integration Adapter",
+		[]string{"eng"},
+	).Scan(&id); err != nil {
+		t.Fatalf("could not create the adapter author: %v", err)
+	}
+
+	return id
+}
+
+// setStoryCreatedAt backdates a story's created_at, which is the key the story
+// branch of the merged feed sorts by. It exists so a paging test can fix the
+// order of the entries it creates instead of hoping the database clock separates
+// them.
+func setStoryCreatedAt(t *testing.T, env integrationStore, storyID string, createdAt time.Time) {
+	t.Helper()
+
+	if _, err := env.pool.Exec(
+		context.Background(),
+		`UPDATE stories SET created_at = $2, updated_at = $2 WHERE id = $1`,
+		storyID,
+		createdAt,
+	); err != nil {
+		t.Fatalf("could not backdate the story: %v", err)
+	}
+}
+
+// insertIntegrationVersion inserts one version row directly and returns its id.
+// The feed tests build lineages by hand so they can pin the exact timestamp and
+// author of each version, which is what makes the merged order and the block
+// semantics assertable. The versions package owns the real insert path; here only
+// the rows matter.
+func insertIntegrationVersion(t *testing.T, env integrationStore, storyID, parentVersionID, authorID, language string, createdAt time.Time) string {
+	t.Helper()
+
+	var id string
+	if err := env.pool.QueryRow(
+		context.Background(),
+		`INSERT INTO story_versions (
+			story_id, parent_version_id, author_id, language, title, body, created_at, updated_at
+		 )
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+		 RETURNING id`,
+		storyID,
+		nullIfEmpty(parentVersionID),
+		authorID,
+		language,
+		"Adaptation in "+language,
+		"Body of the adaptation.",
+		createdAt,
+	).Scan(&id); err != nil {
+		t.Fatalf("could not insert an adaptation: %v", err)
+	}
+
+	return id
 }
 
 // countAuthorStories counts the stories a single author owns, read with an

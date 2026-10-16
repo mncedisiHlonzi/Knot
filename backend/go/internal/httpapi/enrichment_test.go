@@ -455,7 +455,7 @@ func TestStoryFeedBatchesAuthorAttributionOnce(t *testing.T) {
 		authorB: authorUser(authorB, "Grace Hopper", ""),
 	}}
 	handler := newRouterWithRooted(t, discardLogger(), service,
-		&fakeStoriesService{listResult: feed}, &fakeVersionsService{}, &fakeConversationsService{})
+		&fakeStoriesService{listResult: feedOf(feed...)}, &fakeVersionsService{}, &fakeConversationsService{})
 
 	recorder := doStoryRequest(handler, http.MethodGet, "/stories", "", "")
 
@@ -463,20 +463,21 @@ func TestStoryFeedBatchesAuthorAttributionOnce(t *testing.T) {
 		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
 
-	var body listStoriesResponse
+	var body feedPage
 	decodeBody(t, recorder, &body)
 
-	if len(body.Stories) != 3 {
-		t.Fatalf("stories = %d, want 3", len(body.Stories))
+	page := feedStories(t, body)
+	if len(page) != 3 {
+		t.Fatalf("stories = %d, want 3", len(page))
 	}
-	if body.Stories[0].AuthorDisplayName != "Ada Lovelace" {
-		t.Errorf("story 0 author_display_name = %q, want %q", body.Stories[0].AuthorDisplayName, "Ada Lovelace")
+	if page[0].AuthorDisplayName != "Ada Lovelace" {
+		t.Errorf("story 0 author_display_name = %q, want %q", page[0].AuthorDisplayName, "Ada Lovelace")
 	}
-	if body.Stories[1].AuthorDisplayName != "Grace Hopper" {
-		t.Errorf("story 1 author_display_name = %q, want %q", body.Stories[1].AuthorDisplayName, "Grace Hopper")
+	if page[1].AuthorDisplayName != "Grace Hopper" {
+		t.Errorf("story 1 author_display_name = %q, want %q", page[1].AuthorDisplayName, "Grace Hopper")
 	}
-	if body.Stories[2].AuthorDisplayName != "Ada Lovelace" {
-		t.Errorf("story 2 author_display_name = %q, want the repeated author's name", body.Stories[2].AuthorDisplayName)
+	if page[2].AuthorDisplayName != "Ada Lovelace" {
+		t.Errorf("story 2 author_display_name = %q, want the repeated author's name", page[2].AuthorDisplayName)
 	}
 	if service.userCalls != 1 {
 		t.Errorf("author lookups = %d, want exactly 1 for the whole feed page", service.userCalls)
@@ -493,7 +494,7 @@ func TestStoryFeedAttachesAuthorRooted(t *testing.T) {
 	}
 	service := &fakeRootedService{batchResult: rootedSignals(map[string]string{authorA: "Cape Town"})}
 	handler := newRouterWithRooted(t, discardLogger(), service,
-		&fakeStoriesService{listResult: feed}, &fakeVersionsService{}, &fakeConversationsService{})
+		&fakeStoriesService{listResult: feedOf(feed...)}, &fakeVersionsService{}, &fakeConversationsService{})
 
 	recorder := doStoryRequest(handler, http.MethodGet, "/stories", "", "")
 
@@ -501,23 +502,24 @@ func TestStoryFeedAttachesAuthorRooted(t *testing.T) {
 		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
 
-	var body listStoriesResponse
+	var body feedPage
 	decodeBody(t, recorder, &body)
 
-	if len(body.Stories) != 2 {
-		t.Fatalf("stories = %d, want 2", len(body.Stories))
+	page := feedStories(t, body)
+	if len(page) != 2 {
+		t.Fatalf("stories = %d, want 2", len(page))
 	}
-	if body.Stories[0].AuthorRooted == nil {
+	if page[0].AuthorRooted == nil {
 		t.Fatal("story 0 author_rooted = nil, want the author's inline summary")
 	}
-	if body.Stories[0].AuthorRooted.Place != "Cape Town" {
-		t.Errorf("story 0 place = %q, want %q", body.Stories[0].AuthorRooted.Place, "Cape Town")
+	if page[0].AuthorRooted.Place != "Cape Town" {
+		t.Errorf("story 0 place = %q, want %q", page[0].AuthorRooted.Place, "Cape Town")
 	}
-	if body.Stories[0].AuthorRooted.DurationBucket != rooted.DurationLifelong {
-		t.Errorf("story 0 duration_bucket = %q, want %q", body.Stories[0].AuthorRooted.DurationBucket, rooted.DurationLifelong)
+	if page[0].AuthorRooted.DurationBucket != rooted.DurationLifelong {
+		t.Errorf("story 0 duration_bucket = %q, want %q", page[0].AuthorRooted.DurationBucket, rooted.DurationLifelong)
 	}
-	if body.Stories[1].AuthorRooted != nil {
-		t.Errorf("story 1 author_rooted = %+v, want null for an author with no signal", body.Stories[1].AuthorRooted)
+	if page[1].AuthorRooted != nil {
+		t.Errorf("story 1 author_rooted = %+v, want null for an author with no signal", page[1].AuthorRooted)
 	}
 
 	if service.batchCalls != 1 {
@@ -531,9 +533,9 @@ func TestStoryFeedAttachesAuthorRooted(t *testing.T) {
 func TestStoryFeedWithoutSignalIsNull(t *testing.T) {
 	service := &fakeRootedService{}
 	handler := newRouterWithRooted(t, discardLogger(), service,
-		&fakeStoriesService{listResult: []stories.Story{
+		&fakeStoriesService{listResult: feedOf(
 			storyFixture("11111111-1111-4111-8111-111111111111", authorA),
-		}},
+		)},
 		&fakeVersionsService{}, &fakeConversationsService{})
 
 	recorder := doStoryRequest(handler, http.MethodGet, "/stories", "", "")
