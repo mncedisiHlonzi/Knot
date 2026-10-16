@@ -61,6 +61,11 @@ import { PLACEHOLDER_MEDIA_ASPECT_RATIO } from '../../utils/mediaFrame';
 import { useMediaAspectRatio } from '../../utils/useMediaAspectRatio';
 import { formatRelativeTime } from '../../utils/time';
 import {
+  VIEWABILITY_CONFIG,
+  type ViewableItemsInfo,
+  activeViewableKey,
+} from '../../utils/viewability';
+import {
   DEFAULT_PROFILE_TAB,
   PROFILE_TABS,
   activityCard,
@@ -120,12 +125,15 @@ function emptyIllustration(kind: ActivityKind): 'no-stories' | 'no-inquiries' {
 }
 
 /**
- * The card's media block: a still image, or a video's paused first frame, or
- * nothing when the card carries no media.
+ * The card's media block: a still image, a video that plays in place, or nothing
+ * when the card carries no media.
  *
  * The API sends a relative path, so it is joined to the base URL the way the
- * feed's media is. A video never plays here — the wall is a browse surface, and
- * playback belongs to the Feed (KNOT-020g-fix4).
+ * feed's media is. A video plays when its card is the one the wall judges to be on
+ * screen, exactly as a video does on the Feed and Place Stories — the same
+ * `FeedVideo` player, the same 60%-visible rule, and the same screen-wide mute
+ * setting (KNOT-020g-fix13). Tapping it opens the card's own destination, because
+ * the card around it is the tap target.
  *
  * The frame is **full-bleed** and is the **media's own shape**: full width, with a
  * height that follows the media's natural width:height ratio, so a portrait photo
@@ -146,7 +154,17 @@ function emptyIllustration(kind: ActivityKind): 'no-stories' | 'no-inquiries' {
  * reason `OptionRow` is: the profile wall is the only place that draws one
  * (KNOT-020g-fix7).
  */
-function CardMedia({ card }: { readonly card: ProfileCard }): React.ReactElement | null {
+function CardMedia({
+  card,
+  isVisible,
+  isMuted,
+  onToggleMute,
+}: {
+  readonly card: ProfileCard;
+  readonly isVisible: boolean;
+  readonly isMuted: boolean;
+  readonly onToggleMute: () => void;
+}): React.ReactElement | null {
   // The hook is called before the early return, so the component always calls it
   // however the card changes between renders.
   const { aspectRatio, onLoadSize } = useMediaAspectRatio(card.mediaWidth, card.mediaHeight);
@@ -167,7 +185,13 @@ function CardMedia({ card }: { readonly card: ProfileCard }): React.ReactElement
   if (card.mediaType === 'video') {
     return (
       <View style={frame}>
-        <FeedVideo uri={uri} previewOnly onLoadSize={onLoadSize} />
+        <FeedVideo
+          uri={uri}
+          isVisible={isVisible}
+          isMuted={isMuted}
+          onToggleMute={onToggleMute}
+          onLoadSize={onLoadSize}
+        />
       </View>
     );
   }
@@ -285,6 +309,25 @@ export default function UserProfileScreen({
   const [error, setError] = useState<string | undefined>(undefined);
   const [activeTab, setActiveTab] = useState<ActivityKind>(DEFAULT_PROFILE_TAB);
   const [menuOpen, setMenuOpen] = useState(false);
+  // The one card the wall judges to be on screen. Its video plays; every other
+  // card's stays paused, so at most one video plays at a time (KNOT-020g-fix13).
+  const [activeItemId, setActiveItemId] = useState<string | undefined>(undefined);
+  // One mute setting for the whole wall, muted to begin with: a video that starts
+  // itself must never make a sound.
+  const [isMuted, setIsMuted] = useState(true);
+
+  // The viewability config and the callback must keep their identity for the life
+  // of the list — FlatList misbehaves if either is re-created — so they are held in
+  // refs rather than rebuilt on every render.
+  const viewabilityConfig = useRef(VIEWABILITY_CONFIG).current;
+  const onViewableItemsChanged = useRef((info: ViewableItemsInfo): void => {
+    setActiveItemId(activeViewableKey(info));
+  }).current;
+
+  /** Flips the wall-wide mute setting; every video on screen follows it. */
+  const toggleMute = useCallback((): void => {
+    setIsMuted((current) => !current);
+  }, []);
 
   const [pickerVisible, setPickerVisible] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
@@ -488,7 +531,6 @@ export default function UserProfileScreen({
     <View style={styles.container}>
       <Header
         title="Profile"
-        centered
         left={
           showBackButton && onBack !== undefined ? (
             <Pressable
@@ -517,6 +559,8 @@ export default function UserProfileScreen({
         data={visible}
         keyExtractor={(activity) => activity.id}
         contentContainerStyle={styles.content}
+        viewabilityConfig={viewabilityConfig}
+        onViewableItemsChanged={onViewableItemsChanged}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -680,7 +724,12 @@ export default function UserProfileScreen({
                 ) : null}
               </View>
 
-              <CardMedia card={card} />
+              <CardMedia
+                card={card}
+                isVisible={item.id === activeItemId}
+                isMuted={isMuted}
+                onToggleMute={toggleMute}
+              />
 
               {card.meta === '' ? null : (
                 <View style={styles.cardPadded}>

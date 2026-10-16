@@ -147,19 +147,16 @@ export default function InquiryListScreen({
 
   return (
     <View style={styles.screen}>
-      <Header
-        title="Inquiries"
-        right={
-          <Pressable
-            style={styles.headerAction}
-            onPress={onAsk}
-            accessibilityRole="button"
-            accessibilityLabel="Ask a question about a place"
-          >
-            <Text style={[typeScale.label, styles.headerActionLabel]}>Ask a question</Text>
-          </Pressable>
-        }
-      />
+      <Header title="Inquiries" />
+
+      {/* The screen's primary action, on its own line under the header rather
+          than as a text link in the header's corner. It is a full-width primary
+          `Button`, so asking a question is the loudest thing on the screen — the
+          one thing a reader came here to do (KNOT-020g-fix13). The header keeps
+          only the centred title, which is where the reference puts it. */}
+      <View style={styles.askBar}>
+        <Button variant="primary" fullWidth label="Ask a question" onPress={onAsk} />
+      </View>
 
       <FlatList
         data={inquiries}
@@ -281,6 +278,13 @@ export default function InquiryListScreen({
 }
 
 const styles = StyleSheet.create({
+  // The Ask action's band: the screen's gutter, with the list's own spacing below
+  // it, so the button reads as chrome above the content rather than as the first
+  // list row.
+  askBar: {
+    paddingBottom: spacing.md,
+    paddingHorizontal: layout.screenPaddingFeed,
+  },
   content: {
     paddingBottom: spacing.xxxl,
     paddingHorizontal: layout.screenPaddingFeed,
@@ -300,16 +304,6 @@ const styles = StyleSheet.create({
   },
   footer: {
     paddingVertical: spacing.lg,
-  },
-  // A 44-point tap target for the header's trailing action, even though it is
-  // only as tall as its label.
-  headerAction: {
-    alignItems: 'center',
-    height: 44,
-    justifyContent: 'center',
-  },
-  headerActionLabel: {
-    color: colors.brand.primary,
   },
   // One question: the overline, the title, up to two lines of the body, then the
   // asker's attribution and the answer tally, closed by a full-bleed hairline.

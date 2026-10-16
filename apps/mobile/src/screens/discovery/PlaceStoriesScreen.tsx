@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -10,7 +10,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { ArrowLeft } from 'phosphor-react-native';
+import { ArrowLeft, MapPin } from 'phosphor-react-native';
 import Mapbox, { Camera, MapView, PointAnnotation } from '@rnmapbox/maps';
 
 import { describeError } from '../../api/client';
@@ -21,6 +21,11 @@ import FeedEntry from '../../components/FeedEntry';
 import Header from '../../components/Header';
 import { KNOT_MAPBOX_TOKEN } from '../../config/dev';
 import { colors, elevation, layout, radius, spacing, typeScale } from '../../theme';
+import {
+  VIEWABILITY_CONFIG,
+  type ViewableItemsInfo,
+  activeViewableKey,
+} from '../../utils/viewability';
 import {
   PILLAR_TABS,
   type PillarFilter,
@@ -50,11 +55,25 @@ const STRIP_HEIGHT = 140;
 const STRIP_ZOOM = 11;
 
 /**
- * The strip's marker: the Discovery Map's marker in miniature — an indigo dot
- * ringed in the navy ink, with no story count to show.
+ * The strip's marker glyph.
+ *
+ * It is the brand's location pin — a filled indigo `MapPin`, the same glyph the
+ * Discovery Map plots — rather than the bare dot the strip used to paint, so a
+ * place reads as a place in both places (KNOT-020g-fix13). The Discovery Map's
+ * pins are 30pt; this one is slightly smaller because the strip is a compact
+ * preview, but stays well inside the 20–24pt the brief asks for.
  */
-const STRIP_MARKER_SIZE = 14;
-const STRIP_MARKER_BORDER = 2;
+const STRIP_MARKER_SIZE = 24;
+
+/**
+ * The marker's touch target.
+ *
+ * The pin is invisible at touch level and is centred in a 44-point box — the
+ * design system's minimum target — exactly as the Discovery Map's markers are.
+ * The box is transparent, so the pin still looks like a pin, and the marker stays
+ * centred on the place's coordinate (KNOT-020g-fix13).
+ */
+const STRIP_MARKER_TOUCH_SIZE = 44;
 
 // Mapbox needs its access token before any map mounts. Setting it once, at module
 // load, keeps it out of the component and off every render. The token is public
@@ -124,8 +143,13 @@ type PlaceStoriesScreenProps = {
  * does (KNOT-020e-fix2) — so a story reads the same in both places. The strip is
  * drawn only when the cluster carried a coordinate. A tab is a **server-side**
  * filter rather than a view of the loaded page, so switching tabs starts the list
- * again from the first page. Nothing here auto-plays: the Feed is the only screen
- * that does (KNOT-ADR-068), so a video entry renders on its paused frame.
+ * again from the first page.
+ *
+ * Playback follows the scroll, exactly as it does on the Feed: the entry the list
+ * judges to be on screen (at least 60% visible) plays its video, every other entry
+ * stays paused, and a mute control on a video flips one screen-wide setting
+ * (KNOT-020g-fix13). Tapping a video opens its story, the same as tapping the
+ * entry does, because the whole entry is the tap target.
  */
 export default function PlaceStoriesScreen({
   place,
@@ -148,6 +172,25 @@ export default function PlaceStoriesScreen({
   // the loaded page, so changing it starts the list again from the first page
   // (KNOT-020e-fix6).
   const [pillar, setPillar] = useState<PillarFilter>('all');
+  // The one entry this screen judges to be on screen. Its video plays; every other
+  // entry's pauses, so at most one video plays at a time (KNOT-020g-fix13).
+  const [activeItemId, setActiveItemId] = useState<string | undefined>(undefined);
+  // One mute setting for the whole screen, muted to begin with: a video that
+  // starts itself must never make a sound.
+  const [isMuted, setIsMuted] = useState(true);
+
+  // The viewability config and the callback must keep their identity for the life
+  // of the list — FlatList misbehaves if either is re-created — so they are held in
+  // refs rather than rebuilt on every render.
+  const viewabilityConfig = useRef(VIEWABILITY_CONFIG).current;
+  const onViewableItemsChanged = useRef((info: ViewableItemsInfo): void => {
+    setActiveItemId(activeViewableKey(info));
+  }).current;
+
+  /** Flips the screen-wide mute setting; every video on screen follows it. */
+  const toggleMute = useCallback((): void => {
+    setIsMuted((current) => !current);
+  }, []);
 
   const loadFirstPage = useCallback(
     async (mode: 'initial' | 'refresh'): Promise<void> => {
@@ -276,14 +319,18 @@ export default function PlaceStoriesScreen({
                 zoomLevel: STRIP_ZOOM,
               }}
             />
-            {/* PointAnnotation renders its child as the marker. The strip has no
-                count to show, so it is the Discovery Map's marker stripped to
-                its indigo fill and navy ring. */}
+            {/* PointAnnotation renders its child as the marker, centred on the
+                coordinate. It is the brand's filled indigo location pin — the
+                same glyph the Discovery Map plots — held in a transparent
+                44-point box so its touch target matches the map's markers even
+                though the strip itself is not interactive (KNOT-020g-fix13). */}
             <PointAnnotation
               id="place-strip-marker"
               coordinate={[mapPoint.longitude, mapPoint.latitude]}
             >
-              <View style={styles.stripMarker} />
+              <View style={styles.stripMarker}>
+                <MapPin color={colors.brand.primary} size={STRIP_MARKER_SIZE} weight="fill" />
+              </View>
             </PointAnnotation>
           </MapView>
 
@@ -363,6 +410,8 @@ export default function PlaceStoriesScreen({
           void loadMore();
         }}
         onEndReachedThreshold={0.5}
+        viewabilityConfig={viewabilityConfig}
+        onViewableItemsChanged={onViewableItemsChanged}
         renderItem={({ item }) => (
           <FeedEntry
             story={{
@@ -387,6 +436,9 @@ export default function PlaceStoriesScreen({
               title: item.title,
               version_count: item.version_count,
             }}
+            isVisible={item.id === activeItemId}
+            isMuted={isMuted}
+            onToggleMute={toggleMute}
             onPress={() => onOpenStory(item.id)}
           />
         )}
@@ -510,14 +562,14 @@ const styles = StyleSheet.create({
     height: '100%',
     width: '100%',
   },
-  // The Discovery Map's marker in miniature: indigo fill, navy ring, no count.
+  // The pin's touch box: a transparent 44-point square, the design system's
+  // minimum target, with the glyph centred in it so the pin sits on the place's
+  // coordinate and matches the Discovery Map's markers (KNOT-020g-fix13).
   stripMarker: {
-    backgroundColor: colors.brand.primary,
-    borderColor: colors.text.primary,
-    borderRadius: STRIP_MARKER_SIZE / 2,
-    borderWidth: STRIP_MARKER_BORDER,
-    height: STRIP_MARKER_SIZE,
-    width: STRIP_MARKER_SIZE,
+    alignItems: 'center',
+    height: STRIP_MARKER_TOUCH_SIZE,
+    justifyContent: 'center',
+    width: STRIP_MARKER_TOUCH_SIZE,
   },
   summary: {
     color: colors.text.tertiary,

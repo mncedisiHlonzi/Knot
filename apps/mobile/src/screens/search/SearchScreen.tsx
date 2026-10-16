@@ -8,7 +8,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { ArrowLeft, MagnifyingGlass } from 'phosphor-react-native';
+import { ArrowLeft, FunnelSimple, MagnifyingGlass } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import {
@@ -322,6 +322,15 @@ export default function SearchScreen({
             ) : null}
 
             <View style={styles.filters}>
+              {/* A label for the whole filter group, so the two chip rows below
+                  read as facets of one control rather than as loose pills. The
+                  funnel is the design's filter glyph and stays in the quiet ink
+                  (KNOT-020g-fix13). */}
+              <View style={styles.filterHeading}>
+                <FunnelSimple color={colors.text.tertiary} size={14} weight="bold" />
+                <Text style={[typeScale.overline, styles.filterHeadingLabel]}>Filters</Text>
+              </View>
+
               <ChipRow
                 options={KIND_OPTIONS}
                 selected={kind}
@@ -417,6 +426,7 @@ export default function SearchScreen({
         ListEmptyComponent={
           loading ? null : error !== undefined ? null : !searchable ? (
             <EmptyState
+              illustrationName="no-results"
               headline="Search Knot"
               body="Find stories, versions, and questions by phrase, place, or lens."
             />
@@ -424,7 +434,7 @@ export default function SearchScreen({
             <EmptyState
               illustrationName="no-results"
               headline={
-                phrase === '' ? 'No matches for these filters.' : `No results for ${phrase}.`
+                phrase === '' ? 'No matches for these filters.' : `No results for '${phrase}'.`
               }
             />
           ) : null
@@ -516,6 +526,16 @@ const styles = StyleSheet.create({
   filters: {
     gap: spacing.sm,
     marginTop: spacing.md,
+  },
+  // The filter group's label: the funnel glyph with the overline caption beside
+  // it, both in the tertiary ink so the chips below stay the loudest thing here.
+  filterHeading: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.xs,
+  },
+  filterHeadingLabel: {
+    color: colors.text.tertiary,
   },
   // A 44-point tap target for the header's leading icon button.
   iconButton: {

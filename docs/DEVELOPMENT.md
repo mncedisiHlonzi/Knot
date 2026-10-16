@@ -625,6 +625,29 @@ references and **16** deprecated colour aliases went to **0** (so the 35 such re
 `src/screens` are now 21, in Login, Register and Rooted Setup — parts 8-10). `Input`'s `keyboardType` union
 gained `'url'` so the media-link field keeps its keyboard.
 
+**KNOT-020g-fix13** made video auto-play **app-wide** and centred the shared `Header`'s title.
+Auto-play used to be the Feed's alone (KNOT-ADR-068); the rule is now shared. A new
+`src/utils/viewability.ts` exports `VIEWABILITY_CONFIG` (`itemVisiblePercentThreshold: 60`), a
+structural `ViewableItemsInfo` type, and `activeViewableKey(info)` — the first viewable item's key as
+a string, or `undefined` when nothing is visible. Every screen that draws a story's video drives
+`FeedVideo` from it: the Feed, **Place Stories**, and the **profile wall**, each holding one
+`activeItemId`, one screen-wide `isMuted` (default `true`) and one `toggleMute`. So at most one video
+plays per screen, a video pauses when it scrolls out, and tapping it opens the story the card already
+opens — the mute control is a nested `Pressable`, so it does not navigate. The profile card's
+display-only preview mode is gone: `FeedVideo` lost its `previewOnly` prop along with its last caller,
+so the wall plays video the way the Feed does. The screens the brief listed that do **not** draw
+video — Search, Inquiries, the language tree and version detail — carry no wiring, because their
+endpoints return no media, and the Story Detail's media tiles keep their explicit tap-to-play control
+inside a horizontal carousel rather than a viewability list. In the shared `Header` the title is now
+drawn **out of flow**, centred on the bar rather than on the space left between the two side slots, so
+it sits on the screen's centre whatever those slots hold; the `centered` prop, which only the Profile
+tab passed, is gone with it. Place Stories' map strip plots the brand's filled indigo **`MapPin`**
+(24pt, centred in a transparent 44-point box) instead of a bare dot; the Feed header nudges the
+logomark 8 points right, onto the feed's 16-point content column; Search gained a funnel-labelled
+filter group, the `no-results` artwork on both of its empty states, and a quoted
+`No results for '<phrase>'.` headline; and Inquiries moved "Ask a question" out of the header into a
+full-width primary `Button` beneath it.
+
 The same screen serves the owner: `isOwnProfile` adds the avatar upload, the Set Rooted
 shortcut, and sign-out, so tapping your own author line opens your wall. `AuthorLine`'s
 `onPress` is how the app reaches it — a nested `Pressable` handles the author tap without

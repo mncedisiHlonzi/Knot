@@ -18,27 +18,32 @@ import FeedEntry from '../../components/FeedEntry';
 import Header from '../../components/Header';
 import Logomark from '../../components/Logomark';
 import { colors, layout, radius, spacing, tabularNums, typeScale } from '../../theme';
+import {
+  VIEWABILITY_CONFIG,
+  type ViewableItemsInfo,
+  activeViewableKey,
+} from '../../utils/viewability';
 
 /** The logomark's size in the feed header. */
 const LOGOMARK_SIZE = 32;
+
+/**
+ * The logomark's horizontal nudge, so its left edge lines up with the content
+ * beneath it.
+ *
+ * The header's own gutter is `spacing.sm` (8pt); the feed's entries sit at
+ * `layout.screenPaddingFeed` (16pt). The extra 8pt here lifts the mark onto that
+ * same column, which is what the home reference draws (its header is
+ * `padding: 0 6px 0 16px`). Without it the mark reads as drifting left of every
+ * story below it (KNOT-020g-fix13).
+ */
+const LOGOMARK_INSET = spacing.sm;
 
 /** The header icon size. */
 const ICON_SIZE = 24;
 
 /** The text tabs above the feed. They are a local selection until the API grows a filter. */
 const FEED_TABS = ['For you', 'Wonder', 'Heritage', 'Nearby'] as const;
-
-/**
- * How much of an entry must be on screen before it becomes the active one. At 60%
- * only one entry can normally qualify at a time, which is what keeps playback to a
- * single video (KNOT-020c-fix3).
- */
-const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 60 };
-
-/** The slice of the viewability callback's payload the feed reads. */
-type ViewabilityInfo = {
-  readonly viewableItems: ReadonlyArray<{ readonly key: string | number }>;
-};
 
 type FeedScreenProps = {
   /** The signed-in user's access token, needed to read the unread count and the feed. */
@@ -93,9 +98,8 @@ export default function FeedScreen({
   // of the list — FlatList misbehaves if either is re-created — so they are held in
   // refs rather than rebuilt on every render.
   const viewabilityConfig = useRef(VIEWABILITY_CONFIG).current;
-  const onViewableItemsChanged = useRef((info: ViewabilityInfo): void => {
-    const first = info.viewableItems[0];
-    setActiveItemId(first === undefined ? undefined : String(first.key));
+  const onViewableItemsChanged = useRef((info: ViewableItemsInfo): void => {
+    setActiveItemId(activeViewableKey(info));
   }).current;
 
   /** Flips the feed-wide mute setting; every video follows it. */
@@ -200,7 +204,11 @@ export default function FeedScreen({
       <View style={styles.topBar}>
         <Header
           pinned
-          left={<Logomark size={LOGOMARK_SIZE} />}
+          left={
+            <View style={styles.logomark}>
+              <Logomark size={LOGOMARK_SIZE} />
+            </View>
+          }
           right={
             <View style={styles.headerActions}>
               <Pressable
@@ -372,6 +380,11 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingBottom: spacing.xxxl,
+  },
+  // The mark's own inset, on top of the header's 8pt gutter, so it lines up with
+  // the feed's 16pt content column (KNOT-020g-fix13).
+  logomark: {
+    marginLeft: LOGOMARK_INSET,
   },
   spinner: {
     marginTop: spacing.xl,
