@@ -10,12 +10,13 @@ import {
   Text,
   View,
 } from 'react-native';
-import { ArrowLeft, MapPin } from 'phosphor-react-native';
-import Mapbox, { Camera, MapView, PointAnnotation } from '@rnmapbox/maps';
+import { ArrowLeft } from 'phosphor-react-native';
+import Mapbox, { Camera, MapView } from '@rnmapbox/maps';
 
 import { describeError } from '../../api/client';
 import { PLACE_PAGE_SIZE, discoveryApi } from '../../api/discovery';
 import { Story } from '../../api/stories';
+import Chip from '../../components/Chip';
 import EmptyState from '../../components/EmptyState';
 import FeedEntry from '../../components/FeedEntry';
 import Header from '../../components/Header';
@@ -53,27 +54,6 @@ const STRIP_HEIGHT = 140;
  * or a single street.
  */
 const STRIP_ZOOM = 11;
-
-/**
- * The strip's marker glyph.
- *
- * It is the brand's location pin — a filled indigo `MapPin`, the same glyph the
- * Discovery Map plots — rather than the bare dot the strip used to paint, so a
- * place reads as a place in both places (KNOT-020g-fix13). The Discovery Map's
- * pins are 30pt; this one is slightly smaller because the strip is a compact
- * preview, but stays well inside the 20–24pt the brief asks for.
- */
-const STRIP_MARKER_SIZE = 24;
-
-/**
- * The marker's touch target.
- *
- * The pin is invisible at touch level and is centred in a 44-point box — the
- * design system's minimum target — exactly as the Discovery Map's markers are.
- * The box is transparent, so the pin still looks like a pin, and the marker stays
- * centred on the place's coordinate (KNOT-020g-fix13).
- */
-const STRIP_MARKER_TOUCH_SIZE = 44;
 
 // Mapbox needs its access token before any map mounts. Setting it once, at module
 // load, keeps it out of the component and off every render. The token is public
@@ -135,15 +115,17 @@ type PlaceStoriesScreenProps = {
  * pull-to-refresh starts again from the newest story. A place with no stories is a
  * normal empty state, not an error — the server answers 200 with an empty list.
  *
- * The design is the reference's (KNOT-020e, KNOT-020e-fix3, KNOT-020e-fix6): the
- * place is the screen's headline with its totals beneath it, a compact
- * **non-interactive map strip** pinning where the place is, the **pillar tabs**
- * (All / Heritage / Wonder), and the stories below as the same `FeedEntry` the
- * Feed renders — carrying the same author, media, and count enrichment the feed
- * does (KNOT-020e-fix2) — so a story reads the same in both places. The strip is
- * drawn only when the cluster carried a coordinate. A tab is a **server-side**
- * filter rather than a view of the loaded page, so switching tabs starts the list
- * again from the first page.
+ * The design is the reference's (KNOT-020e, KNOT-020e-fix3, KNOT-020e-fix6, KNOT-020g-fix14):
+ * the place is the screen's headline with its totals beneath it, a compact
+ * **non-interactive map strip** showing where the place is, the **pillar chips**
+ * (All / Wonder / Heritage — the Discovery Map's filter control, in the map's
+ * order), and the stories below as the same `FeedEntry` the Feed renders — carrying
+ * the same author, media, and count enrichment the feed does (KNOT-020e-fix2) — so
+ * a story reads the same in both places. The strip is drawn only when the cluster
+ * carried a coordinate, and it paints **no custom marker**: it is the map's own
+ * place label over the coordinate the camera is centred on. A chip is a
+ * **server-side** filter rather than a view of the loaded page, so switching chips
+ * starts the list again from the first page.
  *
  * Playback follows the scroll, exactly as it does on the Feed: the entry the list
  * judges to be on screen (at least 60% visible) plays its video, every other entry
@@ -168,8 +150,8 @@ export default function PlaceStoriesScreen({
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
-  // The active pillar tab. The choice is a server-side query rather than a view of
-  // the loaded page, so changing it starts the list again from the first page
+  // The active pillar chip. The choice is a server-side query rather than a view
+  // of the loaded page, so changing it starts the list again from the first page
   // (KNOT-020e-fix6).
   const [pillar, setPillar] = useState<PillarFilter>('all');
   // The one entry this screen judges to be on screen. Its video plays; every other
@@ -197,7 +179,7 @@ export default function PlaceStoriesScreen({
       if (mode === 'initial') {
         setLoading(true);
         // A new pillar is a different query, so the page starts over: the previous
-        // tab's rows must not linger under the new tab's label.
+        // chip's rows must not linger under the new chip's label.
         setStories([]);
         setNextCursor('');
       } else {
@@ -291,15 +273,19 @@ export default function PlaceStoriesScreen({
         <View style={[styles.strip, { height: stripHeight }]}>
           {/* A `TextureView`, not the Android default `GLSurfaceView`: a surface
               view is punched through the RN view hierarchy, so it ignores this
-              wrapper's clipping and paints over the tab row and the list whatever
+              wrapper's clipping and paints over the chip row and the list whatever
               the z-order says. A texture view is an ordinary view, clipped and
               stacked with everything else (KNOT-020e-fix6).
 
               The map is left non-interactive: the strip is a decorative preview
-              and the reference gives it no controls. Mapbox's scale bar and its
-              attribution button are off — neither is part of the design — while
-              the logo stays, as Mapbox's terms require; it keeps the strip's lower
-              left, which the floating header does not cover (KNOT-020g-fix9). */}
+              and the reference gives it no controls. Mapbox's scale bar is off —
+              it is not part of the design — while the logo and the attribution
+              button are both **on**, as Mapbox's terms require. They keep the
+              strip's lower corners, which the floating back control does not
+              cover; the attribution was restored here in KNOT-020g-fix14, closing
+              the compliance gap KNOT-020g-fix10 opened on this screen. The strip
+              paints **no marker**: it is the map's own place label over the
+              coordinate the camera is centred on (KNOT-020g-fix14). */}
           <MapView
             style={styles.stripMap}
             styleURL={Mapbox.StyleURL.Light}
@@ -309,7 +295,8 @@ export default function PlaceStoriesScreen({
             rotateEnabled={false}
             pitchEnabled={false}
             scaleBarEnabled={false}
-            attributionEnabled={false}
+            attributionEnabled
+            attributionPosition={{ bottom: spacing.sm, right: spacing.sm }}
             logoEnabled
             logoPosition={{ bottom: spacing.sm, left: spacing.sm }}
           >
@@ -319,19 +306,6 @@ export default function PlaceStoriesScreen({
                 zoomLevel: STRIP_ZOOM,
               }}
             />
-            {/* PointAnnotation renders its child as the marker, centred on the
-                coordinate. It is the brand's filled indigo location pin — the
-                same glyph the Discovery Map plots — held in a transparent
-                44-point box so its touch target matches the map's markers even
-                though the strip itself is not interactive (KNOT-020g-fix13). */}
-            <PointAnnotation
-              id="place-strip-marker"
-              coordinate={[mapPoint.longitude, mapPoint.latitude]}
-            >
-              <View style={styles.stripMarker}>
-                <MapPin color={colors.brand.primary} size={STRIP_MARKER_SIZE} weight="fill" />
-              </View>
-            </PointAnnotation>
           </MapView>
 
           {/* The back control floats over the top-left of the strip. There is no
@@ -350,7 +324,7 @@ export default function PlaceStoriesScreen({
           name already had. */}
       {mapPoint === undefined ? <Header left={backButton} /> : null}
       {/* The strip is out of flow, so its band is reserved here and the place
-          block, the tabs, and the list all start below it (KNOT-020g-fix9). */}
+          block, the chips, and the list all start below it (KNOT-020g-fix9). */}
       {mapPoint === undefined ? null : <View style={{ height: stripHeight }} />}
 
       {/* The reference's place block: the place as the screen's headline, with its
@@ -364,32 +338,19 @@ export default function PlaceStoriesScreen({
         </Text>
       </View>
 
-      {/* The pillar filter, mirroring the Feed's tab row: every tab carries the
-          button weight, and the active one is marked by ink and the indigo
-          underline rather than by weight, so the row never depends on weight
-          alone. The choice is a server-side filter, so tapping a tab refetches
-          from the first page (KNOT-020e-fix6). */}
-      <View style={styles.tabs}>
-        {PILLAR_TABS.map((option) => {
-          const active = option.value === pillar;
-          return (
-            <Pressable
-              key={option.value}
-              style={[styles.tab, active ? styles.tabActive : null]}
-              onPress={() => setPillar(option.value)}
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-              accessibilityLabel={option.label}
-            >
-              <Text
-                style={[typeScale.button, styles.tabLabel, active ? styles.tabLabelActive : null]}
-                numberOfLines={1}
-              >
-                {option.label}
-              </Text>
-            </Pressable>
-          );
-        })}
+      {/* The pillar filter, the Discovery Map's own chip row: the same control, in
+          the same order (All / Wonder / Heritage), so the two screens cannot
+          drift (KNOT-020g-fix14). The choice is a server-side filter, so tapping a
+          chip refetches from the first page (KNOT-020e-fix6). */}
+      <View style={styles.chipRow}>
+        {PILLAR_TABS.map((option) => (
+          <Chip
+            key={option.value}
+            label={option.label}
+            selected={option.value === pillar}
+            onPress={() => setPillar(option.value)}
+          />
+        ))}
       </View>
 
       <FlatList
@@ -468,6 +429,18 @@ export default function PlaceStoriesScreen({
 }
 
 const styles = StyleSheet.create({
+  // The pillar chip row, the same control the Discovery Map's sheet draws: a
+  // wrapping row of `Chip`s. It is stacked above the list and opaque, so a
+  // scrolled story passes beneath it rather than through it (KNOT-020g-fix14).
+  chipRow: {
+    backgroundColor: colors.bg.canvas,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    paddingBottom: spacing.md,
+    paddingHorizontal: layout.screenPaddingFeed,
+    zIndex: 1,
+  },
   container: {
     backgroundColor: colors.bg.canvas,
     flex: 1,
@@ -505,7 +478,7 @@ const styles = StyleSheet.create({
     ...elevation[2],
   },
   // The list takes whatever the header, the place block, the map strip, and the
-  // tab row leave, so nothing pushes it off screen and it scrolls in the
+  // chip row leave, so nothing pushes it off screen and it scrolls in the
   // remainder. The explicit background and z-index keep a scrolled story beneath
   // the bands above it rather than drawn across them (KNOT-020e-fix5,
   // KNOT-020e-fix6).
@@ -539,7 +512,7 @@ const styles = StyleSheet.create({
     width: '100%',
     // The strip is the topmost band, so a story scrolled under it is hidden rather
     // than drawn across it. The stacking is 3 (floating header) > 2 (strip) > 1
-    // (tabs) > 0 (list) (KNOT-020e-fix6, KNOT-020g-fix9).
+    // (chip row) > 0 (list) (KNOT-020e-fix6, KNOT-020g-fix9).
     zIndex: 2,
   },
   // The back control's overlay: a bare positioning box in the strip's top-left
@@ -562,46 +535,8 @@ const styles = StyleSheet.create({
     height: '100%',
     width: '100%',
   },
-  // The pin's touch box: a transparent 44-point square, the design system's
-  // minimum target, with the glyph centred in it so the pin sits on the place's
-  // coordinate and matches the Discovery Map's markers (KNOT-020g-fix13).
-  stripMarker: {
-    alignItems: 'center',
-    height: STRIP_MARKER_TOUCH_SIZE,
-    justifyContent: 'center',
-    width: STRIP_MARKER_TOUCH_SIZE,
-  },
   summary: {
     color: colors.text.tertiary,
     marginTop: spacing.xs,
-  },
-  // The pillar tabs mirror the Feed's: three equal-width tabs, each carrying the
-  // row's hairline under it and the active one drawn 2px in the brand colour. The
-  // row is opaque and stacked above the list, so a scrolled story passes beneath
-  // it rather than through it (KNOT-020e-fix6).
-  tab: {
-    alignItems: 'center',
-    borderBottomColor: colors.border.hairline,
-    borderBottomWidth: 1,
-    flex: 1,
-    paddingBottom: spacing.sm,
-    paddingTop: spacing.md,
-  },
-  tabActive: {
-    borderBottomColor: colors.brand.primary,
-    borderBottomWidth: 2,
-  },
-  tabLabel: {
-    color: colors.text.tertiary,
-    textAlign: 'center',
-  },
-  tabLabelActive: {
-    color: colors.text.primary,
-  },
-  tabs: {
-    backgroundColor: colors.bg.canvas,
-    flexDirection: 'row',
-    paddingHorizontal: spacing.lg,
-    zIndex: 1,
   },
 });

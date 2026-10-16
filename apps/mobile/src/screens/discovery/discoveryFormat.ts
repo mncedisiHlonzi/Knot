@@ -36,12 +36,13 @@ export function mapTopInset(platform: string, statusBarHeight: number | undefine
 }
 
 /**
- * The pillars the discovery API counts, in the order the summary line reads them
+ * The pillars the discovery API counts, in the order the summary *line* reads them
  * (Heritage before Wonder, matching the design reference).
  *
- * The keys are the wire keys from `PlaceCluster.pillar_counts`; an unknown key is
- * ignored rather than printed, so a server that grows a third pillar cannot render
- * a stray segment.
+ * This is the line's own word order, not the filter's — the two discovery screens
+ * offer their pillar chips Wonder-first (see `PILLAR_TABS`). The keys are the wire
+ * keys from `PlaceCluster.pillar_counts`; an unknown key is ignored rather than
+ * printed, so a server that grows a third pillar cannot render a stray segment.
  */
 const SUMMARY_PILLARS: readonly { readonly key: string; readonly label: string }[] = [
   { key: 'heritage', label: 'Heritage' },
@@ -51,23 +52,29 @@ const SUMMARY_PILLARS: readonly { readonly key: string; readonly label: string }
 /**
  * The pillar filter a place page is showing: one of the two lenses, or "all".
  *
- * The values are the `?pillar=` wire values, plus "all" for the tab that sends
- * no filter, so a tab's value is exactly what the API expects once "all" is
+ * The values are the `?pillar=` wire values, plus "all" for the chip that sends
+ * no filter, so a chip's value is exactly what the API expects once "all" is
  * dropped (KNOT-020e-fix6).
  */
 export type PillarFilter = 'all' | 'heritage' | 'wonder';
 
 /**
- * The place screen's pillar tabs, in the order the design reference draws them
- * (All, Heritage, Wonder).
+ * The pillar filter's options, in the order **both** discovery screens offer them
+ * (All, Wonder, Heritage).
  *
- * The choice is server-side, not a local view of the loaded page, so a tab means
+ * The order is the Discovery Map's, kept here so the two screens can never drift:
+ * the map's chip row and the place screen's chip row are the same control in the
+ * same order (KNOT-020g-fix14). Note that the place summary *line* still reads
+ * Heritage before Wonder — that is the wording the design reference prints, and it
+ * is a different thing from the order of the controls.
+ *
+ * The choice is server-side, not a local view of the loaded page, so a chip means
  * exactly what the wire filter means.
  */
 export const PILLAR_TABS: readonly { readonly value: PillarFilter; readonly label: string }[] = [
   { value: 'all', label: 'All' },
-  { value: 'heritage', label: 'Heritage' },
   { value: 'wonder', label: 'Wonder' },
+  { value: 'heritage', label: 'Heritage' },
 ];
 
 /**

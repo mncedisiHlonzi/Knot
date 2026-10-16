@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput } from 'react-native';
+import { ScrollView, StyleSheet, Text } from 'react-native';
 
 import { api, AuthResponse, describeError } from '../../api/client';
-import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
+import Button from '../../components/Button';
+import Input from '../../components/Input';
+import { colors, spacing, typeScale } from '../../theme';
 
 type LoginScreenProps = {
   /** Called with the issued tokens and user once login succeeds. */
@@ -64,101 +66,66 @@ export default function LoginScreen({
 
   return (
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <Text style={styles.title}>Sign in to Knot</Text>
+      <Text style={[typeScale.h1, styles.title]}>Sign in to Knot</Text>
 
-      <Text style={styles.label}>Email</Text>
-      <TextInput
-        style={styles.input}
+      {/* The fields are the design system's underline `Input`, the same control
+          every other form in the app uses, so the auth screens read as the rest of
+          Knot rather than as a bespoke boxed form (KNOT-020g-fix14). The label is
+          the field's own, drawn in the overline style. */}
+      <Input
+        label="Email"
         value={email}
         onChangeText={setEmail}
         autoCapitalize="none"
         autoCorrect={false}
         keyboardType="email-address"
         placeholder="you@example.com"
-        placeholderTextColor={colors.text.secondary}
       />
 
-      <Text style={styles.label}>Password</Text>
-      <TextInput
-        style={styles.input}
+      <Input
+        label="Password"
         value={password}
         onChangeText={setPassword}
         secureTextEntry
         placeholder="Your password"
-        placeholderTextColor={colors.text.secondary}
       />
 
-      {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
+      {error !== undefined ? <Text style={[typeScale.body, styles.error]}>{error}</Text> : null}
 
-      <Pressable
-        style={[styles.button, submitting ? styles.buttonDisabled : null]}
-        onPress={handleSubmit}
-        disabled={submitting}
-      >
-        <Text style={styles.buttonText}>{submitting ? 'Signing in…' : 'Sign in'}</Text>
-      </Pressable>
+      {/* The submit action is the design system's primary `Button`; its `loading`
+          state is what the hand-rolled "Signing in…" label used to be — the action
+          is disabled and busy, and a spinner replaces the label
+          (KNOT-020g-fix14). */}
+      <Button
+        variant="primary"
+        fullWidth
+        label="Sign in"
+        loading={submitting}
+        onPress={() => {
+          void handleSubmit();
+        }}
+      />
 
-      <Pressable style={styles.link} onPress={onSwitchToRegister}>
-        <Text style={styles.linkText}>Don't have an account? Create one</Text>
-      </Pressable>
+      <Button
+        variant="ghost"
+        fullWidth
+        label="Don't have an account? Create one"
+        onPress={onSwitchToRegister}
+      />
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  button: {
-    alignItems: 'center',
-    backgroundColor: colors.brand.purple,
-    borderRadius: radius.md,
-    marginTop: 20,
-    paddingVertical: 14,
-  },
-  buttonDisabled: {
-    opacity: 0.5,
-  },
-  buttonText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    fontWeight: fontWeights.semiBold,
-  },
   content: {
-    backgroundColor: colors.bg.primary,
+    backgroundColor: colors.bg.canvas,
+    gap: spacing.lg,
     padding: spacing.xl,
   },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.base,
-    marginTop: spacing.lg,
-  },
-  input: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-  },
-  label: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
-    marginBottom: 6,
-    marginTop: spacing.lg,
-  },
-  link: {
-    alignItems: 'center',
-    marginTop: 18,
-  },
-  linkText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.base,
+    color: colors.state.danger,
   },
   title: {
     color: colors.text.primary,
-    fontSize: fontSizes.xl,
-    fontWeight: fontWeights.bold,
-    marginBottom: spacing.sm,
   },
 });

@@ -2041,8 +2041,11 @@ other content read (KNOT-017a-fix2).
 judges to be on screen — the entry that is at least 60% visible. Every other entry's video is
 paused, so at most one plays at a time. A mute control on each video flips a single **feed-wide**
 setting: unmuting one unmutes them all, and the next video to scroll into view follows the same
-setting. The Feed is the only screen that auto-plays; the Story Detail's media viewer is
-unchanged.
+setting. Auto-play on view applies to Feed, Place Stories, and Profile. Each screen runs one
+video at a time with a screen-wide mute state. Search, Inquiries, Language Tree, and Version
+Detail render no media and therefore do not auto-play. (This ADR originally scoped auto-play to
+the Feed alone; KNOT-020g-fix13 widened it. The decision is otherwise unchanged, so the ADR is
+corrected in place rather than marked superseded.)
 
 **Why this shape.** This is the accepted convention for a vertical content feed (LinkedIn,
 Instagram, TikTok): a video that waits for a tap is dead weight in a scrolling list, and one that

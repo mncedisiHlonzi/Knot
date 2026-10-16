@@ -648,6 +648,37 @@ filter group, the `no-results` artwork on both of its empty states, and a quoted
 `No results for '<phrase>'.` headline; and Inquiries moved "Ask a question" out of the header into a
 full-width primary `Button` beneath it.
 
+**KNOT-020g-fix14** closed the Discovery screens' remaining parity gaps and migrated the last three
+screens. On **Place Stories** the map strip now paints **no marker at all**: the `MapPin` added in
+fix13 was removed on the founder's instruction, along with its constants and the `PointAnnotation`
+import, so the strip is the map's own place label over the coordinate the camera is centred on.
+Mapbox's **attribution button is back on** (`attributionEnabled`, bottom-right; the logo keeps the
+bottom-left), which closes the compliance gap this screen had carried since fix10/fix11 — the two
+marks sit in the strip's lower corners, clear of the floating back control. The screen's pillar
+control is now the **Discovery Map's chip row** instead of underline tabs, and both screens offer the
+pillars in the same order (**All / Wonder / Heritage**): `PILLAR_TABS` in `discoveryFormat.ts` is the
+one list, so the two screens cannot drift. The summary *line* still reads Heritage before Wonder,
+which is the wording the design reference prints — a different thing from the order of the controls.
+
+The last three screens left on deprecated tokens are migrated: **Login**, **Register** and **Rooted
+Setup**. All typing now goes through `typeScale`, every colour through a semantic role, and the
+controls are the design system's — `Input` for the fields (the one text field of the design system,
+so the auth screens now read like every other form in the app), a primary `Button` whose `loading`
+state replaces the hand-rolled "Signing in…"/"Creating account…"/"Saving…" labels, `Chip` for Rooted
+Setup's duration buckets, and a brand-coloured switch track. That is **21** deprecated-typography
+references removed (Login 6, Register 6, Rooted Setup 9 — three of the last, in a dead
+`styles.input` that was never referenced, deleted with them) and **21** deprecated colour aliases
+replaced (6 / 6 / 9), so **`src/screens` is now clean of both**. The shared *components* are not:
+`ReportModal`, `LocationPicker`, `LanguagePicker`, `CameraCaptureBadge`, `ReportAction` and
+`MediaGalleryModal` still read the deprecated tokens, and two of them (`LanguagePicker` on Register,
+`LocationPicker` on Rooted Setup) are embedded in the screens migrated here — migrating the
+components is a separate task. Two things were deliberately *not* swapped: no `Header`
+was added (it would move each screen's title into a bar, which is a layout change rather than a token
+migration), and `Input` gained no `maxLength` — Register's two capped fields clamp inside their
+change handlers instead, which is what `maxLength` enforced. `KNOT-ADR-068`'s stale "the Feed is the
+only screen that auto-plays" sentence is corrected in place (the decision itself still holds, so it is
+not marked superseded).
+
 The same screen serves the owner: `isOwnProfile` adds the avatar upload, the Set Rooted
 shortcut, and sign-out, so tapping your own author line opens your wall. `AuthorLine`'s
 `onPress` is how the app reaches it — a nested `Pressable` handles the author tap without

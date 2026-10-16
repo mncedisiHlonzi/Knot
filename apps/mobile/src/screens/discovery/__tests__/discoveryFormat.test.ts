@@ -12,8 +12,8 @@ import {
 
 describe('PILLAR_TABS', () => {
   it('offers All, Heritage, Wonder in the reference order', () => {
-    expect(PILLAR_TABS.map((tab) => tab.label)).toEqual(['All', 'Heritage', 'Wonder']);
-    expect(PILLAR_TABS.map((tab) => tab.value)).toEqual(['all', 'heritage', 'wonder']);
+    expect(PILLAR_TABS.map((tab) => tab.label)).toEqual(['All', 'Wonder', 'Heritage']);
+    expect(PILLAR_TABS.map((tab) => tab.value)).toEqual(['all', 'wonder', 'heritage']);
   });
 
   it('starts on the unfiltered tab', () => {

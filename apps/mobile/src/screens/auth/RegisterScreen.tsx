@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { api, AuthResponse, describeError } from '../../api/client';
+import Button from '../../components/Button';
+import Input from '../../components/Input';
 import LanguagePicker from '../../components/LanguagePicker';
-import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
+import { colors, spacing, typeScale } from '../../theme';
 
 type RegisterScreenProps = {
   /** Called with the issued tokens and user once registration succeeds. */
@@ -87,40 +89,38 @@ export default function RegisterScreen({
 
   return (
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <Text style={styles.title}>Create your Knot account</Text>
+      <Text style={[typeScale.h1, styles.title]}>Create your Knot account</Text>
 
-      <Text style={styles.label}>Email</Text>
-      <TextInput
-        style={styles.input}
+      {/* The fields are the design system's underline `Input`, the same control
+          every other form in the app uses (KNOT-020g-fix14). Its label is drawn in
+          the overline style, so the one standalone label below — the language
+          picker's, which is not an `Input` — matches it. */}
+      <Input
+        label="Email"
         value={email}
         onChangeText={setEmail}
         autoCapitalize="none"
         autoCorrect={false}
         keyboardType="email-address"
         placeholder="you@example.com"
-        placeholderTextColor={colors.text.secondary}
       />
 
-      <Text style={styles.label}>Password</Text>
-      <TextInput
-        style={styles.input}
+      <Input
+        label="Password"
         value={password}
         onChangeText={setPassword}
         secureTextEntry
         placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
-        placeholderTextColor={colors.text.secondary}
       />
 
-      <Text style={styles.label}>Display name</Text>
-      <TextInput
-        style={styles.input}
+      <Input
+        label="Display name"
         value={displayName}
         onChangeText={setDisplayName}
         placeholder="How you want to be known"
-        placeholderTextColor={colors.text.secondary}
       />
 
-      <Text style={styles.label}>Languages you speak</Text>
+      <Text style={[typeScale.overline, styles.fieldLabel]}>Languages you speak</Text>
       <LanguagePicker
         mode="multiple"
         selected={languages}
@@ -128,40 +128,46 @@ export default function RegisterScreen({
         placeholder="Search, e.g. Zulu or zul"
       />
 
-      <Text style={styles.label}>Approximate location (optional)</Text>
-      <TextInput
-        style={styles.input}
+      {/* `Input` has no `maxLength` prop, and extending the design system's field
+          is out of scope for this task, so the same cap is applied in the change
+          handler instead: the value handed to state is never longer than the
+          server's limit, which is what `maxLength` enforced (KNOT-020g-fix14). */}
+      <Input
+        label="Approximate location (optional)"
         value={location}
-        onChangeText={setLocation}
-        maxLength={MAX_LOCATION_LENGTH}
+        onChangeText={(next) => setLocation(next.slice(0, MAX_LOCATION_LENGTH))}
         placeholder="Cape Town"
-        placeholderTextColor={colors.text.secondary}
       />
 
-      <Text style={styles.label}>Phone (optional)</Text>
-      <TextInput
-        style={styles.input}
+      <Input
+        label="Phone (optional)"
         value={phone}
-        onChangeText={setPhone}
-        maxLength={MAX_PHONE_LENGTH}
+        onChangeText={(next) => setPhone(next.slice(0, MAX_PHONE_LENGTH))}
         keyboardType="phone-pad"
         placeholder="+27 00 000 0000"
-        placeholderTextColor={colors.text.secondary}
       />
 
-      {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
+      {error !== undefined ? <Text style={[typeScale.body, styles.error]}>{error}</Text> : null}
 
-      <Pressable
-        style={[styles.button, submitting ? styles.buttonDisabled : null]}
-        onPress={handleSubmit}
-        disabled={submitting}
-      >
-        <Text style={styles.buttonText}>{submitting ? 'Creating account…' : 'Create account'}</Text>
-      </Pressable>
+      {/* The submit action is the design system's primary `Button`; its `loading`
+          state is what the hand-rolled "Creating account…" label used to be
+          (KNOT-020g-fix14). */}
+      <Button
+        variant="primary"
+        fullWidth
+        label="Create account"
+        loading={submitting}
+        onPress={() => {
+          void handleSubmit();
+        }}
+      />
 
-      <Pressable style={styles.link} onPress={onSwitchToLogin}>
-        <Text style={styles.linkText}>Already have an account? Sign in</Text>
-      </Pressable>
+      <Button
+        variant="ghost"
+        fullWidth
+        label="Already have an account? Sign in"
+        onPress={onSwitchToLogin}
+      />
 
       <View style={styles.spacer} />
     </ScrollView>
@@ -169,62 +175,21 @@ export default function RegisterScreen({
 }
 
 const styles = StyleSheet.create({
-  button: {
-    alignItems: 'center',
-    backgroundColor: colors.brand.purple,
-    borderRadius: radius.md,
-    marginTop: 20,
-    paddingVertical: 14,
-  },
-  buttonDisabled: {
-    opacity: 0.5,
-  },
-  buttonText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    fontWeight: fontWeights.semiBold,
-  },
   content: {
-    backgroundColor: colors.bg.primary,
+    backgroundColor: colors.bg.canvas,
+    gap: spacing.lg,
     padding: spacing.xl,
   },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.base,
-    marginTop: spacing.lg,
+    color: colors.state.danger,
   },
-  input: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: 10,
-  },
-  label: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
-    marginBottom: 6,
-    marginTop: spacing.lg,
-  },
-  link: {
-    alignItems: 'center',
-    marginTop: 18,
-  },
-  linkText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.base,
+  fieldLabel: {
+    color: colors.text.secondary,
   },
   spacer: {
-    height: spacing['2xl'],
+    height: spacing.xxl,
   },
   title: {
     color: colors.text.primary,
-    fontSize: fontSizes.xl,
-    fontWeight: fontWeights.bold,
-    marginBottom: spacing.sm,
   },
 });

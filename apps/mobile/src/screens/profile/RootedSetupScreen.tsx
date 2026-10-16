@@ -3,8 +3,10 @@ import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-nat
 
 import { describeError } from '../../api/client';
 import { DURATION_BUCKETS, DurationBucket, rootedApi } from '../../api/rooted';
+import Button from '../../components/Button';
+import Chip from '../../components/Chip';
 import LocationPicker, { PickedPlace } from '../../components/LocationPicker';
-import { colors, fontSizes, fontWeights, radius, spacing } from '../../theme';
+import { colors, spacing, typeScale } from '../../theme';
 
 type RootedSetupScreenProps = {
   /** The signed-in user's access token. The server derives the owner from it. */
@@ -101,16 +103,25 @@ export default function RootedSetupScreen({
 
   return (
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <Pressable style={styles.link} onPress={onCancel}>
-        <Text style={styles.linkText}>← Back</Text>
+      {/* A plain text link rather than a header control: this screen is reached
+          from the profile's options sheet, and the brief for this task migrates
+          the three screens' styling without moving their layout
+          (KNOT-020g-fix14). The tap target still meets the 44-point minimum. */}
+      <Pressable
+        style={styles.link}
+        onPress={onCancel}
+        accessibilityRole="button"
+        accessibilityLabel="Back"
+      >
+        <Text style={[typeScale.button, styles.linkText]}>← Back</Text>
       </Pressable>
 
-      <Text style={styles.title}>Where are you rooted?</Text>
-      <Text style={styles.hint}>
+      <Text style={[typeScale.h1, styles.title]}>Where are you rooted?</Text>
+      <Text style={[typeScale.bodyS, styles.hint]}>
         A city or a region, not a street address. Rooted is self-declared and never verified.
       </Text>
 
-      <Text style={styles.label}>Place</Text>
+      <Text style={[typeScale.overline, styles.label]}>Place</Text>
       <LocationPicker
         text={placeText}
         selected={selectedPlace}
@@ -129,132 +140,90 @@ export default function RootedSetupScreen({
         placeholder="Search for a city or region"
       />
 
-      <Text style={styles.label}>How long have you been rooted there?</Text>
+      <Text style={[typeScale.overline, styles.label]}>How long have you been rooted there?</Text>
+      {/* The duration buckets are the design system's `Chip`, the same control the
+          Discovery screens filter with: a single choice, marked by the brand tint
+          and the brand ink (KNOT-020g-fix14). */}
       <View style={styles.buckets}>
         {DURATION_BUCKETS.map((option) => (
-          <Pressable
+          <Chip
             key={option}
-            style={[styles.bucket, bucket === option ? styles.bucketSelected : null]}
+            label={DURATION_LABELS[option]}
+            selected={bucket === option}
             onPress={() => setBucket(option)}
-          >
-            <Text style={bucket === option ? styles.bucketTextSelected : styles.bucketText}>
-              {DURATION_LABELS[option]}
-            </Text>
-          </Pressable>
+          />
         ))}
       </View>
 
       <View style={styles.switchRow}>
-        <Text style={styles.label}>Show publicly</Text>
-        <Switch value={isPublic} onValueChange={setIsPublic} />
+        <Text style={[typeScale.overline, styles.label]}>Show publicly</Text>
+        <Switch
+          value={isPublic}
+          onValueChange={setIsPublic}
+          trackColor={{ false: colors.bg.sunken, true: colors.brand.primary }}
+        />
       </View>
-      <Text style={styles.hint}>
+      <Text style={[typeScale.bodyS, styles.hint]}>
         Rooted signals are public by default. Turn this off to keep yours to yourself; nobody else
         will see it.
       </Text>
 
-      {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
+      {error !== undefined ? <Text style={[typeScale.body, styles.error]}>{error}</Text> : null}
 
-      <Pressable
-        style={[styles.button, submitting ? styles.buttonDisabled : null]}
-        onPress={handleSubmit}
-        disabled={submitting}
-      >
-        <Text style={styles.buttonText}>{submitting ? 'Saving…' : 'Save my Rooted signal'}</Text>
-      </Pressable>
+      {/* The submit action is the design system's primary `Button`; its `loading`
+          state is what the hand-rolled "Saving…" label used to be
+          (KNOT-020g-fix14). */}
+      <Button
+        variant="primary"
+        fullWidth
+        label="Save my Rooted signal"
+        loading={submitting}
+        onPress={() => {
+          void handleSubmit();
+        }}
+      />
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  bucket: {
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginRight: spacing.md,
-    marginTop: spacing.sm,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-  },
-  bucketSelected: {
-    backgroundColor: colors.brand.purple,
-    borderColor: colors.brand.purple,
-  },
-  bucketText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
-  },
-  bucketTextSelected: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
-  },
   buckets: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-  },
-  button: {
-    alignItems: 'center',
-    backgroundColor: colors.brand.purple,
-    borderRadius: radius.md,
-    marginTop: spacing.xl,
-    paddingVertical: spacing.md,
-  },
-  buttonDisabled: {
-    opacity: 0.5,
-  },
-  buttonText: {
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    fontWeight: fontWeights.semiBold,
+    gap: spacing.sm,
   },
   content: {
-    backgroundColor: colors.bg.primary,
+    backgroundColor: colors.bg.canvas,
+    gap: spacing.lg,
     padding: spacing.xl,
-    paddingBottom: spacing['3xl'],
+    paddingBottom: spacing.xxxl,
   },
   error: {
-    color: colors.state.error,
-    fontSize: fontSizes.base,
-    marginTop: spacing.lg,
+    color: colors.state.danger,
   },
   hint: {
     color: colors.text.secondary,
-    fontSize: fontSizes.sm,
-    marginTop: spacing.sm,
-  },
-  input: {
-    backgroundColor: colors.bg.surface,
-    borderColor: colors.border.default,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    color: colors.text.primary,
-    fontSize: fontSizes.md,
-    marginTop: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
   },
   label: {
-    color: colors.text.primary,
-    fontSize: fontSizes.base,
-    fontWeight: fontWeights.semiBold,
-    marginTop: spacing.xl,
+    color: colors.text.secondary,
   },
+  // The back link keeps a 44-point tap target even though it is only as tall as
+  // its label.
   link: {
-    marginBottom: spacing.md,
+    justifyContent: 'center',
+    minHeight: 44,
   },
   linkText: {
-    color: colors.text.brand,
-    fontSize: fontSizes.base,
+    color: colors.brand.primary,
   },
+  // The row is left exactly as it was — the label then the switch — so this task
+  // changes the screen's tokens and its controls, not its layout
+  // (KNOT-020g-fix14).
   switchRow: {
     alignItems: 'center',
     flexDirection: 'row',
   },
   title: {
     color: colors.text.primary,
-    fontSize: fontSizes.xl,
-    fontWeight: fontWeights.bold,
   },
 });
