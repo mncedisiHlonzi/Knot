@@ -764,6 +764,57 @@ func createTestStory(t *testing.T, handler http.Handler) storyResponse {
 	return body.Story
 }
 
+// TestStoryDetailIncludesAttribution pins that the story detail states its own
+// authorship: a story IS its root version, so its chain is a single link and its
+// depth is 0 (KNOT-021). The router's author fake is empty, so the name falls
+// back to the generic phrase, which also proves the fallback is wired.
+func TestStoryDetailIncludesAttribution(t *testing.T) {
+	store := &memoryStoryStore{}
+	handler := newStoriesHandler(t, store)
+
+	created := createTestStory(t, handler)
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories/"+created.ID, "", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body storyEnvelope
+	decodeBody(t, recorder, &body)
+
+	if body.Story.VersionDepth == nil || *body.Story.VersionDepth != 0 {
+		t.Errorf("version_depth = %v, want 0", body.Story.VersionDepth)
+	}
+	if body.Story.AttributionLine == nil {
+		t.Fatal("attribution_line is absent, want the original's line")
+	}
+	want := "Original story by another author in English."
+	if *body.Story.AttributionLine != want {
+		t.Errorf("attribution_line = %q, want %q", *body.Story.AttributionLine, want)
+	}
+}
+
+// TestStoryFeedOmitsAttribution pins the boundary with KNOT-022: the feed must
+// not carry the attribution fields yet, so they are absent from its JSON rather
+// than present and empty. They are pointers with omitempty precisely so the feed
+// response is byte-identical to what it was before this task.
+func TestStoryFeedOmitsAttribution(t *testing.T) {
+	store := &memoryStoryStore{}
+	handler := newStoriesHandler(t, store)
+
+	createTestStory(t, handler)
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories", "", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	raw := recorder.Body.String()
+	if strings.Contains(raw, "attribution_line") || strings.Contains(raw, "version_depth") {
+		t.Errorf("feed body = %s, want no attribution fields on the feed", raw)
+	}
+}
+
 // ensure the fake satisfies the handler's contract at compile time.
 var _ StoriesService = (*fakeStoriesService)(nil)
 

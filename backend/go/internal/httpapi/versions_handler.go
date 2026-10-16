@@ -20,6 +20,9 @@ type VersionsService interface {
 	CreateAdaptation(ctx context.Context, in versions.CreateAdaptationInput) (versions.StoryVersion, error)
 	GetVersion(ctx context.Context, id string) (versions.StoryVersion, error)
 	GetTree(ctx context.Context, storyID string) ([]versions.StoryVersion, error)
+	// BuildChain returns one version's attribution lineage, ordered root-first,
+	// so the handler can state who an adaptation was adapted from (KNOT-021).
+	BuildChain(ctx context.Context, versionID string) (versions.Chain, error)
 }
 
 // VersionsHandler serves the Tell My People endpoints.
@@ -98,6 +101,14 @@ type versionResponse struct {
 	// version (KNOT-ADR-051). MyReactions is the signals the reader holds.
 	Reactions   reactionCountsResponse `json:"reactions"`
 	MyReactions []string               `json:"my_reactions"`
+	// AttributionLine is the human sentence tracing this version's lineage back
+	// to the story's original, and VersionDepth is how many adaptations separate
+	// the two: 0 for a root version, 1 for a first adaptation, and so on. Both
+	// are derived at read time from the parent pointers rather than stored on the
+	// row, so the tree stays the single source of truth (KNOT-ADR-069). The line
+	// is rendered server-side and the client shows it verbatim.
+	AttributionLine string `json:"attribution_line"`
+	VersionDepth    int    `json:"version_depth"`
 }
 
 // versionEnvelope wraps a single version, so the response shape can gain sibling
@@ -149,6 +160,9 @@ func (h *VersionsHandler) Adapt(w http.ResponseWriter, r *http.Request) {
 	response := newVersionResponse(created)
 	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{created.AuthorID})[created.AuthorID]
 	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, created.AuthorID)
+	// The new version's depth is its parent's plus one, which walking its own
+	// chain produces without a separate count.
+	response.AttributionLine, response.VersionDepth = h.attribution(r.Context(), created.ID)
 
 	writeJSON(w, http.StatusCreated, versionEnvelope{Version: response})
 }
@@ -178,6 +192,28 @@ func (h *VersionsHandler) Tree(w http.ResponseWriter, r *http.Request) {
 		attribution := attributions[version.AuthorID]
 		item.AuthorDisplayName = attribution.DisplayName
 		item.AuthorAvatarURL = optionalString(attribution.AvatarURL)
+
+		// Every version's chain is resolved **in memory** from the rows already
+		// loaded, so a tree of N versions costs no attribution query at all: the
+		// names come from the page-wide attribution read above, and the structure
+		// from the parent pointers already in hand (KNOT-021).
+		chain, chainErr := versions.BuildChainFromVersions(version.ID, list)
+		if chainErr != nil {
+			// A chain that cannot be resolved -- parent pointers that loop -- is
+			// logged and left empty rather than failing the page: the tree is
+			// still readable without its attribution sentence.
+			h.logger.WarnContext(
+				r.Context(),
+				"attribution chain resolution failed",
+				slog.String("request_id", RequestIDFromContext(r.Context())),
+				slog.String("version_id", version.ID),
+				slog.String("error", chainErr.Error()),
+			)
+		} else {
+			item.AttributionLine = versions.FormatAttribution(chainWithNames(chain, attributions))
+			item.VersionDepth = chain.Depth()
+		}
+
 		items = append(items, item)
 	}
 
@@ -211,8 +247,31 @@ func (h *VersionsHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	userID, _ := UserIDFromContext(r.Context())
 	response.Reactions, response.MyReactions = reactionsForEntity(r.Context(), h.reactions, h.logger, reactions.EntityVersion, userID, version.ID)
+	response.AttributionLine, response.VersionDepth = h.attribution(r.Context(), version.ID)
 
 	writeJSON(w, http.StatusOK, versionEnvelope{Version: response})
+}
+
+// attribution resolves one version's chain and renders its sentence, returning
+// the line and the version's depth.
+//
+// Resolution is enrichment: a chain that cannot be built (a cycle, or a version
+// that vanished mid-request) is logged and reported as an empty line at depth 0
+// rather than failing a response the reader can still use.
+func (h *VersionsHandler) attribution(ctx context.Context, versionID string) (string, int) {
+	chain, err := h.service.BuildChain(ctx, versionID)
+	if err != nil {
+		h.logger.WarnContext(
+			ctx,
+			"attribution chain resolution failed",
+			slog.String("request_id", RequestIDFromContext(ctx)),
+			slog.String("version_id", versionID),
+			slog.String("error", err.Error()),
+		)
+		return "", 0
+	}
+
+	return attributionText(ctx, h.authors, h.logger, chain), chain.Depth()
 }
 
 // writeServiceError maps domain errors onto HTTP status codes. Only errors we
@@ -265,5 +324,13 @@ func optionalString(value string) *string {
 	if value == "" {
 		return nil
 	}
+	return &value
+}
+
+// optionalInt wraps an int that one response shape carries and another does not.
+// Paired with `omitempty` it drops the whole key rather than sending a zero the
+// reader might act on -- which is how the feed stays free of the attribution
+// fields this task adds only to the story detail (KNOT-021).
+func optionalInt(value int) *int {
 	return &value
 }

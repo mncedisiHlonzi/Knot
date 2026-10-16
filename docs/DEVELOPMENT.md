@@ -1286,6 +1286,41 @@ is the transaction: a failure while writing the root version leaves no story beh
 Adapting is open to any authenticated user. The adapter comes from the token, and the only
 structural check is that `parent_version_id` belongs to the same story (see KNOT-ADR-013).
 
+#### Hereditary attribution (`internal/versions/attribution.go`)
+
+Every version response carries an `attribution_line` and a `version_depth`, and neither is a
+column: they are resolved on read from the parent pointers (KNOT-ADR-069). Attribution is
+what makes Tell My People a human-adaptation mechanic rather than a translation tool — it
+states who said what, adapted from whom, in what language — so the sentence is rendered on
+the server and the client (the Story Version screen) shows it **verbatim**.
+
+The module holds the whole resolver, and it is deliberately pure where it can be:
+
+- `BuildChain(ctx, store, versionID)` walks up `parent_version_id` to the root, one store
+  read per link, returning a `Chain` ordered root-first. It returns `ErrNotFound` for a
+  missing version and `ErrChainCycle` for parent pointers that loop, and it bounds the walk
+  so a malformed tree can never hang a request.
+- `BuildChainFromVersions(targetID, rows)` resolves the same chain **entirely in memory**
+  from rows a caller already holds. It is what the tree endpoint uses, so a page of N
+  versions issues no attribution query at all.
+- `FormatAttribution(chain)` turns a chain into the sentence. It is a pure function of the
+  chain, with published wording for lineages of 1, 2, 3, and 4+ links (the 4+ form compresses
+  the middle into a count). It degrades rather than gaping: a link with no resolved author
+  reads "another author", and a missing or unrecognised language reads "their language".
+
+The names are the HTTP layer's job, not the domain's: `chainWithNames` in
+`internal/httpapi/enrich.go` fills each link's `AuthorDisplayName` from one batched author
+read (`attributionText`, used by the version and adapt endpoints; the tree reuses the
+page-wide attribution map it has already loaded). `version_depth` is the chain's length
+minus one, so the root is 0 and a first adaptation is 1.
+
+The story detail is the root version, so it needs no walk at all: `StoriesHandler.Get`
+builds a one-link chain from the story's own author and root language — reusing the display
+name the response has already resolved, so the attribution and the author line can never
+disagree — and reports depth 0. The **feed** deliberately does not carry either field, and
+the two fields are pointers with `omitempty` on `storyResponse` precisely so the feed's JSON
+is byte-for-byte what it was before (attribution on the feed is KNOT-022's work).
+
 ### Conversations and bridges
 
 `POST /versions/{id}/comments`, `GET /versions/{id}/comments`,

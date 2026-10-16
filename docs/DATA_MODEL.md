@@ -257,6 +257,26 @@ presentation, and the client indents each version by walking its `parent_version
 No recursive query is used: the flat list is the wire format, and `parent_version_id` is
 the whole of the structure.
 
+### Attribution is derived, not stored
+
+Every version response carries an `attribution_line` and a `version_depth`, and **neither is
+a column**. Both are resolved at read time by walking `parent_version_id` up to the root:
+the chain's length gives the depth (0 for the root, 1 for a first adaptation, and so on) and
+the chain's links — each one's author and language — give the sentence
+(KNOT-ADR-069 in [`docs/DECISIONS.md`](DECISIONS.md)).
+
+Storing a materialised sentence per row would be a second copy of the tree, and the two
+would drift: re-parenting or reordering a branch would leave a row asserting a lineage that
+no longer exists. Deriving it means the tree remains the only source of truth, at the cost
+of resolving a chain per version returned.
+
+That cost is why the resolution is **batched**. `GET /versions/{id}` walks one chain (a
+handful of reads, guarded against a cycle in the parent pointers), while
+`GET /stories/{id}/tree` loads the story's versions once and then resolves every version's
+chain from that in-memory list, so a page of N versions issues no attribution query at all.
+Author names are likewise resolved in one batched read per response rather than one per
+link.
+
 ## `comments`
 
 A comment is one thing a person said about a story version. A comment can answer another

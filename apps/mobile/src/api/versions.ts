@@ -47,6 +47,19 @@ export type StoryVersion = {
   readonly reactions?: ReactionCounts;
   /** The signals the signed-in reader holds, as reaction-type strings. */
   readonly my_reactions?: readonly string[];
+  /**
+   * The human sentence tracing this version's lineage back to the story's
+   * original, e.g. "Adapted from Nomsa Khan's original story in English into
+   * Zulu." The server renders it and the client shows it verbatim, so the
+   * wording lives in one place (KNOT-021).
+   */
+  readonly attribution_line?: string;
+  /**
+   * How many adaptations separate this version from the original: 0 for a root
+   * version, 1 for a first adaptation, and so on. Optional because an older
+   * server omits it (the wire fields are untrusted, KNOT-ADR-042).
+   */
+  readonly version_depth?: number;
 };
 
 /** The request body for POST /stories/{id}/adapt. */

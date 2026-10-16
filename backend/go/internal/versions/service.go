@@ -89,6 +89,23 @@ func (s *Service) GetVersion(ctx context.Context, id string) (StoryVersion, erro
 	return version, nil
 }
 
+// BuildChain returns the attribution lineage of one version, ordered root-first,
+// so a caller can read who said what and who adapted it along the way.
+//
+// It is the service-level entry point onto the package's resolver: the service
+// already owns the store, so a handler depends on this one interface rather than
+// on the store as well (KNOT-021). A caller that already holds a story's
+// versions -- the tree endpoint -- should resolve chains with
+// BuildChainFromVersions instead, which is pure.
+//
+// The chain is not filtered for blocked authors: a version further up the
+// lineage is part of this version's heritage, and hiding a link would make the
+// sentence a lie rather than a redaction. The version being read is itself
+// already refused when its own author is blocked (GetVersion).
+func (s *Service) BuildChain(ctx context.Context, versionID string) (Chain, error) {
+	return BuildChain(ctx, s.store, versionID)
+}
+
 // GetTree returns every version of one story as a flat list ordered oldest
 // first, each carrying its parent pointer.
 //

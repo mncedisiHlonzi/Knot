@@ -132,6 +132,16 @@ export type Story = {
    * optimistically; when absent the client falls back to inspecting the text.
    */
   readonly preview_truncated?: boolean;
+  /**
+   * The root version's attribution sentence, e.g. "Original story by Nomsa Khan
+   * in English." A story IS its root version, so this is always the original's
+   * line and `version_depth` is 0 (KNOT-021). Optional because the API types
+   * describe the wire format optimistically: the server sends them on the story
+   * detail only, so a feed entry sees them absent, and an older server omits
+   * them entirely.
+   */
+  readonly attribution_line?: string;
+  readonly version_depth?: number;
 };
 
 /** The request body for POST /stories. */

@@ -326,7 +326,9 @@ and the pillar it belongs to.
   "first_media_type": "image",
   "first_media_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content",
   "first_media_width": 1080,
-  "first_media_height": 1920
+  "first_media_height": 1920,
+  "attribution_line": "Original story by Ada Lovelace in English.",
+  "version_depth": 0
 }
 ```
 
@@ -338,6 +340,14 @@ when it was not given.
 together: a story either has a point the map can plot or it has none (KNOT-ADR-034). The
 Discovery Map plots `latitude`/`longitude` directly, so a small town appears even though it
 is not in the client's fallback lookup table.
+
+`attribution_line` and `version_depth` are the story's own attribution, and they appear on
+the **detail** (`GET /stories/{id}`) only. A story IS its root version, so the line always
+reads `Original story by {author} in {language}.` and the depth is always `0` (KNOT-021).
+The feed (`GET /stories`) and the place page **omit both keys entirely**: they share this
+object's shape, so the two fields are pointers carrying `omitempty`, which keeps their JSON
+byte-for-byte what it was before this feature. A client that consumes the feed must
+therefore treat the fields as absent. Attribution on the feed is separate work.
 
 `media` is the story's attached files (see [Story media](#story-media)). On
 `GET /stories/{id}` it is the full list in `display_order`. On the feed (`GET /stories`) it
@@ -623,7 +633,9 @@ KNOT-ADR-011 in [`docs/DECISIONS.md`](DECISIONS.md).
   "body": "Grandmother said the first rain remembers every name.",
   "adaptation_note": null,
   "created_at": "2026-10-07T18:26:37.134182+02:00",
-  "updated_at": "2026-10-07T18:26:37.134182+02:00"
+  "updated_at": "2026-10-07T18:26:37.134182+02:00",
+  "attribution_line": "Original story by Ada Lovelace in English.",
+  "version_depth": 0
 }
 ```
 
@@ -632,7 +644,43 @@ adaptation. `adaptation_note` is `null` when the adapter left none. Version resp
 carry `author_rooted`, the author's inline Rooted summary, or `null`. Every version
 response also carries `author_display_name` and `author_avatar_url` — see
 [Author attribution](#author-attribution). See
-[`author_rooted` on content responses](#author_rooted-on-content-responses).
+[`author_rooted` on content responses](#author_rooted-on-content-responses)
+and [The attribution line](#the-attribution-line).
+
+### The attribution line
+
+Every version response — `GET /versions/{id}`, `POST /stories/{id}/adapt`, and each entry
+of `GET /stories/{id}/tree` — carries two derived fields:
+
+| Field              | Type   | Meaning                                                                                       |
+| ------------------ | ------ | --------------------------------------------------------------------------------------------- |
+| `attribution_line` | string | The human sentence tracing this version's lineage back to the story's original                  |
+| `version_depth`    | int    | How many adaptations separate this version from the original: `0` for the root, `1` for a first adaptation, and so on |
+
+Neither is stored. Both are resolved at read time by walking `parent_version_id` up to the
+root (KNOT-ADR-069), so the tree stays the single source of truth and the sentence can never
+drift from it. **The server renders the sentence and a client shows it verbatim** — a client
+must not re-format it, because the wording is one decision in one place. An author whose
+account cannot be resolved is named `another author`, and a language that is missing or
+unrecognised reads `their language`, so the sentence never has a hole in it.
+
+The wording depends on how many versions the lineage holds (write `N` for that count;
+`version_depth` is `N - 1`):
+
+| N  | `attribution_line` |
+| -- | ------------------ |
+| 1  | `Original story by {author} in {language}.` |
+| 2  | `Adapted from {root author}'s original story in {root language} into {language}.` |
+| 3  | `Adapted from {middle author}'s {middle language} version of {root author}'s original story in {root language} into {language}.` |
+| 4+ | `Adapted from {parent author}'s {parent language} version, which traces back through {N-2} adaptations to {root author}'s original story in {root language}, into {language}.` |
+
+In every form the final `{language}` is the language of the version being read. From four
+links on, the middle of the lineage is compressed into a count, so a long chain still reads
+as one sentence rather than a list.
+
+**The tree resolves every chain in memory.** The tree endpoint loads a story's versions
+once and then walks the parent pointers it already holds, so a page of N versions costs the
+same number of queries as a page of one.
 
 ### POST /stories/{id}/adapt
 

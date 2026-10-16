@@ -9,6 +9,7 @@ import (
 	"github.com/knot/backend/internal/rooted"
 	"github.com/knot/backend/internal/storymedia"
 	"github.com/knot/backend/internal/storystats"
+	"github.com/knot/backend/internal/versions"
 )
 
 // StoryMediaLookup is the story-media enrichment dependency: the full list for
@@ -236,6 +237,47 @@ func authorAttributions(ctx context.Context, lookup AuthorLookup, logger *slog.L
 func authorFields(ctx context.Context, authors AuthorLookup, logger *slog.Logger, authorID string) (string, *string) {
 	attribution := authorAttributions(ctx, authors, logger, []string{authorID})[authorID]
 	return attribution.DisplayName, optionalString(attribution.AvatarURL)
+}
+
+// chainWithNames fills each link of a version chain with its author's display
+// name, so the attribution sentence can name people.
+//
+// The versions domain deliberately leaves the name empty: resolving a chain must
+// not become a query per link, so the domain resolves structure and the HTTP
+// layer resolves identity, from a map it either batches here or has already
+// loaded (the tree names its whole page once).
+func chainWithNames(chain versions.Chain, names map[string]authorAttribution) versions.Chain {
+	if len(chain) == 0 {
+		return chain
+	}
+
+	named := make(versions.Chain, 0, len(chain))
+	for _, link := range chain {
+		link.AuthorDisplayName = names[link.AuthorID].DisplayName
+		named = append(named, link)
+	}
+
+	return named
+}
+
+// attributionText renders one version's chain as the sentence a reader sees,
+// naming every link's author from one batched read.
+//
+// It is the single-entity path: the version and adapt responses resolve exactly
+// one chain, so the author read is scoped to the links that chain holds. The tree
+// endpoint uses chainWithNames directly instead, because it has already named
+// every author on the page (KNOT-021).
+func attributionText(ctx context.Context, authors AuthorLookup, logger *slog.Logger, chain versions.Chain) string {
+	if len(chain) == 0 {
+		return ""
+	}
+
+	ids := make([]string, 0, len(chain))
+	for _, link := range chain {
+		ids = append(ids, link.AuthorID)
+	}
+
+	return versions.FormatAttribution(chainWithNames(chain, authorAttributions(ctx, authors, logger, ids)))
 }
 
 // ReactionsLookup is the reaction-enrichment dependency: the counts for a page of

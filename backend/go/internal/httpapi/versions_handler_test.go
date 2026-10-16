@@ -32,6 +32,8 @@ type fakeVersionsService struct {
 	getErr       error
 	treeResult   []versions.StoryVersion
 	treeErr      error
+	chainResult  versions.Chain
+	chainErr     error
 }
 
 func (f *fakeVersionsService) CreateAdaptation(_ context.Context, _ versions.CreateAdaptationInput) (versions.StoryVersion, error) {
@@ -44,6 +46,10 @@ func (f *fakeVersionsService) GetVersion(_ context.Context, _ string) (versions.
 
 func (f *fakeVersionsService) GetTree(_ context.Context, _ string) ([]versions.StoryVersion, error) {
 	return f.treeResult, f.treeErr
+}
+
+func (f *fakeVersionsService) BuildChain(_ context.Context, _ string) (versions.Chain, error) {
+	return f.chainResult, f.chainErr
 }
 
 // memoryVersionStore is an in-memory versions.VersionStore. The handler tests run
@@ -559,6 +565,101 @@ func TestNewVersionsHandlerRejectsMissingDependencies(t *testing.T) {
 	}
 	if _, err := NewVersionsHandler(&fakeVersionsService{}, &fakeAuthorService{}, &fakeRootedService{}, nil, logger); err == nil {
 		t.Error("NewVersionsHandler(service, authors, rooted, nil reactions, logger) error = nil, want an error")
+	}
+}
+
+// Attribution is derived at read time from the parent pointers, so each version
+// endpoint reports the lineage of the version it returns. The router's author
+// fake is empty, so every link's name falls back to the generic phrase: that
+// makes the expected sentence deterministic here and also proves the fallback is
+// wired (KNOT-021).
+func TestGetVersionIncludesAttribution(t *testing.T) {
+	store := newMemoryVersionStore()
+	store.seed(rootVersion())
+	handler := newVersionsHandler(t, store)
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/versions/"+testRootVersionID, "", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body versionEnvelope
+	decodeBody(t, recorder, &body)
+
+	if body.Version.VersionDepth != 0 {
+		t.Errorf("version_depth = %d, want 0 for a root version", body.Version.VersionDepth)
+	}
+	want := "Original story by another author in English."
+	if body.Version.AttributionLine != want {
+		t.Errorf("attribution_line = %q, want %q", body.Version.AttributionLine, want)
+	}
+}
+
+func TestAdaptIncludesAttribution(t *testing.T) {
+	store := newMemoryVersionStore()
+	store.seed(rootVersion())
+	handler := newVersionsHandler(t, store)
+
+	recorder := doStoryRequest(handler, http.MethodPost, "/stories/"+testStoryID+"/adapt", validAdaptationBody(), testAccessToken)
+
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	var body versionEnvelope
+	decodeBody(t, recorder, &body)
+
+	if body.Version.VersionDepth != 1 {
+		t.Errorf("version_depth = %d, want 1 for a first adaptation", body.Version.VersionDepth)
+	}
+	want := "Adapted from another author's original story in English into French."
+	if body.Version.AttributionLine != want {
+		t.Errorf("attribution_line = %q, want %q", body.Version.AttributionLine, want)
+	}
+}
+
+// The tree resolves every chain in memory from the rows it already loaded, so a
+// page of versions carries attribution without a query per row (KNOT-021).
+func TestTreeIncludesAttributionForEveryVersion(t *testing.T) {
+	store := newMemoryVersionStore()
+	store.seed(rootVersion())
+	store.seed(versions.StoryVersion{
+		ID:              testAdaptationVersionID,
+		StoryID:         testStoryID,
+		ParentVersionID: testRootVersionID,
+		AuthorID:        testUserID,
+		Language:        "zul",
+		Title:           "Ukuqala kwemvula",
+		Body:            "Ugogo wayethi imvula yokuqala ikhumbula wonke amagama.",
+	})
+	handler := newVersionsHandler(t, store)
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories/"+testStoryID+"/tree", "", "")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body treeResponse
+	decodeBody(t, recorder, &body)
+
+	if len(body.Versions) != 2 {
+		t.Fatalf("len(versions) = %d, want 2", len(body.Versions))
+	}
+
+	root := body.Versions[0]
+	if root.VersionDepth != 0 || root.AttributionLine != "Original story by another author in English." {
+		t.Errorf("root attribution = (%q, %d), want the original's line at depth 0", root.AttributionLine, root.VersionDepth)
+	}
+
+	adaptation := body.Versions[1]
+	if adaptation.VersionDepth != 1 {
+		t.Errorf("adaptation version_depth = %d, want 1", adaptation.VersionDepth)
+	}
+	want := "Adapted from another author's original story in English into Zulu."
+	if adaptation.AttributionLine != want {
+		t.Errorf("adaptation attribution_line = %q, want %q", adaptation.AttributionLine, want)
 	}
 }
 

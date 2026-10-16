@@ -2329,3 +2329,34 @@ Version Detail, Inquiries, Search, and Notifications keep their current titles. 
 decoded as a still, so a card costs a video's first frame rather than a poster image — acceptable
 because a version has no media of its own and a story's first item is the one the feed already
 previews.
+
+## KNOT-ADR-069 — Hereditary attribution for versions is derived at read time from the version chain, not stored on the row
+
+**Decision.** Every version response carries an `attribution_line` and a `version_depth`.
+Both are computed on read by walking `parent_version_id` from the version up to the story's
+root version, and neither is persisted. The chain is the source of truth: its length gives
+the depth, and its links — each one's author and language — give the sentence
+(`internal/versions/attribution.go`). The resolver lives in the domain rather than in the
+HTTP projection, so any caller holding a version or a story's version list can attribute it.
+
+**Why this shape.** Tell My People is a human-adaptation mechanic, so what has to be honest
+is *who said what, adapted from whom, in what language* — and the tree already holds exactly
+that. A stored sentence would be a second copy of the same fact, and the copy is the thing
+that drifts: re-parenting a version, or removing one, would leave rows asserting a lineage
+the tree no longer describes. Deriving it means there is one place a lineage can be wrong,
+and that place is the tree.
+
+**Consequences.** A chain costs reads. That is fine for the single-version endpoints, which
+walk one lineage of a handful of links, but it would be N+1 on the tree. The tree therefore
+resolves every chain **in memory** from the version rows it has already loaded
+(`BuildChainFromVersions`), so a page of N versions issues no attribution query at all —
+the same batching the author, Rooted, and reaction lookups already use. The wording lives on
+the server and a client renders `attribution_line` **verbatim**, so there is one place to
+change the sentence rather than one per client; the cost is that a client cannot restyle a
+lineage, and a future localisation of the sentence would have to move server-side. A
+malformed tree — parent pointers that loop — is detected rather than trusted: a walk returns
+`ErrChainCycle` instead of hanging, and the tree endpoint logs the failure and leaves that
+one version's line empty rather than failing the page. Finally, a chain is **not** filtered
+for blocked authors: a lineage is structural heritage, hiding a link would make the sentence
+a lie, and the tree endpoint already returns every version of a story unfiltered, so the
+attribution exposes nothing the tree does not.

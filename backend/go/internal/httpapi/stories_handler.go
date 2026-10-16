@@ -12,6 +12,7 @@ import (
 
 	"github.com/knot/backend/internal/reactions"
 	"github.com/knot/backend/internal/stories"
+	"github.com/knot/backend/internal/versions"
 )
 
 // codeUnauthorized is returned when a protected route is reached without a valid
@@ -166,6 +167,14 @@ type storyResponse struct {
 	// "is there more here than a preview shows", and it keeps the client from
 	// inferring truncation from the text (KNOT-020g-fix12).
 	PreviewTruncated bool `json:"preview_truncated"`
+	// AttributionLine is the root version's attribution sentence, and
+	// VersionDepth is how many adaptations separate the story from its original
+	// -- always 0, because a story IS its root version (KNOT-021). Both are
+	// pointers so that `omitempty` drops them from the FEED response entirely:
+	// this task attributes the story detail, and the feed's own attribution is
+	// separate work. A client must treat them as absent when they are missing.
+	AttributionLine *string `json:"attribution_line,omitempty"`
+	VersionDepth    *int    `json:"version_depth,omitempty"`
 }
 
 // storyEnvelope wraps a single story, so the response shape can gain sibling
@@ -240,6 +249,21 @@ func (h *StoriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	userID, _ := UserIDFromContext(r.Context())
 	response.Reactions, response.MyReactions = reactionsForEntity(r.Context(), h.reactions, h.logger, reactions.EntityStory, userID, story.ID)
+
+	// The story detail IS the root version, so its attribution needs no store
+	// walk and no second author read: one link, holding the story's own author --
+	// whose display name this response has already resolved for the author line,
+	// so the two can never disagree -- and the language its root version is
+	// written in, which the response also carries (KNOT-021).
+	rootChain := versions.Chain{{
+		VersionID:         story.RootVersionID,
+		StoryID:           story.ID,
+		AuthorID:          story.AuthorID,
+		AuthorDisplayName: response.AuthorDisplayName,
+		Language:          story.Language,
+	}}
+	response.AttributionLine = optionalString(versions.FormatAttribution(rootChain))
+	response.VersionDepth = optionalInt(0)
 
 	writeJSON(w, http.StatusOK, storyEnvelope{Story: response})
 }

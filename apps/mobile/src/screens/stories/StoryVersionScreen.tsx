@@ -81,6 +81,7 @@ export default function StoryVersionScreen({
   }, [load]);
 
   const adaptationNote = (version?.adaptation_note ?? '').trim();
+  const attributionLine = (version?.attribution_line ?? '').trim();
 
   return (
     <View style={styles.container}>
@@ -128,6 +129,16 @@ export default function StoryVersionScreen({
                 onPress={() => onOpenUserProfile(version.author_id)}
               />
             </View>
+
+            {/* Who this version was adapted from, in whose language, and from
+                whom in turn. The server renders the sentence; this screen shows
+                it verbatim and renders nothing when it is absent, so an older
+                server does not leave a blank line (KNOT-021). */}
+            {attributionLine === '' ? null : (
+              <Text style={[typeScale.caption, styles.attribution]} numberOfLines={2}>
+                {attributionLine}
+              </Text>
+            )}
 
             <Text style={[typeScale.h1, styles.title]}>{version.title}</Text>
 
@@ -191,6 +202,13 @@ const styles = StyleSheet.create({
   },
   actions: {
     marginTop: spacing.lg,
+  },
+  // The lineage sentence under the byline: quiet enough to read as a note rather
+  // than as a second headline, and separate from the author block so it never
+  // competes with the person's name (KNOT-021).
+  attribution: {
+    color: colors.text.tertiary,
+    marginTop: spacing.sm,
   },
   authorRow: {
     marginTop: spacing.sm,
