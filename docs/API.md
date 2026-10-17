@@ -29,7 +29,7 @@ Every error uses the same envelope:
 | 401    | `invalid_credentials` | Login failed. Deliberately identical for a wrong password and an unknown email |
 | 401    | `unauthorized`      | A protected route was called without a valid access token. Identical for a missing, malformed, expired, or wrong-type token |
 | 403    | `forbidden`         | You are not allowed to change this resource: only a story's author may attach media, and only the author or the uploader may delete it |
-| 404    | `not_found`         | The requested resource (story, version, comment, bridge, user, avatar, or media) does not exist, or its id is not a UUID |
+| 404    | `not_found`         | The requested resource (story, version, comment, user, avatar, or media) does not exist, or its id is not a UUID |
 | 405    | *(empty body)*      | Method not allowed for that path                     |
 | 409    | `email_taken`       | That email is already registered                     |
 | 413    | `request_too_large` | Body exceeded 1 MiB; an avatar exceeded 5 MiB; or an image exceeded 10 MiB, or a video 100 MiB |
@@ -75,7 +75,7 @@ life of the process. `code` is an ISO 639-3 code, three lower-case letters.
 
 ## Languages
 
-A user, story, version, comment, or bridge names its language with an
+A user, story, version, or comment names its language with an
 **ISO 639-3 code**: three lower-case ASCII letters, such as `eng` or `zul`.
 `GET /languages` is the authoritative list, and it is duplicated on the device so
 the picker cannot offer a value the server rejects (KNOT-ADR-046).
@@ -191,7 +191,7 @@ identical message, so the endpoint cannot be used to discover which accounts exi
 ## Authentication
 
 `POST /stories`, `POST /stories/{id}/adapt`, `POST /versions/{id}/comments`,
-`POST /comments/{id}/bridges`, `POST /users/me/rooted`, `GET /users/me/rooted`,
+`POST /users/me/rooted`, `GET /users/me/rooted`,
 `POST /users/me/avatar`, `POST /stories/{id}/media`, and `DELETE /stories/{id}/media/{mid}`
 are protected routes. Every other route is public and needs no credentials.
 
@@ -816,36 +816,30 @@ Returns **200** with `{ "version": { ... } }`.
 **Errors:** `404 not_found` (no such version, or the id is not a UUID),
 `500 internal_error`.
 
-## Conversations and Bridges
+## Conversations
 
 A conversation is the list of comments on one story **version**, newest thread first.
-Comments are how people talk about a telling; a **bridge** is how that talk crosses a
-language boundary.
+Comments are how people talk about a telling.
 
 A comment can be a **reply** to another comment. Threading is exactly one level deep: a
 reply to a reply is stored against the same top-level comment its parent answers, so a
 conversation is always a top-level comment followed by its replies, and never nests
 further. See KNOT-ADR-047 in [`docs/DECISIONS.md`](DECISIONS.md).
 
-A bridge does not translate in place. It creates a **new comment** in the target
-language, on the **story's version written in that language**, and records a bridge that
-references both. The source comment is left untouched, so both conversations stay intact,
-and the bridge is a first-class object with its own id. A bridge therefore connects two
-conversations rather than adding to one. See KNOT-ADR-014 in
-[`docs/DECISIONS.md`](DECISIONS.md).
-
-Because a bridge writes into a version's conversation, the comment it creates is a
-top-level comment in that conversation: it never carries a `parent_comment_id`, even
-when the comment it came from is a reply.
-
 | Route                          | Auth     | Purpose                                  |
 | ------------------------------ | -------- | ---------------------------------------- |
 | `POST /versions/{id}/comments` | `Bearer` | Comment on a version, or reply to one     |
 | `GET /versions/{id}/comments`  | public   | Read a version's comments, newest first    |
 | `GET /comments/{id}`           | public   | Resolve one comment, with its story        |
-| `POST /comments/{id}/bridges`  | `Bearer` | Bridge a comment into another language     |
-| `GET /comments/{id}/bridges`   | public   | Bridges touching a comment                 |
-| `GET /bridges/{id}`            | public   | Read one bridge                            |
+
+### Comment bridging is retired
+
+Comment bridging is no longer part of the API. The routes `POST /comments/{id}/bridges`,
+`GET /comments/{id}/bridges`, and `GET /bridges/{id}` were removed in KNOT-023, together
+with the bridge reaction routes (`POST|GET /bridges/{id}/reactions`). A request to any of
+them is a plain **404**: the routes do not exist. The `bridges` table is left dormant in
+the database — its rows are preserved but no active code path reads it — and historical
+`bridge.created` notifications are hidden from the inbox. See KNOT-ADR-071.
 
 ### The comment object
 
@@ -867,25 +861,8 @@ when the comment it came from is a reply.
 `parent_comment_id` is `null` for a top-level comment, and is always present, so a client
 can tell "top level" from "the server did not answer".
 
-### The bridge object
-
-```json
-{
-  "id": "77777777-7777-4777-8777-777777777777",
-  "source_comment_id": "66666666-6666-4666-8666-666666666666",
-  "target_comment_id": "88888888-8888-4888-8888-888888888888",
-  "author_id": "7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8",
-  "author_display_name": "Ada Lovelace",
-  "author_avatar_url": "/users/7c0c1bfb-acf5-48ad-a3ba-4ea6617e05d8/avatar?v=ada.png",
-  "target_language": "fra",
-  "adaptation_note": "Rendered for French-speaking listeners.",
-  "created_at": "2026-10-08T18:30:00.000000+02:00"
-}
-```
-
-`adaptation_note` is `null` when the bridger left none. Comment and bridge responses also
-carry `author_rooted`, the author's inline Rooted summary, or `null`, and the attribution
-pair `author_display_name` / `author_avatar_url` — see
+Comment responses also carry `author_rooted`, the author's inline Rooted summary, or
+`null`, and the attribution pair `author_display_name` / `author_avatar_url` — see
 [Author attribution](#author-attribution). See
 [`author_rooted` on content responses](#author_rooted-on-content-responses).
 
@@ -994,61 +971,6 @@ as every other comment response — `author_display_name`, `author_avatar_url`, 
 **Errors:** `404 not_found` (no such comment, or the id is not a UUID),
 `500 internal_error`.
 
-### POST /comments/{id}/bridges
-
-Bridges the comment into another language and returns **201** with the bridge plus both
-comments, so a client does not have to fetch them:
-
-```json
-{
-  "bridge": { "id": "...", "source_comment_id": "...", "target_comment_id": "...", "target_language": "fra" },
-  "source_comment": { "id": "...", "language": "eng" },
-  "target_comment": { "id": "...", "language": "fra" }
-}
-```
-
-**Request**
-
-```json
-{
-  "target_language": "fra",
-  "body": "La première pluie se souvient de chaque nom.",
-  "adaptation_note": "Rendered for French-speaking listeners."
-}
-```
-
-| Field             | Required | Rules                                                                         |
-| ----------------- | -------- | ----------------------------------------------------------------------------- |
-| `target_language` | yes      | A canonical ISO 639-3 code, such as `fra`; must differ from the source comment's language. See [Languages](#languages) |
-| `body`            | yes      | The target comment's body, 1-5000 characters                                   |
-| `adaptation_note` | no       | At most 1000 characters after trimming                                          |
-
-**There is no `author_id` field.** The bridger is taken from the access token. The server
-resolves the target comment's version from the source comment's story and `target_language`;
-when the story has several versions in that language the oldest is used. A source comment
-may be bridged into any one given language once; a second attempt returns
-`400 validation_error`.
-
-**Errors:** `401 unauthorized`, `400 validation_error` (including a target language equal
-to the source's, a story with no version in that language, or a language the comment has
-already been bridged into), `400 invalid_request`, `404 not_found` (the source comment
-does not exist), `413 request_too_large`, `500 internal_error`.
-
-### GET /comments/{id}/bridges
-
-Returns **200** with `{ "bridges": [ ... ] }`: every bridge in which the comment is the
-source or the target, newest first. `bridges` is always an array, never `null`.
-
-**Errors:** `404 not_found` (the comment does not exist, or its id is not a UUID),
-`500 internal_error`.
-
-### GET /bridges/{id}
-
-Returns **200** with `{ "bridge": { ... } }`.
-
-**Errors:** `404 not_found` (no such bridge, or the id is not a UUID),
-`500 internal_error`.
-
 ## Rooted
 
 Rooted is a person's self-declared connection to a place: a place name at **city or region
@@ -1143,7 +1065,7 @@ declared nothing public" rather than "no such user". An id that is not a UUID al
 
 ### `author_rooted` on content responses
 
-The feed, story detail, version, comment, and bridge responses carry an `author_rooted` field:
+The feed, story detail, version, and comment responses carry an `author_rooted` field:
 
 ```json
 { "author_rooted": { "place": "Cape Town", "duration_bucket": "lifelong" } }
@@ -1160,7 +1082,6 @@ in a response, never one query per row.
 | `GET /stories`, `GET /stories/{id}`                                                    | the story's author                     |
 | `POST /stories/{id}/adapt`, `GET /stories/{id}/tree`, `GET /versions/{id}`             | each version's author                  |
 | `POST /versions/{id}/comments`, `GET /versions/{id}/comments`, `GET /comments/{id}`     | each comment's author                  |
-| `POST /comments/{id}/bridges`, `GET /comments/{id}/bridges`, `GET /bridges/{id}`       | each bridge's author (and, on create, both comments' authors) |
 
 The feed attaches it to every story on the page in one batched read (KNOT-020c-fix4,
 reversing the earlier decision to leave the feed unenriched: KNOT-015b). `POST /stories`
@@ -1197,7 +1118,6 @@ call — never one query per row, and never by widening an entity's stored colum
 | `POST /stories`, `GET /stories`, `GET /stories/{id}`                                              | the story's author                |
 | `POST /stories/{id}/adapt`, `GET /stories/{id}/tree`, `GET /versions/{id}`                         | each version's author             |
 | `POST /versions/{id}/comments`, `GET /versions/{id}/comments`, `GET /comments/{id}`                | each comment's author             |
-| `POST /comments/{id}/bridges`, `GET /comments/{id}/bridges`, `GET /bridges/{id}`                   | the bridger (and, on create, both comments' authors) |
 
 Attribution is supplementary: if the lookup fails, the response still returns, with
 `author_display_name` empty and `author_avatar_url` `null`.
@@ -1205,7 +1125,7 @@ Attribution is supplementary: if the lookup fails, the response still returns, w
 ## Profiles
 
 Every user has a public **wall**: one chronological stream of everything they have
-authored — stories, adaptations, comments, and bridges. It is how the app answers
+authored — stories, adaptations, comments, and inquiries. It is how the app answers
 "who is this person, and what have they made?" from any author mention.
 
 | Route                     | Auth   | Purpose                                    |
@@ -1274,7 +1194,6 @@ kind:
 | `story`          | the story      | `{ title, pillar, language, place, version_count, preview, preview_truncated, media_preview_url, first_media_type, first_media_width, first_media_height }`             |
 | `version`        | the adaptation | `{ story_id, story_title, language, place, version_number, preview, preview_truncated, media_preview_url, first_media_type, first_media_width, first_media_height }`    |
 | `comment`        | the comment    | `{ version_id, story_id, body_preview }`                                                             |
-| `bridge`         | the bridge     | `{ source_comment_id, version_id, target_language }`                                                 |
 | `inquiry`        | the question   | `{ title, place, answer_count, preview, preview_truncated }`                                          |
 | `inquiry_answer` | the answer     | `{ inquiry_id, inquiry_title, body_preview }`                                                        |
 
@@ -1321,8 +1240,7 @@ author**: the name and avatar are on the `user` header. `body_preview` is the fi
 200 characters of a comment.
 
 One act is one activity: a story's **root version** is not listed again as a
-`version`, and a bridge's **target comment** is not listed again as a `comment`.
-See KNOT-ADR-042.
+`version`. See KNOT-ADR-042.
 
 **Errors:** `400 validation_error` (an unreadable `cursor`, or a `limit` that is not
 a positive integer), `404 not_found` (no such user, or the id is not a UUID),
@@ -1450,14 +1368,13 @@ content. Every route below is protected, and every route is scoped to the caller
 token — there is no user id in any request, and no way to read or mark another person's
 inbox. Delivery is in-app only; there is no push channel (KNOT-ADR-039).
 
-Four events exist, and each one fires only when the recipient and the actor are different
-people:
+The content events exist, and each one fires only when the recipient and the actor are
+different people:
 
 | `event_type`       | Fires when                                             | `entity_type`           | `entity_id` names  |
 | ------------------ | ------------------------------------------------------ | ----------------------- | ------------------ |
 | `version.created`  | someone adapts a version the recipient authored         | `version`               | the new version     |
 | `comment.created`  | someone comments on a version the recipient authored, **or replies to a comment the recipient authored** | `comment` | the new comment |
-| `bridge.created`   | someone bridges a comment the recipient authored        | `bridge`                | the new bridge      |
 | `reaction.created` | someone leaves a perspective reaction on content the recipient authored | the target's own kind | the reacted-to entity |
 
 For `comment.created`, the recipient is the **version's author** for a top-level comment and
@@ -1555,8 +1472,8 @@ failed (KNOT-ADR-038).
 
 ## Reactions
 
-The four **perspective signals** a reader can leave on a story, a version, or a bridge
-(KNOT-ADR-050; comments are read-only, KNOT-ADR-053). They are not likes: the four do not
+The four **perspective signals** a reader can leave on a story, a version, a comment, or an
+inquiry (KNOT-ADR-050; comments are read-only, KNOT-ADR-053). They are not likes: the four do not
 compete, a reader may hold any combination of them on the same entity, and none of them cancels
 another. Nothing sorts or ranks content by them.
 
@@ -1577,7 +1494,7 @@ Every content response carries two reaction fields (KNOT-ADR-051):
 `reactions` is the count of each signal, always all four keys. `my_reactions` is the signals
 the **authenticated caller** holds, as an array of type strings — `[]` when the caller is
 signed out or holds none. These fields are attached to the story detail and feed, the version
-detail and tree, the comment list and detail, and the bridge list and detail.
+detail and tree, the comment list and detail, and the inquiry list and detail.
 
 ### POST /{entity}/{id}/reactions
 
@@ -1593,7 +1510,6 @@ Returns **200** with the entity's updated counts:
 
 - `POST /stories/{id}/reactions`
 - `POST /versions/{id}/reactions`
-- `POST /bridges/{id}/reactions`
 
 **Not supported on comments.** `POST /comments/{id}/reactions` always answers **400**
 `validation_error` with `"reactions are not supported on comments"`, and writes nothing
@@ -1626,7 +1542,6 @@ Returns **200** with every reaction on the entity, newest first, each reactor re
 - `GET /stories/{id}/reactions`
 - `GET /versions/{id}/reactions`
 - `GET /comments/{id}/reactions`
-- `GET /bridges/{id}/reactions`
 
 `GET /comments/{id}/reactions` remains available even though a comment reaction can no longer
 be created: it is a read-only view of the rows that already exist, which is useful for an audit
@@ -1809,7 +1724,7 @@ question" from "nobody has answered yet".
 ### GET /answers/{id}
 
 One answer. **Public.** The top-level path matches how a single comment (`GET /comments/{id}`)
-and a single bridge (`GET /bridges/{id}`) are already fetched. An unknown id is **404**.
+is already fetched. An unknown id is **404**.
 
 ### Reactions on an inquiry
 
@@ -1859,7 +1774,7 @@ moderator route here.
 ### POST /reports
 
 Protected. Body: `{ "entity_type", "entity_id", "category", "reason"? }`.
-`entity_type` is one of `story | version | comment | bridge | inquiry |
+`entity_type` is one of `story | version | comment | inquiry |
 inquiry_answer`. `category` is one of `harassment | hate_speech | misinformation |
 spam | sensitive_content | other`; `reason` is **required** when the category is
 `other` and optional otherwise. Returns **201** with the report object. A repeat by
@@ -1886,14 +1801,14 @@ Protected, cursor-paginated. Returns
 Blocking is **mutual hiding plus write prevention** (KNOT-ADR-060). The server
 resolves a viewer's block set once per authenticated request and filters it out of
 every content list: the feed, a version's comments and their replies, a comment's
-bridges, the inquiry list and its answers, and a user's profile wall (which answers
+thread, the inquiry list and its answers, and a user's profile wall (which answers
 **404** when its owner is on either side of a block). Anonymous readers carry no
 block set and see everything.
 
 A write that targets content authored by either side of a block is refused with
 **403** and the machine code **`blocked`**:
 `{"error":{"code":"blocked","message":"you cannot interact with this content"}}`.
-This covers commenting, bridging, reacting, answering an inquiry, and adapting a
+This covers commenting, reacting, answering an inquiry, and adapting a
 story.
 
 ## Search (KNOT-018)

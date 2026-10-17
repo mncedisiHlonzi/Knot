@@ -195,33 +195,6 @@ func TestCommentListCarriesReactions(t *testing.T) {
 	}
 }
 
-func TestBridgeDetailCarriesReactions(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	lookup := &fakeReactionsLookup{summaries: map[string]reactions.Summary{testEnrichedEntityID: {NeedsASource: 2}}}
-	conversationsService := &fakeConversationsService{getBridgeResult: conversations.Bridge{ID: testEnrichedEntityID, AuthorID: testReactionAuthorID}}
-
-	handler, err := NewConversationsHandler(conversationsService, &fakeAuthorService{}, &fakeRootedService{}, lookup, logger)
-	if err != nil {
-		t.Fatalf("NewConversationsHandler() error = %v, want nil", err)
-	}
-
-	request := getWithOptionalUser(http.MethodGet, "/bridges/x", testEnrichedEntityID, "")
-	recorder := httptest.NewRecorder()
-	handler.GetBridge(recorder, request)
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
-	}
-
-	var body bridgeEnvelope
-	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if body.Bridge.Reactions.NeedsASource != 2 {
-		t.Errorf("reactions.needs_a_source = %d, want 2", body.Bridge.Reactions.NeedsASource)
-	}
-}
-
 func TestReactionEnrichmentSwallowsLookupFailure(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	lookup := &fakeReactionsLookup{err: io.ErrUnexpectedEOF}

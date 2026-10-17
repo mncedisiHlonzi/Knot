@@ -81,17 +81,6 @@ func commentFixture(id, authorID string) conversations.Comment {
 	}
 }
 
-func bridgeFixture(id, authorID string) conversations.Bridge {
-	return conversations.Bridge{
-		ID:              id,
-		SourceCommentID: testSourceCommentID,
-		TargetCommentID: testTargetCommentID,
-		AuthorID:        authorID,
-		TargetLanguage:  "fra",
-		CreatedAt:       testNow,
-	}
-}
-
 func TestStoryDetailAttachesAuthorRooted(t *testing.T) {
 	service := &fakeRootedService{batchResult: rootedSignals(map[string]string{authorA: "Cape Town"})}
 	handler := newRouterWithRooted(t, discardLogger(), service,
@@ -279,89 +268,6 @@ func TestCreateCommentAttachesAuthorRooted(t *testing.T) {
 
 	if body.Comment.AuthorRooted == nil {
 		t.Fatal("author_rooted = nil, want the commenter's summary")
-	}
-	if service.batchCalls != 1 {
-		t.Errorf("batch calls = %d, want 1", service.batchCalls)
-	}
-}
-
-func TestCreateBridgeAttachesToAllThreeEntities(t *testing.T) {
-	service := &fakeRootedService{batchResult: rootedSignals(map[string]string{
-		testUserID: "Cape Town", authorA: "Johannesburg", authorB: "Durban",
-	})}
-	handler := newRouterWithRooted(t, discardLogger(), service, &fakeStoriesService{}, &fakeVersionsService{},
-		&fakeConversationsService{
-			createBridgeBridge: bridgeFixture(testBridgeID, testUserID),
-			createBridgeSource: commentFixture(testSourceCommentID, authorA),
-			createBridgeTarget: commentFixture(testTargetCommentID, authorB),
-		})
-
-	recorder := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges",
-		`{"target_language": "fra", "body": "hi"}`, testAccessToken)
-
-	if recorder.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusCreated, recorder.Body.String())
-	}
-
-	var body createBridgeResponse
-	decodeBody(t, recorder, &body)
-
-	if body.Bridge.AuthorRooted == nil || body.Bridge.AuthorRooted.Place != "Cape Town" {
-		t.Errorf("bridge author_rooted = %+v, want Cape Town", body.Bridge.AuthorRooted)
-	}
-	if body.SourceComment.AuthorRooted == nil || body.SourceComment.AuthorRooted.Place != "Johannesburg" {
-		t.Errorf("source comment author_rooted = %+v, want Johannesburg", body.SourceComment.AuthorRooted)
-	}
-	if body.TargetComment.AuthorRooted == nil || body.TargetComment.AuthorRooted.Place != "Durban" {
-		t.Errorf("target comment author_rooted = %+v, want Durban", body.TargetComment.AuthorRooted)
-	}
-
-	if service.batchCalls != 1 {
-		t.Errorf("batch calls = %d, want exactly 1 for the whole response", service.batchCalls)
-	}
-	if len(service.gotBatchIDs) != 3 {
-		t.Errorf("batched ids = %v, want the 3 distinct authors", service.gotBatchIDs)
-	}
-}
-
-func TestBridgeListAttachesAuthorRooted(t *testing.T) {
-	service := &fakeRootedService{batchResult: rootedSignals(map[string]string{authorA: "Cape Town"})}
-	handler := newRouterWithRooted(t, discardLogger(), service, &fakeStoriesService{}, &fakeVersionsService{},
-		&fakeConversationsService{listBridgesResult: []conversations.Bridge{bridgeFixture(testBridgeID, authorA)}})
-
-	recorder := doStoryRequest(handler, http.MethodGet, "/comments/"+testSourceCommentID+"/bridges", "", "")
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
-	}
-
-	var body bridgeListResponse
-	decodeBody(t, recorder, &body)
-
-	if len(body.Bridges) != 1 || body.Bridges[0].AuthorRooted == nil {
-		t.Fatalf("bridges = %+v, want one entry with author_rooted", body.Bridges)
-	}
-	if service.batchCalls != 1 {
-		t.Errorf("batch calls = %d, want 1", service.batchCalls)
-	}
-}
-
-func TestGetBridgeAttachesAuthorRooted(t *testing.T) {
-	service := &fakeRootedService{batchResult: rootedSignals(map[string]string{authorA: "Cape Town"})}
-	handler := newRouterWithRooted(t, discardLogger(), service, &fakeStoriesService{}, &fakeVersionsService{},
-		&fakeConversationsService{getBridgeResult: bridgeFixture(testBridgeID, authorA)})
-
-	recorder := doStoryRequest(handler, http.MethodGet, "/bridges/"+testBridgeID, "", "")
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
-	}
-
-	var body bridgeEnvelope
-	decodeBody(t, recorder, &body)
-
-	if body.Bridge.AuthorRooted == nil || body.Bridge.AuthorRooted.Place != "Cape Town" {
-		t.Errorf("author_rooted = %+v, want the bridger's summary", body.Bridge.AuthorRooted)
 	}
 	if service.batchCalls != 1 {
 		t.Errorf("batch calls = %d, want 1", service.batchCalls)
@@ -632,30 +538,6 @@ func TestGetCommentAttachesAuthorAttribution(t *testing.T) {
 
 	if body.Comment.AuthorDisplayName != "Ada Lovelace" {
 		t.Errorf("author_display_name = %q, want %q", body.Comment.AuthorDisplayName, "Ada Lovelace")
-	}
-	if service.userCalls != 1 {
-		t.Errorf("author lookups = %d, want exactly 1", service.userCalls)
-	}
-}
-
-func TestGetBridgeAttachesAuthorAttribution(t *testing.T) {
-	service := &fakeRootedService{users: map[string]*identity.User{
-		authorA: authorUser(authorA, "Ada Lovelace", ""),
-	}}
-	handler := newRouterWithRooted(t, discardLogger(), service, &fakeStoriesService{}, &fakeVersionsService{},
-		&fakeConversationsService{getBridgeResult: bridgeFixture(testBridgeID, authorA)})
-
-	recorder := doStoryRequest(handler, http.MethodGet, "/bridges/"+testBridgeID, "", "")
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-
-	var body bridgeEnvelope
-	decodeBody(t, recorder, &body)
-
-	if body.Bridge.AuthorDisplayName != "Ada Lovelace" {
-		t.Errorf("author_display_name = %q, want %q", body.Bridge.AuthorDisplayName, "Ada Lovelace")
 	}
 	if service.userCalls != 1 {
 		t.Errorf("author lookups = %d, want exactly 1", service.userCalls)

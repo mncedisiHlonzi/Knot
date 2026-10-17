@@ -107,7 +107,7 @@ type rootedSummary struct {
 //
 // Enrichment is supplementary, so a failure is logged and swallowed rather than
 // failing the whole response: a problem reading Rooted must not make stories,
-// versions, comments, or bridges unreadable. A user with no public signal simply
+// versions, or comments unreadable. A user with no public signal simply
 // has no entry, and the response carries null for them.
 func authorRootedSummaries(ctx context.Context, lookup RootedLookup, logger *slog.Logger, authorIDs []string) map[string]*rootedSummary {
 	unique := uniqueAuthorIDs(authorIDs)

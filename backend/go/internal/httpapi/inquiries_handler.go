@@ -386,7 +386,7 @@ func (h *InquiriesHandler) ListAnswers(w http.ResponseWriter, r *http.Request) {
 // GetAnswer handles GET /answers/{id}: one answer.
 //
 // The route is public. It exists so an id alone resolves an answer — the shape
-// GET /comments/{id} and GET /bridges/{id} already have — which is what a wall card
+// GET /comments/{id} already has — which is what a wall card
 // or a stored link needs.
 func (h *InquiriesHandler) GetAnswer(w http.ResponseWriter, r *http.Request) {
 	answer, err := h.service.GetAnswer(r.Context(), r.PathValue("id"))

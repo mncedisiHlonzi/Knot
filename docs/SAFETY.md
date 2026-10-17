@@ -19,8 +19,8 @@ there is **no automated moderation** and no algorithm that hides content.
 
 ## Reports
 
-Any user-generated content is reportable: stories, versions, comments, bridges,
-inquiries, and answers. A report names one of six categories — `harassment`,
+Any user-generated content is reportable: stories, versions, comments, and
+inquiries and answers. A report names one of six categories — `harassment`,
 `hate_speech`, `misinformation`, `spam`, `sensitive_content`, `other` — and, for
 `other`, a free-text reason (KNOT-ADR-062).
 
@@ -39,9 +39,9 @@ inquiries, and answers. A report names one of six categories — `harassment`,
 Blocking is **mutual hiding plus write prevention** (KNOT-ADR-060).
 
 - **Hiding.** If A blocks B, A stops seeing B's content and B stops seeing A's —
-  in the feed, comment threads and replies, bridges, inquiries and answers, and
+  in the feed, comment threads and replies, inquiries and answers, and
   profile walls. A blocked profile answers 404.
-- **Write prevention.** Neither side can comment on, bridge, react to, answer, or
+- **Write prevention.** Neither side can comment on, react to, answer, or
   adapt the other's content; such a write is refused with 403 `blocked`. The
   client shows "You cannot interact with this content."
 - **Silence.** Blocking notifies no one: the blocked user is not told.

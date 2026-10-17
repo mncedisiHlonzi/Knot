@@ -11,7 +11,7 @@ package notifications
 //	postgres_store.go the PostgreSQL implementation of the store contract
 //
 // The package is deliberately **domain-agnostic** (KNOT-ADR-040). It knows
-// nothing about stories, versions, comments, or bridges beyond the strings it
+// nothing about stories, versions, comments, or inquiries beyond the strings it
 // stores: a caller resolves who should be notified and passes primitive ids. That
 // keeps the dependency graph acyclic — versions and conversations depend on a
 // one-method hook they define themselves, never on this package's types — and it
@@ -77,9 +77,6 @@ const (
 	// EventCommentCreated fires when someone comments on a version the recipient
 	// authored.
 	EventCommentCreated EventType = "comment.created"
-	// EventBridgeCreated fires when someone bridges a comment the recipient
-	// authored into another language.
-	EventBridgeCreated EventType = "bridge.created"
 	// EventReactionCreated fires when someone leaves a perspective reaction on
 	// content the recipient authored (KNOT-ADR-050). Unlike the other events, its
 	// entity is whatever was reacted to, so it is the one event with no fixed
@@ -96,7 +93,7 @@ const (
 // Valid reports whether e is one of the supported events.
 func (e EventType) Valid() bool {
 	switch e {
-	case EventVersionCreated, EventCommentCreated, EventBridgeCreated, EventReactionCreated,
+	case EventVersionCreated, EventCommentCreated, EventReactionCreated,
 		EventInquiryAnswered, EventInquiryNearby:
 		return true
 	default:
@@ -116,8 +113,6 @@ const (
 	EntityVersion EntityType = "version"
 	// EntityComment is a comment.
 	EntityComment EntityType = "comment"
-	// EntityBridge is a bridge.
-	EntityBridge EntityType = "bridge"
 	// EntityInquiry is a question someone asked about a place (KNOT-ADR-056).
 	EntityInquiry EntityType = "inquiry"
 )
@@ -125,7 +120,7 @@ const (
 // Valid reports whether t is one of the supported entity types.
 func (t EntityType) Valid() bool {
 	switch t {
-	case EntityStory, EntityVersion, EntityComment, EntityBridge, EntityInquiry:
+	case EntityStory, EntityVersion, EntityComment, EntityInquiry:
 		return true
 	default:
 		return false
@@ -144,8 +139,6 @@ func (e EventType) EntityType() (EntityType, bool) {
 		return EntityVersion, true
 	case EventCommentCreated:
 		return EntityComment, true
-	case EventBridgeCreated:
-		return EntityBridge, true
 	case EventInquiryAnswered, EventInquiryNearby:
 		return EntityInquiry, true
 	default:
@@ -164,8 +157,6 @@ func (e EventType) acceptsEntityType(entityType EntityType) bool {
 		return entityType == EntityVersion
 	case EventCommentCreated:
 		return entityType == EntityComment
-	case EventBridgeCreated:
-		return entityType == EntityBridge
 	case EventInquiryAnswered, EventInquiryNearby:
 		return entityType == EntityInquiry
 	case EventReactionCreated:

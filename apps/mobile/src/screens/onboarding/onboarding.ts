@@ -32,7 +32,7 @@ export const ONBOARDING_SLIDES: readonly OnboardingSlide[] = [
   {
     illustration: 'placeholder-b',
     headline: 'Understand across the divide.',
-    body: 'Conversations happen in every language. Bridges connect them. Understanding travels both ways.',
+    body: 'Conversations happen in every language. Understanding travels both ways.',
   },
 ];
 

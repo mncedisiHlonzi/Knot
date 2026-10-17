@@ -25,9 +25,9 @@ export type ProfileTab = {
  * The three tabs, in the order they appear left to right.
  *
  * The wall shows only what a person authored themselves — the stories they told,
- * the versions they adapted, and the questions they asked. Comments, bridges, and
- * answers are still on the activity stream (the API is unchanged); they are simply
- * not given a tab (KNOT-020g-fix).
+ * the versions they adapted, and the questions they asked. Comments and answers
+ * are still on the activity stream (the API is unchanged); they are simply not
+ * given a tab (KNOT-020g-fix).
  */
 export const PROFILE_TABS: readonly ProfileTab[] = [
   { kind: 'story', label: 'Stories' },

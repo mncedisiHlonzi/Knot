@@ -252,8 +252,8 @@ The design pass added a component library in `apps/mobile/src/components/` — `
 Onboarding, Feed, Story Detail, and Profile) were rebuilt on it in KNOT-020c: they compose
 those components and style with the `typeScale` composites and the semantic colour roles
 (`colors.text.primary`, `colors.bg.canvas`, …), so no redesigned screen sets a raw hex or a
-manual `fontSize`/`lineHeight`/`fontWeight`. The four content screens — Adapt Story, Language
-Tree, Comment Thread, and the Bridge Flow — were migrated the same way in **KNOT-020d**: each
+manual `fontSize`/`lineHeight`/`fontWeight`. The three content screens — Adapt Story, Language
+Tree, and Comment Thread — were migrated the same way in **KNOT-020d**: each
 now opens with the shared `Header`, uses `Button`/`Input`/`EmptyState` instead of hand-rolled
 controls, and reads `typeScale.*` and the semantic tokens throughout. The remaining screens
 still read the deprecated legacy aliases until their own tasks migrate them.
@@ -377,7 +377,7 @@ optional `RootedBadge`, and the content's timestamp as a relative phrase. It tak
   `apps/mobile/src/utils/time.ts`, never as a raw ISO string.
 
 The fields come from the API — `author_display_name` and `author_avatar_url` on stories,
-versions, comments, and bridges (KNOT-ADR-041) — so a screen never has to call the identity
+versions, and comments (KNOT-ADR-041) — so a screen never has to call the identity
 service for a name. Render attribution by passing an entity's fields to `AuthorLine`; do not
 hand-roll the markup on a new screen.
 
@@ -397,7 +397,7 @@ Versions, and Inquiries — and a list of rich cards, with pull-to-refresh and c
 card carries an overline (a story leads with its plain pillar tag) and the title over a meta line,
 closed by a full-bleed hairline, and opens the entity it names — a story card opens the story, a
 version card opens the story it belongs to, and an inquiry card opens the question. The wall shows
-only what a person authored themselves: comments, bridges, and answers still arrive on the
+only what a person authored themselves: comments and answers still arrive on the
 activity stream but are filtered out of the display and given no tab (KNOT-020g-fix). The stats
 line, the per-tab filtering, and the card copy are reduced from the activities loaded so far
 (`src/screens/profile/profileActivity.ts`), because the endpoint returns one page and no totals;
@@ -745,7 +745,7 @@ will not accept it.
 `apps/mobile/src/components/LanguagePicker.tsx` is the one way a form asks for a language. It
 takes `mode: 'single' | 'multiple'` and searches the list **in memory** — no request, and no
 free text that could become a stored value. Use it rather than a `TextInput`: Register uses
-`multiple`, and Create Story, Adapt Story, and Bridge use `single`. Display a stored code with
+`multiple`, and Create Story and Adapt Story use `single`. Display a stored code with
 `languageName(code)`, which falls back to the raw code for a value the list does not know; do
 not render `"zul"` where a person expects "Zulu".
 
@@ -786,7 +786,7 @@ computes the link — `View 1 reply`, `View N replies`, `View all N replies`, or
 and `groupComments` splits the flat page the API returns into `topLevel` plus `repliesByParent`. The
 expansion is held in the screen's `useState` (`expandedIds` and `fullyExpandedIds`, two
 `Set<string>`s updated immutably) and is session-only: leaving the thread forgets it. A reply is
-rendered compact — a small `AuthorLine`, a smaller body, and the same Reply and Bridge actions,
+rendered compact — a small `AuthorLine`, a smaller body, and the same Reply action,
 indented inside its parent's card. Tapping **Reply** focuses the composer
 (`composerRef.current?.focus()`) so the keyboard opens ready to type, and the payload still names
 the top-level comment through `replyTargetId`.
@@ -804,9 +804,9 @@ layer resolves the target through its own domain service first.
 
 ```
 POST /stories/{id}/reactions      POST /versions/{id}/reactions
-POST /comments/{id}/reactions     POST /bridges/{id}/reactions
+POST /comments/{id}/reactions     POST /inquiries/{id}/reactions
 GET  /stories/{id}/reactions      GET  /versions/{id}/reactions
-GET  /comments/{id}/reactions     GET  /bridges/{id}/reactions
+GET  /comments/{id}/reactions     GET  /inquiries/{id}/reactions
 ```
 
 The toggle takes `{"reaction_type":"rings_true"}` and answers with the entity's updated
@@ -817,7 +817,7 @@ signal was **created** on **someone else's** content.
 
 **Enrichment.** Every content response carries `reactions` (all four counts) and `my_reactions`
 (the reader's own signals) — see `ReactionsLookup` and `loadReactions` in `internal/httpapi/enrich.go`.
-A page costs **two batched reads** regardless of size, so a feed, tree, thread, or bridge list
+A page costs **two batched reads** regardless of size, so a feed, tree, thread, or inquiry list
 never fans out into a query per row. The public content reads are wrapped in
 `AuthMiddleware.Optional`, so a valid token fills `my_reactions` and an absent or invalid one
 yields `[]`: the routes stay public (KNOT-ADR-051). `notifications` gained a nullable
@@ -825,7 +825,7 @@ yields `[]`: the routes stay public (KNOT-ADR-051). `notifications` gained a nul
 
 **Comments are read-only for reactions.** `POST /comments/{id}/reactions` answers **400**
 `validation_error` ("reactions are not supported on comments") and writes nothing, because the
-comment thread already carries a replies link, Reply, and Bridge and a bar overloaded it
+comment thread already carries a replies link and Reply and a bar overloaded it
 (KNOT-ADR-053). `GET /comments/{id}/reactions` still answers, and comment responses still carry
 `reactions` and `my_reactions`, so the existing rows stay readable and auditable; the mobile
 `Comment` type simply no longer declares those fields because nothing renders them.
@@ -837,16 +837,10 @@ own Reaction glyphs (`src/assets/brand/reaction-*.svg`, tinted through `currentC
 optimistically, reverts on error, and invites a signed-out reader to sign in. Its `entityType`
 accepts `story`, `version`, and `inquiry`. It is applied to the story detail (below the body) and
 each version row in the language tree (compact: glyph and count only). It is **not** applied to
-comments: the comment thread already carries a replies link, Reply, and Bridge, so a bar
+comments: the comment thread already carries a replies link and Reply, so a bar
 overloaded it and the comment toggle route answers **400** (KNOT-015g / KNOT-ADR-053). The inbox
 renders `reaction.created` as "{actor} ✅ Rings true on your comment." and opens the target — a
-story, version, comment, or bridge — through the existing tap-through routing.
-
-> **Disclosure.** `BridgeScreen` is a **compose form** for a new bridge; it never renders an
-> existing bridge, so there is no bridge body to place a bar under. Bridge reactions are fully
-> supported by the API (`POST /bridges/{id}/reactions`) and the brand ships a `reaction-bridge`
-> glyph, but the mobile `entityType` union does **not** include `bridge`; it will be widened when
-> a surface that displays an existing bridge exists (KNOT-020c).
+story, version, comment, or inquiry — through the existing tap-through routing.
 
 ### Native dependencies (Mapbox, AsyncStorage)
 
@@ -1214,9 +1208,7 @@ curl -s -X POST http://localhost:8080/auth/register \
 | `GET /versions/{id}`       | public   | `internal/httpapi/versions_handler.go` |
 | `POST /versions/{id}/comments` | `Bearer` | `internal/httpapi/conversations_handler.go` |
 | `GET /versions/{id}/comments`  | public   | `internal/httpapi/conversations_handler.go` |
-| `POST /comments/{id}/bridges`  | `Bearer` | `internal/httpapi/conversations_handler.go` |
-| `GET /comments/{id}/bridges`   | public   | `internal/httpapi/conversations_handler.go` |
-| `GET /bridges/{id}`            | public   | `internal/httpapi/conversations_handler.go` |
+| `GET /comments/{id}`           | public   | `internal/httpapi/conversations_handler.go` |
 | `POST /users/me/rooted`        | `Bearer` | `internal/httpapi/rooted_handler.go` |
 | `GET /users/me/rooted`         | `Bearer` | `internal/httpapi/rooted_handler.go` |
 | `GET /users/{id}/rooted`       | public   | `internal/httpapi/rooted_handler.go` |
@@ -1321,13 +1313,11 @@ disagree — and reports depth 0. The **feed** deliberately does not carry eithe
 the two fields are pointers with `omitempty` on `storyResponse` precisely so the feed's JSON
 is byte-for-byte what it was before (attribution on the feed is KNOT-022's work).
 
-### Conversations and bridges
+### Conversations
 
-`POST /versions/{id}/comments`, `GET /versions/{id}/comments`,
-`POST /comments/{id}/bridges`, `GET /comments/{id}/bridges`, and `GET /bridges/{id}` are
-served by `internal/httpapi/conversations_handler.go`, backed by the
-`internal/conversations` domain package. A comment belongs to one story version; a bridge
-records that a comment is an adaptation of another comment.
+`POST /versions/{id}/comments`, `GET /versions/{id}/comments`, and `GET /comments/{id}`
+are served by `internal/httpapi/conversations_handler.go`, backed by the
+`internal/conversations` domain package. A comment belongs to one story version.
 
 Comment pagination reuses the feed's keyset pattern. The cursor is duplicated in
 `internal/conversations/cursor.go` rather than shared, following KNOT-ADR-010, and the
@@ -1375,19 +1365,28 @@ separately, because that is who gets the notification:
 The recipient is resolved before the depth rewrite for exactly that reason. Acting on your
 own comment still notifies nobody, and only one notification is written per comment.
 
-Creating a bridge resolves the target version first — the source comment's story, plus the
-version of that story written in `target_language` (the oldest, when several share it) —
-then writes a target comment and a bridge in one transaction: the target comment is
-inserted first, the bridge second, and a failure on either rolls both back. There is no
-circular foreign key here, so a plain `Begin`/`Commit` is enough — contrast the
-single-statement CTE the story plus its root version needs, above. The target comment is
-inserted with **no parent**: a bridge connects two conversations rather than answering a
-comment, so a bridge target is always top-level.
+### KNOT-023 — bridging retired, and three feed refinements
 
-Bridging is open to any authenticated user. The bridger comes from the token, and the only
-structural checks are that the target language differs from the source comment's language
-and that the comment has not already been bridged into that language (see
-KNOT-ADR-014/015).
+**Comment bridging is gone** (KNOT-ADR-071): the `bridge.go` domain file, the `BridgeStore`
+contract, the bridge routes, the `bridge.created` event dispatch, the `BridgeScreen`, and
+the mobile bridge API are all deleted. The `bridges` table is left **dormant** — no
+migration, no data deletion — and `notifications.PostgresStore` hides historical
+`bridge.created` rows in `List`, `UnreadCount`, and `MarkAllRead`, so the inbox and its
+badge agree even though the schema still permits the value.
+
+**Feed entry (`src/components/FeedEntry.tsx`).**
+
+- A **sensitive** item (`sensitive: true`, inherited from the story for both kinds) holds
+  its media behind a scrim. An image is blurred with `blurRadius`; a video is covered by
+  the same `colors.scrim.overlay` scrim and a centred "Sensitive content — tap to reveal"
+  line. A bottom-left **Sensitive** badge toggles the reveal, so the reveal is reachable
+  without covering a video's controls. The state is `useState` on the card — not persisted.
+- A version card shows its **inherited pillar** as a plain `PillarTag` beside the
+  `Version N · Language` overline (the same Wonder/Heritage tokens a story card uses),
+  because the pillar tells a reader which kind of story they are opening.
+- The **attribution line** uses `typeScale.bodyS` at `colors.text.tertiary` (was
+  `typeScale.caption`) and keeps its two-line clamp, so it reads as context rather than a
+  footnote.
 
 ### Rooted, and the enrichment pattern
 
@@ -1447,10 +1446,10 @@ package. Every route is protected and every route is scoped to the caller by the
 there is no user id in any request and no way to reach another person's inbox.
 
 A notification records that **another user acted on your content**: someone adapted a
-version you wrote, commented on it, or bridged one of your comments. Two further events go
+version you wrote, commented on it, or reacted to it. Two further events go
 beyond that shape — `reaction.created` names whichever entity was reacted to, and
 `inquiry.nearby` reaches a recipient who authored nothing, because they are Rooted in the
-place a question names. Six events exist in total and the set is closed by a CHECK constraint
+place a question names. Five events exist in total and the set is closed by a CHECK constraint
 and by Go constants. The package is deliberately **domain-agnostic** — it imports no content
 domain and stores primitive ids — and each producing domain declares its own narrow hook
 instead, so the dependency graph stays acyclic (KNOT-ADR-040):
@@ -1462,7 +1461,7 @@ type Notifier interface {
 }
 ```
 
-`versions.Service.CreateAdaptation` and `conversations.Service.CreateComment`/`CreateBridge`
+`versions.Service.CreateAdaptation` and `conversations.Service.CreateComment`
 call their hook **after** the primary row is committed, compare recipient and actor first so
 your own action never notifies you, and ignore the returned error: a notification is a
 non-critical side effect, and an inbox write must not fail the adaptation or comment that
@@ -1502,12 +1501,11 @@ and shows a bell with a badge on the feed.
 `GET /users/{id}/profile` is served by `internal/httpapi/profile_handler.go`, backed by
 `internal/profile`. The wall is a **read model**, not a table:
 `internal/profile/postgres_store.go` runs one `UNION ALL` over `stories`, `story_versions`,
-`comments`, and `bridges`, filtered by `author_id` and ordered by
+`comments`, `inquiries`, and `inquiry_answers`, filtered by `author_id` and ordered by
 `(created_at DESC, id DESC)`. Each branch builds its payload with `jsonb_build_object`, so a
 page is one query, never N+1, and a comment preview is `left(body, 200)` so a full body
-never leaves through the wall. Two acts are not double-counted: a story's root version is
-excluded from the version branch, and a bridge's target comment is excluded from the comment
-branch (KNOT-ADR-042).
+never leaves through the wall. One act is not double-counted: a story's root version is
+excluded from the version branch (KNOT-ADR-042).
 
 The service resolves the owner through `identity.UserByID` — so an unknown id is a 404 even
 with no activity — and decodes the same opaque `(created_at, id)` cursor the feed uses. The
@@ -1585,7 +1583,7 @@ Two mechanical points are worth knowing before changing them:
   overlap `/inquiries/{id}/answers` at `/inquiries/answers/answers`, and Go's `ServeMux` refuses
   conflicting patterns at registration — it panics rather than picking one. `TestInquiryRoutesAreRegistered`
   builds the real router, so a future pattern change that collides fails in the test suite rather
-  than at start-up. The top-level shape also matches `GET /comments/{id}` and `GET /bridges/{id}`.
+  than at start-up. The top-level shape also matches `GET /comments/{id}`.
 - **Routing is a lookup on Rooted, not a query in this package.** `internal/inquiries` depends on
   a one-method `RootedRouting` interface (`RootedUserIDsByPlace`), which `rooted.Service`
   satisfies. Rooted owns `rooted_signals`, so the SQL lives in
@@ -1926,8 +1924,6 @@ The canonical checklist — every content read and its current state:
 | `GET /versions/{id}` | detail 404 (`versions.GetVersion`) |
 | `GET /versions/{id}/comments` | list predicate (`conversations.ListComments` + `ListReplies`) |
 | `GET /comments/{id}` | detail 404 (`conversations.GetComment`) |
-| `GET /comments/{id}/bridges` | list predicate (`conversations.ListBridgesForComment`) |
-| `GET /bridges/{id}` | detail 404 (`conversations.GetBridge`) |
 | `GET /inquiries` | list predicate (`inquiries.ListInquiries`) |
 | `GET /inquiries/{id}` | detail 404 (`inquiries.GetInquiry`) |
 | `GET /inquiries/{id}/answers` | list predicate (`inquiries.ListAnswers`) |

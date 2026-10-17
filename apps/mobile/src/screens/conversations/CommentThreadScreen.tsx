@@ -49,8 +49,7 @@ type CommentThreadScreenProps = {
    * it fetches, and then to English.
    */
   readonly language?: string;
-  /** Called when the person wants to bridge a comment into another language. */
-  readonly onBridge: (comment: Comment) => void;
+
   /** Called when a commenter is tapped, to open their profile. */
   readonly onOpenUserProfile: (userId: string) => void;
   /** Called when the person returns to the story. */
@@ -88,10 +87,8 @@ function validateForm(body: string, language: string): string | undefined {
  * replies it gathers. The "Reply" action on a reply answers the same top-level
  * comment, so the thread never nests further than that.
  *
- * Every comment carries a "Bridge to another language" action. A bridge is how
- * someone replies in their own language: it writes a new comment in the target
- * language and joins it to the one it came from, leaving this conversation
- * intact (see KNOT-ADR-014).
+ * Every comment can be replied to, and every reply answers the same top-level
+ * comment, so the thread never nests further than that.
  *
  * The comment box's language is shown as a chip reading the language's name, and
  * tapping it opens a picker. The choice lasts for this visit only: it is not
@@ -101,7 +98,6 @@ export default function CommentThreadScreen({
   versionId,
   token,
   language,
-  onBridge,
   onOpenUserProfile,
   onBack,
 }: CommentThreadScreenProps): React.ReactElement {
@@ -385,13 +381,6 @@ export default function CommentThreadScreen({
                 >
                   <Text style={[typeScale.button, styles.actionText]}>Reply</Text>
                 </Pressable>
-                <Pressable
-                  style={styles.action}
-                  onPress={() => onBridge(item)}
-                  accessibilityRole="button"
-                >
-                  <Text style={[typeScale.button, styles.actionText]}>Bridge</Text>
-                </Pressable>
                 {linkLabel !== null ? (
                   <Pressable
                     style={styles.action}
@@ -422,13 +411,6 @@ export default function CommentThreadScreen({
                       accessibilityRole="button"
                     >
                       <Text style={[typeScale.button, styles.actionText]}>Reply</Text>
-                    </Pressable>
-                    <Pressable
-                      style={styles.action}
-                      onPress={() => onBridge(reply)}
-                      accessibilityRole="button"
-                    >
-                      <Text style={[typeScale.button, styles.actionText]}>Bridge</Text>
                     </Pressable>
                     <ReportAction token={token} entityType="comment" entityId={reply.id} />
                   </View>

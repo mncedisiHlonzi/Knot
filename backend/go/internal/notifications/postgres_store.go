@@ -15,6 +15,13 @@ import (
 // and its order is the order that scanner reads.
 const notificationColumns = `id, user_id, actor_id, event_type, entity_type, entity_id, read_at, created_at, reaction_type`
 
+// retiredEventType is the one event the inbox no longer surfaces. Comment
+// bridging was retired as a first-class mechanic (KNOT-ADR-071), but rows written
+// before that stay in the database, so every inbox read excludes them. The
+// notifications.event_type CHECK still allows the value; only dispatch and
+// rendering are gone.
+const retiredEventType = "bridge.created"
+
 // PostgresStore is the pgx-backed implementation of NotificationStore.
 //
 // It holds an injected pool and no other state, so it is safe for concurrent use.
@@ -81,8 +88,11 @@ func (s *PostgresStore) List(ctx context.Context, userID string, cursor *Cursor,
 	query := `SELECT ` + notificationColumns + ` FROM notifications WHERE user_id = $1`
 	args := []any{userID}
 
-	// Hide a blocked actor's notifications: an action by someone on either side of
-	// a block with the viewer is not surfaced (KNOT-ADR-064).
+	// Hide retired events (KNOT-ADR-071) and a blocked actor's notifications: an
+	// action by someone on either side of a block with the viewer is not surfaced
+	// (KNOT-ADR-064).
+	args = append(args, retiredEventType)
+	query += fmt.Sprintf(` AND event_type <> $%d`, len(args))
 	if excluded := moderation.ExcludedAuthors(ctx); len(excluded) > 0 {
 		args = append(args, excluded)
 		query += fmt.Sprintf(` AND actor_id <> ALL($%d::uuid[])`, len(args))
@@ -137,7 +147,10 @@ func (s *PostgresStore) UnreadCount(ctx context.Context, userID string) (int, er
 	query := `SELECT count(*) FROM notifications WHERE user_id = $1 AND read_at IS NULL`
 	args := []any{userID}
 
-	// The badge must agree with the list, which hides a blocked actor (KNOT-ADR-064).
+	// The badge must agree with the list, which hides retired events
+	// (KNOT-ADR-071) and a blocked actor (KNOT-ADR-064).
+	args = append(args, retiredEventType)
+	query += fmt.Sprintf(` AND event_type <> $%d`, len(args))
 	if excluded := moderation.ExcludedAuthors(ctx); len(excluded) > 0 {
 		args = append(args, excluded)
 		query += fmt.Sprintf(` AND actor_id <> ALL($%d::uuid[])`, len(args))
@@ -178,7 +191,8 @@ func (s *PostgresStore) MarkRead(ctx context.Context, id, userID string) error {
 }
 
 // MarkAllRead marks every unread notification for a user read and returns how
-// many rows were updated.
+// many rows were updated. Retired events (KNOT-ADR-071) are excluded so the count
+// matches what the inbox shows.
 func (s *PostgresStore) MarkAllRead(ctx context.Context, userID string) (int, error) {
 	if !isUUID(userID) {
 		return 0, nil
@@ -186,8 +200,9 @@ func (s *PostgresStore) MarkAllRead(ctx context.Context, userID string) (int, er
 
 	tag, err := s.pool.Exec(
 		ctx,
-		`UPDATE notifications SET read_at = now() WHERE user_id = $1 AND read_at IS NULL`,
+		`UPDATE notifications SET read_at = now() WHERE user_id = $1 AND read_at IS NULL AND event_type <> $2`,
 		userID,
+		retiredEventType,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("notifications: mark all read: %w", err)

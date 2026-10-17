@@ -1,6 +1,6 @@
 // Package reactions implements the Knot perspective-reaction domain: the four
 // knowledge-quality signals a reader can leave on a story, a version, a comment,
-// or a bridge.
+// or an inquiry.
 //
 // A reaction is a signal of perspective, not a like (KNOT-ADR-050). The four
 // signals do not compete: a user may hold any combination of them on the same
@@ -73,8 +73,6 @@ const (
 	EntityVersion EntityType = "version"
 	// EntityComment is one comment.
 	EntityComment EntityType = "comment"
-	// EntityBridge is one bridge.
-	EntityBridge EntityType = "bridge"
 	// EntityInquiry is one question asked about a place (KNOT-ADR-057).
 	//
 	// Answers are deliberately absent: an answer is a reply, and replies carry no
@@ -85,7 +83,7 @@ const (
 // Valid reports whether t is one of the supported entity types.
 func (t EntityType) Valid() bool {
 	switch t {
-	case EntityStory, EntityVersion, EntityComment, EntityBridge, EntityInquiry:
+	case EntityStory, EntityVersion, EntityComment, EntityInquiry:
 		return true
 	default:
 		return false

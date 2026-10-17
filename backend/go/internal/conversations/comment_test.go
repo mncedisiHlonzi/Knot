@@ -34,9 +34,8 @@ func TestValidationErrorContracts(t *testing.T) {
 
 func TestSentinelErrorsAreDistinct(t *testing.T) {
 	sentinels := map[string]error{
-		"ErrNotFound":       ErrNotFound,
-		"ErrValidation":     ErrValidation,
-		"ErrAlreadyBridged": ErrAlreadyBridged,
+		"ErrNotFound":   ErrNotFound,
+		"ErrValidation": ErrValidation,
 	}
 
 	for name, sentinel := range sentinels {

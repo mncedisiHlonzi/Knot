@@ -177,16 +177,6 @@ func (f *fakeNotifier) NotifyCommentCreated(_ context.Context, recipientID, acto
 	return f.err
 }
 
-func (f *fakeNotifier) NotifyBridgeCreated(_ context.Context, recipientID, actorID, bridgeID string) error {
-	f.calls = append(f.calls, fakeNotifierCall{
-		kind:        string(notifications.EventBridgeCreated),
-		recipientID: recipientID,
-		actorID:     actorID,
-		entityID:    bridgeID,
-	})
-	return f.err
-}
-
 // newTestNotificationsHandler returns a notifications handler over fresh fakes,
 // for the router helpers other handler tests use to assemble the full route table.
 func newTestNotificationsHandler(t *testing.T, logger *slog.Logger) *NotificationsHandler {

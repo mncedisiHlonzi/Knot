@@ -1,6 +1,6 @@
 // Package profile implements the Knot profile wall: one user's public activity
-// stream, merged from the six things a person can author — stories, versions
-// (adaptations), comments, bridges, inquiries, and answers to inquiries — into one
+// stream, merged from the five things a person can author — stories, versions
+// (adaptations), comments, inquiries, and answers to inquiries — into one
 // chronological, cursor-paginated page.
 //
 // It is a read model over the content domains rather than a domain of its own: it
@@ -78,10 +78,10 @@ const (
 )
 
 // Kind is the type of one activity on a wall. The set is closed: the store only
-// produces these six values.
+// produces these five values.
 type Kind string
 
-// The six activity kinds.
+// The five activity kinds.
 const (
 	// KindStory is a story the user published (its root version).
 	KindStory Kind = "story"
@@ -89,8 +89,6 @@ const (
 	KindVersion Kind = "version"
 	// KindComment is a comment the user wrote on a version.
 	KindComment Kind = "comment"
-	// KindBridge is a bridge the user made from another person's comment.
-	KindBridge Kind = "bridge"
 	// KindInquiry is a question the user asked about a place (KNOT-ADR-057).
 	KindInquiry Kind = "inquiry"
 	// KindInquiryAnswer is an answer the user gave to someone else's question
@@ -105,7 +103,6 @@ const (
 //	story          { title, pillar, language, place, version_count, preview, media_preview_url, first_media_type }
 //	version        { story_id, story_title, language, place, version_number, preview, media_preview_url, first_media_type }
 //	comment        { version_id, story_id, body_preview }
-//	bridge         { source_comment_id, version_id, target_language }
 //	inquiry        { title, place, answer_count, preview }
 //	inquiry_answer { inquiry_id, inquiry_title, body_preview }
 //
@@ -129,7 +126,7 @@ type Payload struct {
 	StoryTitle string `json:"story_title,omitempty"`
 
 	// VersionID is the version the activity points at. Set for KindComment (the
-	// commented version) and KindBridge (the source comment's version).
+	// commented version).
 	VersionID string `json:"version_id,omitempty"`
 	// BodyPreview is the first MaxBodyPreviewChars characters of a comment or an
 	// answer. Set for KindComment and KindInquiryAnswer.
@@ -144,11 +141,6 @@ type Payload struct {
 	// ellipsis. It is computed in SQL beside Preview, so the client never has to
 	// infer truncation from the text (KNOT-020g-fix12).
 	PreviewTruncated bool `json:"preview_truncated,omitempty"`
-
-	// SourceCommentID is the comment a bridge was made from. Set for KindBridge.
-	SourceCommentID string `json:"source_comment_id,omitempty"`
-	// TargetLanguage is the language a bridge was made into. Set for KindBridge.
-	TargetLanguage string `json:"target_language,omitempty"`
 
 	// Place is the place the activity is about, at the precision the author gave.
 	// Set for KindStory and KindVersion (the story's coarse place) and for
@@ -200,8 +192,8 @@ type Payload struct {
 type Activity struct {
 	// Kind is what the user did.
 	Kind Kind
-	// ID is the id of the thing itself — a story, version, comment, bridge,
-	// inquiry, or inquiry answer.
+	// ID is the id of the thing itself — a story, version, comment, inquiry, or
+	// inquiry answer.
 	ID string
 	// CreatedAt is when it was authored. It is the wall's primary sort key.
 	CreatedAt time.Time

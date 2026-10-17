@@ -57,8 +57,6 @@ export function notificationParts(notification: Notification): NotificationSente
       return { actor, text: 'adapted your version.' };
     case 'comment.created':
       return { actor, text: 'commented on your version.' };
-    case 'bridge.created':
-      return { actor, text: 'bridged your comment into another language.' };
     case 'reaction.created':
       return {
         actor,

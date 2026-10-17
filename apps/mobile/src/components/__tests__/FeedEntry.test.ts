@@ -1,6 +1,7 @@
 import type { ImageLoadEventData, NativeSyntheticEvent } from 'react-native';
 
 import { MAX_PORTRAIT_ASPECT_RATIO } from '../../utils/mediaFrame';
+import { typeScale } from '../../theme';
 import AuthorLine from '../AuthorLine';
 import FeedEntry from '../FeedEntry';
 import FeedVideo from '../FeedVideo';
@@ -336,6 +337,89 @@ describe('FeedEntry', () => {
     expect(video).toBeDefined();
     expect(typeof video?.props?.onLoadSize).toBe('function');
   });
+
+  /**
+   * Finds the first element whose props satisfy the predicate. The reveal and
+   * sensitive-flag assertions need to look at props a string host component
+   * carries, which `findElementByType` cannot express (KNOT-023).
+   */
+  function findElement(
+    node: unknown,
+    predicate: (props: Record<string, unknown>) => boolean,
+  ): { props?: Record<string, unknown> } | undefined {
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        const found = findElement(child, predicate);
+        if (found !== undefined) {
+          return found;
+        }
+      }
+      return undefined;
+    }
+    if (node === null || node === undefined || typeof node !== 'object') {
+      return undefined;
+    }
+
+    const element = node as { props?: Record<string, unknown>; children?: unknown };
+    if (element.props !== undefined && predicate(element.props)) {
+      return element;
+    }
+    return findElement(element.props?.children, predicate);
+  }
+
+  describe('sensitive content', () => {
+    it('blurs the media and shows the Sensitive badge when the item is sensitive', () => {
+      const element = FeedEntry({
+        story: { ...withMedia, sensitive: true },
+        onPress: () => undefined,
+      });
+      const image = findElementByType(element, 'Image');
+
+      expect(image?.props?.blurRadius).toBeGreaterThan(0);
+      expect(findElement(element, (props) => props.testID === 'sensitive-badge')).toBeDefined();
+      expect(findElement(element, (props) => props.testID === 'sensitive-overlay')).toBeDefined();
+    });
+
+    it('covers a sensitive video with the reveal scrim', () => {
+      const element = FeedEntry({
+        story: { ...withMedia, first_media_type: 'video', sensitive: true },
+        onPress: () => undefined,
+      });
+
+      expect(findElement(element, (props) => props.testID === 'sensitive-overlay')).toBeDefined();
+      expect(findElement(element, (props) => props.testID === 'sensitive-badge')).toBeDefined();
+    });
+
+    it('leaves normal media unblurred and badge-free', () => {
+      const element = FeedEntry({ story: withMedia, onPress: () => undefined });
+      const image = findElementByType(element, 'Image');
+
+      expect(image?.props?.blurRadius).toBe(0);
+      expect(findElement(element, (props) => props.testID === 'sensitive-badge')).toBeUndefined();
+    });
+  });
+
+  describe('the version variant', () => {
+    const versionFeedItem = {
+      ...withMedia,
+      sensitive: false,
+    };
+
+    it('sets the attribution line in the small body style, not the caption', () => {
+      const element = FeedEntry({
+        story: versionFeedItem,
+        variant: 'version',
+        versionNumber: 2,
+        attributionLine: 'Adapted from Ada Lovelace in English into Zapotec.',
+        onPress: () => undefined,
+      });
+      const attribution = findElement(element, (props) => props.numberOfLines === 2);
+
+      expect(attribution).toBeDefined();
+      expect(attribution?.props?.style).toContain(typeScale.bodyS);
+      expect(attribution?.props?.style).not.toContain(typeScale.caption);
+    });
+  });
 });
 
 /**
@@ -491,7 +575,7 @@ const version = {
 const ATTRIBUTION = "Adapted from Nomsa Khan's original story in English into Zulu.";
 
 describe('FeedEntry version variant', () => {
-  it('labels an adaptation with its version and language instead of the pillar tag', () => {
+  it('labels an adaptation with its version, language, and inherited pillar', () => {
     const element = FeedEntry({
       story: version,
       variant: 'version',
@@ -500,9 +584,12 @@ describe('FeedEntry version variant', () => {
       onPress: () => undefined,
     });
 
-    // The badge replaces the pillar tag: the pillar is the story's, inherited, so
-    // repeating it would say nothing about this entry (KNOT-022).
-    expect(elementTypes(element)).not.toContain(PillarTag);
+    // The pillar here is the story's, inherited — and KNOT-023 restored it because
+    // it tells a reader which kind of story they are opening.
+    const pillar = elementTypes(element);
+    expect(pillar).toContain(PillarTag);
+    expect(findElementByType(element, PillarTag)?.props?.pillar).toBe('heritage');
+    expect(findElementByType(element, PillarTag)?.props?.variant).toBe('plain');
 
     const text = collectText(element);
     expect(text).toContain('Version 2 · Zulu');

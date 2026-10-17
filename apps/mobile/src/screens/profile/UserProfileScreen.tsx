@@ -28,7 +28,6 @@ import {
 } from 'phosphor-react-native';
 
 import { User, describeError } from '../../api/client';
-import { conversationsApi } from '../../api/conversations';
 import { blocksApi, describeModerationError } from '../../api/moderation';
 import {
   Activity,
@@ -270,9 +269,9 @@ function OptionRow({
  * first media item when it has one, and a meta line, closed by a full-bleed
  * hairline — the design reference's tab content.
  *
- * The wall shows only what the person authored themselves. Comments, bridges, and
- * replies to questions still arrive on the stream (the API is unchanged) but are
- * filtered out of the display and given no tab (KNOT-020g-fix).
+ * The wall shows only what the person authored themselves. Comments and replies
+ * to questions still arrive on the stream (the API is unchanged) but are filtered
+ * out of the display and given no tab (KNOT-020g-fix).
  *
  * The stats and the per-tab lists are computed over the activities loaded so far
  * — the profile API returns no totals and no per-kind filter, so both grow as the
@@ -475,10 +474,8 @@ export default function UserProfileScreen({
    *
    * A story opens the story. An adaptation opens the story it belongs to. A
    * comment opens its version's thread (the payload already names both ids). A
-   * bridge names only its source comment and version, so the story is resolved
-   * through `GET /comments/{id}` before the thread opens. A question and an answer
-   * both open the question: the payload names the inquiry in each case, so no
-   * lookup is needed (KNOT-ADR-057).
+   * question and an answer both open the question: the payload names the inquiry
+   * in each case, so no lookup is needed (KNOT-ADR-057).
    */
   const handleOpenActivity = useCallback(
     (activity: Activity): void => {
@@ -492,19 +489,6 @@ export default function UserProfileScreen({
         case 'comment':
           onOpenComment(activity.payload.story_id, activity.payload.version_id);
           return;
-        case 'bridge':
-          void (async () => {
-            try {
-              const { comment } = await conversationsApi.getComment(
-                activity.payload.source_comment_id,
-                token,
-              );
-              onOpenComment(comment.story_id, comment.version_id);
-            } catch {
-              // A comment that can no longer be read simply does not open.
-            }
-          })();
-          return;
         case 'inquiry':
           onOpenInquiry(activity.id);
           return;
@@ -517,7 +501,7 @@ export default function UserProfileScreen({
           return;
       }
     },
-    [onOpenComment, onOpenInquiry, onOpenStory, token],
+    [onOpenComment, onOpenInquiry, onOpenStory],
   );
 
   const avatarUri =

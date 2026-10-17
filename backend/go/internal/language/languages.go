@@ -2,7 +2,7 @@ package language
 
 // Package language is the canonical language list Knot accepts for user data.
 //
-// A user, story, version, comment, or bridge names its language with an ISO
+// A user, story, version, or comment names its language with an ISO
 // 639-3 code — three lowercase letters, such as "eng" or "zul" — and this package
 // is the single source of truth for which codes exist. The service layer of every
 // domain that stores a language validates against it, so free text ("English",

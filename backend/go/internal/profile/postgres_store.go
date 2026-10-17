@@ -58,10 +58,9 @@ func activityPreviewSQL(column string) string {
 //
 // The payload is built in SQL with jsonb_build_object, so the context a card
 // needs (a story's title, place, and version count; an adaptation's story title,
-// place, and version number; a comment's preview, a bridge's source, an inquiry's
-// place and answer count, an answer's question) travels with the row rather than
-// being fetched per activity: the whole page is one query, never N+1
-// (KNOT-ADR-042).
+// place, and version number; a comment's preview, an inquiry's place and answer
+// count, an answer's question) travels with the row rather than being fetched per
+// activity: the whole page is one query, never N+1 (KNOT-ADR-042).
 //
 // The story branch counts its versions with a correlated COUNT over
 // story_versions(story_id) — an index-only lookup for the handful of rows on a
@@ -74,18 +73,13 @@ func activityPreviewSQL(column string) string {
 // story's root version is the story itself, so counting it again as a "version"
 // would list the same act twice. Only adaptations appear as versions.
 //
-// The comment branch excludes a comment that is the target of a bridge: bridging
-// writes both a bridge row and the target comment, and the target is the bridge's
-// artifact, so the bridge branch is the one that represents the act. Without this,
-// one bridge would appear as two activities.
+// The comment branch joins its version to resolve the story and version ids a
+// client needs to open the right thread.
 //
-// The inquiry and inquiry_answer branches need no such exclusion. Asking a question
-// and answering one are different acts by different people, and an answer always
-// belongs to someone else's inquiry, so the two can never describe the same row.
-//
-// Comments and bridges join their version (and, for a bridge, its source comment)
-// to resolve the story/version ids a client needs to open the right thread. An
-// inquiry_answer joins its inquiry to name the question it answers.
+// The inquiry and inquiry_answer branches are separate acts by different people:
+// an answer always belongs to someone else's inquiry, so the two can never
+// describe the same row. An inquiry_answer joins its inquiry to name the question
+// it answers.
 var activityUnion = `
 	SELECT
 		'story' AS kind,
@@ -163,22 +157,6 @@ var activityUnion = `
 	FROM comments c
 	JOIN story_versions v ON v.id = c.version_id
 	WHERE c.author_id = $1
-	  AND NOT EXISTS (SELECT 1 FROM bridges b WHERE b.target_comment_id = c.id)
-
-	UNION ALL
-
-	SELECT
-		'bridge' AS kind,
-		b.id AS id,
-		b.created_at AS created_at,
-		jsonb_build_object(
-			'source_comment_id', b.source_comment_id,
-			'version_id', sc.version_id,
-			'target_language', b.target_language
-		) AS payload
-	FROM bridges b
-	JOIN comments sc ON sc.id = b.source_comment_id
-	WHERE b.author_id = $1
 
 	UNION ALL
 

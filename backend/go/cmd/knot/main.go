@@ -280,14 +280,14 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	// One store implements both conversation contracts: comments and bridges live
-	// in the same database and the same bounded context.
+	// The conversations store backs the comment service. Comments and their
+	// versions live in the same database and the same bounded context.
 	conversationsStore, err := conversations.NewPostgresStore(pool)
 	if err != nil {
 		return err
 	}
 
-	conversationsService, err := conversations.NewService(conversationsStore, conversationsStore, notificationsService)
+	conversationsService, err := conversations.NewService(conversationsStore, notificationsService)
 	if err != nil {
 		return err
 	}
@@ -379,7 +379,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	entityExistence, err := httpapi.NewEntityExistence(storiesService, versionsService, conversationsService, conversationsService, inquiriesService, inquiriesService)
+	entityExistence, err := httpapi.NewEntityExistence(storiesService, versionsService, conversationsService, inquiriesService, inquiriesService)
 	if err != nil {
 		return err
 	}

@@ -112,7 +112,7 @@ func (s *Service) Toggle(ctx context.Context, in ToggleInput) (Summary, bool, er
 // avatar, which the client renders as an unknown user.
 func (s *Service) ListForEntity(ctx context.Context, entityType EntityType, entityID string) ([]ReactionWithActor, error) {
 	if !entityType.Valid() {
-		return nil, &ValidationError{Field: "entity_type", Message: "must be one of story, version, comment, bridge"}
+		return nil, &ValidationError{Field: "entity_type", Message: "must be one of story, version, comment, inquiry"}
 	}
 	if !isUUID(entityID) {
 		return nil, &ValidationError{Field: "entity_id", Message: "must be a UUID"}
@@ -145,7 +145,7 @@ func (s *Service) ListForEntity(ctx context.Context, entityType EntityType, enti
 // returns the zero Summary, not an error.
 func (s *Service) SummaryForEntity(ctx context.Context, entityType EntityType, entityID string) (Summary, error) {
 	if !entityType.Valid() {
-		return Summary{}, &ValidationError{Field: "entity_type", Message: "must be one of story, version, comment, bridge"}
+		return Summary{}, &ValidationError{Field: "entity_type", Message: "must be one of story, version, comment, inquiry"}
 	}
 	if !isUUID(entityID) {
 		return Summary{}, &ValidationError{Field: "entity_id", Message: "must be a UUID"}
@@ -163,7 +163,7 @@ func (s *Service) SummaryForEntity(ctx context.Context, entityType EntityType, e
 // query, so enriching a feed page never fans out into a query per row.
 func (s *Service) BatchSummaries(ctx context.Context, entityType EntityType, entityIDs []string) (map[string]Summary, error) {
 	if !entityType.Valid() {
-		return nil, &ValidationError{Field: "entity_type", Message: "must be one of story, version, comment, bridge"}
+		return nil, &ValidationError{Field: "entity_type", Message: "must be one of story, version, comment, inquiry"}
 	}
 	if len(entityIDs) == 0 {
 		return map[string]Summary{}, nil
@@ -188,7 +188,7 @@ func (s *Service) BatchSummaries(ctx context.Context, entityType EntityType, ent
 // client.
 func (s *Service) BatchMyReactions(ctx context.Context, userID string, entityType EntityType, entityIDs []string) (map[string][]ReactionType, error) {
 	if !entityType.Valid() {
-		return nil, &ValidationError{Field: "entity_type", Message: "must be one of story, version, comment, bridge"}
+		return nil, &ValidationError{Field: "entity_type", Message: "must be one of story, version, comment, inquiry"}
 	}
 	if userID == "" || len(entityIDs) == 0 {
 		return map[string][]ReactionType{}, nil
@@ -281,7 +281,7 @@ func validateToggle(in ToggleInput) error {
 		return &ValidationError{Field: "user_id", Message: "must be a UUID"}
 	}
 	if !in.EntityType.Valid() {
-		return &ValidationError{Field: "entity_type", Message: "must be one of story, version, comment, bridge"}
+		return &ValidationError{Field: "entity_type", Message: "must be one of story, version, comment, inquiry"}
 	}
 	if !isUUID(in.EntityID) {
 		return &ValidationError{Field: "entity_id", Message: "must be a UUID"}

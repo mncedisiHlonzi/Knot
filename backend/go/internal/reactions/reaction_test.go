@@ -32,7 +32,7 @@ func TestReactionTypesAreTheFourSignals(t *testing.T) {
 }
 
 func TestEntityTypeValid(t *testing.T) {
-	for _, entityType := range []EntityType{EntityStory, EntityVersion, EntityComment, EntityBridge, EntityInquiry} {
+	for _, entityType := range []EntityType{EntityStory, EntityVersion, EntityComment, EntityInquiry} {
 		if !entityType.Valid() {
 			t.Errorf("%q.Valid() = false, want true", entityType)
 		}
@@ -40,7 +40,7 @@ func TestEntityTypeValid(t *testing.T) {
 
 	// An answer is a reply, and replies carry no reactions at MVP (KNOT-ADR-052),
 	// so "inquiry_answer" must stay outside the closed set.
-	for _, invalid := range []EntityType{"", "profile", "Story", "notification", "inquiry_answer"} {
+	for _, invalid := range []EntityType{"", "profile", "Story", "notification", "bridge", "inquiry_answer"} {
 		if invalid.Valid() {
 			t.Errorf("%q.Valid() = true, want false", invalid)
 		}

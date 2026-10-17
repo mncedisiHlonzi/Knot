@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 
 import type { AuthResponse, User } from './src/api/client';
-import { conversationsApi, type Comment } from './src/api/conversations';
+import { conversationsApi } from './src/api/conversations';
 import type { Notification } from './src/api/notifications';
 import type { Story } from './src/api/stories';
 import { versionsApi } from './src/api/versions';
@@ -29,7 +29,6 @@ import { hasSeenOnboarding, markOnboardingSeen } from './src/session/onboarding'
 import { clearSession, loadSession, saveSession, Session } from './src/session/session';
 import LoginScreen from './src/screens/auth/LoginScreen';
 import RegisterScreen from './src/screens/auth/RegisterScreen';
-import BridgeScreen from './src/screens/conversations/BridgeScreen';
 import CommentThreadScreen from './src/screens/conversations/CommentThreadScreen';
 import DiscoveryMapScreen from './src/screens/discovery/DiscoveryMapScreen';
 import PlaceStoriesScreen from './src/screens/discovery/PlaceStoriesScreen';
@@ -85,12 +84,6 @@ type Overlay =
   | { readonly name: 'tree'; readonly storyId: string }
   | { readonly name: 'storyVersion'; readonly versionId: string }
   | { readonly name: 'comments'; readonly storyId: string; readonly versionId: string }
-  | {
-      readonly name: 'bridge';
-      readonly storyId: string;
-      readonly versionId: string;
-      readonly comment: Comment;
-    }
   | { readonly name: 'rootedSetup' }
   | { readonly name: 'notifications' }
   | {
@@ -381,8 +374,6 @@ export default function App(): React.ReactElement {
    *
    *   version.created  GET /versions/{id}                 -> the story detail
    *   comment.created  GET /comments/{id}                 -> the comment's thread
-   *   bridge.created   GET /bridges/{id}, then the source -> the source's thread
-   *                    comment with GET /comments/{id}
    *   inquiry.*        the inquiry itself                    -> the inquiry detail
    *
    * `GET /comments/{id}` names both the version and the story, so a resolved
@@ -419,12 +410,6 @@ export default function App(): React.ReactElement {
             openCommentThread(comment.version_id, comment.story_id);
             return;
           }
-          case 'bridge': {
-            const { bridge } = await conversationsApi.getBridge(notification.entity_id, token);
-            const { comment } = await conversationsApi.getComment(bridge.source_comment_id, token);
-            openCommentThread(comment.version_id, comment.story_id);
-            return;
-          }
           case 'inquiry': {
             // Both inquiry.answered and inquiry.nearby name the inquiry, so a tap
             // opens the question with no conditional on the event type.
@@ -438,8 +423,8 @@ export default function App(): React.ReactElement {
             return;
         }
       } catch {
-        // A version, comment, bridge, or inquiry that can no longer be read does
-        // not open.
+        // A version, comment, or inquiry that can no longer be read does not
+        // open.
       }
     })();
   }
@@ -554,29 +539,8 @@ export default function App(): React.ReactElement {
             versionId={overlay.versionId}
             token={current.accessToken}
             language={preferredLanguageTag(current.user)}
-            onBridge={(comment) =>
-              setOverlays((stack) =>
-                pushOverlay(stack, {
-                  name: 'bridge',
-                  storyId: overlay.storyId,
-                  versionId: overlay.versionId,
-                  comment,
-                }),
-              )
-            }
             onOpenUserProfile={openUserProfile}
             onBack={handleBack}
-          />
-        );
-      case 'bridge':
-        return (
-          <BridgeScreen
-            sourceComment={overlay.comment}
-            token={current.accessToken}
-            preferredLanguages={current.user.preferred_languages}
-            onBridged={handleBack}
-            onOpenUserProfile={openUserProfile}
-            onCancel={handleBack}
           />
         );
       case 'rootedSetup':

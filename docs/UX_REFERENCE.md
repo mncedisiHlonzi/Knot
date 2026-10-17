@@ -9,7 +9,7 @@
 
 Phase labels used on each entry:
 
-- **Phase 1** — identity, stories, Tell My People, bridges (the core loop).
+- **Phase 1** — identity, stories, Tell My People (the core loop).
 - **Phase 2** — Rooted, Discovery Map, Curious Inquiries, notifications.
 - **Post-MVP** — everything after those.
 
@@ -33,7 +33,7 @@ directly on the auth screens. The assets and colours it needs are specified in
 ## 2. Onboarding
 
 **Concept.** Two or three first-run panels that explain what Knot is — stories told in many
-languages, adapted by people rather than machines, joined by bridges — ending at Register or
+languages, adapted by people rather than machines — ending at Register or
 Login.
 
 **Current status.** **Not Yet Built.** The app opens on `RegisterScreen`, with a link that
@@ -83,20 +83,17 @@ out of another.
 
 **Current status.** **Shipped as an indented list.** `LanguageTreeScreen` renders every
 version of a story indented by its depth, with a language badge, an author prefix, the
-adaptation note, and a "root" marker. A graphical tree layout is not built, and a per-version
-bridge-count badge is deferred.
+adaptation note, and a "root" marker. A graphical tree layout is not built.
 
 **MVP phase.** Phase 1.
 
 ## 7. Comments
 
-**Concept.** The conversation under a telling, with an easy way to reply across a language
-boundary.
+**Concept.** The conversation under a telling, with an easy way to reply.
 
 **Current status.** **Shipped.** `CommentThreadScreen` — a newest-first, cursor-paged list
-of top-level comments with a compose box, pull-to-refresh, a "Reply" action and a "Bridge to
-another language" action on every comment — and `BridgeScreen`, which writes a new comment in
-a target language and joins it to the one it came from. Replies are collapsed under their
+of top-level comments with a compose box, pull-to-refresh, and a "Reply" action on every
+comment. Replies are collapsed under their
 parent and expand inline on tap, three at a time (KNOT-ADR-049), so a comment with many
 replies never pushes the rest of the conversation off the screen. Threading is one level deep:
 replying to a reply stays in the same thread, and tapping Reply focuses the composer. The

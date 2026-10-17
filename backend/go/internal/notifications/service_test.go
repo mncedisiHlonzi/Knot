@@ -502,21 +502,6 @@ func TestNotifyCommentCreated(t *testing.T) {
 	}
 }
 
-func TestNotifyBridgeCreated(t *testing.T) {
-	service, store, _ := newTestService(t)
-
-	if err := service.NotifyBridgeCreated(context.Background(), testUserID, testActorID, testEntityID); err != nil {
-		t.Fatalf("NotifyBridgeCreated() error = %v, want nil", err)
-	}
-
-	if store.gotCreate.EventType != EventBridgeCreated {
-		t.Errorf("event type = %q, want %q", store.gotCreate.EventType, EventBridgeCreated)
-	}
-	if store.gotCreate.EntityType != EntityBridge {
-		t.Errorf("entity type = %q, want %q", store.gotCreate.EntityType, EntityBridge)
-	}
-}
-
 func TestNotifyInquiryAnswered(t *testing.T) {
 	service, store, _ := newTestService(t)
 
@@ -618,8 +603,8 @@ func TestNotifyRejectsMalformedIDs(t *testing.T) {
 
 	// A caller in another domain can only hand over ids it holds, but a malformed
 	// one is still refused rather than stored.
-	if err := service.NotifyBridgeCreated(context.Background(), "not-a-uuid", testActorID, testEntityID); err == nil {
-		t.Fatal("NotifyBridgeCreated() error = nil, want a validation error")
+	if err := service.NotifyCommentCreated(context.Background(), "not-a-uuid", testActorID, testEntityID); err == nil {
+		t.Fatal("NotifyCommentCreated() error = nil, want a validation error")
 	}
 	if store.createCalls != 0 {
 		t.Errorf("store create calls = %d, want 0", store.createCalls)

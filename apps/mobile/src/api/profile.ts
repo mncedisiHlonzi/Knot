@@ -7,14 +7,13 @@
  *
  * The wall is public, so no token is needed. It is one chronological stream
  * merged from the things a person can author — stories, versions (adaptations),
- * comments, bridges, inquiries, and answers to inquiries.
+ * comments, inquiries, and answers to inquiries.
  */
 import { request } from './client';
 import type { AuthorRooted } from './rooted';
 
 /** What a user did, as the server names it. The set is closed. */
-export type ActivityKind =
-  'story' | 'version' | 'comment' | 'bridge' | 'inquiry' | 'inquiry_answer';
+export type ActivityKind = 'story' | 'version' | 'comment' | 'inquiry' | 'inquiry_answer';
 
 /** The context of a story activity. */
 export type StoryActivityPayload = {
@@ -83,13 +82,6 @@ export type CommentActivityPayload = {
   readonly body_preview: string;
 };
 
-/** The context of a bridge activity. */
-export type BridgeActivityPayload = {
-  readonly source_comment_id: string;
-  readonly version_id: string;
-  readonly target_language: string;
-};
-
 /** The context of an inquiry activity: the question the owner asked. */
 export type InquiryActivityPayload = {
   readonly title: string;
@@ -135,12 +127,6 @@ export type Activity =
       readonly id: string;
       readonly created_at: string;
       readonly payload: CommentActivityPayload;
-    }
-  | {
-      readonly kind: 'bridge';
-      readonly id: string;
-      readonly created_at: string;
-      readonly payload: BridgeActivityPayload;
     }
   | {
       readonly kind: 'inquiry';

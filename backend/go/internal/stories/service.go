@@ -50,7 +50,7 @@ func (s *Service) GetStory(ctx context.Context, id string) (Story, error) {
 	}
 
 	// A detail view of a blocked author's story is not found, matching the list
-	// filter and the bridge/profile pattern (KNOT-ADR-064).
+	// filter and the profile pattern (KNOT-ADR-064).
 	if moderation.IsExcludedAuthor(ctx, story.AuthorID) {
 		return Story{}, ErrNotFound
 	}

@@ -44,8 +44,8 @@ type ReactionBarProps = {
 /**
  * The brand's own reaction glyph for each signal (KNOT-020b-fix). Each asset is a
  * 24 x 24 stroke drawn with `currentColor`, so it is tinted through the `color`
- * prop of `SvgImage`. The fifth glyph, `reaction-bridge.svg`, belongs to the
- * Bridge screen (KNOT-020c) and is deliberately not used here.
+ * prop of `SvgImage`. The fifth glyph, `reaction-bridge.svg`, is an unused brand
+ * asset: reactions target stories, versions, comments, and inquiries only.
  */
 const REACTION_ICONS: Readonly<Record<ReactionType, React.ComponentType<SvgProps>>> = {
   rings_true: RingsTrueGlyph,

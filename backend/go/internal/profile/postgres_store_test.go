@@ -58,7 +58,7 @@ func integrationSetup(t *testing.T) integrationEnv {
 	}
 
 	// Every table the union reads must exist for these tests to run.
-	for _, table := range []string{"public.stories", "public.story_versions", "public.comments", "public.bridges", "public.inquiries", "public.inquiry_answers", "public.users"} {
+	for _, table := range []string{"public.stories", "public.story_versions", "public.comments", "public.inquiries", "public.inquiry_answers", "public.users"} {
 		var present bool
 		if err := pool.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", table).Scan(&present); err != nil {
 			pool.Close()
@@ -118,8 +118,7 @@ func integrationSetup(t *testing.T) integrationEnv {
 		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancelCleanup()
 
-		// Deleting the users cascades to their stories, versions, comments, and
-		// bridges.
+		// Deleting the users cascades to their stories, versions, and comments.
 		if _, err := pool.Exec(cleanupCtx, "DELETE FROM stories WHERE author_id IN ($1, $2)", env.userA, env.userB); err != nil {
 			t.Logf("cleanup: could not delete test stories: %v", err)
 		}
@@ -230,24 +229,6 @@ func createComment(t *testing.T, env integrationEnv, author, versionID, body str
 	return created.ID
 }
 
-// createBridge bridges sourceCommentID into targetLanguage, writing the target
-// comment on targetVersionID. It returns the bridge id.
-func createBridge(t *testing.T, env integrationEnv, author, sourceCommentID, targetVersionID, targetLanguage string) string {
-	t.Helper()
-
-	bridge, _, err := env.convStore.CreateBridge(context.Background(), conversations.Comment{
-		VersionID: targetVersionID,
-		AuthorID:  author,
-		Language:  targetLanguage,
-		Body:      "A bridged comment in " + targetLanguage + ".",
-	}, sourceCommentID, "")
-	if err != nil {
-		t.Fatalf("CreateBridge() error = %v, want nil", err)
-	}
-
-	return bridge.ID
-}
-
 func TestPostgresStoreListForUserMergesEveryKind(t *testing.T) {
 	env := integrationSetup(t)
 	ctx := context.Background()
@@ -255,7 +236,6 @@ func TestPostgresStoreListForUserMergesEveryKind(t *testing.T) {
 	storyID, rootVersionID := createStory(t, env, env.userA, "merged")
 	frVersionID := createVersion(t, env, env.userA, storyID, rootVersionID, "fra")
 	commentID := createComment(t, env, env.userA, rootVersionID, "Ada's comment.")
-	bridgeID := createBridge(t, env, env.userA, commentID, frVersionID, "fra")
 
 	page, next, err := env.store.ListForUser(ctx, env.userA, nil, 50)
 	if err != nil {
@@ -264,8 +244,8 @@ func TestPostgresStoreListForUserMergesEveryKind(t *testing.T) {
 	if next != nil {
 		t.Errorf("next = %+v, want nil on the last page", next)
 	}
-	if len(page) != 4 {
-		t.Fatalf("activities = %d, want 4 (story, adaptation, comment, bridge); got %+v", len(page), page)
+	if len(page) != 3 {
+		t.Fatalf("activities = %d, want 3 (story, adaptation, comment); got %+v", len(page), page)
 	}
 
 	byKind := make(map[Kind]Activity, len(page))
@@ -295,13 +275,6 @@ func TestPostgresStoreListForUserMergesEveryKind(t *testing.T) {
 	}
 	if got := byKind[KindComment].Payload; got.VersionID != rootVersionID || got.StoryID != storyID || got.BodyPreview == "" {
 		t.Errorf("comment payload = %+v, want the version id, story id and a body preview", got)
-	}
-
-	if got := byKind[KindBridge]; got.ID != bridgeID {
-		t.Errorf("bridge id = %q, want %q", got.ID, bridgeID)
-	}
-	if got := byKind[KindBridge].Payload; got.SourceCommentID != commentID || got.VersionID != rootVersionID || got.TargetLanguage != "fra" {
-		t.Errorf("bridge payload = %+v, want the source comment, version and target language", got)
 	}
 
 	// Newest first.

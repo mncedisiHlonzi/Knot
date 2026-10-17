@@ -21,12 +21,9 @@ type ConversationsService interface {
 	CreateComment(ctx context.Context, in conversations.CreateCommentInput) (conversations.Comment, error)
 	GetComment(ctx context.Context, id string) (conversations.Comment, error)
 	ListComments(ctx context.Context, versionID string, rawCursor string, limit int) ([]conversations.Comment, string, error)
-	CreateBridge(ctx context.Context, in conversations.CreateBridgeInput) (conversations.Bridge, conversations.Comment, conversations.Comment, error)
-	GetBridge(ctx context.Context, id string) (conversations.Bridge, error)
-	ListBridgesForComment(ctx context.Context, commentID string) ([]conversations.Bridge, error)
 }
 
-// ConversationsHandler serves the comment and bridge endpoints.
+// ConversationsHandler serves the comment endpoints.
 type ConversationsHandler struct {
 	service   ConversationsService
 	authors   AuthorLookup
@@ -71,16 +68,6 @@ type createCommentRequest struct {
 	// against the top-level comment it belongs to, so depth is one level
 	// (KNOT-ADR-047).
 	ParentCommentID *string `json:"parent_comment_id"`
-}
-
-// createBridgeRequest is the POST /comments/{id}/bridges body.
-//
-// The bridger is taken from the access token, and the source comment comes from
-// the path, so neither is in the body.
-type createBridgeRequest struct {
-	TargetLanguage string `json:"target_language"`
-	Body           string `json:"body"`
-	AdaptationNote string `json:"adaptation_note"`
 }
 
 // commentResponse is the public projection of a comment.
@@ -160,49 +147,6 @@ type commentDetailEnvelope struct {
 type commentListResponse struct {
 	Comments   []commentResponse `json:"comments"`
 	NextCursor string            `json:"next_cursor"`
-}
-
-// bridgeResponse is the public projection of a bridge.
-type bridgeResponse struct {
-	ID              string    `json:"id"`
-	SourceCommentID string    `json:"source_comment_id"`
-	TargetCommentID string    `json:"target_comment_id"`
-	AuthorID        string    `json:"author_id"`
-	TargetLanguage  string    `json:"target_language"`
-	AdaptationNote  *string   `json:"adaptation_note"`
-	CreatedAt       time.Time `json:"created_at"`
-	// AuthorDisplayName and AuthorAvatarURL are the bridger's inline attribution,
-	// filled by one batched lookup per response. AuthorAvatarURL is the backend
-	// path to fetch an avatar from, or null when the bridger has none (KNOT-ADR-041).
-	AuthorDisplayName string  `json:"author_display_name"`
-	AuthorAvatarURL   *string `json:"author_avatar_url"`
-	// AuthorRooted is the bridger's primary public Rooted signal, or null when they
-	// have none. It is a summary (place and duration only), attached at the HTTP
-	// layer; see KNOT-ADR-017.
-	AuthorRooted *rootedSummary `json:"author_rooted"`
-	// Reactions is the count of each of the four perspective signals on the bridge
-	// (KNOT-ADR-051). MyReactions is the signals the reader holds.
-	Reactions   reactionCountsResponse `json:"reactions"`
-	MyReactions []string               `json:"my_reactions"`
-}
-
-// bridgeEnvelope wraps a single bridge.
-type bridgeEnvelope struct {
-	Bridge bridgeResponse `json:"bridge"`
-}
-
-// bridgeListResponse is the GET /comments/{id}/bridges body. Bridges is always an
-// array, never null.
-type bridgeListResponse struct {
-	Bridges []bridgeResponse `json:"bridges"`
-}
-
-// createBridgeResponse is the POST /comments/{id}/bridges body: the bridge plus
-// the two comments it joins, so a client does not have to fetch them.
-type createBridgeResponse struct {
-	Bridge        bridgeResponse  `json:"bridge"`
-	SourceComment commentResponse `json:"source_comment"`
-	TargetComment commentResponse `json:"target_comment"`
 }
 
 // CreateComment handles POST /versions/{id}/comments. The route is protected, so
@@ -290,110 +234,6 @@ func (h *ConversationsHandler) ListComments(w http.ResponseWriter, r *http.Reque
 	}
 
 	writeJSON(w, http.StatusOK, commentListResponse{Comments: items, NextCursor: next})
-}
-
-// CreateBridge handles POST /comments/{id}/bridges. The route is protected.
-func (h *ConversationsHandler) CreateBridge(w http.ResponseWriter, r *http.Request) {
-	authorID, ok := UserIDFromContext(r.Context())
-	if !ok {
-		writeError(w, http.StatusUnauthorized, codeUnauthorized, "authentication required")
-		return
-	}
-
-	var body createBridgeRequest
-	if err := decodeJSON(w, r, &body); err != nil {
-		writeDecodeError(w, r, h.logger, err)
-		return
-	}
-
-	bridge, source, target, err := h.service.CreateBridge(r.Context(), conversations.CreateBridgeInput{
-		SourceCommentID: r.PathValue("id"),
-		AuthorID:        authorID,
-		TargetLanguage:  body.TargetLanguage,
-		Body:            body.Body,
-		AdaptationNote:  body.AdaptationNote,
-	})
-	if err != nil {
-		h.writeServiceError(w, r, err, "source comment not found")
-		return
-	}
-
-	bridgeItem := newBridgeResponse(bridge)
-	sourceItem := newCommentResponse(source)
-	targetItem := newCommentResponse(target)
-	authorIDs := []string{bridge.AuthorID, source.AuthorID, target.AuthorID}
-	summaries := authorRootedSummaries(r.Context(), h.rooted, h.logger, authorIDs)
-	attributions := authorAttributions(r.Context(), h.authors, h.logger, authorIDs)
-	bridgeItem.AuthorRooted = summaries[bridge.AuthorID]
-	sourceItem.AuthorRooted = summaries[source.AuthorID]
-	targetItem.AuthorRooted = summaries[target.AuthorID]
-	bridgeItem.AuthorDisplayName, bridgeItem.AuthorAvatarURL = attributions[bridge.AuthorID].DisplayName, optionalString(attributions[bridge.AuthorID].AvatarURL)
-	sourceItem.AuthorDisplayName, sourceItem.AuthorAvatarURL = attributions[source.AuthorID].DisplayName, optionalString(attributions[source.AuthorID].AvatarURL)
-	targetItem.AuthorDisplayName, targetItem.AuthorAvatarURL = attributions[target.AuthorID].DisplayName, optionalString(attributions[target.AuthorID].AvatarURL)
-
-	writeJSON(w, http.StatusCreated, createBridgeResponse{
-		Bridge:        bridgeItem,
-		SourceComment: sourceItem,
-		TargetComment: targetItem,
-	})
-}
-
-// ListBridges handles GET /comments/{id}/bridges. The route is public.
-func (h *ConversationsHandler) ListBridges(w http.ResponseWriter, r *http.Request) {
-	bridges, err := h.service.ListBridgesForComment(r.Context(), r.PathValue("id"))
-	if err != nil {
-		h.writeServiceError(w, r, err, "comment not found")
-		return
-	}
-
-	items := make([]bridgeResponse, 0, len(bridges))
-	authorIDs := make([]string, 0, len(bridges))
-	for _, bridge := range bridges {
-		authorIDs = append(authorIDs, bridge.AuthorID)
-	}
-	summaries := authorRootedSummaries(r.Context(), h.rooted, h.logger, authorIDs)
-	attributions := authorAttributions(r.Context(), h.authors, h.logger, authorIDs)
-	for _, bridge := range bridges {
-		item := newBridgeResponse(bridge)
-		item.AuthorRooted = summaries[bridge.AuthorID]
-		attribution := attributions[bridge.AuthorID]
-		item.AuthorDisplayName = attribution.DisplayName
-		item.AuthorAvatarURL = optionalString(attribution.AvatarURL)
-		items = append(items, item)
-	}
-
-	// One batched pair of reads decorates the list with reaction counts and the
-	// reader's own signals (KNOT-ADR-051).
-	readerID, _ := UserIDFromContext(r.Context())
-	bridgeIDs := make([]string, 0, len(items))
-	for i := range items {
-		bridgeIDs = append(bridgeIDs, items[i].ID)
-	}
-	reactionData := loadReactions(r.Context(), h.reactions, h.logger, reactions.EntityBridge, readerID, bridgeIDs)
-	for i := range items {
-		items[i].Reactions = reactionData.Counts[items[i].ID]
-		items[i].MyReactions = orEmptyStrings(reactionData.Mine[items[i].ID])
-	}
-
-	writeJSON(w, http.StatusOK, bridgeListResponse{Bridges: items})
-}
-
-// GetBridge handles GET /bridges/{id}. The route is public.
-func (h *ConversationsHandler) GetBridge(w http.ResponseWriter, r *http.Request) {
-	bridge, err := h.service.GetBridge(r.Context(), r.PathValue("id"))
-	if err != nil {
-		h.writeServiceError(w, r, err, "bridge not found")
-		return
-	}
-
-	response := newBridgeResponse(bridge)
-	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{bridge.AuthorID})[bridge.AuthorID]
-	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, bridge.AuthorID)
-
-	userID, _ := UserIDFromContext(r.Context())
-	response.Reactions, response.MyReactions = reactionsForEntity(r.Context(), h.reactions, h.logger, reactions.EntityBridge, userID, bridge.ID)
-
-	writeJSON(w, http.StatusOK, bridgeEnvelope{Bridge: response})
 }
 
 // GetComment handles GET /comments/{id}. The route is public.
@@ -499,22 +339,6 @@ func newCommentDetailResponse(comment conversations.Comment) commentDetailRespon
 		ParentCommentID: comment.ParentCommentID,
 		CreatedAt:       comment.CreatedAt,
 		UpdatedAt:       comment.UpdatedAt,
-		// Emit [] rather than null until the enrichment fills it in.
-		MyReactions: []string{},
-	}
-}
-
-// newBridgeResponse projects a domain bridge onto the wire format. An empty
-// adaptation note becomes JSON null via optionalString.
-func newBridgeResponse(bridge conversations.Bridge) bridgeResponse {
-	return bridgeResponse{
-		ID:              bridge.ID,
-		SourceCommentID: bridge.SourceCommentID,
-		TargetCommentID: bridge.TargetCommentID,
-		AuthorID:        bridge.AuthorID,
-		TargetLanguage:  bridge.TargetLanguage,
-		AdaptationNote:  optionalString(bridge.AdaptationNote),
-		CreatedAt:       bridge.CreatedAt,
 		// Emit [] rather than null until the enrichment fills it in.
 		MyReactions: []string{},
 	}

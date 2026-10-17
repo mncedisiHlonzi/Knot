@@ -49,25 +49,3 @@ func TestCreateCommentAllowsWhenTheAuthorIsNotBlocked(t *testing.T) {
 		t.Errorf("CreateComment() wrote %d comments, want 1", comments.createCalls)
 	}
 }
-
-func TestCreateBridgeRejectsBlockedSourceAuthor(t *testing.T) {
-	service, comments, _ := newTestService(t)
-	comments.getResult = Comment{
-		ID:        sourceCommentID,
-		VersionID: versionID,
-		AuthorID:  authorID,
-		Language:  "eng",
-	}
-
-	ctx := moderation.WithExcludedAuthors(context.Background(), []string{authorID})
-	_, _, _, err := service.CreateBridge(ctx, CreateBridgeInput{
-		SourceCommentID: sourceCommentID,
-		AuthorID:        blockCommenterID,
-		TargetLanguage:  "zul",
-		Body:            "a bridge",
-	})
-
-	if !errors.Is(err, moderation.ErrBlocked) {
-		t.Fatalf("CreateBridge() error = %v, want ErrBlocked", err)
-	}
-}

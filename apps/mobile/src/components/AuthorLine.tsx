@@ -76,7 +76,7 @@ const AVATAR_SIZE: Readonly<Record<AuthorLineSize, 'sm' | 'md' | 'lg'>> = {
  * and the content's time as a relative phrase.
  *
  * It is the one place attribution is rendered, so a story, a version, a comment,
- * and a bridge all read the same way. Every segment is optional: a missing name or
+ * and a comment all read the same way. Every segment is optional: a missing name or
  * timestamp is omitted rather than shown empty, and an author with no avatar gets
  * their initials in a circle instead (drawn by `Avatar`).
  *

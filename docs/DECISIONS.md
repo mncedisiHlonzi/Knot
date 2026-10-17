@@ -2417,3 +2417,51 @@ story entry shows its pillar and place — the pillar on a version is inherited,
 it would say nothing about the entry — and shows the attribution sentence under its title.
 Finally, a client that taps an adaptation opens the **version**, not the story, so the feed
 needs both destinations wired (`onOpenVersion` alongside `onOpenStory`).
+
+## KNOT-ADR-071 — Comment Bridging is retired as a first-class mechanic
+
+**Context.** Comment bridging (KNOT-ADR-014, KNOT-ADR-015) was part of the original design:
+a comment in one language was joined to a new comment on the story's version in another
+language, and the bridge was a first-class object with its own id, reactions, and
+notifications. After the founder's review of the core platform, it was judged **out of scope**.
+Hereditary attribution (KNOT-ADR-069) and the merged feed (KNOT-ADR-070) already make Tell My
+People the primary mechanic: a person adapts a story, the version appears in the feed with
+honest attribution, and a reader can follow it back to the original. Bridging was a second,
+competing mechanic that fragmented conversation, complicated the schema, and gave the app two
+different ways to cross a language boundary.
+
+**Decision.** Comment bridging is retired as a first-class mechanic.
+
+- Every bridge route is gone: `POST /comments/{id}/bridges`, `GET /comments/{id}/bridges`,
+  `GET /bridges/{id}`, and the bridge reaction routes (`POST|GET /bridges/{id}/reactions`).
+- The bridge domain, store contract, cursors, wire types, and mobile screen and API client
+  are deleted. The comment thread keeps Reply and Report — nothing else.
+- The **`bridges` table is left dormant**: not dropped, no rows deleted. It is preserved
+  through a cooling-off period and a future cleanup task will drop it. See
+  [`docs/DATA_MODEL.md`](DATA_MODEL.md).
+- The `bridge.created` notification event is retired from dispatch. The
+  `notifications.event_type` CHECK still permits the value (no migration), and every inbox
+  read hides those rows at the store query level, so historical notifications are preserved
+  but never rendered.
+- The Master Brief's internal loop is now **six steps**: Create Story → Discover → Human
+  Adaptation → Language-specific Conversation → Return to Original Language → Deeper
+  Understanding. See [`docs/PROJECT.md`](PROJECT.md).
+
+**Consequences.** The North Star metric — "meaningful cross-language conversations that
+return" — is still measurable: version reads and reactions record that an adaptation was
+received, and the parent chain is what "return" means. The specific bridge primitive is what
+is retired. The cross-language return still happens via the version's parent chain rather
+than through a second comment tree.
+
+The `bridges` table's foreign keys are `ON DELETE CASCADE` *into* it, so a user or comment
+deletion still cascades to historical rows; nothing on a live table depends on `bridges`, so
+leaving it dormant cannot fail a live write. Removing the bridge activity kind also removes
+it from the profile wall's union — a wall shows the five kinds a person can author today.
+
+KNOT-023 also refined the feed after on-device review: a sensitive item's media is held
+behind a per-card reveal, a version card shows its inherited pillar beside the version badge,
+and the attribution sentence uses `typeScale.bodyS` so it reads as context rather than a
+footnote. The last of these reverses KNOT-ADR-070's sentence that repeating a version's
+inherited pillar "would say nothing about the entry": the founder judged the pillar worth
+showing, because it tells a reader whether they are reading a Wonder or a Heritage story
+before they open it.

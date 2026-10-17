@@ -149,14 +149,11 @@ func (r *Router) Handler() http.Handler {
 	mux.HandleFunc("GET /stories/{id}/tree", r.authMiddleware.Optional(r.versions.Tree))
 	mux.HandleFunc("GET /versions/{id}", r.authMiddleware.Optional(r.versions.Get))
 
-	// Conversations: comments on a version, and the bridges between comments.
-	// Commenting and bridging require an access token; reading is open.
+	// Conversations: comments on a version. Commenting requires an access token;
+	// reading is open.
 	mux.HandleFunc("POST /versions/{id}/comments", r.authMiddleware.Require(r.conversations.CreateComment))
 	mux.HandleFunc("GET /versions/{id}/comments", r.authMiddleware.Optional(r.conversations.ListComments))
 	mux.HandleFunc("GET /comments/{id}", r.authMiddleware.Optional(r.conversations.GetComment))
-	mux.HandleFunc("POST /comments/{id}/bridges", r.authMiddleware.Require(r.conversations.CreateBridge))
-	mux.HandleFunc("GET /comments/{id}/bridges", r.authMiddleware.Optional(r.conversations.ListBridges))
-	mux.HandleFunc("GET /bridges/{id}", r.authMiddleware.Optional(r.conversations.GetBridge))
 
 	// Reactions: the four perspective signals, per entity kind. Toggling requires
 	// an access token; listing is public. The path names the entity kind, so each
@@ -169,8 +166,6 @@ func (r *Router) Handler() http.Handler {
 	mux.HandleFunc("GET /versions/{id}/reactions", r.reactions.ListVersion)
 	mux.HandleFunc("POST /comments/{id}/reactions", r.authMiddleware.Require(r.reactions.ToggleComment))
 	mux.HandleFunc("GET /comments/{id}/reactions", r.reactions.ListComment)
-	mux.HandleFunc("POST /bridges/{id}/reactions", r.authMiddleware.Require(r.reactions.ToggleBridge))
-	mux.HandleFunc("GET /bridges/{id}/reactions", r.reactions.ListBridge)
 	mux.HandleFunc("POST /inquiries/{id}/reactions", r.authMiddleware.Require(r.reactions.ToggleInquiry))
 	mux.HandleFunc("GET /inquiries/{id}/reactions", r.reactions.ListInquiry)
 
@@ -183,7 +178,7 @@ func (r *Router) Handler() http.Handler {
 	// "GET /answers/{id}" is a top-level path rather than "/inquiries/answers/{id}"
 	// because the latter would overlap "/inquiries/{id}/answers" at
 	// /inquiries/answers/answers, which Go's ServeMux refuses as a conflict. The
-	// top-level shape also matches how a single comment and a single bridge are
+	// top-level shape also matches how a single comment and a single answer are
 	// already fetched.
 	mux.HandleFunc("POST /inquiries", r.authMiddleware.Require(r.inquiries.Create))
 	mux.HandleFunc("GET /inquiries", r.authMiddleware.Optional(r.inquiries.List))

@@ -316,6 +316,10 @@ export default function FeedScreen({
               preview: item.body,
               preview_truncated: item.preview_truncated,
               reactions: item.reactions,
+              // Sensitive is inherited from the story, so it travels with both
+              // kinds of entry and the card holds its media until revealed
+              // (KNOT-023).
+              sensitive: item.sensitive,
               title: item.title,
               version_count: item.version_count,
             }}

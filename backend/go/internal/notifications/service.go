@@ -173,16 +173,10 @@ func (s *Service) NotifyCommentCreated(ctx context.Context, recipientID, actorID
 	return s.notify(ctx, recipientID, actorID, EventCommentCreated, EntityComment, commentID, "")
 }
 
-// NotifyBridgeCreated records that actorID bridged a comment authored by
-// recipientID.
-func (s *Service) NotifyBridgeCreated(ctx context.Context, recipientID, actorID, bridgeID string) error {
-	return s.notify(ctx, recipientID, actorID, EventBridgeCreated, EntityBridge, bridgeID, "")
-}
-
 // NotifyReactionCreated records that actorID left a reaction on content
 // authored by recipientID (KNOT-ADR-050).
 //
-// entityType is the target's own kind (story, version, comment, or bridge): a
+// entityType is the target's own kind (story, version, comment, or inquiry): a
 // reaction reuses the entity it points at rather than introducing a new one, so
 // the client opens the same screen a tap on the content would. reactionType is
 // which of the four signals was left, so the inbox can name it.
@@ -265,7 +259,7 @@ func validateCreate(in CreateInput) (Notification, error) {
 	if !in.EventType.Valid() {
 		return Notification{}, &ValidationError{
 			Field:   "event_type",
-			Message: "must be one of version.created, comment.created, bridge.created, reaction.created, inquiry.answered, inquiry.nearby",
+			Message: "must be one of version.created, comment.created, reaction.created, inquiry.answered, inquiry.nearby",
 		}
 	}
 	if !in.EventType.acceptsEntityType(in.EntityType) {

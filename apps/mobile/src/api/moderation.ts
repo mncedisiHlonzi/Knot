@@ -16,8 +16,7 @@ import { ApiError, describeError, request } from './client';
 import { buildQueryString } from './query';
 
 /** The kinds of content that can be reported. The set matches the server's schema. */
-export type ReportEntityType =
-  'story' | 'version' | 'comment' | 'bridge' | 'inquiry' | 'inquiry_answer';
+export type ReportEntityType = 'story' | 'version' | 'comment' | 'inquiry' | 'inquiry_answer';
 
 /** Why content was reported. The set is closed: the server refuses anything else. */
 export type ReportCategory =

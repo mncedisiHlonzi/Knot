@@ -136,7 +136,7 @@ func newTestReactionsHandler(t *testing.T, logger *slog.Logger, service Reaction
 	}
 
 	// The inquiries service is only consulted to resolve an inquiry's author, which
-	// none of the story, version, comment, or bridge tests exercise. The default stub
+	// none of the story, version, or comment tests exercise. The default stub
 	// reports not-found, so a reaction that was accidentally routed to an inquiry
 	// fails loudly instead of resolving to an empty author.
 	inquiryService := &fakeInquiriesService{getErr: inquiries.ErrNotFound}
@@ -342,22 +342,15 @@ func TestToggleReactionUnauthenticatedIsUnauthorized(t *testing.T) {
 	}
 }
 
-func TestSwitchToggleVersionAndBridgeEntityTypes(t *testing.T) {
+func TestSwitchToggleVersionEntityType(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	versionService := &fakeVersionsService{getResult: versions.StoryVersion{ID: testReactionEntityID, AuthorID: testReactionAuthorID}}
-	bridgeService := &fakeConversationsService{getBridgeResult: conversations.Bridge{ID: testReactionEntityID, AuthorID: testReactionAuthorID}}
 
 	versionHandler := newTestReactionsHandler(t, logger, &fakeReactionsService{active: true}, nil, versionService, nil, nil)
 	versionRecorder := doReactionRequest(versionHandler.ToggleVersion, http.MethodPost, "/versions/x/reactions", testReactionEntityID, testReactionUserID, `{"reaction_type":"rings_true"}`)
 	if versionRecorder.Code != http.StatusOK {
 		t.Fatalf("version status = %d, want %d", versionRecorder.Code, http.StatusOK)
-	}
-
-	bridgeHandler := newTestReactionsHandler(t, logger, &fakeReactionsService{active: true}, nil, nil, bridgeService, nil)
-	bridgeRecorder := doReactionRequest(bridgeHandler.ToggleBridge, http.MethodPost, "/bridges/x/reactions", testReactionEntityID, testReactionUserID, `{"reaction_type":"rings_true"}`)
-	if bridgeRecorder.Code != http.StatusOK {
-		t.Fatalf("bridge status = %d, want %d", bridgeRecorder.Code, http.StatusOK)
 	}
 }
 
@@ -400,7 +393,7 @@ func TestListReactionsEmptyIsAnArray(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handler := newTestReactionsHandler(t, logger, &fakeReactionsService{}, nil, nil, nil, nil)
 
-	recorder := doReactionRequest(handler.ListBridge, http.MethodGet, "/bridges/x/reactions", testReactionEntityID, "", "")
+	recorder := doReactionRequest(handler.ListStory, http.MethodGet, "/stories/x/reactions", testReactionEntityID, "", "")
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)

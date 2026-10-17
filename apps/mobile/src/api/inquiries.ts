@@ -234,7 +234,7 @@ export const inquiriesApi = {
    * GET /answers/{id} — one answer. Public.
    *
    * The top-level path (not `/inquiries/answers/{id}`) matches how a single
-   * comment and a single bridge are already fetched.
+   * comment are already fetched.
    */
   getAnswer(id: string, token?: string): Promise<AnswerResponse> {
     return request<AnswerResponse>(`/answers/${encodeURIComponent(id)}`, { method: 'GET', token });

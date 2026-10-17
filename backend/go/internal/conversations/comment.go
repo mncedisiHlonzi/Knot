@@ -1,26 +1,19 @@
 // Package conversations implements the Knot conversation layer: comments on a
-// story version, and the bridges that connect a comment in one language to a
-// comment in another.
+// story version.
 //
 // The package is deliberately layered, mirroring internal/stories and
 // internal/versions:
 //
 //	comment.go        Comment, CommentStore, package errors and limits
-//	bridge.go         Bridge, BridgeStore
 //	cursor.go         opaque pagination cursors for a comment thread
-//	service.go        business rules (CreateComment, ListComments, CreateBridge, …)
+//	service.go        business rules (CreateComment, ListComments, …)
 //	postgres_store.go the PostgreSQL implementations of the store contracts
 //
-// A comment belongs to exactly one story version. A bridge is a first-class
-// object that references a source comment and a target comment: creating one
-// writes a new target comment on the same version as the source, in the target
-// language, plus a bridge row joining the two. The source conversation is never
-// modified. Comment threading (replies) is deliberately not part of this model;
-// replies happen only by bridging (see KNOT-ADR-014).
+// A comment belongs to exactly one story version. Threading is one level deep
+// (KNOT-ADR-047).
 //
 // Nothing in this package knows about HTTP, JSON, or SQL types. User, version,
-// comment, and bridge ids are plain strings holding canonical UUID text
-// (KNOT-ADR-010).
+// and comment ids are plain strings holding canonical UUID text (KNOT-ADR-010).
 package conversations
 
 import (
@@ -41,10 +34,6 @@ var (
 	// so errors.Is(err, ErrValidation) and errors.As(err, &validation) are both
 	// true for the same value.
 	ErrValidation = errors.New("conversations: invalid input")
-	// ErrAlreadyBridged is returned when the constraints refuse a second bridge
-	// of the same comment into the same language. The service turns it into a
-	// field validation error so the client learns which field to change.
-	ErrAlreadyBridged = errors.New("conversations: comment already bridged into that language")
 )
 
 // ValidationError describes a rejected field on a request. Handlers expose the
@@ -74,8 +63,6 @@ const (
 	minBodyLen = 1
 	// MaxBodyLen is the longest accepted comment body.
 	MaxBodyLen = 5000
-	// MaxAdaptationNoteLength bounds the optional note a bridge carries.
-	MaxAdaptationNoteLength = 1000
 )
 
 // Thread page sizes. The service enforces them so the domain, not just the HTTP
@@ -107,8 +94,7 @@ type Comment struct {
 	// ParentCommentID is the comment this one replies to, or nil for a top-level
 	// comment. Threading is one level deep: a reply to a reply is stored against
 	// the top-level comment it belongs to, so a parent is always a top-level
-	// comment (KNOT-ADR-047). A bridge's target comment is never a reply, so it
-	// has no parent either (KNOT-ADR-014).
+	// comment (KNOT-ADR-047).
 	ParentCommentID *string
 	// CreatedAt is the insertion time. It is the thread's primary sort key.
 	CreatedAt time.Time
@@ -172,21 +158,17 @@ type CommentStore interface {
 	VersionAuthor(ctx context.Context, versionID string) (string, error)
 }
 
-// Notifier records that a user commented on, or bridged, content. It is
-// satisfied by the notifications service, but the conversations package depends
-// only on these methods, so it never imports the notifications package
-// (KNOT-ADR-040).
+// Notifier records that a user commented on content. It is satisfied by the
+// notifications service, but the conversations package depends only on this
+// method, so it never imports the notifications package (KNOT-ADR-040).
 //
-// Every call is non-critical: an implementation records the notification and
+// The call is non-critical: an implementation records the notification and
 // reports a failure, and the caller ignores that failure rather than failing the
-// comment or bridge that triggered it (KNOT-ADR-038).
+// comment that triggered it (KNOT-ADR-038).
 type Notifier interface {
 	// NotifyCommentCreated records that actorID commented (commentID) on a version
 	// authored by recipientID.
 	NotifyCommentCreated(ctx context.Context, recipientID, actorID, commentID string) error
-	// NotifyBridgeCreated records that actorID bridged a comment (bridgeID) authored
-	// by recipientID.
-	NotifyBridgeCreated(ctx context.Context, recipientID, actorID, bridgeID string) error
 }
 
 // isUUID reports whether s is a canonical 8-4-4-4-12 hexadecimal UUID string.

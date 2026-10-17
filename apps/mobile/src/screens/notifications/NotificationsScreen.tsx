@@ -33,10 +33,9 @@ type NotificationsScreenProps = {
  *
  * Every row is a Pressable that marks the notification read and then hands it to
  * the caller, which opens what it can. Each entity type resolves over public GETs:
- * a version names its story (`GET /versions/{id}`), a comment names its version
- * and story (`GET /comments/{id}`), and a bridge names its source comment, which
- * resolves the same way. A version tap lands on the story detail, while a comment
- * or a bridge lands on the comment's thread.
+ * a version names its story (`GET /versions/{id}`) and a comment names its version
+ * and story (`GET /comments/{id}`). A version tap lands on the story detail, while
+ * a comment lands on the comment's thread.
  *
  * Paging is keyset-based, exactly as the feed and a thread are: each page returns
  * an opaque `next_cursor` sent back verbatim to fetch the following page, and an

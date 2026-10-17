@@ -1,8 +1,8 @@
 # Knot — Data Model
 
 **Status: MVP, subject to change.** Eight tables exist today: `users`, `stories`,
-`story_versions`, `comments`, `bridges`, `rooted_signals`, `story_media`, and
-`notifications`.
+`story_versions`, `comments`, `bridges` (**dormant** — see below), `rooted_signals`,
+`story_media`, and `notifications`.
 
 Migrations live in `backend/go/migrations/` and are applied with
 `go run ./cmd/knot migrate up`. See the "Migrations" section of
@@ -101,7 +101,7 @@ trigger would be the right move once several columns need it, and is a later tas
 ## `stories`
 
 A story is one cultural artefact. Every later content feature (Tell My People, the
-Language Tree, Conversations, Bridges) references `stories.id`.
+Language Tree, Conversations) references `stories.id`.
 
 | Column                 | Type           | Nullable | Default             | Notes                                                       |
 | ---------------------- | -------------- | -------- | ------------------- | ----------------------------------------------------------- |
@@ -322,10 +322,6 @@ comment on the same version, one level deep: `parent_comment_id` names a **top-l
 comment, and a reply to a reply is stored against that reply's top-level comment. A thread
 is therefore always a top-level comment followed by its replies. See KNOT-ADR-047.
 
-A reply in another language is still a **bridge**, not a child comment: a bridge writes an
-ordinary top-level comment into the target version's conversation, so the comment it
-creates never carries a parent. See KNOT-ADR-014.
-
 | Column              | Type          | Nullable | Default             | Notes                                              |
 | ------------------- | ------------- | -------- | ------------------- | -------------------------------------------------- |
 | `id`                | `uuid`        | no       | `gen_random_uuid()` | Primary key                                        |
@@ -369,15 +365,23 @@ lookup. The service resolves the parent, refuses one from another version, and r
 reply's parent to that parent's own parent. The self-parent check is the one part the
 schema can state, and it does — an `UPDATE` cannot slip past it.
 
-## `bridges`
+## `bridges` — **dormant**
 
-A bridge connects a comment in one language to a comment in another. It is a first-class
-object: it names a source comment and a target comment, and it is the record that one is
-an adaptation of the other. Creating a bridge writes a new comment (the target) and the
-bridge row in **one transaction**. The target comment belongs to the story's version
-written in `target_language`, so a bridge joins two conversations rather than adding to
-one; both comments remain ordinary members of their own conversation. See KNOT-ADR-014
-and KNOT-ADR-015.
+> **Dormant since KNOT-023.** The `bridges` table is present and preserved: it was not
+dropped and no rows were deleted, because comment bridging was retired as a first-class
+mechanic after real data existed (KNOT-ADR-071). **No active code path reads or writes it.**
+The API routes are gone, the service and store methods are deleted, the notification event
+is retired, and the profile wall no longer unions this table. A future cleanup task will
+drop the table after a cooling-off period.
+>
+> Leaving it dormant is safe: both foreign keys are `ON DELETE CASCADE` **into** `bridges`,
+> so deleting a user or a comment still cascades to its bridge rows. No constraint or
+trigger on any live table depends on `bridges`, so nothing a live write does can fail
+> because the table exists.
+
+The table records a historical bridge: it names a source comment and a target comment, and
+it was the record that one was an adaptation of the other (KNOT-ADR-014, KNOT-ADR-015). The
+schema below is the historical shape, kept for reference until the drop.
 
 | Column              | Type          | Nullable | Default             | Notes                                                               |
 | ------------------- | ------------- | -------- | ------------------- | ------------------------------------------------------------------- |
@@ -404,23 +408,16 @@ and KNOT-ADR-015.
 | `bridges_author_id_fkey`          | Foreign key      | `author_id` → `users(id)`                | `ON DELETE CASCADE`: deleting an account removes its bridges          |
 | `bridges_check`                   | Check constraint | `source_comment_id`, `target_comment_id` | A comment cannot be bridged to itself                                 |
 
-### Creating a bridge is one transaction
+### Historical write path (retired)
 
-A bridge first resolves its target version: the source comment gives the story, and
-`target_language` gives the version of that story written in the language (the oldest,
-when several share it). The story must have such a version, or the request is rejected.
-The target version's conversation is the one the target comment joins.
+A bridge resolved its target version from the source comment's story and
+`target_language` (the oldest version when several shared it), then inserted the target
+comment and the bridge row in one transaction. That path was removed in KNOT-023; the
+columns and constraints above remain only because the rows do.
 
-Unlike the story-plus-root-version write in migration `0003`, a bridge has no circular
-foreign key: the target comment is inserted first, then the bridge that references it and
-the source comment. Both rows are written in a single transaction, so a failure while
-inserting the bridge rolls back the target comment it had already created. There is no
-window in which a comment exists with no bridge to say where it came from.
-
-`bridges_one_per_target_language` is a product policy rather than a structural necessity:
+`bridges_one_per_target_language` was a product policy rather than a structural necessity:
 without it, the same comment could be bridged into French repeatedly, producing many
-near-duplicate targets claiming to be the same adaptation. It is the default this task
-chose (see KNOT-ADR-014) and can be relaxed later by dropping the one index.
+near-duplicate targets claiming to be the same adaptation.
 
 ## `rooted_signals`
 
@@ -551,10 +548,10 @@ than the older `stories.media_urls` array.
 ## `notifications`
 
 A notification records that **another user acted on your content**: someone adapted a
-version you wrote, commented on it, replied to a comment you wrote, or bridged one of your
-comments into another language. It is one row per event, addressed to one recipient, with
-the id of the thing the client should open. See KNOT-ADR-038, KNOT-ADR-039, and
-KNOT-ADR-047.
+version you wrote, commented on it, replied to a comment you wrote, reacted to it, or
+asked about the place you are Rooted in. It is one row per event, addressed to one
+recipient, with the id of the thing the client should open. See KNOT-ADR-038,
+KNOT-ADR-039, and KNOT-ADR-047.
 
 A `comment.created` row's recipient depends on what was written: for a top-level comment it
 is the **version's author**, and for a reply it is the **author of the comment that was
@@ -595,16 +592,22 @@ PostgreSQL seeks to the resume point instead of sorting the table.
 
 ### The event and entity sets are closed
 
-`event_type` is one of `version.created`, `comment.created`, `bridge.created`,
+`event_type` is one of `version.created`, `comment.created`,
 `reaction.created`, `inquiry.answered`, or `inquiry.nearby`; `entity_type` is one of `story`,
-`version`, `comment`, `bridge`, or `inquiry`. Both sets are CHECK constraints *and* Go constants
+`version`, `comment`, or `inquiry`. Both sets are CHECK constraints *and* Go constants
 with a `Valid` method, so a value outside them is refused before it reaches the database. The
 constraints are widened in the same migration that starts writing a new event — a migration that
 adds an event without widening the CHECK would fail at the first write (KNOT-ADR-050,
 KNOT-ADR-056).
 
+**Retired event.** The `event_type` CHECK still permits `bridge.created` and
+`entity_type` still permits `bridge`, because the constraint was never narrowed and
+historical rows use both. No active code path dispatches that event any more, and every
+inbox read excludes it at the store query level, so a pre-KNOT-023 row is preserved but
+never shown (KNOT-ADR-071).
+
 Each event maps to exactly one entity type — `version.created` → `version`,
-`comment.created` → `comment`, `bridge.created` → `bridge`, and both inquiry events → `inquiry`
+`comment.created` → `comment`, and both inquiry events → `inquiry`
 — and the service enforces the mapping. A notification therefore always points at something a
 client can render, and "an adaptation" can never be filed against a comment.
 
@@ -658,7 +661,7 @@ entity, and nothing orders content by them.
 | --------------- | ------------- | -------- | ------------------- | -------------------------------------------------------------- |
 | `id`            | `uuid`        | no       | `gen_random_uuid()` | Primary key                                                     |
 | `user_id`       | `uuid`        | no       | —                   | References `users(id)`; the person who reacted                    |
-| `entity_type`   | `text`        | no       | —                   | One of `story`, `version`, `comment`, `bridge`; a closed set      |
+| `entity_type`   | `text`        | no       | —                   | One of `story`, `version`, `comment`, `inquiry`; a closed set      |
 | `entity_id`     | `uuid`        | no       | —                   | The reacted-to row. **No foreign key** — see below                |
 | `reaction_type` | `text`        | no       | —                   | One of the four signals; a closed set                             |
 | `created_at`    | `timestamptz` | no       | `now()`             | Insertion time                                                    |
@@ -771,7 +774,7 @@ because a place's knowledge is plural (KNOT-ADR-055).
 
 The profile wall (`GET /users/{id}/profile`) is **not backed by a table**. It is a read
 model over the entity tables that already exist — `stories`, `story_versions`,
-`comments`, `bridges`, `inquiries`, and `inquiry_answers` — unioned in one query, filtered by
+`comments`, `inquiries`, and `inquiry_answers` — unioned in one query, filtered by
 the author, and ordered chronologically:
 
 ```sql
@@ -803,16 +806,6 @@ FROM (
     FROM comments c
     JOIN story_versions v ON v.id = c.version_id
     WHERE c.author_id = $1
-      AND NOT EXISTS (SELECT 1 FROM bridges b WHERE b.target_comment_id = c.id)
-
-    UNION ALL
-    SELECT 'bridge'  AS kind, b.id, b.created_at,
-           jsonb_build_object('source_comment_id', b.source_comment_id,
-                              'version_id',        sc.version_id,
-                              'target_language',   b.target_language)
-    FROM bridges b
-    JOIN comments sc ON sc.id = b.source_comment_id
-    WHERE b.author_id = $1
 
     UNION ALL
     SELECT 'inquiry' AS kind, i.id, i.created_at,
@@ -841,27 +834,24 @@ domain, kept in sync on every delete, and backfilled. A read model with one quer
 one scan of each author-indexed table and stays correct by construction (KNOT-ADR-042).
 
 **Why the payload is built in SQL.** `jsonb_build_object` attaches the context a card needs
-— a story's title, an adaptation's story title, a comment's preview, a bridge's source, an
-inquiry's place, an answer's question — to the row, so a whole page is one query rather than
+— a story's title, an adaptation's story title, a comment's preview, an inquiry's place, an
+answer's question — to the row, so a whole page is one query rather than
 one per activity. The comment and answer previews are `left(body, 200)`, so a full body never
 travels to a client through the wall.
 
-**Two acts are deliberately not double-counted.** A story's root version is excluded from
-the `version` branch (the root *is* the story), and a bridge's target comment is excluded
-from the `comment` branch (the target is the bridge's artifact). Both are single acts that
-write two rows each, so listing both rows would list one action twice. The inquiry branches
+**One act is deliberately not double-counted.** A story's root version is excluded from
+the `version` branch (the root *is* the story). The inquiry branches
 need no such exclusion: asking a question and answering one are different acts by different
 people, and an answer always belongs to someone else's inquiry.
 
-**The six wall kinds.** `story`, `version`, `comment`, `bridge`, `inquiry`, and
+**The five wall kinds.** `story`, `version`, `comment`, `inquiry`, and
 `inquiry_answer`, with payloads `{title, pillar, language}`, `{story_id, story_title,
-language}`, `{version_id, story_id, body_preview}`, `{source_comment_id, version_id,
-target_language}`, `{title, place}`, and `{inquiry_id, inquiry_title, body_preview}`. Every
-payload field carries `omitempty`, so a place-less inquiry has no `place` key at all rather
-than an explicit null.
+language}`, `{version_id, story_id, body_preview}`, `{title, place}`, and `{inquiry_id,
+inquiry_title, body_preview}`. Every payload field carries `omitempty`, so a place-less inquiry
+has no `place` key at all rather than an explicit null.
 
 **Indexes it relies on.** `stories_author_id_idx`, `story_versions_author_id_idx`,
-`comments_author_id_idx`, `bridges_author_id_idx`, `inquiries_author_id_idx`, and
+`comments_author_id_idx`, `inquiries_author_id_idx`, and
 `inquiry_answers_author_id_idx` narrow each branch to the author; the
 `ORDER BY (created_at DESC, id DESC)` is a sort over the merged rows, which is bounded by the
 per-author filters. Each branch's primary-key lookup for the join is an index scan.

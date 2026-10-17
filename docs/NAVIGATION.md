@@ -37,7 +37,6 @@ type Overlay =
   | { name: 'adapt'; storyId: string; parentVersionId: string }
   | { name: 'tree'; storyId: string }
   | { name: 'comments'; storyId: string; versionId: string }
-  | { name: 'bridge'; storyId: string; versionId: string; comment: Comment }
   | { name: 'rootedSetup' }
   | { name: 'placeStories'; place: string };
 ```
@@ -65,7 +64,7 @@ signing in**. Sign-out returns to Register.
 conversations and trees behind them — and see **Create** and the other write actions only once
 they are authenticated. The API already allows this: the reads
 (`GET /stories`, `GET /stories/{id}`, `GET /stories/{id}/tree`, `GET /versions/{id}`,
-`GET /versions/{id}/comments`, `GET /comments/{id}/bridges`, `GET /bridges/{id}`) are public,
+`GET /versions/{id}/comments`, `GET /comments/{id}`) are public,
 and only the writes require a bearer token. So the change is client-side, and it needs an
 approved task.
 
@@ -82,7 +81,6 @@ StoryDetail
  ├── AdaptStory ──▶ (on success) LanguageTree
  ├── LanguageTree
  └── CommentThread
-      └── Bridge ──▶ (on success / back) CommentThread
 ```
 
 - **Feed → StoryDetail** — tapping a story opens it.
@@ -94,9 +92,6 @@ StoryDetail
 - **StoryDetail → CommentThread** — "See conversation", on the story's **root version**.
 - **AdaptStory → LanguageTree** — a new adaptation is a new version, so the tree is where the
   person lands.
-- **CommentThread → Bridge** — "Bridge to another language" on a comment.
-- **Bridge → CommentThread** — a successful bridge (or cancelling) returns to the thread, which
-  reloads and shows the newly bridged comment.
 
 ## Modals and temporary screens
 

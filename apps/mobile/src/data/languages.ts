@@ -1,7 +1,7 @@
 /**
  * The canonical language list Knot accepts for user data.
  *
- * A user, story, version, comment, or bridge names its language with an ISO
+ * A user, story, version, or comment names its language with an ISO
  * 639-3 code — three lowercase letters, such as "eng" or "zul" — and the server
  * rejects anything that is not on this list (KNOT-ADR-046). The picker offers
  * exactly these entries, so a value the app can produce is a value the API

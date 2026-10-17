@@ -138,18 +138,13 @@ func (h *ReactionsHandler) ToggleVersion(w http.ResponseWriter, r *http.Request)
 // ToggleComment handles POST /comments/{id}/reactions.
 //
 // Reactions are not supported on comments (KNOT-ADR-053): the comment thread
-// already carries a replies link, Reply, and Bridge, and four more chips overload
-// it. The route stays registered so the answer is an explicit 400 rather than a
-// 404, which tells a client the operation is not supported instead of that the
-// route does not exist. The rejection happens before anything is written, and a
+// already carries a replies link and Reply, and four more chips overload it. The
+// route stays registered so the answer is an explicit 400 rather than a 404,
+// which tells a client the operation is not supported instead of that the route
+// does not exist. The rejection happens before anything is written, and a
 // comment's existing reaction rows are left untouched.
 func (h *ReactionsHandler) ToggleComment(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusBadRequest, codeValidation, "reactions are not supported on comments")
-}
-
-// ToggleBridge handles POST /bridges/{id}/reactions.
-func (h *ReactionsHandler) ToggleBridge(w http.ResponseWriter, r *http.Request) {
-	h.toggle(w, r, reactions.EntityBridge, h.bridgeAuthor)
 }
 
 // ToggleInquiry handles POST /inquiries/{id}/reactions.
@@ -176,17 +171,12 @@ func (h *ReactionsHandler) ListComment(w http.ResponseWriter, r *http.Request) {
 	h.list(w, r, reactions.EntityComment)
 }
 
-// ListBridge handles GET /bridges/{id}/reactions.
-func (h *ReactionsHandler) ListBridge(w http.ResponseWriter, r *http.Request) {
-	h.list(w, r, reactions.EntityBridge)
-}
-
 // ListInquiry handles GET /inquiries/{id}/reactions.
 func (h *ReactionsHandler) ListInquiry(w http.ResponseWriter, r *http.Request) {
 	h.list(w, r, reactions.EntityInquiry)
 }
 
-// toggle is the shared body of the four toggle routes.
+// toggle is the shared body of the toggle routes.
 func (h *ReactionsHandler) toggle(w http.ResponseWriter, r *http.Request, entityType reactions.EntityType, authorOf authorResolver) {
 	actorID, ok := UserIDFromContext(r.Context())
 	if !ok {
@@ -249,7 +239,7 @@ func (h *ReactionsHandler) toggle(w http.ResponseWriter, r *http.Request, entity
 	writeJSON(w, http.StatusOK, reactionCountsEnvelope{Reactions: newReactionCounts(summary)})
 }
 
-// list is the shared body of the four list routes.
+// list is the shared body of the list routes.
 //
 // An entity with no reactions — or an id that names nothing — returns an empty
 // array. The list route is a read of signals that exist, so an absent entity is
@@ -278,8 +268,8 @@ func (h *ReactionsHandler) list(w http.ResponseWriter, r *http.Request, entityTy
 	writeJSON(w, http.StatusOK, reactionListResponse{Reactions: out})
 }
 
-// storyAuthor, versionAuthor, and bridgeAuthor resolve an entity's author through
-// that entity's own service.
+// storyAuthor and versionAuthor resolve an entity's author through that entity's
+// own service.
 func (h *ReactionsHandler) storyAuthor(ctx context.Context, id string) (string, error) {
 	story, err := h.stories.GetStory(ctx, id)
 	if err != nil {
@@ -294,14 +284,6 @@ func (h *ReactionsHandler) versionAuthor(ctx context.Context, id string) (string
 		return "", err
 	}
 	return version.AuthorID, nil
-}
-
-func (h *ReactionsHandler) bridgeAuthor(ctx context.Context, id string) (string, error) {
-	bridge, err := h.conversations.GetBridge(ctx, id)
-	if err != nil {
-		return "", err
-	}
-	return bridge.AuthorID, nil
 }
 
 func (h *ReactionsHandler) inquiryAuthor(ctx context.Context, id string) (string, error) {
@@ -366,8 +348,6 @@ func notFoundMessage(entityType reactions.EntityType) string {
 		return "version not found"
 	case reactions.EntityComment:
 		return "comment not found"
-	case reactions.EntityBridge:
-		return "bridge not found"
 	case reactions.EntityInquiry:
 		return "inquiry not found"
 	default:

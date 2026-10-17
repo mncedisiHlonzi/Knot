@@ -52,13 +52,6 @@ const comment: Activity = {
   payload: { version_id: 'version-1', story_id: 'story-1', body_preview: 'Yes.' },
 };
 
-const bridge: Activity = {
-  kind: 'bridge',
-  id: 'bridge-1',
-  created_at: '2025-03-04T00:00:00Z',
-  payload: { source_comment_id: 'comment-1', version_id: 'version-1', target_language: 'zul' },
-};
-
 const inquiry: Activity = {
   kind: 'inquiry',
   id: 'inquiry-1',
@@ -81,7 +74,7 @@ const answer: Activity = {
   },
 };
 
-const wall: readonly Activity[] = [story, version, comment, bridge, inquiry, answer];
+const wall: readonly Activity[] = [story, version, comment, inquiry, answer];
 
 describe('profile tabs', () => {
   it('lists the three tabs in order, starting on stories', () => {
@@ -99,13 +92,12 @@ describe('filterActivities', () => {
     expect(filterActivities(wall, 'story')).toEqual([story]);
     expect(filterActivities(wall, 'version')).toEqual([version]);
     expect(filterActivities(wall, 'comment')).toEqual([comment]);
-    expect(filterActivities(wall, 'bridge')).toEqual([bridge]);
     expect(filterActivities(wall, 'inquiry')).toEqual([inquiry]);
     expect(filterActivities(wall, 'inquiry_answer')).toEqual([answer]);
   });
 
   it('returns an empty list when nothing matches', () => {
-    expect(filterActivities([story], 'bridge')).toEqual([]);
+    expect(filterActivities([story], 'comment')).toEqual([]);
   });
 
   it('shows only questions on the Inquiries tab, never the answers', () => {
@@ -295,7 +287,6 @@ describe('activityCard', () => {
 
   it('is undefined for a kind the wall does not show', () => {
     expect(activityCard(comment, 'now')).toBeUndefined();
-    expect(activityCard(bridge, 'now')).toBeUndefined();
     expect(activityCard(answer, 'now')).toBeUndefined();
   });
 });

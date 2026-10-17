@@ -39,18 +39,23 @@ work against. Both describe the same loop.
 4. **Build Understanding** — the conversation crosses the language boundary and comes
    back, leaving both sides knowing more than they did.
 
-### Internal loop — the canonical eight steps
+### Internal loop — the canonical six steps
 
 1. Create Story
 2. Discover
 3. Human Adaptation
 4. Language-specific Conversation
-5. Comment Bridging
-6. Cross-language Conversation
-7. Return to Original Language
-8. Deeper Understanding
+5. Return to Original Language
+6. Deeper Understanding
 
 This is the full canonical loop. The public-facing four-verb loop above is a simplification of the same journey, not a different process.
+
+**Comment Bridging and Cross-language Conversation were retired as first-class loop steps in
+KNOT-023** (KNOT-ADR-071). Hereditary attribution and the merged feed already make returning
+to the original language a property of the version's parent chain: a reader can follow an
+adaptation back to the telling it came from, and the conversation happens in the language it
+was written in. The retired steps were a second, competing mechanic rather than a missing
+one.
 
 Every feature Knot builds must strengthen this loop.
 

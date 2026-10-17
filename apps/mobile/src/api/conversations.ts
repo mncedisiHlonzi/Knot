@@ -1,14 +1,11 @@
 /**
- * The conversation endpoints of the Knot HTTP API: comments on a story version,
- * and the bridges that connect a comment in one language to a comment in
- * another.
+ * The conversation endpoints of the Knot HTTP API: comments on a story version.
  *
  * Everything here goes through the shared transport in `client.ts`, so error
  * handling is identical to the auth, story, and version endpoints: a failure is
  * always an `ApiError` carrying the server's machine-readable code.
  */
 import { request } from './client';
-import type { ReactionCounts } from './reactions';
 import type { AuthorRooted } from './rooted';
 
 /** One comment on a story version. */
@@ -31,8 +28,7 @@ export type Comment = {
    *
    * Threading is one level deep: a reply to a reply names the same top-level
    * comment its parent does, so a thread is always a top-level comment followed
-   * by its replies. A comment a bridge created never replies to anything, so a
-   * bridge target is always null here (KNOT-ADR-047).
+   * by its replies (KNOT-ADR-047).
    */
   readonly parent_comment_id: string | null;
   readonly created_at: string;
@@ -81,61 +77,6 @@ export type CommentListResponse = {
   readonly comments: readonly Comment[];
   /** The token that resumes the thread after this page, or "" at the end. */
   readonly next_cursor: string;
-};
-
-/** A bridge: a comment in one language joined to a comment in another. */
-export type Bridge = {
-  readonly id: string;
-  readonly source_comment_id: string;
-  readonly target_comment_id: string;
-  readonly author_id: string;
-  /**
-   * The bridger's display name and avatar path, attached by the server. The avatar
-   * is a relative path on the API, or null when the bridger has no avatar (the
-   * client then renders initials). Both are optional, because a response from an
-   * older server omits them (KNOT-015b-fix).
-   */
-  readonly author_display_name?: string;
-  readonly author_avatar_url?: string | null;
-  readonly target_language: string;
-  readonly adaptation_note: string | null;
-  readonly created_at: string;
-  /**
-   * The bridger's primary public Rooted signal, or null when they have none. The
-   * server attaches it to the bridge list, get, and create responses.
-   */
-  readonly author_rooted?: AuthorRooted | null;
-  /**
-   * The counts of each perspective signal on the bridge (KNOT-ADR-051). Optional
-   * because an older server omits it.
-   */
-  readonly reactions?: ReactionCounts;
-  /** The signals the signed-in reader holds, as reaction-type strings. */
-  readonly my_reactions?: readonly string[];
-};
-
-/** The request body for POST /comments/{id}/bridges. */
-export type CreateBridgePayload = {
-  readonly target_language: string;
-  readonly body: string;
-  readonly adaptation_note?: string;
-};
-
-/** The body returned by POST /comments/{id}/bridges. */
-export type CreateBridgeResponse = {
-  readonly bridge: Bridge;
-  readonly source_comment: Comment;
-  readonly target_comment: Comment;
-};
-
-/** The body returned by GET /comments/{id}/bridges. */
-export type BridgeListResponse = {
-  readonly bridges: readonly Bridge[];
-};
-
-/** The body returned by GET /bridges/{id}. */
-export type BridgeResponse = {
-  readonly bridge: Bridge;
 };
 
 /** Options for a comment page. */
@@ -207,34 +148,5 @@ export const conversationsApi = {
       method: 'GET',
       token,
     });
-  },
-
-  /**
-   * POST /comments/{id}/bridges — bridges a comment into another language,
-   * creating a new comment there. The bridger is taken from `token`.
-   */
-  createBridge(
-    commentId: string,
-    token: string,
-    payload: CreateBridgePayload,
-  ): Promise<CreateBridgeResponse> {
-    return request<CreateBridgeResponse>(`/comments/${encodeURIComponent(commentId)}/bridges`, {
-      method: 'POST',
-      body: payload,
-      token,
-    });
-  },
-
-  /** GET /comments/{id}/bridges — every bridge touching a comment. Public. */
-  listBridgesForComment(commentId: string, token?: string): Promise<BridgeListResponse> {
-    return request<BridgeListResponse>(`/comments/${encodeURIComponent(commentId)}/bridges`, {
-      method: 'GET',
-      token,
-    });
-  },
-
-  /** GET /bridges/{id} — reads one bridge. Public. */
-  getBridge(id: string, token?: string): Promise<BridgeResponse> {
-    return request<BridgeResponse>(`/bridges/${encodeURIComponent(id)}`, { method: 'GET', token });
   },
 };

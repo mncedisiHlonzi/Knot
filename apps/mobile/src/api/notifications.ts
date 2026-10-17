@@ -19,13 +19,12 @@ import type { AuthorRooted } from './rooted';
 export type NotificationEventType =
   | 'version.created'
   | 'comment.created'
-  | 'bridge.created'
   | 'reaction.created'
   | 'inquiry.answered'
   | 'inquiry.nearby';
 
 /** The kind of thing `entity_id` names. */
-export type NotificationEntityType = 'story' | 'version' | 'comment' | 'bridge' | 'inquiry';
+export type NotificationEntityType = 'story' | 'version' | 'comment' | 'inquiry';
 
 /** The user who acted, as the inbox renders them. */
 export type NotificationActor = {
@@ -43,7 +42,7 @@ export type Notification = {
   readonly event_type: NotificationEventType;
   readonly entity_type: NotificationEntityType;
   /**
-   * The id of the thing to open: a story, version, comment, bridge, or inquiry.
+   * The id of the thing to open: a story, version, comment, or inquiry.
    */
   readonly entity_id: string;
   /**

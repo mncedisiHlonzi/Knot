@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Image,
   Pressable,
@@ -42,6 +42,12 @@ type FeedEntryStory = {
   readonly preview_truncated?: boolean;
   readonly language: string;
   readonly place?: string | null;
+  /**
+   * Whether the story was flagged sensitive when it was told, inherited by every
+   * adaptation of it. A sensitive entry holds its media behind a scrim until the
+   * reader asks to see it (KNOT-023).
+   */
+  readonly sensitive?: boolean;
   readonly author_display_name?: string | null;
   readonly author_avatar_url?: string | null;
   readonly author_rooted?: { readonly place: string; readonly duration_bucket: string } | null;
@@ -123,6 +129,13 @@ const ATTRIBUTION_LINES = 2;
 /** The media-count badge's glyph size. */
 const COUNT_ICON_SIZE = 14;
 
+/**
+ * How far the image is blurred while sensitive content is hidden. The value is
+ * deliberately large enough that the picture reads as a shape rather than as
+ * content, so the flag is meaningful on a phone screen (KNOT-023).
+ */
+const SENSITIVE_BLUR_RADIUS = 18;
+
 /** A no-op for the mute control when a caller renders an entry without wiring one. */
 const NOOP = (): void => undefined;
 
@@ -187,6 +200,12 @@ export default function FeedEntry({
   const mediaUrl = resolveMediaUrl(story.first_media_url);
   const isVideo = story.first_media_type === 'video';
   const mediaCount = story.media_count ?? 0;
+  // The reveal is per-card and session-only: leaving the feed and coming back
+  // remounts the card, so sensitive media is hidden again (KNOT-023).
+  const [sensitiveRevealed, setSensitiveRevealed] = useState(false);
+  const sensitive = story.sensitive === true;
+  const sensitiveHidden = sensitive && !sensitiveRevealed;
+  const toggleSensitive = (): void => setSensitiveRevealed((current) => !current);
   const { aspectRatio, onLoadSize } = useMediaAspectRatio(
     story.first_media_width,
     story.first_media_height,
@@ -243,12 +262,15 @@ export default function FeedEntry({
           onPress={onOpenAuthor}
         />
 
-        {/* An adaptation is labelled by its version and language where a story is
-            labelled by its pillar and place: the pillar is the story's, inherited,
-            so repeating it here would say nothing about this entry (KNOT-022). */}
+        {/* An adaptation is labelled by its inherited pillar, its version, and its
+            language: the pillar frames the story the adaptation belongs to, and
+            the version badge says which telling this is (KNOT-022, KNOT-023). */}
         {isVersion ? (
-          <View style={styles.tagRow}>
-            <Text style={[typeScale.overline, styles.versionBadge]}>{versionBadge}</Text>
+          <View style={[styles.tagRow, styles.versionRow]}>
+            <PillarTag pillar={story.pillar} variant="plain" />
+            <Text testID="version-badge" style={[typeScale.overline, styles.versionBadge]}>
+              {versionBadge}
+            </Text>
           </View>
         ) : (
           <View style={styles.tagRow}>
@@ -262,7 +284,7 @@ export default function FeedEntry({
             version is called, and the line under it says whose story it adapts. It
             is rendered verbatim, because the server owns the wording (KNOT-021). */}
         {isVersion && attributionLine !== undefined && attributionLine !== '' ? (
-          <Text style={[typeScale.caption, styles.attribution]} numberOfLines={ATTRIBUTION_LINES}>
+          <Text style={[typeScale.bodyS, styles.attribution]} numberOfLines={ATTRIBUTION_LINES}>
             {attributionLine}
           </Text>
         ) : null}
@@ -303,10 +325,46 @@ export default function FeedEntry({
               source={{ uri: mediaUrl }}
               style={styles.media}
               resizeMode="cover"
+              blurRadius={sensitiveHidden ? SENSITIVE_BLUR_RADIUS : 0}
               onLoad={handleImageLoad}
               accessibilityIgnoresInvertColors
             />
           )}
+
+          {/* A video frame cannot be blurred in place, so the same scrim covers
+              the player and hides its chrome until the reader asks for it
+              (KNOT-023). */}
+          {sensitiveHidden ? (
+            <Pressable
+              style={styles.sensitiveOverlay}
+              onPress={toggleSensitive}
+              accessibilityRole="button"
+              accessibilityLabel="Show sensitive content"
+              testID="sensitive-overlay"
+            >
+              <Text style={[typeScale.caption, styles.sensitiveOverlayText]}>
+                Sensitive content — tap to reveal
+              </Text>
+            </Pressable>
+          ) : null}
+
+          {/* The badge is both the flag and the control: tapping it hides the
+              media again, so the reveal toggles without covering a video's
+              controls (KNOT-023). */}
+          {sensitive ? (
+            <Pressable
+              style={styles.sensitiveBadge}
+              onPress={toggleSensitive}
+              hitSlop={spacing.sm}
+              accessibilityRole="button"
+              accessibilityLabel={
+                sensitiveHidden ? 'Sensitive content, hidden' : 'Sensitive content, shown'
+              }
+              testID="sensitive-badge"
+            >
+              <Text style={[typeScale.caption, styles.sensitiveBadgeText]}>Sensitive</Text>
+            </Pressable>
+          ) : null}
 
           {mediaCount > 1 ? (
             <View
@@ -407,8 +465,48 @@ const styles = StyleSheet.create({
   versionBadge: {
     color: colors.brand.primary,
   },
+  // The pillar and the version badge sit side by side, so an adaptation reads as
+  // "Wonder · Version 2 · Zulu" without the two labels competing (KNOT-023).
+  versionRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+  },
   tagRow: {
     marginTop: spacing.md,
+  },
+  // The sensitive flag, drawn over the media's bottom-left corner so it never
+  // collides with the media-count badge or a video's mute control (KNOT-023).
+  sensitiveBadge: {
+    backgroundColor: colors.scrim.overlay,
+    borderRadius: radius.sm,
+    bottom: spacing.sm,
+    left: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 2,
+    position: 'absolute',
+  },
+  sensitiveBadgeText: {
+    color: colors.text.onBrand,
+  },
+  // The scrim that holds sensitive media until it is revealed. It is opaque
+  // enough to read as a cover rather than a tint, and the centred line says what
+  // to do about it (KNOT-023).
+  sensitiveOverlay: {
+    alignItems: 'center',
+    backgroundColor: colors.scrim.overlay,
+    bottom: 0,
+    justifyContent: 'center',
+    left: 0,
+    paddingHorizontal: spacing.lg,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  sensitiveOverlayText: {
+    color: colors.text.onBrand,
+    textAlign: 'center',
   },
   title: {
     color: colors.text.primary,

@@ -27,10 +27,6 @@ type (
 	commentGetter interface {
 		GetComment(ctx context.Context, id string) (conversations.Comment, error)
 	}
-	// bridgeGetter resolves a bridge by id.
-	bridgeGetter interface {
-		GetBridge(ctx context.Context, id string) (conversations.Bridge, error)
-	}
 	// inquiryGetter resolves an inquiry by id.
 	inquiryGetter interface {
 		GetInquiry(ctx context.Context, id string) (inquiries.Inquiry, error)
@@ -42,28 +38,26 @@ type (
 )
 
 // EntityExistence is the moderation.EntityLookup implementation. It resolves any
-// of the six reportable kinds through that kind's own domain service, so the
+// of the five reportable kinds through that kind's own domain service, so the
 // moderation package never imports a content domain (KNOT-ADR-040 pattern).
 type EntityExistence struct {
 	stories       storyGetter
 	versions      versionGetter
 	conversations commentGetter
-	bridges       bridgeGetter
 	inquiries     inquiryGetter
 	answers       answerGetter
 }
 
-// NewEntityExistence wires the six content services into an existence lookup.
-func NewEntityExistence(storiesService storyGetter, versionsService versionGetter, conversationsService commentGetter, bridgeService bridgeGetter, inquiriesService inquiryGetter, answerService answerGetter) (*EntityExistence, error) {
+// NewEntityExistence wires the five content services into an existence lookup.
+func NewEntityExistence(storiesService storyGetter, versionsService versionGetter, conversationsService commentGetter, inquiriesService inquiryGetter, answerService answerGetter) (*EntityExistence, error) {
 	if storiesService == nil || versionsService == nil || conversationsService == nil ||
-		bridgeService == nil || inquiriesService == nil || answerService == nil {
-		return nil, fmt.Errorf("httpapi: entity existence requires all six content services")
+		inquiriesService == nil || answerService == nil {
+		return nil, fmt.Errorf("httpapi: entity existence requires all five content services")
 	}
 	return &EntityExistence{
 		stories:       storiesService,
 		versions:      versionsService,
 		conversations: conversationsService,
-		bridges:       bridgeService,
 		inquiries:     inquiriesService,
 		answers:       answerService,
 	}, nil
@@ -82,9 +76,6 @@ func (e *EntityExistence) EntityExists(ctx context.Context, entityType moderatio
 		return existsFromError(err)
 	case moderation.EntityComment:
 		_, err := e.conversations.GetComment(ctx, entityID)
-		return existsFromError(err)
-	case moderation.EntityBridge:
-		_, err := e.bridges.GetBridge(ctx, entityID)
 		return existsFromError(err)
 	case moderation.EntityInquiry:
 		_, err := e.inquiries.GetInquiry(ctx, entityID)

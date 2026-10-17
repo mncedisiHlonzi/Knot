@@ -1,6 +1,6 @@
 /**
  * The reaction endpoints of the Knot HTTP API: the four perspective signals a
- * reader can leave on a story, a version, a comment, or a bridge.
+ * reader can leave on a story, a version, a comment, or an inquiry.
  *
  * A reaction is a perspective signal, not a like (KNOT-ADR-050). The four signals
  * do not compete: a reader may hold any combination of them on the same entity,
@@ -13,7 +13,7 @@
 import { request } from './client';
 
 /** The kinds of content a reaction can target. */
-export type ReactionEntityType = 'story' | 'version' | 'comment' | 'bridge' | 'inquiry';
+export type ReactionEntityType = 'story' | 'version' | 'comment' | 'inquiry';
 
 /** The four perspective signals. The set is closed: the server's schema refuses anything else. */
 export type ReactionType =
@@ -96,7 +96,6 @@ const ENTITY_PATH: Readonly<Record<ReactionEntityType, string>> = {
   story: 'stories',
   version: 'versions',
   comment: 'comments',
-  bridge: 'bridges',
   inquiry: 'inquiries',
 };
 

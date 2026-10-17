@@ -44,7 +44,7 @@ func (c Category) Valid() bool {
 // with 'inquiry_answer' because every answer is separately reportable.
 type EntityType string
 
-// The six reportable entity kinds.
+// The five reportable entity kinds.
 const (
 	// EntityStory is a story.
 	EntityStory EntityType = "story"
@@ -52,18 +52,16 @@ const (
 	EntityVersion EntityType = "version"
 	// EntityComment is a comment.
 	EntityComment EntityType = "comment"
-	// EntityBridge is a bridge.
-	EntityBridge EntityType = "bridge"
 	// EntityInquiry is a question about a place.
 	EntityInquiry EntityType = "inquiry"
 	// EntityInquiryAnswer is one answer to an inquiry.
 	EntityInquiryAnswer EntityType = "inquiry_answer"
 )
 
-// Valid reports whether t is one of the six reportable entity kinds.
+// Valid reports whether t is one of the five reportable entity kinds.
 func (t EntityType) Valid() bool {
 	switch t {
-	case EntityStory, EntityVersion, EntityComment, EntityBridge, EntityInquiry, EntityInquiryAnswer:
+	case EntityStory, EntityVersion, EntityComment, EntityInquiry, EntityInquiryAnswer:
 		return true
 	default:
 		return false
@@ -169,7 +167,7 @@ func (s *ReportService) CreateReport(ctx context.Context, in CreateReportInput) 
 		return Report{}, &ValidationError{Field: "reporter", Message: "must be a valid user id"}
 	}
 	if !in.EntityType.Valid() {
-		return Report{}, &ValidationError{Field: "entity_type", Message: "must be one of story, version, comment, bridge, inquiry, inquiry_answer"}
+		return Report{}, &ValidationError{Field: "entity_type", Message: "must be one of story, version, comment, inquiry, inquiry_answer"}
 	}
 	if !isUUID(in.EntityID) {
 		return Report{}, &ValidationError{Field: "entity_id", Message: "must be a valid entity id"}

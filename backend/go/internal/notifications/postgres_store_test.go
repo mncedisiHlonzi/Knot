@@ -190,6 +190,53 @@ func TestPostgresStoreCreateRejectsUnknownEventType(t *testing.T) {
 	}
 }
 
+// TestPostgresStoreHidesRetiredBridgeEvents proves the inbox no longer surfaces
+// bridge.created rows (KNOT-ADR-071) even though the event type is still allowed
+// by the schema and historical rows remain in the table.
+func TestPostgresStoreHidesRetiredBridgeEvents(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	// Write the retired event directly: the domain no longer has a value for it,
+	// which is exactly the situation a pre-KNOT-023 row is in.
+	var retiredID string
+	if err := env.pool.QueryRow(
+		ctx,
+		`INSERT INTO notifications (user_id, actor_id, event_type, entity_type, entity_id)
+		 VALUES ($1, $2, 'bridge.created', 'bridge', $3)
+		 RETURNING id`,
+		env.recipient,
+		env.actors[0],
+		env.actors[1],
+	).Scan(&retiredID); err != nil {
+		t.Fatalf("could not insert the retired notification: %v", err)
+	}
+
+	visible := createNotification(t, env, env.actors[2])
+
+	page, _, err := env.store.List(ctx, env.recipient, nil, 10)
+	if err != nil {
+		t.Fatalf("List() error = %v, want nil", err)
+	}
+	if len(page) != 1 || page[0].ID != visible.ID {
+		t.Fatalf("page = %+v, want exactly the non-retired notification %s", page, visible.ID)
+	}
+	for _, notification := range page {
+		if notification.EventType == retiredEventType || notification.ID == retiredID {
+			t.Errorf("retired notification %s is visible in the inbox, want it hidden", notification.ID)
+		}
+	}
+
+	// The badge agrees with the list.
+	count, err := env.store.UnreadCount(ctx, env.recipient)
+	if err != nil {
+		t.Fatalf("UnreadCount() error = %v, want nil", err)
+	}
+	if count != 1 {
+		t.Errorf("unread count = %d, want 1 — the retired notification must not be counted", count)
+	}
+}
+
 func TestPostgresStoreListReturnsNewestFirst(t *testing.T) {
 	env := integrationSetup(t)
 

@@ -102,46 +102,6 @@ func TestPostgresStoreBlockFilterHidesCommentsAndReplies(t *testing.T) {
 	}
 }
 
-// TestPostgresStoreBlockFilterHidesBridges proves a blocked author's bridge is
-// absent from a comment's bridge list, and present with no block set.
-func TestPostgresStoreBlockFilterHidesBridges(t *testing.T) {
-	env := integrationSetup(t)
-	ctx := context.Background()
-
-	_, sourceVersion := newIntegrationStory(t, env, "bridge-source")
-	_, targetVersion := newIntegrationStory(t, env, "bridge-target")
-	blocked := createFilterUser(t, env)
-
-	source := insertFilterComment(t, env, sourceVersion, env.author, "source", nil)
-
-	bridge, _, err := env.store.CreateBridge(
-		ctx,
-		Comment{VersionID: targetVersion, AuthorID: blocked, Language: "zul", Body: "bridged"},
-		source.ID,
-		"",
-	)
-	if err != nil {
-		t.Fatalf("CreateBridge() error = %v, want nil", err)
-	}
-
-	filtered := moderation.WithExcludedAuthors(ctx, []string{blocked})
-	hidden, err := env.store.ListBridgesForComment(filtered, source.ID)
-	if err != nil {
-		t.Fatalf("ListBridgesForComment() error = %v, want nil", err)
-	}
-	if len(hidden) != 0 {
-		t.Errorf("blocked author's bridge is visible: %+v", hidden)
-	}
-
-	all, err := env.store.ListBridgesForComment(ctx, source.ID)
-	if err != nil {
-		t.Fatalf("ListBridgesForComment() error = %v, want nil", err)
-	}
-	if len(all) != 1 || all[0].ID != bridge.ID {
-		t.Errorf("unfiltered bridges = %+v, want the one bridge %s", all, bridge.ID)
-	}
-}
-
 // TestGetCommentBlockedAuthorIsNotFound proves a blocked author's comment is
 // reported as not found on the detail route (KNOT-ADR-064).
 func TestGetCommentBlockedAuthorIsNotFound(t *testing.T) {

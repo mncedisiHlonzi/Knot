@@ -13,7 +13,6 @@ func TestEventTypeEntityType(t *testing.T) {
 	}{
 		{EventVersionCreated, EntityVersion},
 		{EventCommentCreated, EntityComment},
-		{EventBridgeCreated, EntityBridge},
 	}
 
 	for _, test := range tests {
@@ -47,7 +46,6 @@ func TestEventTypeValid(t *testing.T) {
 	for _, event := range []EventType{
 		EventVersionCreated,
 		EventCommentCreated,
-		EventBridgeCreated,
 		EventReactionCreated,
 		EventInquiryAnswered,
 		EventInquiryNearby,
@@ -73,11 +71,10 @@ func TestEventTypeAcceptsEntityType(t *testing.T) {
 	}{
 		{EventVersionCreated, EntityVersion},
 		{EventCommentCreated, EntityComment},
-		{EventBridgeCreated, EntityBridge},
 		{EventInquiryAnswered, EntityInquiry},
 		{EventInquiryNearby, EntityInquiry},
 	}
-	allEntities := []EntityType{EntityStory, EntityVersion, EntityComment, EntityBridge, EntityInquiry}
+	allEntities := []EntityType{EntityStory, EntityVersion, EntityComment, EntityInquiry}
 
 	for _, test := range tests {
 		if !test.event.acceptsEntityType(test.entity) {
@@ -134,13 +131,13 @@ func TestValidateCreateReactionType(t *testing.T) {
 }
 
 func TestEntityTypeValid(t *testing.T) {
-	for _, entity := range []EntityType{EntityStory, EntityVersion, EntityComment, EntityBridge, EntityInquiry} {
+	for _, entity := range []EntityType{EntityStory, EntityVersion, EntityComment, EntityInquiry} {
 		if !entity.Valid() {
 			t.Errorf("%q.Valid() = false, want true", entity)
 		}
 	}
 
-	for _, entity := range []EntityType{"", "user", "STORY", "inquiry_answer"} {
+	for _, entity := range []EntityType{"", "user", "STORY", "bridge", "inquiry_answer"} {
 		if entity.Valid() {
 			t.Errorf("%q.Valid() = true, want false", entity)
 		}

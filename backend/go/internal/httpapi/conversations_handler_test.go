@@ -19,11 +19,10 @@ import (
 // the service's UUID validation accepts them.
 const (
 	testVersionID       = "44444444-4444-4444-8444-444444444444"
-	testFrenchVersionID = "44444444-4444-4444-8444-444444444445"
+	testOtherVersionID  = "44444444-4444-4444-8444-444444444445"
 	testSourceCommentID = "66666666-6666-4666-8666-666666666666"
 	testReplyCommentID  = "66666666-6666-4666-8666-666666666667"
 	testTargetCommentID = "88888888-8888-4888-8888-888888888888"
-	testBridgeID        = "77777777-7777-4777-8777-777777777777"
 )
 
 // fakeConversationsService returns canned values, so the failure paths a real
@@ -38,17 +37,6 @@ type fakeConversationsService struct {
 
 	getCommentResult conversations.Comment
 	getCommentErr    error
-
-	createBridgeBridge conversations.Bridge
-	createBridgeSource conversations.Comment
-	createBridgeTarget conversations.Comment
-	createBridgeErr    error
-
-	getBridgeResult conversations.Bridge
-	getBridgeErr    error
-
-	listBridgesResult []conversations.Bridge
-	listBridgesErr    error
 }
 
 func (f *fakeConversationsService) CreateComment(_ context.Context, _ conversations.CreateCommentInput) (conversations.Comment, error) {
@@ -63,39 +51,23 @@ func (f *fakeConversationsService) ListComments(_ context.Context, _ string, _ s
 	return f.listCommentsResult, f.listCommentsNext, f.listCommentsErr
 }
 
-func (f *fakeConversationsService) CreateBridge(_ context.Context, _ conversations.CreateBridgeInput) (conversations.Bridge, conversations.Comment, conversations.Comment, error) {
-	return f.createBridgeBridge, f.createBridgeSource, f.createBridgeTarget, f.createBridgeErr
-}
-
-func (f *fakeConversationsService) GetBridge(_ context.Context, _ string) (conversations.Bridge, error) {
-	return f.getBridgeResult, f.getBridgeErr
-}
-
-func (f *fakeConversationsService) ListBridgesForComment(_ context.Context, _ string) ([]conversations.Bridge, error) {
-	return f.listBridgesResult, f.listBridgesErr
-}
-
 // memoryVersion is what the in-memory store knows about a story version: the
-// story it belongs to and the language it is written in. It is what resolving a
-// bridge's target version needs.
+// story it belongs to, so GET /comments/{id} can name it.
 type memoryVersion struct {
-	storyID  string
-	language string
+	storyID string
 }
 
-// memoryConversationsStore is an in-memory conversations.CommentStore and
-// conversations.BridgeStore. The handler tests run the real conversations
-// service over it rather than a stub service, so the tests cover the actual
-// validation, the same-language rule, and target-version resolution while
+// memoryConversationsStore is an in-memory conversations.CommentStore. The
+// handler tests run the real conversations service over it rather than a stub
+// service, so the tests cover the actual validation and threading rules while
 // staying free of a database.
 type memoryConversationsStore struct {
 	comments []conversations.Comment
-	bridges  []conversations.Bridge
 	// versions is the set of version ids that exist, so comment creation and
 	// listing can report "no such version" the way PostgresStore does.
 	versions map[string]bool
-	// versionMeta describes each seeded version enough to resolve a target
-	// version. seedComment registers its comment's version with testStoryID.
+	// versionMeta names the story each seeded version belongs to. seedComment
+	// registers its comment's version with testStoryID.
 	versionMeta map[string]memoryVersion
 	// versionAuthors is the author of each seeded version, so the conversations
 	// service can tell a version's author that someone commented on it.
@@ -113,18 +85,18 @@ func newMemoryConversationsStore() *memoryConversationsStore {
 	}
 }
 
-// seedVersion registers a story version, so a bridge into its language can be
-// resolved. It also marks the version as existing for comment operations.
-func (m *memoryConversationsStore) seedVersion(versionID, storyID, language string) {
+// seedVersion registers a story version, so a comment on it resolves to its
+// story.
+func (m *memoryConversationsStore) seedVersion(versionID, storyID string) {
 	m.versions[versionID] = true
-	m.versionMeta[versionID] = memoryVersion{storyID: storyID, language: language}
+	m.versionMeta[versionID] = memoryVersion{storyID: storyID}
 }
 
 // seedComment inserts a comment directly, as earlier requests would have left
-// it, and registers its version on testStoryID so bridging it can be resolved.
+// it, and registers its version on testStoryID.
 func (m *memoryConversationsStore) seedComment(comment conversations.Comment) {
 	m.comments = append(m.comments, comment)
-	m.seedVersion(comment.VersionID, testStoryID, comment.Language)
+	m.seedVersion(comment.VersionID, testStoryID)
 }
 
 // seedVersionAuthor records who authored a seeded version. A version with no
@@ -257,93 +229,6 @@ func beforeCommentCursor(comment conversations.Comment, cursor conversations.Cur
 	return comment.ID < cursor.ID()
 }
 
-func (m *memoryConversationsStore) CreateBridge(_ context.Context, target conversations.Comment, sourceCommentID, adaptationNote string) (conversations.Bridge, conversations.Comment, error) {
-	if m.err != nil {
-		return conversations.Bridge{}, conversations.Comment{}, m.err
-	}
-	for _, bridge := range m.bridges {
-		if bridge.SourceCommentID == sourceCommentID && bridge.TargetLanguage == target.Language {
-			return conversations.Bridge{}, conversations.Comment{}, conversations.ErrAlreadyBridged
-		}
-	}
-
-	createdTarget := target
-	createdTarget.ID = fmt.Sprintf("00000000-0000-4000-c000-%012d", len(m.comments)+1)
-	createdTarget.CreatedAt = testNow.Add(time.Duration(len(m.comments)) * time.Second)
-	createdTarget.UpdatedAt = createdTarget.CreatedAt
-	m.comments = append(m.comments, createdTarget)
-
-	bridge := conversations.Bridge{
-		ID:              fmt.Sprintf("00000000-0000-4000-b000-%012d", len(m.bridges)+1),
-		SourceCommentID: sourceCommentID,
-		TargetCommentID: createdTarget.ID,
-		AuthorID:        target.AuthorID,
-		TargetLanguage:  target.Language,
-		AdaptationNote:  adaptationNote,
-		CreatedAt:       createdTarget.CreatedAt,
-	}
-	m.bridges = append(m.bridges, bridge)
-
-	return bridge, createdTarget, nil
-}
-
-func (m *memoryConversationsStore) GetBridge(_ context.Context, id string) (conversations.Bridge, error) {
-	for _, bridge := range m.bridges {
-		if bridge.ID == id {
-			return bridge, nil
-		}
-	}
-	return conversations.Bridge{}, conversations.ErrNotFound
-}
-
-func (m *memoryConversationsStore) ListBridgesForComment(_ context.Context, commentID string) ([]conversations.Bridge, error) {
-	found := false
-	for _, comment := range m.comments {
-		if comment.ID == commentID {
-			found = true
-			break
-		}
-	}
-	if !found {
-		return nil, conversations.ErrNotFound
-	}
-
-	out := make([]conversations.Bridge, 0)
-	for _, bridge := range m.bridges {
-		if bridge.SourceCommentID == commentID || bridge.TargetCommentID == commentID {
-			out = append(out, bridge)
-		}
-	}
-	return out, nil
-}
-
-func (m *memoryConversationsStore) ListBridgesForStory(_ context.Context, _ string) ([]conversations.Bridge, error) {
-	return []conversations.Bridge{}, nil
-}
-
-// FindTargetVersion returns the version of the source version's story written in
-// targetLanguage. When several match, the smallest id is returned, mirroring the
-// SQL store's deterministic ORDER BY closely enough for the handler tests.
-func (m *memoryConversationsStore) FindTargetVersion(_ context.Context, sourceVersionID, targetLanguage string) (string, error) {
-	source, ok := m.versionMeta[sourceVersionID]
-	if !ok {
-		return "", conversations.ErrNotFound
-	}
-
-	matches := make([]string, 0)
-	for versionID, version := range m.versionMeta {
-		if version.storyID == source.storyID && version.language == targetLanguage {
-			matches = append(matches, versionID)
-		}
-	}
-	if len(matches) == 0 {
-		return "", conversations.ErrNotFound
-	}
-
-	sort.Strings(matches)
-	return matches[0], nil
-}
-
 // newConversationsHandler returns the composed router with the real
 // conversations service over store.
 func newConversationsHandler(t *testing.T, store *memoryConversationsStore) http.Handler {
@@ -351,7 +236,7 @@ func newConversationsHandler(t *testing.T, store *memoryConversationsStore) http
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	service, err := conversations.NewService(store, store, &fakeNotifier{})
+	service, err := conversations.NewService(store, &fakeNotifier{})
 	if err != nil {
 		t.Fatalf("conversations.NewService() error = %v, want nil", err)
 	}
@@ -427,15 +312,6 @@ func englishComment() conversations.Comment {
 // validCommentBody is a request body that passes every comment validation rule.
 func validCommentBody() string {
 	return `{"body":"The first rain remembers every name.","language":"eng"}`
-}
-
-// validBridgeBody is a request body that passes every bridge validation rule.
-func validBridgeBody() string {
-	return `{
-		"target_language": "fra",
-		"body": "La première pluie se souvient de chaque nom.",
-		"adaptation_note": "Rendered for French-speaking listeners."
-	}`
 }
 
 func TestCreateCommentRequiresAuthentication(t *testing.T) {
@@ -731,7 +607,7 @@ func TestCreateCommentReplyRejectsAParentOnAnotherVersion(t *testing.T) {
 
 	elsewhere := englishComment()
 	elsewhere.ID = testTargetCommentID
-	elsewhere.VersionID = testFrenchVersionID
+	elsewhere.VersionID = testOtherVersionID
 	store.seedComment(elsewhere)
 	handler := newConversationsHandler(t, store)
 
@@ -887,309 +763,6 @@ func TestListCommentsUnexpectedFailureIsInternalError(t *testing.T) {
 	}
 }
 
-func TestCreateBridgeRequiresAuthentication(t *testing.T) {
-	store := newMemoryConversationsStore()
-	store.seedComment(englishComment())
-	handler := newConversationsHandler(t, store)
-
-	recorder := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges", validBridgeBody(), "")
-
-	if recorder.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
-	}
-	if code := decodedErrorCode(t, recorder); code != codeUnauthorized {
-		t.Errorf("error code = %q, want %q", code, codeUnauthorized)
-	}
-	if len(store.bridges) != 0 {
-		t.Errorf("store has %d bridges, want 0 — an unauthenticated request must not bridge", len(store.bridges))
-	}
-}
-
-func TestCreateBridgeHappyPath(t *testing.T) {
-	store := newMemoryConversationsStore()
-	store.seedComment(englishComment())
-	store.seedVersion(testFrenchVersionID, testStoryID, "fra")
-	handler := newConversationsHandler(t, store)
-
-	recorder := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges", validBridgeBody(), testAccessToken)
-
-	if recorder.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusCreated, recorder.Body.String())
-	}
-
-	var body createBridgeResponse
-	decodeBody(t, recorder, &body)
-
-	if body.Bridge.ID == "" {
-		t.Error("bridge id is empty, want the stored id")
-	}
-	if body.Bridge.AuthorID != testUserID {
-		t.Errorf("bridge author id = %q, want the authenticated user %q", body.Bridge.AuthorID, testUserID)
-	}
-	if body.Bridge.SourceCommentID != testSourceCommentID {
-		t.Errorf("bridge source id = %q, want %q", body.Bridge.SourceCommentID, testSourceCommentID)
-	}
-	if body.Bridge.TargetLanguage != "fra" {
-		t.Errorf("target language = %q, want %q", body.Bridge.TargetLanguage, "fra")
-	}
-	if body.Bridge.AdaptationNote == nil {
-		t.Error("adaptation note = null, want the submitted note")
-	}
-	if body.SourceComment.ID != testSourceCommentID {
-		t.Errorf("source comment id = %q, want %q", body.SourceComment.ID, testSourceCommentID)
-	}
-	if body.TargetComment.ID == "" {
-		t.Error("target comment id is empty, want the created comment")
-	}
-	if body.TargetComment.VersionID != testFrenchVersionID {
-		t.Errorf("target version id = %q, want the resolved French version %q", body.TargetComment.VersionID, testFrenchVersionID)
-	}
-}
-
-func TestCreateBridgeSameLanguageIsBadRequest(t *testing.T) {
-	store := newMemoryConversationsStore()
-	store.seedComment(englishComment()) // language "eng"
-	handler := newConversationsHandler(t, store)
-
-	body := `{"target_language":"eng","body":"Same language"}`
-	recorder := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges", body, testAccessToken)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusBadRequest, recorder.Body.String())
-	}
-	if code := decodedErrorCode(t, recorder); code != codeValidation {
-		t.Errorf("error code = %q, want %q", code, codeValidation)
-	}
-	if len(store.bridges) != 0 {
-		t.Errorf("store has %d bridges, want 0 — a same-language bridge must not be stored", len(store.bridges))
-	}
-}
-
-func TestCreateBridgeAlreadyBridgedIsBadRequest(t *testing.T) {
-	store := newMemoryConversationsStore()
-	store.seedComment(englishComment())
-	store.seedVersion(testFrenchVersionID, testStoryID, "fra")
-	handler := newConversationsHandler(t, store)
-
-	if recorder := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges", validBridgeBody(), testAccessToken); recorder.Code != http.StatusCreated {
-		t.Fatalf("first bridge status = %d, want %d", recorder.Code, http.StatusCreated)
-	}
-
-	recorder := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges", validBridgeBody(), testAccessToken)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusBadRequest, recorder.Body.String())
-	}
-	if code := decodedErrorCode(t, recorder); code != codeValidation {
-		t.Errorf("error code = %q, want %q", code, codeValidation)
-	}
-}
-
-func TestCreateBridgeMissingTargetVersionIsBadRequest(t *testing.T) {
-	// The story has only its English version, so there is no French conversation
-	// to bridge into.
-	store := newMemoryConversationsStore()
-	store.seedComment(englishComment())
-	handler := newConversationsHandler(t, store)
-
-	recorder := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges", validBridgeBody(), testAccessToken)
-
-	if recorder.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusBadRequest, recorder.Body.String())
-	}
-	if code := decodedErrorCode(t, recorder); code != codeValidation {
-		t.Errorf("error code = %q, want %q", code, codeValidation)
-	}
-	if len(store.bridges) != 0 {
-		t.Errorf("store has %d bridges, want 0 — a bridge with no target version must not be stored", len(store.bridges))
-	}
-}
-
-func TestCreateBridgeSourceNotFound(t *testing.T) {
-	// A well-formed source id that names no comment is a 404.
-	handler := newConversationsHandler(t, newMemoryConversationsStore())
-
-	recorder := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges", validBridgeBody(), testAccessToken)
-
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusNotFound, recorder.Body.String())
-	}
-	if code := decodedErrorCode(t, recorder); code != codeNotFound {
-		t.Errorf("error code = %q, want %q", code, codeNotFound)
-	}
-}
-
-func TestCreateBridgeValidationIsBadRequest(t *testing.T) {
-	store := newMemoryConversationsStore()
-	store.seedComment(englishComment())
-	store.seedVersion(testFrenchVersionID, testStoryID, "fra")
-	handler := newConversationsHandler(t, store)
-
-	tests := []struct {
-		name string
-		body string
-	}{
-		{name: "missing target language", body: `{"body":"B"}`},
-		{name: "bad target language", body: `{"target_language":"f","body":"B"}`},
-		{name: "two letter target language", body: `{"target_language":"fr","body":"B"}`},
-		{name: "empty body", body: `{"target_language":"fra","body":"  "}`},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			recorder := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges", test.body, testAccessToken)
-
-			if recorder.Code != http.StatusBadRequest {
-				t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
-			}
-			if code := decodedErrorCode(t, recorder); code != codeValidation {
-				t.Errorf("error code = %q, want %q", code, codeValidation)
-			}
-		})
-	}
-}
-
-func TestCreateBridgeUnexpectedFailureIsInternalError(t *testing.T) {
-	handler := newConversationsHandlerWithService(t, &fakeConversationsService{createBridgeErr: errors.New("connection reset")})
-
-	recorder := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges", validBridgeBody(), testAccessToken)
-
-	if recorder.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusInternalServerError)
-	}
-	if code := decodedErrorCode(t, recorder); code != codeInternal {
-		t.Errorf("error code = %q, want %q", code, codeInternal)
-	}
-}
-
-func TestListBridgesHappyPath(t *testing.T) {
-	store := newMemoryConversationsStore()
-	store.seedComment(englishComment())
-	store.seedVersion(testFrenchVersionID, testStoryID, "fra")
-	handler := newConversationsHandler(t, store)
-
-	if recorder := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges", validBridgeBody(), testAccessToken); recorder.Code != http.StatusCreated {
-		t.Fatalf("seed bridge status = %d, want %d", recorder.Code, http.StatusCreated)
-	}
-
-	recorder := doStoryRequest(handler, http.MethodGet, "/comments/"+testSourceCommentID+"/bridges", "", "")
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-
-	var body bridgeListResponse
-	decodeBody(t, recorder, &body)
-
-	if len(body.Bridges) != 1 {
-		t.Fatalf("len(bridges) = %d, want 1", len(body.Bridges))
-	}
-	if body.Bridges[0].SourceCommentID != testSourceCommentID {
-		t.Errorf("source id = %q, want %q", body.Bridges[0].SourceCommentID, testSourceCommentID)
-	}
-}
-
-func TestListBridgesEmptyIsAnEmptyArray(t *testing.T) {
-	store := newMemoryConversationsStore()
-	store.seedComment(englishComment())
-	handler := newConversationsHandler(t, store)
-
-	recorder := doStoryRequest(handler, http.MethodGet, "/comments/"+testSourceCommentID+"/bridges", "", "")
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
-	}
-	if !strings.Contains(recorder.Body.String(), `"bridges":[]`) {
-		t.Errorf("body = %s, want it to contain an empty array", recorder.Body.String())
-	}
-}
-
-func TestListBridgesCommentNotFound(t *testing.T) {
-	handler := newConversationsHandler(t, newMemoryConversationsStore())
-
-	recorder := doStoryRequest(handler, http.MethodGet, "/comments/"+testSourceCommentID+"/bridges", "", "")
-
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
-	}
-	if code := decodedErrorCode(t, recorder); code != codeNotFound {
-		t.Errorf("error code = %q, want %q", code, codeNotFound)
-	}
-}
-
-func TestListBridgesUnexpectedFailureIsInternalError(t *testing.T) {
-	handler := newConversationsHandlerWithService(t, &fakeConversationsService{listBridgesErr: errors.New("connection reset")})
-
-	recorder := doStoryRequest(handler, http.MethodGet, "/comments/"+testSourceCommentID+"/bridges", "", "")
-
-	if recorder.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusInternalServerError)
-	}
-	if code := decodedErrorCode(t, recorder); code != codeInternal {
-		t.Errorf("error code = %q, want %q", code, codeInternal)
-	}
-}
-
-func TestGetBridgeHappyPath(t *testing.T) {
-	store := newMemoryConversationsStore()
-	store.seedComment(englishComment())
-	store.seedVersion(testFrenchVersionID, testStoryID, "fra")
-	handler := newConversationsHandler(t, store)
-
-	created := doStoryRequest(handler, http.MethodPost, "/comments/"+testSourceCommentID+"/bridges", validBridgeBody(), testAccessToken)
-	var createdBody createBridgeResponse
-	decodeBody(t, created, &createdBody)
-
-	recorder := doStoryRequest(handler, http.MethodGet, "/bridges/"+createdBody.Bridge.ID, "", "")
-
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
-	}
-
-	var body bridgeEnvelope
-	decodeBody(t, recorder, &body)
-
-	if body.Bridge.ID != createdBody.Bridge.ID {
-		t.Errorf("id = %q, want %q", body.Bridge.ID, createdBody.Bridge.ID)
-	}
-}
-
-func TestGetBridgeNotFound(t *testing.T) {
-	handler := newConversationsHandler(t, newMemoryConversationsStore())
-
-	recorder := doStoryRequest(handler, http.MethodGet, "/bridges/"+testBridgeID, "", "")
-
-	if recorder.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
-	}
-	if code := decodedErrorCode(t, recorder); code != codeNotFound {
-		t.Errorf("error code = %q, want %q", code, codeNotFound)
-	}
-}
-
-func TestGetBridgeMalformedIDIsNotFound(t *testing.T) {
-	handler := newConversationsHandler(t, newMemoryConversationsStore())
-
-	recorder := doStoryRequest(handler, http.MethodGet, "/bridges/not-a-uuid", "", "")
-
-	if recorder.Code != http.StatusNotFound {
-		t.Errorf("status = %d, want %d", recorder.Code, http.StatusNotFound)
-	}
-}
-
-func TestGetBridgeUnexpectedFailureIsInternalError(t *testing.T) {
-	handler := newConversationsHandlerWithService(t, &fakeConversationsService{getBridgeErr: errors.New("connection reset")})
-
-	recorder := doStoryRequest(handler, http.MethodGet, "/bridges/"+testBridgeID, "", "")
-
-	if recorder.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusInternalServerError)
-	}
-	if code := decodedErrorCode(t, recorder); code != codeInternal {
-		t.Errorf("error code = %q, want %q", code, codeInternal)
-	}
-}
-
 func TestGetCommentHappyPath(t *testing.T) {
 	store := newMemoryConversationsStore()
 	store.seedComment(englishComment())
@@ -1275,5 +848,4 @@ func TestNewConversationsHandlerRejectsMissingDependencies(t *testing.T) {
 var (
 	_ ConversationsService       = (*fakeConversationsService)(nil)
 	_ conversations.CommentStore = (*memoryConversationsStore)(nil)
-	_ conversations.BridgeStore  = (*memoryConversationsStore)(nil)
 )
