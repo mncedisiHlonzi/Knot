@@ -1,8 +1,8 @@
-import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { House, MagnifyingGlass, MapTrifold, Plus, User, type Icon } from 'phosphor-react-native';
 
-import { colors, fontWeights, radius, spacing, typeScale } from '../theme';
+import { colors, fontWeights, motion, radius, spacing, typeScale } from '../theme';
 
 /** The five primary destinations of the app. */
 export type TabName = 'feed' | 'discoveryMap' | 'createStory' | 'inquiries' | 'profile';
@@ -41,6 +41,68 @@ const ICON_SIZE = 24;
 
 /** The diameter of the elevated Create button. */
 const CREATE_BUTTON_SIZE = 44;
+
+/**
+ * How far the selected tab's glyph swells at the peak of its bounce, and how
+ * much smaller it starts. Both are small enough to read as a settle rather than
+ * as a bounce of its own (KNOT-020h).
+ */
+const BOUNCE_PEAK = 1.12;
+const BOUNCE_START = 0.9;
+
+/**
+ * One tab's glyph, with the selection bounce.
+ *
+ * It is a component of its own so the bounce's animated value is per tab and the
+ * bar itself stays stateless — the value only moves when its own tab becomes the
+ * selected one. Both steps use the motion tokens' `micro` duration, so the
+ * bounce never reads as a delay between the tap and the destination.
+ */
+function TabGlyph({
+  icon: IconComponent,
+  color,
+  weight,
+  active,
+}: {
+  readonly icon: Icon;
+  readonly color: string;
+  readonly weight: 'bold' | 'regular';
+  readonly active: boolean;
+}): React.ReactElement {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (!active) {
+      scale.setValue(1);
+      return undefined;
+    }
+
+    scale.setValue(BOUNCE_START);
+    const bounce = Animated.sequence([
+      Animated.timing(scale, {
+        toValue: BOUNCE_PEAK,
+        duration: motion.durations.micro,
+        easing: Easing.bezier(...motion.easing.standard),
+        useNativeDriver: true,
+      }),
+      Animated.timing(scale, {
+        toValue: 1,
+        duration: motion.durations.micro,
+        easing: Easing.bezier(...motion.easing.exit),
+        useNativeDriver: true,
+      }),
+    ]);
+    bounce.start();
+
+    return () => bounce.stop();
+  }, [active, scale]);
+
+  return (
+    <Animated.View style={{ transform: [{ scale }] }}>
+      <IconComponent color={color} size={ICON_SIZE} weight={weight} />
+    </Animated.View>
+  );
+}
 
 /**
  * The hand-rolled bottom tab bar: five destinations, no library.
@@ -96,7 +158,12 @@ export default function TabBar({ activeTab, onSelect }: TabBarProps): React.Reac
             accessibilityState={{ selected: active }}
             accessibilityLabel={label}
           >
-            <IconComponent color={tint} size={ICON_SIZE} weight={active ? 'bold' : 'regular'} />
+            <TabGlyph
+              icon={IconComponent}
+              color={tint}
+              weight={active ? 'bold' : 'regular'}
+              active={active}
+            />
             <Text
               style={[typeScale.caption, styles.label, active ? styles.labelActive : null]}
               numberOfLines={1}

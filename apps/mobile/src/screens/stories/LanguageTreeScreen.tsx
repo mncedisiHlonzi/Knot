@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { ArrowLeft } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
@@ -8,9 +8,13 @@ import AuthorLine from '../../components/AuthorLine';
 import Button from '../../components/Button';
 import EmptyState from '../../components/EmptyState';
 import Header from '../../components/Header';
+import TheThread from '../../components/TheThread';
 import { languageName } from '../../data/languages';
 import { colors, layout, radius, spacing, typeScale } from '../../theme';
 import { adaptCountLabel, treeRows, treeSummary } from './versionTree';
+
+/** The Thread's length while the tree loads, matching a two-row preview. */
+const TREE_THREAD_LENGTH = 112;
 
 type LanguageTreeScreenProps = {
   /** The story whose language tree to show. */
@@ -118,7 +122,13 @@ export default function LanguageTreeScreen({
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        {loading ? <ActivityIndicator style={styles.spinner} /> : null}
+        {/* The Thread runs down the tree's own spine while the versions load, so
+            the wait already shows the shape it is about to fill (KNOT-020h). */}
+        {loading ? (
+          <View style={styles.spinner} testID="tree-thread">
+            <TheThread orientation="vertical" length={TREE_THREAD_LENGTH} />
+          </View>
+        ) : null}
         {error !== undefined ? <Text style={[typeScale.bodyS, styles.error]}>{error}</Text> : null}
 
         {!loading && rows.length === 0 && error === undefined ? (
@@ -323,6 +333,7 @@ const styles = StyleSheet.create({
     top: '50%',
   },
   spinner: {
+    alignItems: 'center',
     marginTop: spacing.xl,
   },
   summaryBlock: {

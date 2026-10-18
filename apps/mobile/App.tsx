@@ -1,10 +1,13 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
+  Animated,
   BackHandler,
+  Easing,
   SafeAreaView,
   StatusBar,
   StyleSheet,
   View,
+  useWindowDimensions,
   type StatusBarProps,
 } from 'react-native';
 
@@ -15,7 +18,7 @@ import type { Story } from './src/api/stories';
 import { versionsApi } from './src/api/versions';
 import { DEFAULT_LANGUAGE_CODE } from './src/config/language';
 import { isLanguageCode } from './src/data/languages';
-import { colors, spacing } from './src/theme';
+import { colors, motion, spacing } from './src/theme';
 import TabBar from './src/components/TabBar';
 import type { TabName } from './src/components/TabBar';
 import {
@@ -77,6 +80,12 @@ const STATUS_BAR: StatusBarProps = {
   barStyle: 'dark-content',
   translucent: false,
 };
+
+/** The push transition's curve: fast out, settling onto the screen. */
+const EASING_ENTER = Easing.bezier(...motion.easing.enter);
+
+/** The pop transition's curve: it accelerates away to the right. */
+const EASING_EXIT = Easing.bezier(...motion.easing.exit);
 
 type Overlay =
   | { readonly name: 'detail'; readonly storyId: string }
@@ -153,6 +162,25 @@ export default function App(): React.ReactElement {
   const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [tab, setTab] = useState<TabName>('feed');
   const [overlays, setOverlays] = useState<readonly Overlay[]>([]);
+
+  // The overlay transition (KNOT-020h).
+  //
+  // The app renders exactly one screen at a time, so a push slides the incoming
+  // screen in from the right and a pop slides the leaving one back out over the
+  // canvas. `screenOffset` is the only animated value: a translate on the screen
+  // container, run on the native driver so the transition never drops a frame on
+  // the JS thread.
+  //
+  // A push is detected by the stack getting deeper — every push site already goes
+  // through `pushOverlay`, so the animation needs no per-call plumbing. A pop is
+  // the reverse, but it is run BEFORE the state changes: the leaving screen stays
+  // mounted and intact while it slides away, and the stack is only popped when the
+  // animation finishes. `popping` makes a second back tap during those 280ms a
+  // no-op, so one gesture can never pop two screens.
+  const { width: windowWidth } = useWindowDimensions();
+  const screenOffset = useRef(new Animated.Value(0)).current;
+  const overlayDepth = useRef(0);
+  const popping = useRef(false);
   // The boot flow. It starts on the splash, which is held while the stored session
   // and the first-run flag are read and for a short minimum, then hands off.
   const [bootPhase, setBootPhase] = useState<BootPhase>('splash');
@@ -204,6 +232,61 @@ export default function App(): React.ReactElement {
     setBootPhase('app');
   }
 
+  /**
+   * Pops the top overlay, sliding it out to the right first.
+   *
+   * The pop is committed only when the animation finishes, so the screen keeps
+   * its content while it leaves instead of remounting into its loading state. The
+   * canvas shows behind it; the app renders one screen at a time, and keeping the
+   * lower screen mounted would restart hidden video playback (KNOT-020h, disclosed).
+   */
+  const handleBack = useCallback((): void => {
+    if (popping.current || overlays.length === 0) {
+      return;
+    }
+
+    popping.current = true;
+    Animated.timing(screenOffset, {
+      toValue: windowWidth,
+      duration: motion.durations.screen,
+      easing: EASING_EXIT,
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      popping.current = false;
+      // A push that landed mid-exit stops this timing; that screen has taken over
+      // the offset, so the pop must not also fire.
+      if (!finished) {
+        return;
+      }
+      screenOffset.setValue(0);
+      setOverlays((current) => popOverlay(current));
+    });
+  }, [overlays.length, screenOffset, windowWidth]);
+
+  // The slide, in one place: a deeper stack is a push (enter), a shallower one
+  // that we did not animate ourselves is a jump (sign-out, a screen swapped in
+  // place), which lands instantly. A layout effect runs before the frame is
+  // painted, so the incoming screen is never seen at its resting position first.
+  useLayoutEffect(() => {
+    const depth = overlays.length;
+
+    if (depth > overlayDepth.current) {
+      screenOffset.stopAnimation();
+      screenOffset.setValue(windowWidth);
+      Animated.timing(screenOffset, {
+        toValue: 0,
+        duration: motion.durations.screen,
+        easing: EASING_ENTER,
+        useNativeDriver: true,
+      }).start();
+    } else if (depth < overlayDepth.current) {
+      screenOffset.stopAnimation();
+      screenOffset.setValue(0);
+    }
+
+    overlayDepth.current = depth;
+  }, [overlays.length, screenOffset, windowWidth]);
+
   // Android hardware back pops the overlay stack and falls through to the OS
   // (background the app) only when there is nothing to pop. BackHandler exists on
   // every platform but only fires on Android, so this is inert on iOS.
@@ -212,17 +295,12 @@ export default function App(): React.ReactElement {
       if (overlays.length === 0) {
         return false;
       }
-      setOverlays((current) => popOverlay(current));
+      handleBack();
       return true;
     });
 
     return () => subscription.remove();
-  }, [overlays]);
-
-  /** Pops the top overlay — the back action every overlay screen calls. */
-  const handleBack = useCallback((): void => {
-    setOverlays((current) => popOverlay(current));
-  }, []);
+  }, [handleBack, overlays.length]);
 
   function handleAuthenticated(result: AuthResponse): void {
     const next: Session = {
@@ -684,7 +762,11 @@ export default function App(): React.ReactElement {
   return (
     <SafeAreaView style={styles.storyContainer}>
       <StatusBar {...STATUS_BAR} />
-      <View style={styles.body}>{renderOverlay(session)}</View>
+      <View style={styles.body}>
+        <Animated.View style={[styles.screen, { transform: [{ translateX: screenOffset }] }]}>
+          {renderOverlay(session)}
+        </Animated.View>
+      </View>
       {overlays.length === 0 ? <TabBar activeTab={tab} onSelect={setTab} /> : null}
     </SafeAreaView>
   );
@@ -699,9 +781,15 @@ const styles = StyleSheet.create({
   },
   body: {
     flex: 1,
+    // The transition slides a screen past the window's edge; without this the
+    // moving screen would paint outside the body while it leaves (KNOT-020h).
+    overflow: 'hidden',
   },
   bootContainer: {
     backgroundColor: colors.bg.canvas,
+    flex: 1,
+  },
+  screen: {
     flex: 1,
   },
   storyContainer: {

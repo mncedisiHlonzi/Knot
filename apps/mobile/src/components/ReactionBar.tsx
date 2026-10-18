@@ -1,5 +1,15 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Alert,
+  Animated,
+  Easing,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 
 import { describeError } from '../api/client';
 import {
@@ -9,8 +19,72 @@ import {
   REACTION_TYPES,
   reactionsApi,
 } from '../api/reactions';
-import { colors, radius, spacing, tabularNums, typeScale } from '../theme';
+import { colors, motion, radius, spacing, tabularNums, typeScale } from '../theme';
 import { applyReactionToggle, asReactionTypes, holdsReaction } from './reactionToggle';
+
+/** How far a pill swells when it is tapped (KNOT-020h). */
+const PULSE_SCALE = 1.06;
+
+/** The pill's own press feedback needs an animated Pressable. */
+const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
+
+type ReactionPillProps = {
+  readonly style: StyleProp<ViewStyle>;
+  readonly accessibilityState: { readonly selected: boolean };
+  readonly accessibilityLabel: string;
+  readonly onPress: () => void;
+  readonly children: React.ReactNode;
+};
+
+/**
+ * One reaction pill: the bar's surface with a one-shot pulse on tap.
+ *
+ * The custom reaction glyphs were removed in KNOT-025-fix3, so the scale plays on
+ * the pill as a whole — the tap still has a tactile answer, and the optimistic
+ * fill change lands with it (KNOT-020h). The pulse is a native-driver transform,
+ * so it costs the JS thread nothing while it runs.
+ */
+function ReactionPill({
+  style,
+  accessibilityState,
+  accessibilityLabel,
+  onPress,
+  children,
+}: ReactionPillProps): React.ReactElement {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  const handlePress = (): void => {
+    scale.setValue(1);
+    Animated.sequence([
+      Animated.timing(scale, {
+        toValue: PULSE_SCALE,
+        duration: motion.durations.micro,
+        easing: Easing.bezier(...motion.easing.standard),
+        useNativeDriver: true,
+      }),
+      Animated.timing(scale, {
+        toValue: 1,
+        duration: motion.durations.micro,
+        easing: Easing.bezier(...motion.easing.standard),
+        useNativeDriver: true,
+      }),
+    ]).start();
+    onPress();
+  };
+
+  return (
+    <AnimatedPressable
+      style={[style, { transform: [{ scale }] }]}
+      onPress={handlePress}
+      hitSlop={spacing.xs}
+      accessibilityRole="button"
+      accessibilityState={accessibilityState}
+      accessibilityLabel={accessibilityLabel}
+    >
+      {children}
+    </AnimatedPressable>
+  );
+}
 
 /** The content kinds a reaction can target that the app exposes today. */
 export type ReactionBarEntityType = 'story' | 'version' | 'inquiry';
@@ -125,20 +199,18 @@ export default function ReactionBar({
         const count = localCounts[type];
 
         return (
-          <Pressable
+          <ReactionPill
             key={type}
-            hitSlop={spacing.xs}
             style={[
               styles.pill,
               inGrid ? styles.gridPill : styles.rowPill,
               active ? styles.pillActive : styles.pillIdle,
             ]}
+            accessibilityState={{ selected: active }}
+            accessibilityLabel={`${REACTION_LABELS[type]}${count > 0 ? `, ${count}` : ''}`}
             onPress={() => {
               void toggle(type);
             }}
-            accessibilityRole="button"
-            accessibilityState={{ selected: active }}
-            accessibilityLabel={`${REACTION_LABELS[type]}${count > 0 ? `, ${count}` : ''}`}
           >
             <Text
               style={[
@@ -162,7 +234,7 @@ export default function ReactionBar({
                 {count}
               </Text>
             ) : null}
-          </Pressable>
+          </ReactionPill>
         );
       })}
     </View>

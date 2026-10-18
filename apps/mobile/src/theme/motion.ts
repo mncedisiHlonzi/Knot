@@ -17,8 +17,11 @@
  *   screen — full-screen pushes and modals
  *   max    — the ceiling; a transition must never feel slower than this
  *
- * No screen consumes these yet (KNOT-020a installs the token only); the animation
- * work lands with the component and screen tasks.
+ * These tokens are consumed by the motion pass (KNOT-020h): the Thread's loading
+ * loop, the overlay push/pop transition in `App.tsx`, and the press, chip, pill
+ * and tab micro-interactions. Every duration and curve used by those animations
+ * comes from here — the only exceptions are the physics-based springs, which take
+ * `speed`/`bounciness` rather than a duration (React Native's own API).
  */
 export const motion = {
   easing: {

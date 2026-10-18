@@ -107,6 +107,16 @@ via the one token — never set a raw shadow on a screen.
 `motion.durations` holds `micro 110 · small 180 · medium 240 · screen 280 · max 320`
 (ms). Reuse these instead of inventing timings, and never exceed `max`.
 
+The motion pass (KNOT-020h) consumes them: **The Thread** — the 1.5pt indigo line
+that draws itself (`components/TheThread.tsx`, on the splash, under the feed's
+pull-to-refresh, inside the adapt form's primary button and down the language
+tree while it loads), the overlay push/pop slide in `App.tsx` (`enter`/`exit` at
+`durations.screen`), and the micro-interactions — a `micro` press scale on
+`Button`, an animated fill plus a spring on `Chip`'s leading icon, a `micro` pulse
+on a tapped `ReactionBar` pill, and a two-step `micro` bounce on the active
+`TabBar` glyph. All of them run on the native driver except the chip's fill, which
+animates `backgroundColor` and therefore cannot.
+
 ## Rules
 
 - **5% indigo rule** — indigo is a scarce accent. It marks the single primary

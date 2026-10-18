@@ -9,6 +9,7 @@ import Button from '../../components/Button';
 import Header from '../../components/Header';
 import Input from '../../components/Input';
 import LanguagePicker from '../../components/LanguagePicker';
+import TheThread from '../../components/TheThread';
 import { isLanguageCode, languageName } from '../../data/languages';
 import { colors, layout, radius, spacing, typeScale } from '../../theme';
 
@@ -30,6 +31,9 @@ type AdaptStoryScreenProps = {
 /** Field limits, mirroring the server's rules so the user is told early. */
 const MAX_TITLE_LENGTH = 200;
 const MAX_NOTE_LENGTH = 1000;
+
+/** The Thread's length inside the primary button (KNOT-020h). */
+const BTN_THREAD_LENGTH = 96;
 
 /** The language the form starts with when the caller offers nothing usable. */
 const DEFAULT_LANGUAGE = DEFAULT_LANGUAGE_CODE;
@@ -243,6 +247,10 @@ export default function AdaptStoryScreen({
                   label="Publish for my people"
                   onPress={() => void handleSubmit()}
                   loading={submitting}
+                  // The paint-and-submit wait draws the Thread rather than a
+                  // spinner, so the app's one loading gesture carries through
+                  // (KNOT-020h).
+                  loadingIndicator={<TheThread length={BTN_THREAD_LENGTH} />}
                   fullWidth
                 />
               </View>

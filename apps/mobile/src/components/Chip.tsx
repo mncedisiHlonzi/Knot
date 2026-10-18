@@ -1,8 +1,8 @@
-import React from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useRef } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, Text } from 'react-native';
 import { X } from 'phosphor-react-native';
 
-import { colors, radius, spacing, typeScale } from '../theme';
+import { colors, motion, radius, spacing, typeScale } from '../theme';
 
 type ChipProps = {
   /** The chip's text. */
@@ -27,6 +27,16 @@ const HEIGHT = 32;
 /** Expands the 32-point chip to a 44-point touch target without changing its look. */
 const VERTICAL_HIT_SLOP = 6;
 
+/** The leading icon's scale at rest and while it springs in when selected. */
+const ICON_REST_SCALE = 0.72;
+
+/**
+ * The chip paints its own fill through an animated value, so a selection is a
+ * colour change rather than a swapped style. `backgroundColor` cannot run on the
+ * native driver, so this one animation is JS-driven; the icon's spring is native.
+ */
+const AnimatedChip = Animated.createAnimatedComponent(Pressable);
+
 export default function Chip({
   label,
   selected = false,
@@ -42,15 +52,42 @@ export default function Chip({
       ? colors.text.primary
       : colors.text.secondary;
 
-  const fillStyle = selected
-    ? styles.selected
-    : variant === 'outline'
-      ? styles.outline
-      : styles.default;
+  // 0 is the resting fill, 1 the brand tint; the chip slides between them so a
+  // tap reads as a surface change in motion (KNOT-020h).
+  const fill = useRef(new Animated.Value(selected ? 1 : 0)).current;
+  useEffect(() => {
+    Animated.timing(fill, {
+      toValue: selected ? 1 : 0,
+      duration: motion.durations.small,
+      easing: Easing.bezier(...motion.easing.standard),
+      useNativeDriver: false,
+    }).start();
+  }, [fill, selected]);
+
+  // The icon springs in when the chip becomes selected, which gives the tap a
+  // point of arrival beyond the fill alone.
+  const iconScale = useRef(new Animated.Value(selected ? 1 : ICON_REST_SCALE)).current;
+  useEffect(() => {
+    Animated.spring(iconScale, {
+      toValue: selected ? 1 : ICON_REST_SCALE,
+      speed: 20,
+      bounciness: 9,
+      useNativeDriver: true,
+    }).start();
+  }, [iconScale, selected]);
+
+  const fillColor = fill.interpolate({
+    inputRange: [0, 1],
+    outputRange: [variant === 'outline' ? 'transparent' : colors.bg.sunken, colors.brand.tint],
+  });
 
   const content = (
     <>
-      {icon !== undefined ? <View style={styles.leadingIcon}>{icon}</View> : null}
+      {icon !== undefined ? (
+        <Animated.View style={[styles.leadingIcon, { transform: [{ scale: iconScale }] }]}>
+          {icon}
+        </Animated.View>
+      ) : null}
       <Text style={[typeScale.caption, { color: textColor }]} numberOfLines={1}>
         {label}
       </Text>
@@ -68,11 +105,18 @@ export default function Chip({
     </>
   );
 
+  // The fill is always the animated one; the outline variant only adds its border.
+  const chipStyle = [
+    styles.chip,
+    variant === 'outline' ? styles.outline : null,
+    { backgroundColor: fillColor },
+  ];
+
   if (onPress !== undefined) {
     return (
-      <Pressable
+      <AnimatedChip
         onPress={onPress}
-        style={[styles.chip, fillStyle]}
+        style={chipStyle}
         hitSlop={{ bottom: VERTICAL_HIT_SLOP, top: VERTICAL_HIT_SLOP }}
         accessibilityRole="button"
         accessibilityState={{ selected }}
@@ -80,14 +124,14 @@ export default function Chip({
         testID={testID}
       >
         {content}
-      </Pressable>
+      </AnimatedChip>
     );
   }
 
   return (
-    <View style={[styles.chip, fillStyle]} testID={testID}>
+    <Animated.View style={chipStyle} testID={testID}>
       {content}
-    </View>
+    </Animated.View>
   );
 }
 
@@ -101,23 +145,16 @@ const styles = StyleSheet.create({
     height: HEIGHT,
     paddingHorizontal: spacing.md,
   },
-  default: {
-    backgroundColor: colors.bg.sunken,
-  },
   leadingIcon: {
     alignItems: 'center',
     justifyContent: 'center',
   },
   outline: {
-    backgroundColor: 'transparent',
     borderColor: colors.border.hairline,
     borderWidth: 1,
   },
   remove: {
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  selected: {
-    backgroundColor: colors.brand.tint,
   },
 });

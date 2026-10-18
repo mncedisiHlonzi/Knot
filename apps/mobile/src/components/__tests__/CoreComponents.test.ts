@@ -24,12 +24,38 @@ import {
  * now holds state for its media frame — has its own suite that stubs the hook
  * primitives (KNOT-020g-fix7).
  *
- * React Native is stubbed so its Flow source is not parsed, and `config/api` is
+ * `Button` and `Chip` gained animation state in KNOT-020h (a press scale and a
+ * fill/icon transition), so the hook primitives are stubbed here too. React
+ * Native is stubbed so its Flow source is not parsed, and `config/api` is
  * stubbed so the gitignored `secrets.local` module is never imported in CI
  * (KNOT-ADR-027).
  */
+jest.mock('react', () => ({
+  ...jest.requireActual('react'),
+  useCallback: (callback: unknown) => callback,
+  useEffect: () => undefined,
+  useRef: (initial: unknown) => ({ current: initial }),
+}));
+
 jest.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
+  // The motion pass (KNOT-020h) gave Button and Chip animated values. The
+  // animations themselves are visual and are not asserted; the stand-ins only
+  // have to exist so a direct call can render, exactly as the app would.
+  Animated: {
+    Value: class {
+      setValue(): void {}
+      interpolate(): number {
+        return 0;
+      }
+    },
+    View: 'Animated.View',
+    createAnimatedComponent: <T>(component: T): T => component,
+    loop: () => ({ start: () => undefined, stop: () => undefined }),
+    spring: () => ({ start: () => undefined, stop: () => undefined }),
+    timing: () => ({ start: () => undefined, stop: () => undefined }),
+  },
+  Easing: { bezier: () => (progress: number) => progress },
   Image: 'Image',
   Pressable: 'Pressable',
   StyleSheet: { create: (styles: unknown) => styles },

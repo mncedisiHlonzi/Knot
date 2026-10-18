@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Text,
   View,
+  useWindowDimensions,
 } from 'react-native';
 import { Bell, MagnifyingGlass } from 'phosphor-react-native';
 
@@ -17,6 +18,7 @@ import EmptyState from '../../components/EmptyState';
 import FeedEntry from '../../components/FeedEntry';
 import Header from '../../components/Header';
 import Logomark from '../../components/Logomark';
+import TheThread from '../../components/TheThread';
 import { colors, layout, radius, spacing, tabularNums, typeScale } from '../../theme';
 import {
   VIEWABILITY_CONFIG,
@@ -107,6 +109,8 @@ export default function FeedScreen({
   // One mute setting for the whole feed, muted to begin with: a video that starts
   // itself must never make a sound.
   const [isMuted, setIsMuted] = useState(true);
+  // The Thread spans the list while a pull-to-refresh is in flight (KNOT-020h).
+  const { width: pageWidth } = useWindowDimensions();
 
   // The viewability config and the callback must keep their identity for the life
   // of the list — FlatList misbehaves if either is re-created — so they are held in
@@ -287,11 +291,27 @@ export default function FeedScreen({
         contentContainerStyle={styles.listContent}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
+        // The Thread is the feed's refresh indicator. It is drawn at the top of
+        // the list content rather than inside the RefreshControl, because the
+        // platform control owns the pull gesture and cannot host a custom
+        // indicator (KNOT-020h).
+        ListHeaderComponent={
+          refreshing ? (
+            <View style={styles.refreshingThread} testID="feed-thread">
+              <TheThread length={pageWidth} />
+            </View>
+          ) : null
+        }
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={refresh}
-            tintColor={colors.text.secondary}
+            // The Thread is the feed's refresh indicator, so the platform
+            // spinner is drawn transparent rather than on top of it
+            // (KNOT-020h).
+            tintColor="transparent"
+            colors={['transparent']}
+            progressBackgroundColor={colors.bg.canvas}
           />
         }
         onEndReached={() => {
@@ -426,6 +446,11 @@ const styles = StyleSheet.create({
   },
   listContent: {
     paddingBottom: spacing.xxxl,
+  },
+  // The Thread sits flush under the tab row: the list content starts there, so
+  // the line reads as the refresh indicator rather than as part of a card.
+  refreshingThread: {
+    marginBottom: spacing.xs,
   },
   // The mark's own inset, on top of the header's 8pt gutter, so it lines up with
   // the feed's 16pt content column (KNOT-020g-fix13).

@@ -360,6 +360,50 @@ visible, and pauses every other entry's. A single feed-wide mute setting, held i
 governs all of them; `FeedEntry` itself stays hookless and only passes the visibility and mute
 state down. The Feed is the only screen that auto-plays. See KNOT-ADR-068.
 
+#### Motion and The Thread (KNOT-020h)
+
+The motion layer lands last, on top of the design system: `src/theme/motion.ts`
+holds the easing tuples and the `micro`/`small`/`medium`/`screen`/`max` durations,
+and every animation added here reads from it (the springs are the one exception —
+React Native's spring takes `speed`/`bounciness`, not a duration; the file says
+so). Everything else runs on the **native driver**; the only JS-driven animation
+is `Chip`'s fill, because `backgroundColor` cannot be animated natively.
+
+- **`components/TheThread.tsx`** is the signature 1.5pt indigo line that draws
+  itself: a fixed `length` × 1.5 frame (so nothing reflows while it draws) holding
+  a line that grows through a `scaleX`/`scaleY` transform offset by half the
+  length — the trick that keeps the leading edge at the start of the line — with
+  `opacity` interpolated from the same value so `Animated.loop`'s reset is
+  invisible. It runs `standard` at `durations.max`, the longest token
+  (the brief's `durations.long` does not exist; `max` is the ceiling).
+- **Where it draws:** under the splash logo; under the feed's tab row while a
+  pull-to-refresh is in flight (the `RefreshControl` keeps the gesture and its own
+  spinner is made transparent, because that prop cannot host a custom indicator);
+  inside the adapt form's primary button via `Button`'s new optional
+  `loadingIndicator`; and **vertically** down the language tree while it loads,
+  replacing its `ActivityIndicator` (`testID` `tree-thread`).
+- **Overlay transitions, in `App.tsx`:** one `Animated.View` around the rendered
+  screen carries a `translateX`. A **push** is detected by the stack getting
+  deeper (every push already goes through `pushOverlay`, so no call site changed):
+  a `useLayoutEffect` jumps the offset to the window width and runs `enter` at
+  `durations.screen` to zero, before the frame paints. A **pop** is run *before*
+  the state changes — `exit` at `durations.screen` slides the screen out, and the
+  stack is popped when it finishes, so the leaving screen keeps its content
+  instead of remounting into its loading state. `popping` makes a second back tap
+  during those 280ms a no-op. The tab bar stays outside the animated view: it is
+  still hidden whenever the stack is non-empty.
+- **Disclosed:** the app renders exactly ONE screen at a time (that is what pauses
+  the Feed's video), so the transition slides over the canvas rather than over a
+  static underlying screen. Keeping the lower screen mounted would restart hidden
+  video playback, so it was not done; a true parallax needs a navigator that keeps
+  the stack mounted.
+- **Micro-interactions:** `Button` scales to `0.97` on press-in and back on
+  press-out (`timing` at `micro`); `Chip` cross-fades `bg.sunken`→`brand.tint`
+  (`timing` at `small`) and springs its leading icon in when selected; a tapped
+  `ReactionBar` pill pulses to `1.06` and back (`micro` twice) — the reaction
+  glyphs themselves are long gone (KNOT-025-fix3); and the active `TabBar` glyph
+  runs a two-step `micro` bounce when its tab becomes selected.
+
 ### Author attribution (`AuthorLine`)
 
 Every screen that shows user-generated content attributes it through one component,

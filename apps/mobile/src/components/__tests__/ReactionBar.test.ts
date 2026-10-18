@@ -8,6 +8,7 @@ jest.mock('react', () => ({
   ...jest.requireActual('react'),
   useCallback: (callback: unknown) => callback,
   useEffect: () => undefined,
+  useRef: (initial: unknown) => ({ current: initial }),
   // Call a lazy initializer, as React would, so state backed by a function (the
   // seeded reactions list) is the value rather than the function itself.
   useState: (initial: unknown) => [
@@ -18,6 +19,17 @@ jest.mock('react', () => ({
 
 jest.mock('react-native', () => ({
   Alert: { alert: jest.fn() },
+  // The pills pulse on tap, which is visual only; the stand-ins exist so a direct
+  // call renders (KNOT-020h).
+  Animated: {
+    Value: class {
+      setValue(): void {}
+    },
+    createAnimatedComponent: <T>(component: T): T => component,
+    sequence: () => ({ start: () => undefined, stop: () => undefined }),
+    timing: () => ({ start: () => undefined, stop: () => undefined }),
+  },
+  Easing: { bezier: () => (progress: number) => progress },
   Pressable: 'Pressable',
   StyleSheet: { create: (styles: unknown) => styles },
   Text: 'Text',
