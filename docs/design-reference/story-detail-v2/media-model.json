@@ -1,0 +1,140 @@
+{
+  "_note": "Sample shape only. Field names are a proposal for the API. Maximum 10 items per story, images and videos mixed, order preserved.",
+  "story": {
+    "id": "s1",
+    "pillar": "heritage",
+    "language": "zap",
+    "media": [
+      {
+        "id": "m1",
+        "type": "video",
+        "url": "https://cdn.example/stories/s1/m1",
+        "posterUrl": "https://cdn.example/stories/s1/m1-poster.jpg",
+        "durationMs": 48000,
+        "width": 1080,
+        "height": 1350,
+        "caption": "Market day, before the rains",
+        "alt": "Describe the media for screen readers",
+        "credit": "Nomsa K.",
+        "order": 0
+      },
+      {
+        "id": "m2",
+        "type": "image",
+        "url": "https://cdn.example/stories/s1/m2",
+        "posterUrl": null,
+        "durationMs": null,
+        "width": 1080,
+        "height": 1350,
+        "caption": null,
+        "alt": "Describe the media for screen readers",
+        "credit": "Nomsa K.",
+        "order": 1
+      },
+      {
+        "id": "m3",
+        "type": "image",
+        "url": "https://cdn.example/stories/s1/m3",
+        "posterUrl": null,
+        "durationMs": null,
+        "width": 1080,
+        "height": 1350,
+        "caption": null,
+        "alt": "Describe the media for screen readers",
+        "credit": "Nomsa K.",
+        "order": 2
+      },
+      {
+        "id": "m4",
+        "type": "video",
+        "url": "https://cdn.example/stories/s1/m4",
+        "posterUrl": "https://cdn.example/stories/s1/m4-poster.jpg",
+        "durationMs": 31000,
+        "width": 1080,
+        "height": 1350,
+        "caption": null,
+        "alt": "Describe the media for screen readers",
+        "credit": "Nomsa K.",
+        "order": 3
+      },
+      {
+        "id": "m5",
+        "type": "image",
+        "url": "https://cdn.example/stories/s1/m5",
+        "posterUrl": null,
+        "durationMs": null,
+        "width": 1080,
+        "height": 1350,
+        "caption": null,
+        "alt": "Describe the media for screen readers",
+        "credit": "Nomsa K.",
+        "order": 4
+      },
+      {
+        "id": "m6",
+        "type": "image",
+        "url": "https://cdn.example/stories/s1/m6",
+        "posterUrl": null,
+        "durationMs": null,
+        "width": 1080,
+        "height": 1350,
+        "caption": null,
+        "alt": "Describe the media for screen readers",
+        "credit": "Nomsa K.",
+        "order": 5
+      },
+      {
+        "id": "m7",
+        "type": "image",
+        "url": "https://cdn.example/stories/s1/m7",
+        "posterUrl": null,
+        "durationMs": null,
+        "width": 1080,
+        "height": 1350,
+        "caption": null,
+        "alt": "Describe the media for screen readers",
+        "credit": "Nomsa K.",
+        "order": 6
+      },
+      {
+        "id": "m8",
+        "type": "video",
+        "url": "https://cdn.example/stories/s1/m8",
+        "posterUrl": "https://cdn.example/stories/s1/m8-poster.jpg",
+        "durationMs": 22000,
+        "width": 1080,
+        "height": 1350,
+        "caption": null,
+        "alt": "Describe the media for screen readers",
+        "credit": "Nomsa K.",
+        "order": 7
+      },
+      {
+        "id": "m9",
+        "type": "image",
+        "url": "https://cdn.example/stories/s1/m9",
+        "posterUrl": null,
+        "durationMs": null,
+        "width": 1080,
+        "height": 1350,
+        "caption": null,
+        "alt": "Describe the media for screen readers",
+        "credit": "Nomsa K.",
+        "order": 8
+      },
+      {
+        "id": "m10",
+        "type": "image",
+        "url": "https://cdn.example/stories/s1/m10",
+        "posterUrl": null,
+        "durationMs": null,
+        "width": 1080,
+        "height": 1350,
+        "caption": null,
+        "alt": "Describe the media for screen readers",
+        "credit": "Nomsa K.",
+        "order": 9
+      }
+    ]
+  }
+}
