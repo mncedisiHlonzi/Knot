@@ -1458,6 +1458,30 @@ than a rule. The header and tab row stay on the white canvas above the list.
   category `sensitive_content` is a **different** concept (a user reports content) and
   stays.
 
+### KNOT-022-fix1/fix2 — the attribution row
+
+A version card opens with an **attribution row**: a small stack of the LINEAGE authors'
+avatars beside a two-line social credit, then a hairline, then the poster's `AuthorLine`.
+The stack shows the author of the version this one directly adapts (`parent_author_*`) and
+the story's original author (`root_author_*`) — never the poster, who is the entry's own
+`author_*` and is already the `AuthorLine` below. A first adaptation's parent IS the root,
+so the client draws one avatar (it compares the ids first).
+
+- The sentence is rendered by `versions.FormatAttribution` and shown verbatim:
+  `Adapted by {adapter} from {root}'s original story in {language}.` (N=2),
+  `Adapted by {adapter} from {middle}'s {language} version of {root}'s original story in
+  {language}.` (N=3), and `Adapted by {adapter} from {parent}'s {language} version,
+  tracing back to {root}'s original story.` (N=4+). The target language is deliberately not
+  repeated: the reader is already looking at that telling (KNOT-022-fix2).
+- `feedEntryMeta.attributionSegments` splits **every** name the sentence mentions, so all
+  of them take the bold label voice; `attributionParts` remains as a first-name view. The
+  older `Adapted from …` shapes are still parsed, so a newer client styles a sentence from
+  an older server.
+- Both `parent_author_*` and `root_author_*` come from the chain the feed already resolves
+  (the second-to-last and first links) and the same batched author read, so the fields cost
+  no extra query. `FeedScreen` passes them into `FeedEntry`; the card renders them at
+  `Avatar size="sm"` in lineage order with a canvas ring on the overlap.
+
 ### Rooted, and the enrichment pattern
 
 `POST /users/me/rooted`, `GET /users/me/rooted`, and `GET /users/{id}/rooted` are served by

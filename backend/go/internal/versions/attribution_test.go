@@ -3,7 +3,6 @@ package versions
 import (
 	"context"
 	"errors"
-	"strings"
 	"testing"
 )
 
@@ -170,7 +169,7 @@ func TestFormatAttributionFirstAdaptation(t *testing.T) {
 		ChainLink{AuthorID: attrMid1Author, AuthorDisplayName: attrMid1Name, Language: "zul"},
 	)
 
-	want := "Adapted from Nomsa Khan's original story in English into Zulu."
+	want := "Adapted by Sipho Dlamini from Nomsa Khan's original story in English."
 	if got := FormatAttribution(chain); got != want {
 		t.Errorf("FormatAttribution(first adaptation) = %q, want %q", got, want)
 	}
@@ -183,7 +182,7 @@ func TestFormatAttributionAdaptationOfAdaptation(t *testing.T) {
 		ChainLink{AuthorID: attrMid2Author, AuthorDisplayName: attrMid2Name, Language: "ssw"},
 	)
 
-	want := "Adapted from Sipho Dlamini's Zulu version of Nomsa Khan's original story in English into Swati."
+	want := "Adapted by Thandi Mokoena from Sipho Dlamini's Zulu version of Nomsa Khan's original story in English."
 	if got := FormatAttribution(chain); got != want {
 		t.Errorf("FormatAttribution(adaptation of adaptation) = %q, want %q", got, want)
 	}
@@ -199,7 +198,7 @@ func TestFormatAttributionDeepChainCompresses(t *testing.T) {
 		ChainLink{AuthorID: attrLeafAuthor, AuthorDisplayName: attrLeafName, Language: "tso"},
 	)
 
-	want := "Adapted from Thandi Mokoena's Xhosa version, which traces back through 2 adaptations to Nomsa Khan's original story in English, into Tsonga."
+	want := "Adapted by Ana Ruiz from Thandi Mokoena's Xhosa version, tracing back to Nomsa Khan's original story."
 	if got := FormatAttribution(chain); got != want {
 		t.Errorf("FormatAttribution(deep chain) = %q, want %q", got, want)
 	}
@@ -215,8 +214,9 @@ func TestFormatAttributionDeepChainCountsMiddleLinks(t *testing.T) {
 	)
 
 	got := FormatAttribution(chain)
-	if !strings.Contains(got, "traces back through 3 adaptations") {
-		t.Errorf("FormatAttribution(5 links) = %q, want it to count 3 middle links", got)
+	want := "Adapted by E from D's Tsonga version, tracing back to A's original story."
+	if got != want {
+		t.Errorf("FormatAttribution(5 links) = %q, want %q", got, want)
 	}
 }
 
@@ -240,11 +240,13 @@ func TestFormatAttributionFallsBackWhenLanguageIsUnknown(t *testing.T) {
 
 func TestFormatAttributionFallsBackWhenLanguageCodeIsUnrecognised(t *testing.T) {
 	chain := namedChain(
-		ChainLink{AuthorDisplayName: attrRootName, Language: "eng"},
-		ChainLink{AuthorDisplayName: attrMid1Name, Language: "zzz"},
+		ChainLink{AuthorDisplayName: attrRootName, Language: "zzz"},
+		ChainLink{AuthorDisplayName: attrMid1Name, Language: "zul"},
 	)
 
-	want := "Adapted from Nomsa Khan's original story in English into their language."
+	// The target language is no longer part of the sentence, so the root language is
+	// the one that has to degrade when its code is unknown (KNOT-022-fix2).
+	want := "Adapted by Sipho Dlamini from Nomsa Khan's original story in their language."
 	if got := FormatAttribution(chain); got != want {
 		t.Errorf("FormatAttribution(unrecognised code) = %q, want %q", got, want)
 	}

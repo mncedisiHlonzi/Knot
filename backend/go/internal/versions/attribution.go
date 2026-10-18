@@ -24,6 +24,7 @@ const maxChainDepth = 512
 // rather than as an empty gap in the sentence (KNOT-021).
 const (
 	unknownAuthor   = "another author"
+	unknownAdapter  = "someone"
 	unknownLanguage = "their language"
 )
 
@@ -197,12 +198,17 @@ func walkChain(targetID string, load func(id string) (StoryVersion, error)) (Cha
 // The four shapes, by chain length:
 //
 //	1     Original story by {author} in {language}.
-//	2     Adapted from {root}'s original story in {root language} into {language}.
-//	3     Adapted from {middle}'s {language} version of {root}'s original story
-//	      in {root language} into {language}.
-//	4+    Adapted from {parent}'s {language} version, which traces back through
-//	      {N-2} adaptations to {root}'s original story in {root language}, into
-//	      {language}.
+//	2     Adapted by {adapter} from {root}'s original story in {root language}.
+//	3     Adapted by {adapter} from {middle}'s {middle language} version of
+//	      {root}'s original story in {root language}.
+//	4+    Adapted by {adapter} from {parent}'s {parent language} version,
+//	      tracing back to {root}'s original story.
+//
+// Every adaptation shape names the ADAPTER first, because the adaptation is
+// theirs; the root language follows the original story it belongs to. The target
+// language is deliberately absent: the reader is already looking at it, and saying
+// "into Zulu" twice made the sentence read like a data log rather than a credit
+// (KNOT-022-fix2).
 //
 // An empty chain renders as the empty string, which a caller reads as "no
 // attribution to show".
@@ -219,27 +225,26 @@ func FormatAttribution(chain Chain) string {
 	case 2:
 		root, target := chain[0], chain[1]
 		return fmt.Sprintf(
-			"Adapted from %s's original story in %s into %s.",
-			displayName(root), displayLanguage(root), displayLanguage(target),
+			"Adapted by %s from %s's original story in %s.",
+			displayAdapterName(target), displayName(root), displayLanguage(root),
 		)
 	case 3:
 		root, middle, target := chain[0], chain[1], chain[2]
 		return fmt.Sprintf(
-			"Adapted from %s's %s version of %s's original story in %s into %s.",
+			"Adapted by %s from %s's %s version of %s's original story in %s.",
+			displayAdapterName(target),
 			displayName(middle), displayLanguage(middle),
 			displayName(root), displayLanguage(root),
-			displayLanguage(target),
 		)
 	default:
 		root := chain[0]
 		parent := chain[len(chain)-2]
 		target := chain[len(chain)-1]
 		return fmt.Sprintf(
-			"Adapted from %s's %s version, which traces back through %d adaptations to %s's original story in %s, into %s.",
+			"Adapted by %s from %s's %s version, tracing back to %s's original story.",
+			displayAdapterName(target),
 			displayName(parent), displayLanguage(parent),
-			len(chain)-2,
-			displayName(root), displayLanguage(root),
-			displayLanguage(target),
+			displayName(root),
 		)
 	}
 }
@@ -250,6 +255,17 @@ func FormatAttribution(chain Chain) string {
 func displayName(link ChainLink) string {
 	if link.AuthorDisplayName == "" {
 		return unknownAuthor
+	}
+	return link.AuthorDisplayName
+}
+
+// displayAdapterName names the version's own author in the leading "Adapted by"
+// clause. It falls back to "someone" rather than "another author", because the
+// latter would read as "Adapted by another author from another author's", and
+// the adapter is the one person a credit can safely leave vague.
+func displayAdapterName(link ChainLink) string {
+	if link.AuthorDisplayName == "" {
+		return unknownAdapter
 	}
 	return link.AuthorDisplayName
 }

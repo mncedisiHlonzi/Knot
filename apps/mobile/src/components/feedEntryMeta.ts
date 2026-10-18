@@ -55,24 +55,29 @@ type NameRange = {
  * Splits the server's attribution sentence into text runs, marking every person
  * it names so a card can draw their names in a heavier voice (KNOT-022-fix1).
  *
- * The server renders these shapes:
+ * The server renders these shapes (KNOT-022-fix2):
  *
  *   Original story by {name} in {language}.
- *   Adapted from {name}'s original story in {language} into {language}.
- *   Adapted from {parent}'s {language} version of {root}'s original story …
- *   Adapted from {parent}'s {language} version, which traces back through
- *     {N} adaptations to {root}'s original story …
+ *   Adapted by {adapter} from {root}'s original story in {language}.
+ *   Adapted by {adapter} from {middle}'s {language} version of {root}'s
+ *     original story in {language}.
+ *   Adapted by {adapter} from {parent}'s {language} version, tracing back to
+ *     {root}'s original story.
  *
- * The first name is the span after `Adapted from ` up to `'s `, or after
- * `Original story by ` up to ` in `. A second name, when the sentence has one, is
- * the span after ` of ` or ` to ` up to `'s original story`. All patterns are
- * deliberately NON-GREEDY, so a deeper lineage keeps the parent's name as the
- * first (the sentence opens with it) instead of swallowing the rest.
+ * The adapter is the span after `Adapted by ` up to ` from `; the next name is
+ * the span up to `'s `; and a third name, when the sentence has one, is the span
+ * after ` of ` or ` to ` up to `'s original story`. All patterns are deliberately
+ * NON-GREEDY, so a deeper lineage keeps each person as a separate run instead of
+ * swallowing the rest.
  *
- * Names containing the literal `'s ` (or ` in `, in the original-story shape) are
- * the only ambiguous input, and they degrade to the first plausible split rather
- * than failing. An unexpected shape returns the whole sentence as one plain run:
- * attribution is supplementary, so it must never fail to draw.
+ * The older `Adapted from {name}'s …` shapes are still parsed: an app can meet a
+ * server that predates KNOT-022-fix2, and attribution is display-only, so it is
+ * better to bold the name than to render an unstyled sentence.
+ *
+ * Names containing the literal ` from `, `'s ` (or ` in `, in the original-story
+ * shape) are the only ambiguous input, and they degrade to the first plausible
+ * split rather than failing. An unexpected shape returns the whole sentence as
+ * one plain run: attribution is supplementary, so it must never fail to draw.
  */
 export function attributionSegments(line: string): readonly AttributionSegment[] {
   const value = line.trim();
@@ -109,6 +114,34 @@ function nameRanges(value: string): readonly NameRange[] {
     return [{ start, end: start + original[1].length }];
   }
 
+  // The current shape: "Adapted by {adapter} from {next}'s …". The adapter is
+  // named first, so it opens the runs (KNOT-022-fix2).
+  const adaptedBy = /^Adapted by (.+?) from /.exec(value);
+  if (adaptedBy !== null) {
+    const adapterStart = 'Adapted by '.length;
+    const ranges: NameRange[] = [{ start: adapterStart, end: adapterStart + adaptedBy[1].length }];
+
+    const nextStart = adapterStart + adaptedBy[1].length + ' from '.length;
+    const next = /^(.+?)'s /.exec(value.slice(nextStart));
+    if (next !== null) {
+      ranges.push({ start: nextStart, end: nextStart + next[1].length });
+
+      // A third name, in a three-deep or longer lineage: "…version of Ada's
+      // original story…", or "…version, tracing back to Ada's original story".
+      const restStart = nextStart + next[1].length;
+      const rest = value.slice(restStart);
+      const root = / (?:of|to) (.+?)'s original story/.exec(rest);
+      if (root !== null) {
+        const start = restStart + rest.indexOf(root[1], root.index);
+        ranges.push({ start, end: start + root[1].length });
+      }
+    }
+
+    return ranges;
+  }
+
+  // The pre-KNOT-022-fix2 shape: "Adapted from {name}'s …". Kept so a newer
+  // client still styles a sentence from an older server.
   const adapted = /^Adapted from (.+?)'s /.exec(value);
   if (adapted === null) {
     return [];

@@ -60,6 +60,15 @@ type FeedEntryStory = {
   readonly root_author_id?: string;
   readonly root_author_display_name?: string | null;
   readonly root_author_avatar_url?: string | null;
+  /**
+   * The author of the version this one adapts directly -- the lineage actor the
+   * attribution row credits first. For a first adaptation this is the same person
+   * as the root author, and the row renders a single avatar (KNOT-022-fix2). A
+   * story entry carries none of these.
+   */
+  readonly parent_author_id?: string;
+  readonly parent_author_display_name?: string | null;
+  readonly parent_author_avatar_url?: string | null;
   readonly created_at: string;
   readonly version_count?: number;
   readonly language_count?: number;
@@ -173,20 +182,45 @@ function resolveAvatarUrl(path: string | null | undefined): string | undefined {
 }
 
 /**
- * The attribution runs for a server that sent no sentence: the original author
- * alone, in the same shape `attributionSegments` produces, so the row renders the
- * fallback as just another sentence (KNOT-022-fix1).
+ * The attribution runs for a server that sent no sentence: the adapter and the
+ * original author, in the same shape `attributionSegments` produces, so the row
+ * renders the fallback as just another sentence (KNOT-022-fix1, KNOT-022-fix2).
  */
-function fallbackAttributionRuns(rootAuthorName: string): readonly AttributionSegment[] {
+function fallbackAttributionRuns(
+  adapterName: string,
+  rootAuthorName: string,
+): readonly AttributionSegment[] {
   if (rootAuthorName === '') {
     return [];
   }
+  if (adapterName === '') {
+    return [
+      { text: 'Adapted from ', bold: false },
+      { text: rootAuthorName, bold: true },
+      { text: "'s original story.", bold: false },
+    ];
+  }
 
   return [
-    { text: 'Adapted from ', bold: false },
+    { text: 'Adapted by ', bold: false },
+    { text: adapterName, bold: true },
+    { text: ' from ', bold: false },
     { text: rootAuthorName, bold: true },
     { text: "'s original story.", bold: false },
   ];
+}
+
+/** One face in the attribution row's lineage stack. */
+type LineageAvatar = {
+  readonly key: 'parent' | 'root';
+  readonly uri: string | undefined;
+  readonly name: string;
+  readonly label: string;
+};
+
+/** The accessibility label for a lineage avatar, tolerating an unresolved name. */
+function lineageAvatarLabel(name: string): string {
+  return name === '' ? 'Lineage author\u2019s profile picture' : `${name}'s profile picture`;
 }
 
 /**
@@ -201,10 +235,11 @@ function fallbackAttributionRuns(rootAuthorName: string): readonly AttributionSe
  *
  * The author block is a vertical stack (KNOT-023b): the avatar on the left and,
  * on the right, the name, the quiet Rooted line, then the compact time. A version
- * card additionally opens with an attribution row — a small stack of the adapter
- * and original author's avatars beside the server's sentence, whose names are
- * bolded — which is the only place that sentence, and the "Version N · Language"
- * label, are drawn (KNOT-022-fix1).
+ * card additionally opens with an attribution row — a small stack of the LINEAGE
+ * authors' avatars (the direct parent and the original) beside the server's
+ * sentence, whose names are bolded — which is the only place that sentence, and
+ * the "Version N · Language" label, are drawn. The poster is the AuthorLine below,
+ * not a face in that stack (KNOT-022-fix1, KNOT-022-fix2).
  *
  * The text column keeps the feed's horizontal inset, but the **media is
  * full-bleed**: no horizontal padding and no corner rounding. An image draws
@@ -269,15 +304,56 @@ export default function FeedEntry({
   });
 
   const isVersion = variant === 'version';
-  // The two people the row credits: the adapter (the card's own author) and the
-  // original author, whose identity the server attaches only to an adaptation
-  // (KNOT-023a). The avatars read from these fields; the sentence is never parsed
-  // for them.
+  // The people the row credits are the LINEAGE, not the poster: the author of the
+  // version this one adapts (the parent) and the story's original author (the
+  // root). The poster -- this version's own author -- is already the AuthorLine
+  // below, so repeating them in the stack credited the wrong person
+  // (KNOT-022-fix2). The sentence is never parsed for these; the server sends the
+  // structured fields from the same batched author read.
   const adapterName =
     typeof story.author_display_name === 'string' ? story.author_display_name.trim() : '';
+  const rootAuthorID = typeof story.root_author_id === 'string' ? story.root_author_id.trim() : '';
   const rootAuthorName =
     typeof story.root_author_display_name === 'string' ? story.root_author_display_name.trim() : '';
   const rootAuthorAvatarUrl = resolveAvatarUrl(story.root_author_avatar_url);
+  const parentAuthorID =
+    typeof story.parent_author_id === 'string' ? story.parent_author_id.trim() : '';
+  const parentAuthorName =
+    typeof story.parent_author_display_name === 'string'
+      ? story.parent_author_display_name.trim()
+      : '';
+  const parentAuthorAvatarUrl = resolveAvatarUrl(story.parent_author_avatar_url);
+
+  const parentKnown = parentAuthorName !== '' || parentAuthorAvatarUrl !== undefined;
+  const rootKnown = rootAuthorName !== '' || rootAuthorAvatarUrl !== undefined;
+  // A first adaptation's parent IS the original, so the two structure fields name
+  // the same person and only one face is drawn. The id is the reliable comparison;
+  // the name is the fallback for a server that omits it.
+  const sameLineageAuthor =
+    parentKnown &&
+    rootKnown &&
+    (parentAuthorID !== '' && rootAuthorID !== ''
+      ? parentAuthorID === rootAuthorID
+      : parentAuthorName !== '' && parentAuthorName === rootAuthorName);
+
+  const lineageAvatars: LineageAvatar[] = [];
+  if (parentKnown) {
+    lineageAvatars.push({
+      key: 'parent',
+      uri: parentAuthorAvatarUrl,
+      name: parentAuthorName,
+      label: lineageAvatarLabel(parentAuthorName),
+    });
+  }
+  if (rootKnown && !sameLineageAuthor) {
+    lineageAvatars.push({
+      key: 'root',
+      uri: rootAuthorAvatarUrl,
+      name: rootAuthorName,
+      label: lineageAvatarLabel(rootAuthorName),
+    });
+  }
+
   const attributionText = typeof attributionLine === 'string' ? attributionLine.trim() : '';
   // The sentence names the people in the lineage, so it is split into runs and
   // every name is drawn in the bold label voice (KNOT-022-fix1). Parsing is
@@ -285,11 +361,12 @@ export default function FeedEntry({
   const attributionRuns: readonly AttributionSegment[] =
     attributionText !== ''
       ? attributionSegments(attributionText)
-      : fallbackAttributionRuns(rootAuthorName);
-  // The version's position and language ride in this row, quietly, so the card's
-  // overline can stay the pillar tag alone (KNOT-022-fix1). The server's sentence
-  // already names the target language ("...into Zulu"), so it contributes only
-  // the number; without a sentence the full label is drawn.
+      : fallbackAttributionRuns(adapterName, rootAuthorName);
+  // The version's position rides in this row, quietly, so the card's overline can
+  // stay the pillar tag alone (KNOT-022-fix1). The sentence no longer carries the
+  // target language either -- the reader is already looking at that telling -- so
+  // a sentence contributes only the number; when it is missing, the full label is
+  // drawn (KNOT-022-fix2).
   const versionLabel =
     versionNumber === undefined
       ? `Version in ${languageName(story.language)}`
@@ -313,35 +390,30 @@ export default function FeedEntry({
       testID={testID}
     >
       <View style={styles.padded}>
-        {/* The attribution row: the adapter who wrote this telling and the
-            original author whose story it carries, as stacked avatars, then a
-            two-line social credit (the server's sentence with its names bolded,
-            plus the quiet version label). It replaces the old overline badge and
-            the sentence under the title (KNOT-023b, KNOT-022-fix1). */}
+        {/* The attribution row: the lineage authors -- the direct parent and the
+            original -- as stacked avatars, then a two-line social credit (the
+            server's sentence with its names bolded, plus the quiet version
+            label). The poster is deliberately absent: they are the AuthorLine
+            below, not the lineage (KNOT-023b, KNOT-022-fix1, KNOT-022-fix2). */}
         {showAttributionHeader ? (
           <View style={styles.attributionRow} testID="attribution-header">
-            <View style={styles.attributionAvatars}>
-              <Avatar
-                uri={resolveAvatarUrl(story.author_avatar_url)}
-                displayName={adapterName}
-                size="sm"
-                accessibilityLabel={
-                  adapterName === ''
-                    ? 'Adapter\u2019s profile picture'
-                    : `${adapterName}'s profile picture`
-                }
-              />
-              {rootAuthorName !== '' ? (
-                <View style={styles.attributionAvatarStacked}>
-                  <Avatar
-                    uri={rootAuthorAvatarUrl}
-                    displayName={rootAuthorName}
-                    size="sm"
-                    accessibilityLabel={`${rootAuthorName}'s profile picture`}
-                  />
-                </View>
-              ) : null}
-            </View>
+            {lineageAvatars.length > 0 ? (
+              <View style={styles.attributionAvatars}>
+                {lineageAvatars.map((actor, index) => (
+                  <View
+                    key={actor.key}
+                    style={index === 0 ? null : styles.attributionAvatarStacked}
+                  >
+                    <Avatar
+                      uri={actor.uri}
+                      displayName={actor.name}
+                      size="sm"
+                      accessibilityLabel={actor.label}
+                    />
+                  </View>
+                ))}
+              </View>
+            ) : null}
             <Text
               testID="attribution-sentence"
               style={[typeScale.bodyS, styles.attributionText]}
@@ -469,8 +541,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
   },
-  // The original author sits over the adapter's avatar, ringed in the canvas so
-  // the two faces stay legible where they meet.
+  // Each later lineage face sits over the one before it, ringed in the canvas so
+  // the faces stay legible where they meet (KNOT-022-fix2).
   attributionAvatarStacked: {
     backgroundColor: colors.bg.canvas,
     borderColor: colors.bg.canvas,

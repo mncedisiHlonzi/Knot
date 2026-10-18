@@ -480,7 +480,10 @@ two entry kinds** — a story and somebody's adaptation of one — and every ent
       "language": "zul",
       "title": "Imvula yokuqala",
       "version_number": 2,
-      "attribution_line": "Adapted from Nomsa Khan's original story in English into Zulu.",
+      "attribution_line": "Adapted by Sipho Dlamini from Nomsa Khan's original story in English.",
+      "parent_author_id": "…",
+      "parent_author_display_name": "Nomsa Khan",
+      "parent_author_avatar_url": "/users/…/avatar?v=b.png",
       "root_author_id": "…",
       "root_author_display_name": "Nomsa Khan",
       "root_author_avatar_url": "/users/…/avatar?v=a.png",
@@ -536,6 +539,7 @@ one card component can draw both. What differs:
 | `reactions`, `my_reactions` | the story's | the **version's**: a reader reacts to the adaptation they are reading (KNOT-021) |
 | `version_number` | absent | the entry's position in its lineage, counting the original as **1**, so a first adaptation is `2` |
 | `attribution_line` | absent | the server-rendered sentence tracing this version back to the original, shown **verbatim**; empty when the lineage could not be resolved |
+| `parent_author_id`, `parent_author_display_name`, `parent_author_avatar_url` | absent | the author of the version this one **directly adapts**: the lineage actor a card credits first. For a first adaptation this is the same person as the root author, and a client renders one avatar (KNOT-022-fix2) |
 | `root_author_id`, `root_author_display_name`, `root_author_avatar_url` | absent | the **original** author — the first link of the lineage — as structured data, so a card can head the entry with "{name}'s original story" without parsing `attribution_line`. The name is empty when the lineage could not be resolved; the avatar is `null` when the original author has none (KNOT-023a) |
 | `root_version_id`, `updated_at`, `version_depth`, `media` | present (`version_depth` is `0`) | absent |
 
@@ -548,10 +552,16 @@ what a reader says out loud.
 resolved. Attribution is enrichment: a page that cannot resolve a lineage is still served,
 and the entry simply shows no sentence.
 
-The three `root_author_*` fields are filled by the **same** batched enrichment as
-`attribution_line` — one ancestry read plus the page's single author read — so they add no
-query. They are present on every version entry: an unresolvable lineage yields an empty
-name and a null avatar, which a client reads as "do not draw the header" (KNOT-023a).
+The three `root_author_*` and three `parent_author_*` fields are filled by the **same**
+batched enrichment as `attribution_line` — one ancestry read plus the page's single author
+read — so they add no query. They are present on every version entry: an unresolvable
+lineage yields an empty name and a null avatar, which a client reads as "do not draw the
+header" (KNOT-023a).
+
+The entry's own `author_*` fields are the **poster** (the adapter who wrote this version),
+while `parent_author_*` and `root_author_*` are the **lineage**. A card should draw the
+lineage avatars in the attribution row and the poster in the author line, so the two
+credits are distinct (KNOT-022-fix2).
 
 Ordering is `(created_at DESC, id DESC)` over **both kinds**, keyed by each entry's own
 `created_at`: an adaptation appears where it was written, not where its story was published.
@@ -743,8 +753,9 @@ Neither is stored. Both are resolved at read time by walking `parent_version_id`
 root (KNOT-ADR-069), so the tree stays the single source of truth and the sentence can never
 drift from it. **The server renders the sentence and a client shows it verbatim** — a client
 must not re-format it, because the wording is one decision in one place. An author whose
-account cannot be resolved is named `another author`, and a language that is missing or
-unrecognised reads `their language`, so the sentence never has a hole in it.
+account cannot be resolved is named `another author` in the lineage and `someone` as the
+adapter, and a language that is missing or unrecognised reads `their language`, so the
+sentence never has a hole in it.
 
 The wording depends on how many versions the lineage holds (write `N` for that count;
 `version_depth` is `N - 1`):
@@ -752,13 +763,15 @@ The wording depends on how many versions the lineage holds (write `N` for that c
 | N  | `attribution_line` |
 | -- | ------------------ |
 | 1  | `Original story by {author} in {language}.` |
-| 2  | `Adapted from {root author}'s original story in {root language} into {language}.` |
-| 3  | `Adapted from {middle author}'s {middle language} version of {root author}'s original story in {root language} into {language}.` |
-| 4+ | `Adapted from {parent author}'s {parent language} version, which traces back through {N-2} adaptations to {root author}'s original story in {root language}, into {language}.` |
+| 2  | `Adapted by {adapter} from {root author}'s original story in {root language}.` |
+| 3  | `Adapted by {adapter} from {middle author}'s {middle language} version of {root author}'s original story in {root language}.` |
+| 4+ | `Adapted by {adapter} from {parent author}'s {parent language} version, tracing back to {root author}'s original story.` |
 
-In every form the final `{language}` is the language of the version being read. From four
-links on, the middle of the lineage is compressed into a count, so a long chain still reads
-as one sentence rather than a list.
+Every adaptation shape names the **adapter first**, because the telling is theirs. The
+target language is deliberately absent: the reader is already looking at that version, and
+repeating "into {language}" made the sentence read like a data log (KNOT-022-fix2). From
+four links on, the middle of the lineage is compressed into "tracing back to", so a long
+chain still reads as one sentence rather than a list.
 
 **The tree resolves every chain in memory.** The tree endpoint loads a story's versions
 once and then walks the parent pointers it already holds, so a page of N versions costs the

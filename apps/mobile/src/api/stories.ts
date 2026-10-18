@@ -199,6 +199,16 @@ export type VersionFeedItem = {
   readonly root_author_id?: string;
   readonly root_author_display_name?: string;
   readonly root_author_avatar_url?: string | null;
+  /**
+   * The author of the version this one adapts directly -- the lineage actor the
+   * card credits first -- so the avatar stack shows the lineage rather than the
+   * poster (who is the entry's own `author` and is drawn in the author line). For
+   * a first adaptation this is the same person as the root author, and the card
+   * renders only one avatar (KNOT-022-fix2).
+   */
+  readonly parent_author_id?: string;
+  readonly parent_author_display_name?: string;
+  readonly parent_author_avatar_url?: string | null;
   readonly language: string;
   readonly title: string;
   readonly body: string;

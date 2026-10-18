@@ -747,6 +747,18 @@ func applyVersionCardFields(
 		item.RootAuthorAvatarURL = optionalString(rootAttribution.AvatarURL)
 	}
 
+	// The parent link is the version this one was adapted from. It is the
+	// second-to-last link (the last is the entry itself), and for a first
+	// adaptation it is the root. Its author is resolved from the same batched read,
+	// so the card's lineage avatar stack costs nothing extra (KNOT-022-fix2).
+	if len(chain) >= 2 {
+		parent := chain[len(chain)-2]
+		parentAttribution := attributions[parent.AuthorID]
+		item.ParentAuthorID = parent.AuthorID
+		item.ParentAuthorDisplayName = parentAttribution.DisplayName
+		item.ParentAuthorAvatarURL = optionalString(parentAttribution.AvatarURL)
+	}
+
 	// VersionNumber counts the original as 1, so a chain of depth n -- n
 	// adaptations away from the root -- is version n+1.
 	item.VersionNumber = chain.Depth() + 1

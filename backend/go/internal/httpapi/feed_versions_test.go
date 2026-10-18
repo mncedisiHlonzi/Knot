@@ -33,9 +33,9 @@ const (
 	feedAdapterName = "Sipho Dlamini"
 	feedAuthorName  = "Nomsa Khan"
 	// feedAttribution is the exact sentence the server renders for the fixture
-	// below: a two-link chain, an original in English adapted into Zulu
-	// (KNOT-021, KNOT-022).
-	feedAttribution = "Adapted from Nomsa Khan's original story in English into Zulu."
+	// below: a two-link chain, the adapter's own name followed by the original
+	// (KNOT-021, KNOT-022, KNOT-022-fix2).
+	feedAttribution = "Adapted by Sipho Dlamini from Nomsa Khan's original story in English."
 )
 
 // feedFixture builds the store, the enrichment dependencies, and the router for
@@ -200,6 +200,18 @@ func TestFeedCarriesAdaptationEntries(t *testing.T) {
 	}
 	if adaptation.RootAuthorAvatarURL == nil || !strings.Contains(*adaptation.RootAuthorAvatarURL, feedAuthorID) {
 		t.Errorf("root author avatar = %v, want the original's avatar path", adaptation.RootAuthorAvatarURL)
+	}
+	// The parent author is the lineage actor the card's stack credits first. In a
+	// first adaptation the parent IS the root, so the two sets agree; the client
+	// collapses them to one avatar (KNOT-022-fix2).
+	if adaptation.ParentAuthorID != feedAuthorID {
+		t.Errorf("parent author id = %q, want the direct parent's author %q", adaptation.ParentAuthorID, feedAuthorID)
+	}
+	if adaptation.ParentAuthorDisplayName != feedAuthorName {
+		t.Errorf("parent author display name = %q, want %q", adaptation.ParentAuthorDisplayName, feedAuthorName)
+	}
+	if adaptation.ParentAuthorAvatarURL == nil || !strings.Contains(*adaptation.ParentAuthorAvatarURL, feedAuthorID) {
+		t.Errorf("parent author avatar = %v, want the original's avatar path", adaptation.ParentAuthorAvatarURL)
 	}
 	if !adaptation.CreatedAt.Equal(testNow) {
 		t.Errorf("created at = %v, want the version's own timestamp %v", adaptation.CreatedAt, testNow)

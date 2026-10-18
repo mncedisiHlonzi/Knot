@@ -330,6 +330,13 @@ export default function FeedScreen({
                 root_author_display_name:
                   item.kind === 'version' ? item.root_author_display_name : undefined,
                 root_author_id: item.kind === 'version' ? item.root_author_id : undefined,
+                // The direct parent's author: the lineage actor the attribution
+                // stack credits before the original (KNOT-022-fix2).
+                parent_author_avatar_url:
+                  item.kind === 'version' ? item.parent_author_avatar_url : undefined,
+                parent_author_display_name:
+                  item.kind === 'version' ? item.parent_author_display_name : undefined,
+                parent_author_id: item.kind === 'version' ? item.parent_author_id : undefined,
                 title: item.title,
                 version_count: item.version_count,
               }}

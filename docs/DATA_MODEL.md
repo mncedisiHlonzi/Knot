@@ -294,6 +294,14 @@ a column: no schema change, no migration, and no extra query. The fields exist s
 head an adaptation with "{name}'s original story" without parsing the attribution sentence
 (KNOT-023a).
 
+The **direct parent's** author rides alongside them as `parent_author_id`,
+`parent_author_display_name`, and `parent_author_avatar_url`, taken from the
+**second-to-last link** (the last link is the entry itself). For a first adaptation the
+parent IS the root, so the two sets name the same person. These are projections too: the
+chain and the page's single author read already hold them. A card draws the parent and the
+root as its lineage avatar stack, keeping the poster — the entry's own `author_*` — in the
+author line below (KNOT-022-fix2).
+
 ### The feed reads both tables
 
 The feed is a **union of the two tables above**, not a query over `stories` alone:

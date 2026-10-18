@@ -393,4 +393,48 @@ describe('attributionSegments helper', () => {
     expect(attributionSegments('')).toEqual([]);
     expect(attributionSegments('   ')).toEqual([]);
   });
+
+  it('bolds the adapter and the original in the new adapted-by phrasing', () => {
+    expect(
+      attributionSegments("Adapted by Sipho Dlamini from Nomsa Khan's original story in English."),
+    ).toEqual([
+      { text: 'Adapted by ', bold: false },
+      { text: 'Sipho Dlamini', bold: true },
+      { text: ' from ', bold: false },
+      { text: 'Nomsa Khan', bold: true },
+      { text: "'s original story in English.", bold: false },
+    ]);
+  });
+
+  it('bolds the adapter, parent, and original in a three-deep lineage', () => {
+    expect(
+      attributionSegments(
+        "Adapted by Thandi Mokoena from Sipho Dlamini's Zulu version of Nomsa Khan's original story in English.",
+      ),
+    ).toEqual([
+      { text: 'Adapted by ', bold: false },
+      { text: 'Thandi Mokoena', bold: true },
+      { text: ' from ', bold: false },
+      { text: 'Sipho Dlamini', bold: true },
+      { text: "'s Zulu version of ", bold: false },
+      { text: 'Nomsa Khan', bold: true },
+      { text: "'s original story in English.", bold: false },
+    ]);
+  });
+
+  it('bolds the adapter, parent, and original in the long lineage form', () => {
+    expect(
+      attributionSegments(
+        "Adapted by Ana Ruiz from Thandi Mokoena's Xhosa version, tracing back to Nomsa Khan's original story.",
+      ),
+    ).toEqual([
+      { text: 'Adapted by ', bold: false },
+      { text: 'Ana Ruiz', bold: true },
+      { text: ' from ', bold: false },
+      { text: 'Thandi Mokoena', bold: true },
+      { text: "'s Xhosa version, tracing back to ", bold: false },
+      { text: 'Nomsa Khan', bold: true },
+      { text: "'s original story.", bold: false },
+    ]);
+  });
 });

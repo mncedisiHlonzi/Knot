@@ -251,9 +251,19 @@ type feedVersionItem struct {
 	RootAuthorID          string  `json:"root_author_id"`
 	RootAuthorDisplayName string  `json:"root_author_display_name"`
 	RootAuthorAvatarURL   *string `json:"root_author_avatar_url"`
-	Language              string  `json:"language"`
-	Title                 string  `json:"title"`
-	Body                  string  `json:"body"`
+	// ParentAuthorID, ParentAuthorDisplayName, and ParentAuthorAvatarURL describe
+	// the author of the version this one adapts directly: the lineage actor a card
+	// credits first. They are the second-to-last link of the same chain the root
+	// fields come from, so they add no query; for a first adaptation the parent IS
+	// the root. A card's avatar stack draws the parent and the root -- the lineage --
+	// rather than the entry's own author, who is the poster shown in the author line
+	// (KNOT-022-fix2).
+	ParentAuthorID          string  `json:"parent_author_id"`
+	ParentAuthorDisplayName string  `json:"parent_author_display_name"`
+	ParentAuthorAvatarURL   *string `json:"parent_author_avatar_url"`
+	Language                string  `json:"language"`
+	Title                   string  `json:"title"`
+	Body                    string  `json:"body"`
 	// Pillar is the story's pillar, inherited: a pillar frames the story, and an
 	// adaptation of a heritage story is still heritage.
 	Pillar stories.Pillar `json:"pillar"`

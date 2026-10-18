@@ -105,6 +105,37 @@ function findElementByType(
   return undefined;
 }
 
+/**
+ * Collects EVERY element of the given component type, so a stack can be asserted
+ * by the props of each face rather than only by how many were built
+ * (KNOT-022-fix2).
+ */
+function elementsByType(
+  node: unknown,
+  type: unknown,
+  found: Array<{ props?: Record<string, unknown> }> = [],
+): Array<{ props?: Record<string, unknown> }> {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      elementsByType(child, type, found);
+    }
+    return found;
+  }
+  if (node === null || node === undefined || typeof node !== 'object') {
+    return found;
+  }
+
+  const element = node as { type?: unknown; props?: { children?: unknown } };
+  if (element.type === type) {
+    found.push(element as { props?: Record<string, unknown> });
+  }
+  if (element.props !== undefined) {
+    elementsByType(element.props.children, type, found);
+  }
+
+  return found;
+}
+
 /** The entry every assertion below is built from. */
 const story = {
   id: 'story-1',
@@ -376,10 +407,16 @@ describe('FeedEntry', () => {
   describe('the version variant', () => {
     const versionFeedItem = {
       ...withMedia,
+      parent_author_id: 'author-parent',
+      parent_author_display_name: 'MaEnzy',
+      parent_author_avatar_url: '/users/author-parent/avatar?v=p.png',
+      root_author_id: 'author-root',
+      root_author_display_name: 'Ada Lovelace',
+      root_author_avatar_url: '/users/author-root/avatar?v=a.png',
     };
 
-    it('renders the attribution row in the body-small voice, with a small avatar', () => {
-      const sentence = 'Adapted from Ada Lovelace in English into Zapotec.';
+    it('renders the attribution row in the body-small voice, with small lineage avatars', () => {
+      const sentence = "Adapted by Nomsa Khan from Ada Lovelace's original story in English.";
       const element = FeedEntry({
         story: versionFeedItem,
         variant: 'version',
@@ -395,27 +432,43 @@ describe('FeedEntry', () => {
       expect(line?.props?.style).toContain(typeScale.bodyS);
       expect(line?.props?.numberOfLines).toBe(2);
 
-      // The row leads with the adapter's avatar, at the small size the stacked
-      // pair uses (KNOT-022-fix1).
+      // The row leads with the lineage's parent author, at the small size the
+      // stack uses (KNOT-022-fix2).
       expect(findElementByType(header, Avatar)?.props?.size).toBe('sm');
-      expect(collectText(element)).toContain(sentence);
+
+      // The parser splits the sentence around its names, so the text is asserted
+      // by its runs rather than as one string.
+      const text = collectText(element);
+      expect(text).toContain('Adapted by ');
+      expect(text).toContain('Nomsa Khan');
+      expect(text).toContain('Ada Lovelace');
+      expect(text).toContain("'s original story in English.");
     });
   });
 
   describe('the attribution header', () => {
-    const sentence = "Adapted from Ada Lovelace's original story in English into Zulu.";
+    // The founder's shape: the poster (Nomsa) is version 3's author, MaEnzy wrote
+    // the version it adapts, and Ada wrote the original. The stack must show the
+    // lineage -- MaEnzy and Ada -- never the poster, who is the AuthorLine below
+    // (KNOT-022-fix2).
+    const sentence =
+      "Adapted by Nomsa Khan from MaEnzy's Zulu version of Ada Lovelace's original story in English.";
     const adapted = {
       ...story,
+      author_avatar_url: '/users/author-poster/avatar?v=poster.png',
+      parent_author_id: 'author-parent',
+      parent_author_display_name: 'MaEnzy',
+      parent_author_avatar_url: '/users/author-parent/avatar?v=p.png',
       root_author_id: 'author-root',
       root_author_display_name: 'Ada Lovelace',
       root_author_avatar_url: '/users/author-root/avatar?v=a.png',
     };
 
-    it('stacks the adapter and original author beside the bolded sentence', () => {
+    it('stacks the parent and original authors beside the bolded sentence', () => {
       const element = FeedEntry({
         story: adapted,
         variant: 'version',
-        versionNumber: 2,
+        versionNumber: 3,
         attributionLine: sentence,
         onPress: () => undefined,
       });
@@ -423,22 +476,57 @@ describe('FeedEntry', () => {
       const header = findElement(element, (props) => props.testID === 'attribution-header');
       expect(header).toBeDefined();
 
-      // Two small avatars, stacked: the adapter taking credit, then the original
-      // author (KNOT-022-fix1).
-      const avatars = elementTypes(header).filter((type) => type === Avatar);
+      // Two small avatars, stacked in lineage order: the direct parent, then the
+      // original (KNOT-022-fix2).
+      const avatars = elementsByType(header, Avatar);
       expect(avatars).toHaveLength(2);
-      expect(findElementByType(header, Avatar)?.props?.size).toBe('sm');
+      expect(avatars.map((avatar) => avatar.props?.uri)).toEqual([
+        'http://localhost:8080/users/author-parent/avatar?v=p.png',
+        'http://localhost:8080/users/author-root/avatar?v=a.png',
+      ]);
+      expect(avatars.map((avatar) => avatar.props?.size)).toEqual(['sm', 'sm']);
 
-      // The name is split out and given the bold label voice (KNOT-023c).
-      const boldName = findTextElement(element, (value) => value === 'Ada Lovelace');
-      expect(boldName?.props?.style).toEqual(expect.arrayContaining([typeScale.label]));
+      // The poster is deliberately not in the stack; they are the author line.
+      expect(avatars.map((avatar) => avatar.props?.uri)).not.toContain(
+        'http://localhost:8080/users/author-poster/avatar?v=poster.png',
+      );
+
+      // Every name the sentence mentions is split out and given the bold label
+      // voice (KNOT-023c, KNOT-022-fix2).
+      for (const name of ['Nomsa Khan', 'MaEnzy', 'Ada Lovelace']) {
+        const boldName = findTextElement(element, (value) => value === name);
+        expect(boldName?.props?.style).toEqual(expect.arrayContaining([typeScale.label]));
+      }
 
       const text = collectText(element);
-      expect(text).toContain('Adapted from ');
-      expect(text).toContain("'s original story in English into Zulu.");
+      expect(text).toContain('Adapted by ');
+      expect(text).toContain(' from ');
+      expect(text).toContain("'s Zulu version of ");
+      expect(text).toContain("'s original story in English.");
 
       // A hairline now separates the header from the author block.
       expect(findElement(element, (props) => props.testID === 'attribution-divider')).toBeDefined();
+    });
+
+    it('draws one avatar when the parent is the original author', () => {
+      const element = FeedEntry({
+        story: {
+          ...adapted,
+          parent_author_id: 'author-root',
+          parent_author_display_name: 'Ada Lovelace',
+          parent_author_avatar_url: '/users/author-root/avatar?v=a.png',
+        },
+        variant: 'version',
+        versionNumber: 2,
+        attributionLine: "Adapted by Nomsa Khan from Ada Lovelace's original story in English.",
+        onPress: () => undefined,
+      });
+
+      const header = findElement(element, (props) => props.testID === 'attribution-header');
+      const avatars = elementsByType(header, Avatar);
+
+      expect(avatars).toHaveLength(1);
+      expect(avatars[0].props?.uri).toBe('http://localhost:8080/users/author-root/avatar?v=a.png');
     });
 
     it('bolds the name in the original-story form too', () => {
@@ -485,7 +573,7 @@ describe('FeedEntry', () => {
       expect(collectText(element)).toContain('Version 2 · Zapotec');
     });
 
-    it('falls back to the structured root author when the sentence is missing', () => {
+    it('falls back to the structured lineage when the sentence is missing', () => {
       const element = FeedEntry({
         story: adapted,
         variant: 'version',
@@ -495,7 +583,9 @@ describe('FeedEntry', () => {
       });
 
       const text = collectText(element);
-      expect(text).toContain('Adapted from ');
+      expect(text).toContain('Adapted by ');
+      expect(text).toContain('Nomsa Khan');
+      expect(text).toContain(' from ');
       expect(text).toContain('Ada Lovelace');
       expect(text).toContain("'s original story.");
     });
@@ -652,7 +742,7 @@ const version = {
   language: 'zul',
 };
 
-const ATTRIBUTION = "Adapted from Nomsa Khan's original story in English into Zulu.";
+const ATTRIBUTION = "Adapted by Nomsa Khan from Ada Lovelace's original story in English.";
 
 describe('FeedEntry version variant', () => {
   it('labels an adaptation with its inherited pillar and moves the version into the credit', () => {
@@ -688,10 +778,13 @@ describe('FeedEntry version variant', () => {
     });
 
     const text = collectText(element);
-    expect(text).toContain('Adapted from ');
+    expect(text).toContain('Adapted by ');
     expect(text).toContain('Nomsa Khan');
-    expect(text).toContain("'s original story in English into Zulu.");
+    expect(text).toContain(' from ');
+    expect(text).toContain('Ada Lovelace');
+    expect(text).toContain("'s original story in English.");
 
+    // The sentence opens with the adapter, who is bolded like the original.
     const boldName = findTextElement(element, (value) => value === 'Nomsa Khan');
     expect(boldName?.props?.style).toEqual(expect.arrayContaining([typeScale.label]));
   });
