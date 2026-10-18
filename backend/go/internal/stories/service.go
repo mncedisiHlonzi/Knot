@@ -189,7 +189,6 @@ func validateCreateStory(in CreateStoryInput) (Story, error) {
 		Longitude:           longitude,
 		PlaceCountry:        placeCountry,
 		MediaURLs:           media,
-		Sensitive:           in.Sensitive,
 	}, nil
 }
 

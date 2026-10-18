@@ -29,6 +29,56 @@ export function totalReactions(counts: ReactionCounts): number {
 }
 
 /**
+ * One attribution sentence split so its author name can be drawn in a heavier
+ * voice than the rest. `prefix` and `suffix` are plain text; `name` is the span a
+ * card may bold.
+ */
+export type AttributionParts = {
+  readonly prefix: string;
+  readonly name: string;
+  readonly suffix: string;
+};
+
+/**
+ * Splits the server's attribution sentence around the author it names, for
+ * display only (KNOT-023c).
+ *
+ * The server renders two shapes that begin with a person:
+ *
+ *   Original story by {name} in {language}.
+ *   Adapted from {name}'s ... (a root adaptation, or a deeper version's parent)
+ *
+ * The name is the first span after `from ` up to `'s `, or after `by ` up to
+ * ` in `. Both patterns are deliberately NON-GREEDY: a deeper lineage reads
+ * "Adapted from Bongani's Zulu version of Ada's original story …", and the first
+ * name (Bongani) is the one the sentence opens with; a greedy match would swallow
+ * the rest of the sentence. Names containing the literal `'s ` or ` in ` are the
+ * only ambiguous input, and they degrade to the first plausible split rather than
+ * failing.
+ *
+ * An unexpected shape returns `undefined`, which the card renders as the plain
+ * sentence. Attribution is supplementary, so it must never fail to draw.
+ */
+export function attributionParts(line: string): AttributionParts | undefined {
+  const value = line.trim();
+  if (value === '') {
+    return undefined;
+  }
+
+  const adapted = /^Adapted from (.+?)'s (.+)$/.exec(value);
+  if (adapted !== null) {
+    return { prefix: 'Adapted from ', name: adapted[1], suffix: `'s ${adapted[2]}` };
+  }
+
+  const original = /^Original story by (.+?) in (.+)$/.exec(value);
+  if (original !== null) {
+    return { prefix: 'Original story by ', name: original[1], suffix: ` in ${original[2]}` };
+  }
+
+  return undefined;
+}
+
+/**
  * Builds a feed entry's meta line: the story's counts as plain text, in the order
  * versions, languages, reactions, comments, joined by " · ".
  *

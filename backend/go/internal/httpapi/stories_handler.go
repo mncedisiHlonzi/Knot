@@ -102,7 +102,6 @@ type createStoryRequest struct {
 	Longitude           *float64       `json:"longitude"`
 	PlaceCountry        string         `json:"place_country"`
 	MediaURLs           []string       `json:"media_urls"`
-	Sensitive           bool           `json:"sensitive"`
 }
 
 // storyResponse is the public projection of a story. It is an explicit type, not
@@ -133,7 +132,6 @@ type storyResponse struct {
 	Longitude    *float64  `json:"longitude"`
 	PlaceCountry *string   `json:"place_country"`
 	MediaURLs    []string  `json:"media_urls"`
-	Sensitive    bool      `json:"sensitive"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 	// AuthorRooted is the author's primary public Rooted signal, or null when they
@@ -267,7 +265,6 @@ type feedVersionItem struct {
 	Longitude           *float64  `json:"longitude"`
 	PlaceCountry        *string   `json:"place_country"`
 	MediaURLs           []string  `json:"media_urls"`
-	Sensitive           bool      `json:"sensitive"`
 	CreatedAt           time.Time `json:"created_at"`
 	// MediaCount and the FirstMedia* fields describe the STORY's media preview, so
 	// an adaptation entry shows the story's pictures. The version's own text is
@@ -323,7 +320,6 @@ func newFeedVersionItem(version stories.VersionFeedItem) feedVersionItem {
 		Longitude:           version.Longitude,
 		PlaceCountry:        version.PlaceCountry,
 		MediaURLs:           media,
-		Sensitive:           version.Sensitive,
 		CreatedAt:           version.CreatedAt,
 		PreviewTruncated:    bodyExceedsPreviewWindow(version.Body),
 		// Emit [] rather than null until the enrichment fills it in.
@@ -375,7 +371,6 @@ func (h *StoriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Body:                body.Body,
 		ApproximateLocation: body.ApproximateLocation,
 		MediaURLs:           body.MediaURLs,
-		Sensitive:           body.Sensitive,
 	})
 	if err != nil {
 		h.writeServiceError(w, r, err)
@@ -577,7 +572,6 @@ func newStoryResponse(story stories.Story) storyResponse {
 		Longitude:           story.Longitude,
 		PlaceCountry:        story.PlaceCountry,
 		MediaURLs:           media,
-		Sensitive:           story.Sensitive,
 		CreatedAt:           story.CreatedAt,
 		UpdatedAt:           story.UpdatedAt,
 		PreviewTruncated:    bodyExceedsPreviewWindow(story.Body),

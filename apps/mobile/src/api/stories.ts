@@ -77,7 +77,6 @@ export type Story = {
   readonly longitude?: number | null;
   readonly place_country?: string | null;
   readonly media_urls: readonly string[];
-  readonly sensitive: boolean;
   readonly created_at: string;
   readonly updated_at: string;
   /**
@@ -211,11 +210,6 @@ export type VersionFeedItem = {
   readonly longitude?: number | null;
   readonly place_country?: string | null;
   readonly media_urls: readonly string[];
-  /**
-   * Whether the STORY is flagged sensitive, inherited. A card consults it before
-   * showing the story's media.
-   */
-  readonly sensitive: boolean;
   readonly created_at: string;
   /**
    * The STORY's media, so an adaptation entry shows the pictures the story came
@@ -258,7 +252,6 @@ export type CreateStoryPayload = {
   readonly longitude?: number;
   readonly place_country?: string;
   readonly media_urls?: readonly string[];
-  readonly sensitive?: boolean;
 };
 
 /** The body returned by POST /stories and GET /stories/{id}. */

@@ -316,7 +316,6 @@ and the pillar it belongs to.
       "url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content"
     }
   ],
-  "sensitive": false,
   "created_at": "2026-10-07T18:26:37.134182+02:00",
   "updated_at": "2026-10-07T18:26:37.134182+02:00",
   "version_count": 4,
@@ -334,6 +333,10 @@ and the pillar it belongs to.
 
 `media_urls` is always an array, never `null`. `approximate_location` is an empty string
 when it was not given.
+
+There is **no `sensitive` field**. The flag was removed from the platform in KNOT-023c
+(KNOT-ADR-072): the story shape no longer carries it and `POST /stories` rejects it as an
+unknown field, so a client must neither send nor expect it.
 
 `latitude`, `longitude`, and `place_country` are the story's **structured place data**, or
 `null` when the author attached no place. The coordinate pair is `null` together or set
@@ -426,8 +429,7 @@ and `updated_at` are generated server-side.
   "latitude": -33.9249,
   "longitude": 18.4241,
   "place_country": "South Africa",
-  "media_urls": ["https://example.com/rain.jpg"],
-  "sensitive": false
+  "media_urls": ["https://example.com/rain.jpg"]
 }
 ```
 
@@ -442,7 +444,6 @@ and `updated_at` are generated server-side.
 | `longitude`            | no       | Between -180 and 180. Must be sent with `latitude`            |
 | `place_country`        | no       | At most 100 characters after trimming                        |
 | `media_urls`           | no       | At most 20 links, each at most 2048 characters, none blank    |
-| `sensitive`            | no       | Defaults to `false`                                          |
 
 **There is no `author_id` field.** The author is taken from the access token. A request
 that includes `author_id` is rejected as an unknown field (400) rather than silently
@@ -530,7 +531,7 @@ one card component can draw both. What differs:
 | `parent_version_id` | absent | the version this one adapts. Never `null`: a root is not a feed entry |
 | `author_id` | the story's author | the **adapter**. The original author is named in `attribution_line` |
 | `language`, `title`, `body` | the root version's content | the adapter's own text |
-| `pillar`, `approximate_location`, `latitude`, `longitude`, `place_country`, `media_urls`, `sensitive`, `media_count`, `first_media_*` | the story's own | **inherited from the story**: a version row carries no pillar, place, or media of its own (KNOT-ADR-030, KNOT-ADR-034) |
+| `pillar`, `approximate_location`, `latitude`, `longitude`, `place_country`, `media_urls`, `media_count`, `first_media_*` | the story's own | **inherited from the story**: a version row carries no pillar, place, or media of its own (KNOT-ADR-030, KNOT-ADR-034) |
 | `version_count`, `language_count`, `comment_count` | the story's aggregates | the **story's** aggregates, so the entry can say how much adaptation it has |
 | `reactions`, `my_reactions` | the story's | the **version's**: a reader reacts to the adaptation they are reading (KNOT-021) |
 | `version_number` | absent | the entry's position in its lineage, counting the original as **1**, so a first adaptation is `2` |

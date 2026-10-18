@@ -92,5 +92,4 @@ type VersionFeedItem struct {
 	Longitude           *float64
 	PlaceCountry        *string
 	MediaURLs           []string
-	Sensitive           bool
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   Image,
   Pressable,
@@ -17,7 +17,7 @@ import { PLACEHOLDER_MEDIA_ASPECT_RATIO } from '../utils/mediaFrame';
 import { useMediaAspectRatio } from '../utils/useMediaAspectRatio';
 import AuthorLine from './AuthorLine';
 import Avatar from './Avatar';
-import { feedMetaLine, isPreviewTruncated } from './feedEntryMeta';
+import { feedMetaLine, isPreviewTruncated, attributionParts } from './feedEntryMeta';
 import FeedVideo, { VIDEO_MUTE_BUTTON_SIZE } from './FeedVideo';
 import PillarTag from './PillarTag';
 
@@ -43,12 +43,6 @@ type FeedEntryStory = {
   readonly preview_truncated?: boolean;
   readonly language: string;
   readonly place?: string | null;
-  /**
-   * Whether the story was flagged sensitive when it was told, inherited by every
-   * adaptation of it. A sensitive entry holds its media behind a scrim until the
-   * reader asks to see it (KNOT-023).
-   */
-  readonly sensitive?: boolean;
   readonly author_display_name?: string | null;
   readonly author_avatar_url?: string | null;
   readonly author_rooted?: { readonly place: string; readonly duration_bucket: string } | null;
@@ -148,13 +142,6 @@ const ATTRIBUTION_LINES = 2;
 /** The media-count badge's glyph size. */
 const COUNT_ICON_SIZE = 14;
 
-/**
- * How far the image is blurred while sensitive content is hidden. The value is
- * deliberately large enough that the picture reads as a shape rather than as
- * content, so the flag is meaningful on a phone screen (KNOT-023).
- */
-const SENSITIVE_BLUR_RADIUS = 18;
-
 /** A no-op for the mute control when a caller renders an entry without wiring one. */
 const NOOP = (): void => undefined;
 
@@ -231,12 +218,6 @@ export default function FeedEntry({
   const mediaUrl = resolveMediaUrl(story.first_media_url);
   const isVideo = story.first_media_type === 'video';
   const mediaCount = story.media_count ?? 0;
-  // The reveal is per-card and session-only: leaving the feed and coming back
-  // remounts the card, so sensitive media is hidden again (KNOT-023).
-  const [sensitiveRevealed, setSensitiveRevealed] = useState(false);
-  const sensitive = story.sensitive === true;
-  const sensitiveHidden = sensitive && !sensitiveRevealed;
-  const toggleSensitive = (): void => setSensitiveRevealed((current) => !current);
   const { aspectRatio, onLoadSize } = useMediaAspectRatio(
     story.first_media_width,
     story.first_media_height,
@@ -272,6 +253,10 @@ export default function FeedEntry({
     typeof story.root_author_display_name === 'string' ? story.root_author_display_name.trim() : '';
   const rootAuthorAvatarUrl = resolveAvatarUrl(story.root_author_avatar_url);
   const attributionText = typeof attributionLine === 'string' ? attributionLine.trim() : '';
+  // The sentence is split so the author's name can take the bold label voice
+  // (KNOT-023c). Parsing is display-only; an unexpected sentence falls back to
+  // the plain string.
+  const attribution = attributionParts(attributionText);
   const showAttributionHeader = isVersion && (attributionText !== '' || rootAuthorName !== '');
   // The badge names the version and the language it was written in, which is what
   // makes an adaptation legible before the text is read: "Version 2 · Zulu". The
@@ -314,7 +299,17 @@ export default function FeedEntry({
                 style={[typeScale.caption, styles.attributionText]}
                 numberOfLines={ATTRIBUTION_LINES}
               >
-                {attributionText}
+                {attribution === undefined ? (
+                  attributionText
+                ) : (
+                  <>
+                    {attribution.prefix}
+                    <Text style={[typeScale.label, styles.attributionName]}>
+                      {attribution.name}
+                    </Text>
+                    {attribution.suffix}
+                  </>
+                )}
               </Text>
             ) : (
               <Text
@@ -328,6 +323,12 @@ export default function FeedEntry({
               </Text>
             )}
           </View>
+        ) : null}
+
+        {/* A hairline separates the attribution line from the poster's author
+            block, so the two identities read as distinct (KNOT-023c). */}
+        {showAttributionHeader ? (
+          <View style={styles.attributionDivider} testID="attribution-divider" />
         ) : null}
 
         <AuthorLine
@@ -397,46 +398,10 @@ export default function FeedEntry({
               source={{ uri: mediaUrl }}
               style={styles.media}
               resizeMode="cover"
-              blurRadius={sensitiveHidden ? SENSITIVE_BLUR_RADIUS : 0}
               onLoad={handleImageLoad}
               accessibilityIgnoresInvertColors
             />
           )}
-
-          {/* A video frame cannot be blurred in place, so the same scrim covers
-              the player and hides its chrome until the reader asks for it
-              (KNOT-023). */}
-          {sensitiveHidden ? (
-            <Pressable
-              style={styles.sensitiveOverlay}
-              onPress={toggleSensitive}
-              accessibilityRole="button"
-              accessibilityLabel="Show sensitive content"
-              testID="sensitive-overlay"
-            >
-              <Text style={[typeScale.caption, styles.sensitiveOverlayText]}>
-                Sensitive content — tap to reveal
-              </Text>
-            </Pressable>
-          ) : null}
-
-          {/* The badge is both the flag and the control: tapping it hides the
-              media again, so the reveal toggles without covering a video's
-              controls (KNOT-023). */}
-          {sensitive ? (
-            <Pressable
-              style={styles.sensitiveBadge}
-              onPress={toggleSensitive}
-              hitSlop={spacing.sm}
-              accessibilityRole="button"
-              accessibilityLabel={
-                sensitiveHidden ? 'Sensitive content, hidden' : 'Sensitive content, shown'
-              }
-              testID="sensitive-badge"
-            >
-              <Text style={[typeScale.caption, styles.sensitiveBadgeText]}>Sensitive</Text>
-            </Pressable>
-          ) : null}
 
           {mediaCount > 1 ? (
             <View
@@ -470,7 +435,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     gap: spacing.sm,
-    marginBottom: spacing.sm,
   },
   attributionName: {
     color: colors.text.primary,
@@ -478,6 +442,14 @@ const styles = StyleSheet.create({
   attributionText: {
     color: colors.text.tertiary,
     flexShrink: 1,
+  },
+  // The rule between the attribution line and the poster's author block
+  // (KNOT-023c). It is the design system's hairline, not the heavier divider.
+  attributionDivider: {
+    backgroundColor: colors.border.hairline,
+    height: 1,
+    marginBottom: spacing.sm,
+    marginTop: spacing.sm,
   },
   countBadge: {
     alignItems: 'center',
@@ -562,38 +534,6 @@ const styles = StyleSheet.create({
   },
   tagRow: {
     marginTop: spacing.md,
-  },
-  // The sensitive flag, drawn over the media's bottom-left corner so it never
-  // collides with the media-count badge or a video's mute control (KNOT-023).
-  sensitiveBadge: {
-    backgroundColor: colors.scrim.overlay,
-    borderRadius: radius.sm,
-    bottom: spacing.sm,
-    left: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    position: 'absolute',
-  },
-  sensitiveBadgeText: {
-    color: colors.text.onBrand,
-  },
-  // The scrim that holds sensitive media until it is revealed. It is opaque
-  // enough to read as a cover rather than a tint, and the centred line says what
-  // to do about it (KNOT-023).
-  sensitiveOverlay: {
-    alignItems: 'center',
-    backgroundColor: colors.scrim.overlay,
-    bottom: 0,
-    justifyContent: 'center',
-    left: 0,
-    paddingHorizontal: spacing.lg,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-  },
-  sensitiveOverlayText: {
-    color: colors.text.onBrand,
-    textAlign: 'center',
   },
   title: {
     color: colors.text.primary,

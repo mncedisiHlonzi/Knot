@@ -404,8 +404,7 @@ func validStoryBody() string {
 		"title": "The first rain",
 		"body": "Grandmother said the first rain remembers every name.",
 		"approximate_location": "Cape Town",
-		"media_urls": ["https://example.test/rain.jpg"],
-		"sensitive": false
+		"media_urls": ["https://example.test/rain.jpg"]
 	}`
 }
 

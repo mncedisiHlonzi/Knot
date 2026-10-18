@@ -215,9 +215,6 @@ func TestPostgresStoreCreateStoryRoundTrip(t *testing.T) {
 	if len(created.MediaURLs) != 1 {
 		t.Errorf("media urls = %v, want one entry", created.MediaURLs)
 	}
-	if created.Sensitive {
-		t.Error("sensitive = true, want the column default false")
-	}
 	if created.CreatedAt.IsZero() || created.UpdatedAt.IsZero() {
 		t.Error("timestamps are zero, want database-generated values")
 	}

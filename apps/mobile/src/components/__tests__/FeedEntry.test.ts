@@ -344,9 +344,10 @@ describe('FeedEntry', () => {
   });
 
   /**
-   * Finds the first element whose props satisfy the predicate. The reveal and
-   * sensitive-flag assertions need to look at props a string host component
-   * carries, which `findElementByType` cannot express (KNOT-023).
+   * Finds the first element whose props satisfy the predicate. Structural marker
+   * assertions (the attribution header, divider, and sentence) need to look at
+   * props a string host component carries, which `findElementByType` cannot
+   * express.
    */
   function findElement(
     node: unknown,
@@ -372,42 +373,9 @@ describe('FeedEntry', () => {
     return findElement(element.props?.children, predicate);
   }
 
-  describe('sensitive content', () => {
-    it('blurs the media and shows the Sensitive badge when the item is sensitive', () => {
-      const element = FeedEntry({
-        story: { ...withMedia, sensitive: true },
-        onPress: () => undefined,
-      });
-      const image = findElementByType(element, 'Image');
-
-      expect(image?.props?.blurRadius).toBeGreaterThan(0);
-      expect(findElement(element, (props) => props.testID === 'sensitive-badge')).toBeDefined();
-      expect(findElement(element, (props) => props.testID === 'sensitive-overlay')).toBeDefined();
-    });
-
-    it('covers a sensitive video with the reveal scrim', () => {
-      const element = FeedEntry({
-        story: { ...withMedia, first_media_type: 'video', sensitive: true },
-        onPress: () => undefined,
-      });
-
-      expect(findElement(element, (props) => props.testID === 'sensitive-overlay')).toBeDefined();
-      expect(findElement(element, (props) => props.testID === 'sensitive-badge')).toBeDefined();
-    });
-
-    it('leaves normal media unblurred and badge-free', () => {
-      const element = FeedEntry({ story: withMedia, onPress: () => undefined });
-      const image = findElementByType(element, 'Image');
-
-      expect(image?.props?.blurRadius).toBe(0);
-      expect(findElement(element, (props) => props.testID === 'sensitive-badge')).toBeUndefined();
-    });
-  });
-
   describe('the version variant', () => {
     const versionFeedItem = {
       ...withMedia,
-      sensitive: false,
     };
 
     it('renders the attribution header in the caption voice, with the inline root avatar', () => {
@@ -454,12 +422,34 @@ describe('FeedEntry', () => {
       const header = findElement(element, (props) => props.testID === 'attribution-header');
       expect(header).toBeDefined();
       expect(findElementByType(header, Avatar)?.props?.size).toBe('xs');
-      expect(collectText(element)).toContain(sentence);
 
-      // The old two-line shape (a divider under the header) is gone.
-      expect(
-        findElement(element, (props) => props.testID === 'attribution-divider'),
-      ).toBeUndefined();
+      // The name is split out and given the bold label voice (KNOT-023c).
+      const boldName = findTextElement(element, (value) => value === 'Ada Lovelace');
+      expect(boldName?.props?.style).toEqual(expect.arrayContaining([typeScale.label]));
+
+      const text = collectText(element);
+      expect(text).toContain('Adapted from ');
+      expect(text).toContain("'s original story in English into Zulu.");
+
+      // A hairline now separates the header from the author block.
+      expect(findElement(element, (props) => props.testID === 'attribution-divider')).toBeDefined();
+    });
+
+    it('bolds the name in the original-story form too', () => {
+      const element = FeedEntry({
+        story: adapted,
+        variant: 'version',
+        versionNumber: 1,
+        attributionLine: 'Original story by Ada Lovelace in English.',
+        onPress: () => undefined,
+      });
+
+      const boldName = findTextElement(element, (value) => value === 'Ada Lovelace');
+      expect(boldName?.props?.style).toEqual(expect.arrayContaining([typeScale.label]));
+
+      const text = collectText(element);
+      expect(text).toContain('Original story by ');
+      expect(text).toContain(' in English.');
     });
 
     it('never heads a story entry, even when root fields are present', () => {
@@ -682,7 +672,7 @@ describe('FeedEntry version variant', () => {
     );
   });
 
-  it('shows the attribution sentence verbatim, clamped to two lines', () => {
+  it('splits the attribution sentence so the name takes the bold voice', () => {
     const element = FeedEntry({
       story: version,
       variant: 'version',
@@ -691,10 +681,13 @@ describe('FeedEntry version variant', () => {
       onPress: () => undefined,
     });
 
-    expect(collectText(element)).toContain(ATTRIBUTION);
+    const text = collectText(element);
+    expect(text).toContain('Adapted from ');
+    expect(text).toContain('Nomsa Khan');
+    expect(text).toContain("'s original story in English into Zulu.");
 
-    const line = findTextElement(element, (value) => value === ATTRIBUTION);
-    expect(line?.props?.numberOfLines).toBe(2);
+    const boldName = findTextElement(element, (value) => value === 'Nomsa Khan');
+    expect(boldName?.props?.style).toEqual(expect.arrayContaining([typeScale.label]));
   });
 
   it('shows no attribution line when the server could not resolve one', () => {

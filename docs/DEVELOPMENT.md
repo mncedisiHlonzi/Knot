@@ -1376,17 +1376,15 @@ badge agree even though the schema still permits the value.
 
 **Feed entry (`src/components/FeedEntry.tsx`).**
 
-- A **sensitive** item (`sensitive: true`, inherited from the story for both kinds) holds
-  its media behind a scrim. An image is blurred with `blurRadius`; a video is covered by
-  the same `colors.scrim.overlay` scrim and a centred "Sensitive content — tap to reveal"
-  line. A bottom-left **Sensitive** badge toggles the reveal, so the reveal is reachable
-  without covering a video's controls. The state is `useState` on the card — not persisted.
+- A **sensitive** item once held its media behind a scrim (blurred image, covered video,
+  and a badge that toggled the reveal). **The feature was removed in KNOT-023c** — the
+  column is dropped and the card has no reveal state (KNOT-ADR-072, see the 023c note
+  below).
 - A version card shows its **inherited pillar** as a plain `PillarTag` beside the
   `Version N · Language` overline (the same Wonder/Heritage tokens a story card uses),
   because the pillar tells a reader which kind of story they are opening.
-- The **attribution line** uses `typeScale.bodyS` at `colors.text.tertiary` (was
-  `typeScale.caption`) and keeps its two-line clamp, so it reads as context rather than a
-  footnote.
+- The **attribution sentence** was moved into the card's header by KNOT-023a–c; it no
+  longer sits under the title.
 
 ### KNOT-023a — the feed card's attribution header
 
@@ -1418,7 +1416,7 @@ The feed now reads as **white cards on a grey canvas**, separated by a thick gap
 than a rule. The header and tab row stay on the white canvas above the list.
 
 - **The gap.** `FeedScreen` sets its container to `colors.bg.sunken` and wraps every entry
-  in a `styles.card` (`backgroundColor: colors.bg.canvas`, `marginBottom: spacing.md`).
+  in a `styles.card` (`backgroundColor: colors.bg.canvas`, `marginBottom: spacing.sm`).
   `FeedEntry` gained `showBottomHairline?: boolean` (default `true`): the Feed passes
   `false`, and a `paddingBottom` keeps the meta line off the card's edge. Place Stories
   keeps the default, so its hairline-separated column is untouched.
@@ -1429,11 +1427,36 @@ than a rule. The header and tab row stay on the white canvas above the list.
   screens keep the inline byline.
 - **The single-line header.** A version card opens with one caption line: an inline
   20pt root avatar (`Avatar size="xs"`) and the server's `attribution_line`, clamped to
-  two lines. The sentence is used **verbatim** — the payload has no `root_language` /
-  `target_language`, so it is not recomposed or parsed. If the sentence is missing but the
+  two lines. The sentence is drawn **verbatim** apart from the author span, which KNOT-023c
+  splits out for the bold voice (see below). If the sentence is missing but the
   structured root author is present, the line falls back to
   `Adapted from {name}'s original story.`; with neither, the header is omitted. The old
   two-line header, its divider, and the attribution sentence under the title are gone.
+
+### KNOT-023c — feed polish, and the sensitive flag is removed
+
+- **The gap is 8pt.** `FeedScreen`'s `styles.card` now uses `marginBottom: spacing.sm`
+  (was `spacing.md`), so the white cards sit closer while the grey canvas still separates
+  them.
+- **A hairline under the attribution.** On a version card, a 1px `colors.border.hairline`
+  rule (`marginTop`/`marginBottom: spacing.sm`) now separates the attribution line from the
+  poster's stacked author block.
+- **The attribution name is bold.** `feedEntryMeta.attributionParts(line)` splits the
+  server sentence around its first name — `Adapted from {name}'s …` or
+  `Original story by {name} in …` — using non-greedy patterns so a deep lineage
+  (`Adapted from Bongani's Zulu version of Ada's …`) bolds the person the sentence opens
+  with, not a later one. `FeedEntry` renders the name in `typeScale.label` /
+  `colors.text.primary` and the rest in `typeScale.caption` / `colors.text.tertiary`. An
+  unexpected shape falls back to the plain sentence. The split is **display-only**.
+- **The author stack is tighter.** `AuthorLine`'s `stackedDetails` dropped its
+  `gap: spacing.xs`; the three tokens' own 16pt line heights now set the rhythm, so the
+  name / Rooted / time block reads as one unit.
+- **The sensitive content feature is gone** (KNOT-ADR-072). The `stories.sensitive`
+  column is dropped by migration `0018`; `POST /stories` no longer accepts the field;
+  the story and version responses no longer carry it; the composer lost its switch; and
+  `FeedEntry` lost the blur, the reveal scrim, and the badge. The moderation report
+  category `sensitive_content` is a **different** concept (a user reports content) and
+  stays.
 
 ### Rooted, and the enrichment pattern
 

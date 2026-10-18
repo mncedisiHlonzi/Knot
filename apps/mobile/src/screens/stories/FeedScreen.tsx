@@ -330,10 +330,6 @@ export default function FeedScreen({
                 root_author_display_name:
                   item.kind === 'version' ? item.root_author_display_name : undefined,
                 root_author_id: item.kind === 'version' ? item.root_author_id : undefined,
-                // Sensitive is inherited from the story, so it travels with both
-                // kinds of entry and the card holds its media until revealed
-                // (KNOT-023).
-                sensitive: item.sensitive,
                 title: item.title,
                 version_count: item.version_count,
               }}
@@ -396,7 +392,7 @@ const styles = StyleSheet.create({
   // it. The gap is the Feed's separator; there is no 1px rule (KNOT-023b).
   card: {
     backgroundColor: colors.bg.canvas,
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
   },
   container: {
     backgroundColor: colors.bg.sunken,

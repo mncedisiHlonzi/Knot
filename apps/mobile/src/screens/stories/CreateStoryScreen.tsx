@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { FilmStrip, Plus, X } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
@@ -113,7 +113,6 @@ export default function CreateStoryScreen({
   const [locationText, setLocationText] = useState('');
   const [selectedPlace, setSelectedPlace] = useState<PickedPlace | null>(null);
   const [mediaUrl, setMediaUrl] = useState('');
-  const [sensitive, setSensitive] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
   const [media, setMedia] = useState<readonly PickedMedia[]>([]);
@@ -181,7 +180,6 @@ export default function CreateStoryScreen({
             ...(selectedPlace.country === null ? {} : { place_country: selectedPlace.country }),
           }),
       ...(mediaUrl.trim() === '' ? {} : { media_urls: [mediaUrl.trim()] }),
-      sensitive,
     };
 
     try {
@@ -358,16 +356,6 @@ export default function CreateStoryScreen({
           />
         </View>
 
-        <View style={styles.switchRow}>
-          <View style={styles.switchText}>
-            <Text style={[typeScale.overline, styles.switchLabel]}>Sensitive story</Text>
-            <Text style={[typeScale.caption, styles.hint]}>
-              Mark a story sensitive when it should not be surfaced without care.
-            </Text>
-          </View>
-          <Switch value={sensitive} onValueChange={setSensitive} />
-        </View>
-
         {error === undefined ? null : <Text style={[typeScale.bodyS, styles.error]}>{error}</Text>}
 
         <View style={styles.submit}>
@@ -455,10 +443,6 @@ const styles = StyleSheet.create({
   headline: {
     color: colors.text.primary,
   },
-  hint: {
-    color: colors.text.tertiary,
-    marginTop: spacing.xs,
-  },
   label: {
     color: colors.text.secondary,
     marginBottom: spacing.sm,
@@ -494,22 +478,6 @@ const styles = StyleSheet.create({
   subtitle: {
     color: colors.text.secondary,
     marginTop: spacing.xs,
-  },
-  switchRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.lg,
-    justifyContent: 'space-between',
-    marginTop: spacing.xl,
-  },
-  switchText: {
-    flex: 1,
-  },
-  // The switch's own label: the row already carries the top margin, so this one
-  // only needs the gap beneath it.
-  switchLabel: {
-    color: colors.text.secondary,
-    marginBottom: spacing.xs,
   },
   thumbnail: {
     height: THUMBNAIL_SIZE,

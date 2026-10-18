@@ -117,9 +117,6 @@ func TestCreateStoryHappyPath(t *testing.T) {
 	if created.MediaURLs == nil {
 		t.Error("media urls = nil, want an empty slice so the column never receives NULL")
 	}
-	if created.Sensitive {
-		t.Error("sensitive = true, want false by default")
-	}
 }
 
 func TestCreateStoryTrimsTitleButNotBody(t *testing.T) {

@@ -142,8 +142,6 @@ type Story struct {
 	PlaceCountry *string
 	// MediaURLs is the attached media, never nil once stored.
 	MediaURLs []string
-	// Sensitive marks a story that should not be surfaced without care.
-	Sensitive bool
 	// CreatedAt is the insertion time. It is the primary feed sort key.
 	CreatedAt time.Time
 	// UpdatedAt is maintained by the database.
@@ -176,8 +174,6 @@ type CreateStoryInput struct {
 	ApproximateLocation string
 	// MediaURLs is optional; it may be empty but never nil once stored.
 	MediaURLs []string
-	// Sensitive is optional and defaults to false.
-	Sensitive bool
 }
 
 // StoryStore is the persistence contract for stories. The service depends on

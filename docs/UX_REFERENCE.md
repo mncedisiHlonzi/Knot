@@ -52,9 +52,8 @@ via a link rather than through navigation. A session is issued on success and he
 
 ## 4. Home Feed
 
-**Concept.** The public feed of stories, newest first. Each card shows the title, pillar,
-language, coarse place, and whether the story is sensitive, and there is an obvious way to
-publish one.
+**Concept.** The public feed of stories, newest first. Each card shows the author, title,
+pillar, language, and coarse place, and there is an obvious way to publish one.
 
 **Current status.** **Shipped.** `FeedScreen`. Keyset paging with a "Load more" control,
 pull-to-refresh on the list, the signed-in email, a sign-out action, and a "Tell a story"
@@ -115,11 +114,11 @@ stories and their language versions to exist before it can say anything useful.
 ## 9. Create Story
 
 **Concept.** Compose a story: a pillar, a language, a title, the story itself, a coarse place,
-media, and a sensitive flag.
+and media.
 
 **Current status.** **Shipped, text-first.** `CreateStoryScreen` publishes pillar, language,
-title, body, approximate location, **one** media link, and the sensitive flag. Multiple or
-richer media is not built — media storage strategy is Phase 2 work.
+title, body, approximate location, and **one** media link. Multiple or richer media is not
+built — media storage strategy is Phase 2 work.
 
 **MVP phase.** Phase 1 (text); media handling in Phase 2.
 

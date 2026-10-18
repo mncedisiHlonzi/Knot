@@ -115,9 +115,12 @@ Language Tree, Conversations) references `stories.id`.
 | `place_country`        | `text`         | yes      | `NULL`              | The country the geocoder reported, or `NULL`; at most 100 characters |
 | `approximate_location_lower` | `text`   | yes      | `NULL`              | Normalised `lower(trim(approximate_location))`, maintained on write and backfilled by `0006`; groups stories by place. No coordinates, no geocoding |
 | `media_urls`           | `text[]`       | no       | `'{}'`              | The application always writes an array, never `NULL`          |
-| `sensitive`            | `boolean`      | no       | `false`             | Marks a story that should not be surfaced without care        |
 | `created_at`           | `timestamptz`  | no       | `now()`             | The feed's primary sort key                                  |
 | `updated_at`           | `timestamptz`  | no       | `now()`             | Set on insert. No trigger yet: editing a story is a later task |
+
+The `sensitive` column was **dropped by migration `0018`** (KNOT-023c, KNOT-ADR-072).
+The flag had no server-side effect beyond a client blur; the create path no longer accepts
+it and the feed no longer reads it.
 
 The `language`, `title`, and `body` columns that lived here before migration `0003` now
 live on `story_versions`, where the story's content belongs. See

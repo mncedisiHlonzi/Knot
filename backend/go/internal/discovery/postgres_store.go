@@ -15,7 +15,7 @@ import (
 // with its root version. It matches the stories store's own list, so a story
 // returned from a place looks identical to one returned from the feed. The
 // aliases differ only in the joined version (rv rather than v).
-const storyColumns = `s.id, s.author_id, s.root_version_id, s.pillar, rv.language, rv.title, rv.body, s.approximate_location, s.latitude, s.longitude, s.place_country, s.media_urls, s.sensitive, s.created_at, s.updated_at`
+const storyColumns = `s.id, s.author_id, s.root_version_id, s.pillar, rv.language, rv.title, rv.body, s.approximate_location, s.latitude, s.longitude, s.place_country, s.media_urls, s.created_at, s.updated_at`
 
 // storyFrom resolves each story's root version content. root_version_id is NOT
 // NULL and unique, so the join is always one row and never drops a story.
@@ -292,7 +292,6 @@ func scanStory(row rowScanner) (stories.Story, error) {
 		&story.Longitude,
 		&country,
 		&media,
-		&story.Sensitive,
 		&story.CreatedAt,
 		&story.UpdatedAt,
 	)

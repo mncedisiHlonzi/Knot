@@ -376,9 +376,11 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   // The Feed's stacked block: a left avatar and a column of name, Rooted, time.
+  // The column has no gap: the three tokens' own line heights (16/16/16) already
+  // give the block its rhythm, and a gap made the identity read as three
+  // separated facts rather than one unit (KNOT-023c).
   stackedDetails: {
     flexShrink: 1,
-    gap: spacing.xs,
   },
   stackedRow: {
     alignItems: 'center',

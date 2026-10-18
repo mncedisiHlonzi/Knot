@@ -18,7 +18,7 @@ import (
 // (aliased v), which is why every read joins story_versions. It is a constant so
 // every query in this file stays consistent with scanStory, and its order is the
 // order scanStory reads.
-const storyColumns = `s.id, s.author_id, s.root_version_id, s.pillar, v.language, v.title, v.body, s.approximate_location, s.latitude, s.longitude, s.place_country, s.media_urls, s.sensitive, s.created_at, s.updated_at`
+const storyColumns = `s.id, s.author_id, s.root_version_id, s.pillar, v.language, v.title, v.body, s.approximate_location, s.latitude, s.longitude, s.place_country, s.media_urls, s.created_at, s.updated_at`
 
 // storyFrom resolves each story's root version content. root_version_id is
 // NOT NULL and unique, so the join is always one row and never drops a story.
@@ -60,22 +60,22 @@ func (s *PostgresStore) CreateStory(ctx context.Context, story Story) (Story, er
 	const query = `
 		WITH new_story AS (
 			INSERT INTO stories (
-				author_id, pillar, approximate_location, approximate_location_lower, media_urls, sensitive,
+				author_id, pillar, approximate_location, approximate_location_lower, media_urls,
 				latitude, longitude, place_country, root_version_id
 			)
-			VALUES ($1, $2, $3, lower(trim($3)), $4, $5, $9, $10, $11, gen_random_uuid())
-			RETURNING id, author_id, root_version_id, pillar, approximate_location, latitude, longitude, place_country, media_urls, sensitive, created_at, updated_at
+			VALUES ($1, $2, $3, lower(trim($3)), $4, $8, $9, $10, gen_random_uuid())
+			RETURNING id, author_id, root_version_id, pillar, approximate_location, latitude, longitude, place_country, media_urls, created_at, updated_at
 		), new_version AS (
 			INSERT INTO story_versions (
 				id, story_id, parent_version_id, author_id, language, title, body
 			)
-			SELECT root_version_id, id, NULL, author_id, $6, $7, $8 FROM new_story
+			SELECT root_version_id, id, NULL, author_id, $5, $6, $7 FROM new_story
 			RETURNING language, title, body
 		)
 		SELECT
 			s.id, s.author_id, s.root_version_id, s.pillar, v.language, v.title, v.body,
 			s.approximate_location, s.latitude, s.longitude, s.place_country,
-			s.media_urls, s.sensitive, s.created_at, s.updated_at
+			s.media_urls, s.created_at, s.updated_at
 		FROM new_story s, new_version v`
 
 	row := s.pool.QueryRow(
@@ -85,7 +85,6 @@ func (s *PostgresStore) CreateStory(ctx context.Context, story Story) (Story, er
 		string(story.Pillar),
 		nullIfEmpty(story.ApproximateLocation),
 		nonNilURLs(story.MediaURLs),
-		story.Sensitive,
 		story.Language,
 		story.Title,
 		story.Body,
@@ -146,7 +145,7 @@ const feedStoryBranch = `
 		v.language, v.title, v.body,
 		s.pillar::text AS pillar,
 		s.approximate_location, s.latitude, s.longitude, s.place_country,
-		s.media_urls, s.sensitive,
+		s.media_urls,
 		s.created_at, s.updated_at,
 		s.root_version_id::text AS root_version_id
 	FROM stories s
@@ -162,7 +161,7 @@ const feedVersionBranch = `
 		v.language, v.title, v.body,
 		s.pillar::text AS pillar,
 		s.approximate_location, s.latitude, s.longitude, s.place_country,
-		s.media_urls, s.sensitive,
+		s.media_urls,
 		v.created_at, v.updated_at,
 		''::text AS root_version_id
 	FROM story_versions v
@@ -290,7 +289,6 @@ func scanStory(row rowScanner) (Story, error) {
 		&story.Longitude,
 		&country,
 		&media,
-		&story.Sensitive,
 		&story.CreatedAt,
 		&story.UpdatedAt,
 	)
@@ -329,7 +327,6 @@ func scanFeedItem(row rowScanner) (FeedItem, error) {
 		longitude       *float64
 		country         *string
 		media           []string
-		sensitive       bool
 		createdAt       time.Time
 		updatedAt       time.Time
 		rootVersionID   string
@@ -350,7 +347,6 @@ func scanFeedItem(row rowScanner) (FeedItem, error) {
 		&longitude,
 		&country,
 		&media,
-		&sensitive,
 		&createdAt,
 		&updatedAt,
 		&rootVersionID,
@@ -383,7 +379,6 @@ func scanFeedItem(row rowScanner) (FeedItem, error) {
 				Longitude:           longitude,
 				PlaceCountry:        country,
 				MediaURLs:           nonNilURLs(media),
-				Sensitive:           sensitive,
 			},
 		}, nil
 	}
@@ -405,7 +400,6 @@ func scanFeedItem(row rowScanner) (FeedItem, error) {
 			Longitude:           longitude,
 			PlaceCountry:        country,
 			MediaURLs:           nonNilURLs(media),
-			Sensitive:           sensitive,
 			CreatedAt:           createdAt,
 			UpdatedAt:           updatedAt,
 		},

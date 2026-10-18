@@ -5,7 +5,13 @@ import EmptyState from '../EmptyState';
 import PillarTag from '../PillarTag';
 import RootedBadge from '../RootedBadge';
 import TabBar from '../TabBar';
-import { countLabel, feedMetaLine, isPreviewTruncated, totalReactions } from '../feedEntryMeta';
+import {
+  attributionParts,
+  countLabel,
+  feedMetaLine,
+  isPreviewTruncated,
+  totalReactions,
+} from '../feedEntryMeta';
 
 /**
  * These are the hookless components of the KNOT-020b library. The project has no
@@ -293,5 +299,41 @@ describe('isPreviewTruncated helper', () => {
 
   it('does not mistake a mid-text ellipsis for a truncation mark', () => {
     expect(isPreviewTruncated('He paused… then went on.')).toBe(false);
+  });
+});
+
+describe('attributionParts helper', () => {
+  it('splits the adapted form around the name', () => {
+    expect(
+      attributionParts("Adapted from Ada Lovelace's original story in English into Zulu."),
+    ).toEqual({
+      prefix: 'Adapted from ',
+      name: 'Ada Lovelace',
+      suffix: "'s original story in English into Zulu.",
+    });
+  });
+
+  it('splits the original-story form around the name', () => {
+    expect(attributionParts('Original story by Ada Lovelace in English.')).toEqual({
+      prefix: 'Original story by ',
+      name: 'Ada Lovelace',
+      suffix: ' in English.',
+    });
+  });
+
+  it('takes the FIRST name in a deep adaptation, not a later one', () => {
+    // "Adapted from Bongani's Zulu version of Ada's original story..." opens with
+    // the immediate parent; a greedy match would swallow the whole sentence.
+    expect(
+      attributionParts(
+        "Adapted from Bongani Ncube's Zulu version of Ada Lovelace's original story in English into Swati.",
+      )?.name,
+    ).toBe('Bongani Ncube');
+  });
+
+  it('returns undefined for an unexpected shape or blank input', () => {
+    expect(attributionParts('Adapted from someone.')).toBeUndefined();
+    expect(attributionParts('')).toBeUndefined();
+    expect(attributionParts('   ')).toBeUndefined();
   });
 });

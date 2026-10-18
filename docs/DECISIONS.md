@@ -2465,3 +2465,33 @@ footnote. The last of these reverses KNOT-ADR-070's sentence that repeating a ve
 inherited pillar "would say nothing about the entry": the founder judged the pillar worth
 showing, because it tells a reader whether they are reading a Wonder or a Heritage story
 before they open it.
+
+## KNOT-ADR-072 — The sensitive content feature is removed from the platform
+
+**Context.** A story could be created with `sensitive: true`, and the client drew a
+blur/scrim over its media with a badge that toggled a per-card reveal (KNOT-023). The flag
+had **no server-side effect**: it did not filter a feed, gate an endpoint, or notify a
+moderator. It added a second state to every card, a reveal interaction, and a create-form
+switch without contributing to the core Tell My People loop. After on-device review the
+founder judged it out of scope for the core platform, deferred indefinitely rather than
+designed further.
+
+**Decision.** The sensitive content feature is removed.
+
+- The `stories.sensitive` column is **dropped** by migration `0018`; its data is not
+  preserved (it was a boolean whose only consumer was the removed UI).
+- `POST /stories` no longer accepts a `sensitive` field. Because the decoder rejects unknown
+  fields, sending it is a **400**, not a silently ignored value.
+- The story and version wire shapes no longer carry `sensitive`, and the mobile `Story`,
+  `VersionFeedItem`, and `CreateStoryPayload` types no longer declare it.
+- The feed card loses its blur, reveal scrim, and Sensitive badge; the composer loses its
+  switch. Nothing else changes about media rendering.
+
+**Consequences.** The platform is simpler: one card state, one create form, and no flag
+that implies a safety guarantee the server never enforced. A story's media is always shown
+as provided. Safety mechanisms may return in a future phase with a real enforcement model
+(server-side filtering, moderation, age gates), which would be a new design rather than a
+restoration of this flag.
+
+The moderation **report category** `sensitive_content` is deliberately kept: it is a
+user's report about content, a different concept from a self-declared story flag.

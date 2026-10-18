@@ -116,9 +116,9 @@ func createStory(t *testing.T, pool *pgxpool.Pool, authorID, title, body, langua
 		`WITH new_story AS (
 			INSERT INTO stories (
 				author_id, pillar, approximate_location, approximate_location_lower,
-				media_urls, sensitive, root_version_id, created_at, updated_at
+				media_urls, root_version_id, created_at, updated_at
 			)
-			VALUES ($1, $2, $3, lower(trim($3)), '{}', false, gen_random_uuid(), $4, $4)
+			VALUES ($1, $2, $3, lower(trim($3)), '{}', gen_random_uuid(), $4, $4)
 			RETURNING id, root_version_id
 		)
 		INSERT INTO story_versions (
