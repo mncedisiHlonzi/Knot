@@ -378,7 +378,7 @@ describe('FeedEntry', () => {
       ...withMedia,
     };
 
-    it('renders the attribution header in the caption voice, with the inline root avatar', () => {
+    it('renders the attribution row in the body-small voice, with a small avatar', () => {
       const sentence = 'Adapted from Ada Lovelace in English into Zapotec.';
       const element = FeedEntry({
         story: versionFeedItem,
@@ -392,11 +392,12 @@ describe('FeedEntry', () => {
       expect(header).toBeDefined();
 
       const line = findElement(element, (props) => props.testID === 'attribution-sentence');
-      expect(line?.props?.style).toContain(typeScale.caption);
+      expect(line?.props?.style).toContain(typeScale.bodyS);
       expect(line?.props?.numberOfLines).toBe(2);
 
-      // The avatar is inline and small, as the single-line header requires.
-      expect(findElementByType(header, Avatar)?.props?.size).toBe('xs');
+      // The row leads with the adapter's avatar, at the small size the stacked
+      // pair uses (KNOT-022-fix1).
+      expect(findElementByType(header, Avatar)?.props?.size).toBe('sm');
       expect(collectText(element)).toContain(sentence);
     });
   });
@@ -410,7 +411,7 @@ describe('FeedEntry', () => {
       root_author_avatar_url: '/users/author-root/avatar?v=a.png',
     };
 
-    it('heads a version with one inline avatar-and-sentence line', () => {
+    it('stacks the adapter and original author beside the bolded sentence', () => {
       const element = FeedEntry({
         story: adapted,
         variant: 'version',
@@ -421,7 +422,12 @@ describe('FeedEntry', () => {
 
       const header = findElement(element, (props) => props.testID === 'attribution-header');
       expect(header).toBeDefined();
-      expect(findElementByType(header, Avatar)?.props?.size).toBe('xs');
+
+      // Two small avatars, stacked: the adapter taking credit, then the original
+      // author (KNOT-022-fix1).
+      const avatars = elementTypes(header).filter((type) => type === Avatar);
+      expect(avatars).toHaveLength(2);
+      expect(findElementByType(header, Avatar)?.props?.size).toBe('sm');
 
       // The name is split out and given the bold label voice (KNOT-023c).
       const boldName = findTextElement(element, (value) => value === 'Ada Lovelace');
@@ -464,7 +470,7 @@ describe('FeedEntry', () => {
       ).toBeUndefined();
     });
 
-    it('omits the header when neither the sentence nor the root author exists', () => {
+    it('falls back to the quiet version label when neither the sentence nor the root author exists', () => {
       const element = FeedEntry({
         story: { ...story, root_author_display_name: null },
         variant: 'version',
@@ -473,9 +479,10 @@ describe('FeedEntry', () => {
         onPress: () => undefined,
       });
 
-      expect(
-        findElement(element, (props) => props.testID === 'attribution-header'),
-      ).toBeUndefined();
+      // The version label is the one thing an adaptation must not lose, so the
+      // row is still drawn with it alone (KNOT-022-fix1).
+      expect(findElement(element, (props) => props.testID === 'attribution-header')).toBeDefined();
+      expect(collectText(element)).toContain('Version 2 · Zapotec');
     });
 
     it('falls back to the structured root author when the sentence is missing', () => {
@@ -648,7 +655,7 @@ const version = {
 const ATTRIBUTION = "Adapted from Nomsa Khan's original story in English into Zulu.";
 
 describe('FeedEntry version variant', () => {
-  it('labels an adaptation with its version, language, and inherited pillar', () => {
+  it('labels an adaptation with its inherited pillar and moves the version into the credit', () => {
     const element = FeedEntry({
       story: version,
       variant: 'version',
@@ -657,19 +664,18 @@ describe('FeedEntry version variant', () => {
       onPress: () => undefined,
     });
 
-    // The pillar here is the story's, inherited — and KNOT-023 restored it because
-    // it tells a reader which kind of story they are opening.
+    // The pillar here is the story's, inherited, and the tag is exactly the one a
+    // story card draws: plain, with its place (KNOT-023, KNOT-022-fix1).
     const pillar = elementTypes(element);
     expect(pillar).toContain(PillarTag);
     expect(findElementByType(element, PillarTag)?.props?.pillar).toBe('heritage');
     expect(findElementByType(element, PillarTag)?.props?.variant).toBe('plain');
+    expect(findElementByType(element, PillarTag)?.props?.place).toBe('Oaxaca, Mexico');
 
-    const text = collectText(element);
-    expect(text).toContain('Version 2 · Zulu');
-    // The overline voice upper-cases the label, so the wording is sentence case.
-    expect(findTextElement(element, (value) => value === 'Version 2 · Zulu')?.props?.style).toEqual(
-      expect.arrayContaining([expect.objectContaining({ textTransform: 'uppercase' })]),
-    );
+    // The version rides quietly at the end of the attribution row instead of
+    // occupying the overline slot as an uppercase badge.
+    expect(collectText(element)).toContain('Version 2');
+    expect(findTextElement(element, (value) => value === 'Version 2 · Zulu')).toBeUndefined();
   });
 
   it('splits the attribution sentence so the name takes the bold voice', () => {

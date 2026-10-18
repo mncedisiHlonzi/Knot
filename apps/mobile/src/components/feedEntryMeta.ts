@@ -39,43 +39,122 @@ export type AttributionParts = {
   readonly suffix: string;
 };
 
+/** One run of an attribution sentence; `bold` marks a person's name. */
+export type AttributionSegment = {
+  readonly text: string;
+  readonly bold: boolean;
+};
+
+/** The character range of one person's name inside an attribution sentence. */
+type NameRange = {
+  readonly start: number;
+  readonly end: number;
+};
+
+/**
+ * Splits the server's attribution sentence into text runs, marking every person
+ * it names so a card can draw their names in a heavier voice (KNOT-022-fix1).
+ *
+ * The server renders these shapes:
+ *
+ *   Original story by {name} in {language}.
+ *   Adapted from {name}'s original story in {language} into {language}.
+ *   Adapted from {parent}'s {language} version of {root}'s original story …
+ *   Adapted from {parent}'s {language} version, which traces back through
+ *     {N} adaptations to {root}'s original story …
+ *
+ * The first name is the span after `Adapted from ` up to `'s `, or after
+ * `Original story by ` up to ` in `. A second name, when the sentence has one, is
+ * the span after ` of ` or ` to ` up to `'s original story`. All patterns are
+ * deliberately NON-GREEDY, so a deeper lineage keeps the parent's name as the
+ * first (the sentence opens with it) instead of swallowing the rest.
+ *
+ * Names containing the literal `'s ` (or ` in `, in the original-story shape) are
+ * the only ambiguous input, and they degrade to the first plausible split rather
+ * than failing. An unexpected shape returns the whole sentence as one plain run:
+ * attribution is supplementary, so it must never fail to draw.
+ */
+export function attributionSegments(line: string): readonly AttributionSegment[] {
+  const value = line.trim();
+  if (value === '') {
+    return [];
+  }
+
+  const ranges = nameRanges(value);
+  if (ranges.length === 0) {
+    return [{ text: value, bold: false }];
+  }
+
+  const segments: AttributionSegment[] = [];
+  let cursor = 0;
+  for (const range of ranges) {
+    if (range.start > cursor) {
+      segments.push({ text: value.slice(cursor, range.start), bold: false });
+    }
+    segments.push({ text: value.slice(range.start, range.end), bold: true });
+    cursor = range.end;
+  }
+  if (cursor < value.length) {
+    segments.push({ text: value.slice(cursor), bold: false });
+  }
+
+  return segments;
+}
+
+/** Finds the names an attribution sentence mentions, in reading order. */
+function nameRanges(value: string): readonly NameRange[] {
+  const original = /^Original story by (.+?) in /.exec(value);
+  if (original !== null) {
+    const start = 'Original story by '.length;
+    return [{ start, end: start + original[1].length }];
+  }
+
+  const adapted = /^Adapted from (.+?)'s /.exec(value);
+  if (adapted === null) {
+    return [];
+  }
+
+  const firstNameStart = 'Adapted from '.length;
+  const ranges: NameRange[] = [{ start: firstNameStart, end: firstNameStart + adapted[1].length }];
+
+  // A deeper lineage names the original too: "…version of Ada's original
+  // story…", or "…adaptations to Ada's original story…".
+  const tail = value.slice(firstNameStart + adapted[1].length);
+  const root = / (?:of|to) (.+?)'s original story/.exec(tail);
+  if (root !== null) {
+    const start = firstNameStart + adapted[1].length + tail.indexOf(root[1], root.index);
+    ranges.push({ start, end: start + root[1].length });
+  }
+
+  return ranges;
+}
+
 /**
  * Splits the server's attribution sentence around the author it names, for
  * display only (KNOT-023c).
  *
- * The server renders two shapes that begin with a person:
- *
- *   Original story by {name} in {language}.
- *   Adapted from {name}'s ... (a root adaptation, or a deeper version's parent)
- *
- * The name is the first span after `from ` up to `'s `, or after `by ` up to
- * ` in `. Both patterns are deliberately NON-GREEDY: a deeper lineage reads
- * "Adapted from Bongani's Zulu version of Ada's original story …", and the first
- * name (Bongani) is the one the sentence opens with; a greedy match would swallow
- * the rest of the sentence. Names containing the literal `'s ` or ` in ` are the
- * only ambiguous input, and they degrade to the first plausible split rather than
- * failing.
- *
- * An unexpected shape returns `undefined`, which the card renders as the plain
- * sentence. Attribution is supplementary, so it must never fail to draw.
+ * It is the first bold run of `attributionSegments`, with the rest of the
+ * sentence as its prefix and suffix. An unexpected shape returns `undefined`,
+ * which a card renders as the plain sentence.
  */
 export function attributionParts(line: string): AttributionParts | undefined {
-  const value = line.trim();
-  if (value === '') {
+  const segments = attributionSegments(line);
+  const nameIndex = segments.findIndex((segment) => segment.bold);
+  if (nameIndex === -1) {
     return undefined;
   }
 
-  const adapted = /^Adapted from (.+?)'s (.+)$/.exec(value);
-  if (adapted !== null) {
-    return { prefix: 'Adapted from ', name: adapted[1], suffix: `'s ${adapted[2]}` };
-  }
-
-  const original = /^Original story by (.+?) in (.+)$/.exec(value);
-  if (original !== null) {
-    return { prefix: 'Original story by ', name: original[1], suffix: ` in ${original[2]}` };
-  }
-
-  return undefined;
+  return {
+    prefix: segments
+      .slice(0, nameIndex)
+      .map((segment) => segment.text)
+      .join(''),
+    name: segments[nameIndex].text,
+    suffix: segments
+      .slice(nameIndex + 1)
+      .map((segment) => segment.text)
+      .join(''),
+  };
 }
 
 /**

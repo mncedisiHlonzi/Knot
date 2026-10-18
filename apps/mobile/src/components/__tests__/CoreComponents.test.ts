@@ -7,6 +7,7 @@ import RootedBadge from '../RootedBadge';
 import TabBar from '../TabBar';
 import {
   attributionParts,
+  attributionSegments,
   countLabel,
   feedMetaLine,
   isPreviewTruncated,
@@ -335,5 +336,61 @@ describe('attributionParts helper', () => {
     expect(attributionParts('Adapted from someone.')).toBeUndefined();
     expect(attributionParts('')).toBeUndefined();
     expect(attributionParts('   ')).toBeUndefined();
+  });
+});
+
+describe('attributionSegments helper', () => {
+  it('bolds the name in the adapted form', () => {
+    expect(
+      attributionSegments("Adapted from Ada Lovelace's original story in English into Zulu."),
+    ).toEqual([
+      { text: 'Adapted from ', bold: false },
+      { text: 'Ada Lovelace', bold: true },
+      { text: "'s original story in English into Zulu.", bold: false },
+    ]);
+  });
+
+  it('bolds the name in the original-story form', () => {
+    expect(attributionSegments('Original story by Ada Lovelace in English.')).toEqual([
+      { text: 'Original story by ', bold: false },
+      { text: 'Ada Lovelace', bold: true },
+      { text: ' in English.', bold: false },
+    ]);
+  });
+
+  it('bolds both names in a three-deep lineage', () => {
+    expect(
+      attributionSegments(
+        "Adapted from Bongani Ncube's Zulu version of Ada Lovelace's original story in English into Swati.",
+      ),
+    ).toEqual([
+      { text: 'Adapted from ', bold: false },
+      { text: 'Bongani Ncube', bold: true },
+      { text: "'s Zulu version of ", bold: false },
+      { text: 'Ada Lovelace', bold: true },
+      { text: "'s original story in English into Swati.", bold: false },
+    ]);
+  });
+
+  it('finds the original author after "to" in the long lineage form', () => {
+    const segments = attributionSegments(
+      "Adapted from Bongani Ncube's Zulu version, which traces back through 2 adaptations to Ada Lovelace's original story in English, into Swati.",
+    );
+
+    expect(segments.filter((segment) => segment.bold).map((segment) => segment.text)).toEqual([
+      'Bongani Ncube',
+      'Ada Lovelace',
+    ]);
+  });
+
+  it('returns the whole sentence as one plain run for an unexpected shape', () => {
+    expect(attributionSegments('Adapted from someone.')).toEqual([
+      { text: 'Adapted from someone.', bold: false },
+    ]);
+  });
+
+  it('returns no runs for blank input', () => {
+    expect(attributionSegments('')).toEqual([]);
+    expect(attributionSegments('   ')).toEqual([]);
   });
 });

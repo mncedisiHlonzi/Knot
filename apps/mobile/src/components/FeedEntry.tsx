@@ -17,7 +17,12 @@ import { PLACEHOLDER_MEDIA_ASPECT_RATIO } from '../utils/mediaFrame';
 import { useMediaAspectRatio } from '../utils/useMediaAspectRatio';
 import AuthorLine from './AuthorLine';
 import Avatar from './Avatar';
-import { feedMetaLine, isPreviewTruncated, attributionParts } from './feedEntryMeta';
+import {
+  attributionSegments,
+  feedMetaLine,
+  isPreviewTruncated,
+  type AttributionSegment,
+} from './feedEntryMeta';
 import FeedVideo, { VIDEO_MUTE_BUTTON_SIZE } from './FeedVideo';
 import PillarTag from './PillarTag';
 
@@ -97,11 +102,12 @@ type FeedEntryProps = {
   readonly versionNumber?: number;
   /**
    * The server-rendered sentence tracing this version back to the original, for
-   * the `version` variant. It is shown verbatim in the single-line attribution
-   * header -- the server owns the wording -- and is absent (or empty) when the
-   * lineage could not be resolved, in which case the header falls back to the
-   * structured root author and is omitted if that is missing too (KNOT-021,
-   * KNOT-023b).
+   * the `version` variant. The card renders it verbatim in the attribution row,
+   * drawing every name it mentions in a heavier voice -- the server owns the
+   * wording (KNOT-021, KNOT-022-fix1). Empty when the lineage could not be
+   * resolved, in which case the row falls back to the structured root author and,
+   * failing that, to the quiet version label alone. The server sends the field as
+   * `attribution_line`; the feed maps it onto this prop.
    */
   readonly attributionLine?: string;
   /**
@@ -167,6 +173,23 @@ function resolveAvatarUrl(path: string | null | undefined): string | undefined {
 }
 
 /**
+ * The attribution runs for a server that sent no sentence: the original author
+ * alone, in the same shape `attributionSegments` produces, so the row renders the
+ * fallback as just another sentence (KNOT-022-fix1).
+ */
+function fallbackAttributionRuns(rootAuthorName: string): readonly AttributionSegment[] {
+  if (rootAuthorName === '') {
+    return [];
+  }
+
+  return [
+    { text: 'Adapted from ', bold: false },
+    { text: rootAuthorName, bold: true },
+    { text: "'s original story.", bold: false },
+  ];
+}
+
+/**
  * One story in the feed, as a white card on the feed's grey canvas.
  *
  * The card is full-bleed horizontally — no side border, no shadow — and its
@@ -178,9 +201,10 @@ function resolveAvatarUrl(path: string | null | undefined): string | undefined {
  *
  * The author block is a vertical stack (KNOT-023b): the avatar on the left and,
  * on the right, the name, the quiet Rooted line, then the compact time. A version
- * card additionally opens with a single caption line — an inline 20pt root avatar
- * and the server's attribution sentence — which is the only place that sentence
- * is drawn.
+ * card additionally opens with an attribution row — a small stack of the adapter
+ * and original author's avatars beside the server's sentence, whose names are
+ * bolded — which is the only place that sentence, and the "Version N · Language"
+ * label, are drawn (KNOT-022-fix1).
  *
  * The text column keeps the feed's horizontal inset, but the **media is
  * full-bleed**: no horizontal padding and no corner rounding. An image draws
@@ -245,26 +269,38 @@ export default function FeedEntry({
   });
 
   const isVersion = variant === 'version';
-  // The original author, for the version variant's header. A payload from a server
-  // that predates the structured fields carries no name, and the header then falls
-  // back to the attribution sentence -- and is omitted only when neither exists
-  // (KNOT-023b).
+  // The two people the row credits: the adapter (the card's own author) and the
+  // original author, whose identity the server attaches only to an adaptation
+  // (KNOT-023a). The avatars read from these fields; the sentence is never parsed
+  // for them.
+  const adapterName =
+    typeof story.author_display_name === 'string' ? story.author_display_name.trim() : '';
   const rootAuthorName =
     typeof story.root_author_display_name === 'string' ? story.root_author_display_name.trim() : '';
   const rootAuthorAvatarUrl = resolveAvatarUrl(story.root_author_avatar_url);
   const attributionText = typeof attributionLine === 'string' ? attributionLine.trim() : '';
-  // The sentence is split so the author's name can take the bold label voice
-  // (KNOT-023c). Parsing is display-only; an unexpected sentence falls back to
-  // the plain string.
-  const attribution = attributionParts(attributionText);
-  const showAttributionHeader = isVersion && (attributionText !== '' || rootAuthorName !== '');
-  // The badge names the version and the language it was written in, which is what
-  // makes an adaptation legible before the text is read: "Version 2 · Zulu". The
-  // style upper-cases it, so the wording is written in sentence case here.
-  const versionBadge =
+  // The sentence names the people in the lineage, so it is split into runs and
+  // every name is drawn in the bold label voice (KNOT-022-fix1). Parsing is
+  // display-only; an unexpected sentence falls back to one plain run.
+  const attributionRuns: readonly AttributionSegment[] =
+    attributionText !== ''
+      ? attributionSegments(attributionText)
+      : fallbackAttributionRuns(rootAuthorName);
+  // The version's position and language ride in this row, quietly, so the card's
+  // overline can stay the pillar tag alone (KNOT-022-fix1). The server's sentence
+  // already names the target language ("...into Zulu"), so it contributes only
+  // the number; without a sentence the full label is drawn.
+  const versionLabel =
     versionNumber === undefined
       ? `Version in ${languageName(story.language)}`
       : `Version ${versionNumber} · ${languageName(story.language)}`;
+  const attributionMeta =
+    attributionText === '' || versionNumber === undefined
+      ? versionLabel
+      : `Version ${versionNumber}`;
+  // A version card always carries a version label, so the row is drawn even when
+  // the lineage could not be resolved; in that case it is the label alone.
+  const showAttributionHeader = isVersion;
 
   return (
     <Pressable
@@ -277,51 +313,52 @@ export default function FeedEntry({
       testID={testID}
     >
       <View style={styles.padded}>
-        {/* A single caption line at the top of the card: the inline root avatar,
-            then the server's attribution sentence (or, if it is missing, the
-            structured root author). It replaces both the old two-line header and
-            the sentence under the title (KNOT-023b). */}
+        {/* The attribution row: the adapter who wrote this telling and the
+            original author whose story it carries, as stacked avatars, then a
+            two-line social credit (the server's sentence with its names bolded,
+            plus the quiet version label). It replaces the old overline badge and
+            the sentence under the title (KNOT-023b, KNOT-022-fix1). */}
         {showAttributionHeader ? (
-          <View style={styles.attributionHeader} testID="attribution-header">
-            <Avatar
-              uri={rootAuthorAvatarUrl}
-              displayName={rootAuthorName}
-              size="xs"
-              accessibilityLabel={
-                rootAuthorName === ''
-                  ? 'Original author\u2019s profile picture'
-                  : `${rootAuthorName}'s profile picture`
-              }
-            />
-            {attributionText !== '' ? (
-              <Text
-                testID="attribution-sentence"
-                style={[typeScale.caption, styles.attributionText]}
-                numberOfLines={ATTRIBUTION_LINES}
-              >
-                {attribution === undefined ? (
-                  attributionText
+          <View style={styles.attributionRow} testID="attribution-header">
+            <View style={styles.attributionAvatars}>
+              <Avatar
+                uri={resolveAvatarUrl(story.author_avatar_url)}
+                displayName={adapterName}
+                size="sm"
+                accessibilityLabel={
+                  adapterName === ''
+                    ? 'Adapter\u2019s profile picture'
+                    : `${adapterName}'s profile picture`
+                }
+              />
+              {rootAuthorName !== '' ? (
+                <View style={styles.attributionAvatarStacked}>
+                  <Avatar
+                    uri={rootAuthorAvatarUrl}
+                    displayName={rootAuthorName}
+                    size="sm"
+                    accessibilityLabel={`${rootAuthorName}'s profile picture`}
+                  />
+                </View>
+              ) : null}
+            </View>
+            <Text
+              testID="attribution-sentence"
+              style={[typeScale.bodyS, styles.attributionText]}
+              numberOfLines={ATTRIBUTION_LINES}
+            >
+              {attributionRuns.map((run, index) =>
+                run.bold ? (
+                  <Text key={index} style={[typeScale.label, styles.attributionName]}>
+                    {run.text}
+                  </Text>
                 ) : (
-                  <>
-                    {attribution.prefix}
-                    <Text style={[typeScale.label, styles.attributionName]}>
-                      {attribution.name}
-                    </Text>
-                    {attribution.suffix}
-                  </>
-                )}
-              </Text>
-            ) : (
-              <Text
-                testID="attribution-sentence"
-                style={[typeScale.caption, styles.attributionText]}
-                numberOfLines={ATTRIBUTION_LINES}
-              >
-                {'Adapted from '}
-                <Text style={[typeScale.label, styles.attributionName]}>{rootAuthorName}</Text>
-                {"'s original story."}
-              </Text>
-            )}
+                  run.text
+                ),
+              )}
+              {attributionRuns.length > 0 ? ' · ' : null}
+              <Text style={[typeScale.caption, styles.attributionMeta]}>{attributionMeta}</Text>
+            </Text>
           </View>
         ) : null}
 
@@ -344,21 +381,12 @@ export default function FeedEntry({
           onPress={onOpenAuthor}
         />
 
-        {/* An adaptation is labelled by its inherited pillar, its version, and its
-            language: the pillar frames the story the adaptation belongs to, and
-            the version badge says which telling this is (KNOT-022, KNOT-023). */}
-        {isVersion ? (
-          <View style={[styles.tagRow, styles.versionRow]}>
-            <PillarTag pillar={story.pillar} variant="plain" />
-            <Text testID="version-badge" style={[typeScale.overline, styles.versionBadge]}>
-              {versionBadge}
-            </Text>
-          </View>
-        ) : (
-          <View style={styles.tagRow}>
-            <PillarTag pillar={story.pillar} place={story.place} variant="plain" />
-          </View>
-        )}
+        {/* Both kinds open with the same pillar tag -- "WONDER · ARLIT" -- so an
+            adaptation reads as a story filed under a pillar. Which telling it is
+            lives in the attribution row above (KNOT-022-fix1). */}
+        <View style={styles.tagRow}>
+          <PillarTag pillar={story.pillar} place={story.place} variant="plain" />
+        </View>
 
         <Text style={[typeScale.title, styles.title]}>{story.title}</Text>
 
@@ -429,18 +457,37 @@ export default function FeedEntry({
 }
 
 const styles = StyleSheet.create({
-  // The single-line attribution header: a small inline avatar, then one caption
-  // sentence. It is a label above the author block, not a byline of its own.
-  attributionHeader: {
+  // The attribution row: stacked avatars on the left, a two-line social credit on
+  // the right. It is a label above the author block, not a byline of its own
+  // (KNOT-022-fix1).
+  attributionRow: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: spacing.sm,
   },
+  attributionAvatars: {
+    alignItems: 'center',
+    flexDirection: 'row',
+  },
+  // The original author sits over the adapter's avatar, ringed in the canvas so
+  // the two faces stay legible where they meet.
+  attributionAvatarStacked: {
+    backgroundColor: colors.bg.canvas,
+    borderColor: colors.bg.canvas,
+    borderRadius: radius.pill,
+    borderWidth: 2,
+    marginLeft: -spacing.sm,
+  },
   attributionName: {
     color: colors.text.primary,
   },
-  attributionText: {
+  // The version label rides at the end of the sentence in the quietest ink, so
+  // the credit reads as one line rather than a badge (KNOT-022-fix1).
+  attributionMeta: {
     color: colors.text.tertiary,
+  },
+  attributionText: {
+    color: colors.text.secondary,
     flexShrink: 1,
   },
   // The rule between the attribution line and the poster's author block
@@ -518,19 +565,6 @@ const styles = StyleSheet.create({
   },
   readMoreText: {
     color: colors.brand.primary,
-  },
-  // The version badge: the overline voice in the brand ink, marking the entry as an
-  // adaptation at a glance (KNOT-022).
-  versionBadge: {
-    color: colors.brand.primary,
-  },
-  // The pillar and the version badge sit side by side, so an adaptation reads as
-  // "Wonder · Version 2 · Zulu" without the two labels competing (KNOT-023).
-  versionRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
   },
   tagRow: {
     marginTop: spacing.md,
