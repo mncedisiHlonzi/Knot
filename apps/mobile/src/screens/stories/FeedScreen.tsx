@@ -64,7 +64,10 @@ type FeedScreenProps = {
 };
 
 /**
- * The public story feed, newest first, as a continuous hairline-separated column.
+ * The public story feed, newest first, as white cards on a grey canvas.
+ *
+ * Each entry is a white card separated from the next by a thick background-coloured
+ * gap — the LinkedIn pattern — rather than by a 1px rule (KNOT-023b).
  *
  * The layout pins everything but the list: the header and the four text tabs are
  * fixed siblings ABOVE the FlatList, so only the feed entries scroll beneath them
@@ -296,52 +299,58 @@ export default function FeedScreen({
         }}
         onEndReachedThreshold={0.5}
         renderItem={({ item }) => (
-          <FeedEntry
-            story={{
-              author_avatar_url: item.author_avatar_url,
-              author_display_name: item.author_display_name,
-              author_rooted: item.author_rooted ?? null,
-              comment_count: item.comment_count,
-              created_at: item.created_at,
-              first_media_type: item.first_media_type ?? null,
-              first_media_url: item.first_media_url ?? null,
-              first_media_width: item.first_media_width ?? null,
-              first_media_height: item.first_media_height ?? null,
-              id: item.id,
-              language: item.language,
-              language_count: item.language_count,
-              media_count: item.media_count,
-              pillar: item.pillar,
-              place: item.approximate_location,
-              preview: item.body,
-              preview_truncated: item.preview_truncated,
-              reactions: item.reactions,
-              // The original author's identity, only on an adaptation; the card
-              // heads a version with it. A story entry has no such fields, so
-              // the conditional narrows the union (KNOT-023a).
-              root_author_avatar_url:
-                item.kind === 'version' ? item.root_author_avatar_url : undefined,
-              root_author_display_name:
-                item.kind === 'version' ? item.root_author_display_name : undefined,
-              root_author_id: item.kind === 'version' ? item.root_author_id : undefined,
-              // Sensitive is inherited from the story, so it travels with both
-              // kinds of entry and the card holds its media until revealed
-              // (KNOT-023).
-              sensitive: item.sensitive,
-              title: item.title,
-              version_count: item.version_count,
-            }}
-            variant={item.kind === 'version' ? 'version' : 'story'}
-            versionNumber={item.kind === 'version' ? item.version_number : undefined}
-            attributionLine={item.kind === 'version' ? item.attribution_line : undefined}
-            isMuted={isMuted}
-            isVisible={item.id === activeItemId}
-            onToggleMute={toggleMute}
-            onPress={() =>
-              item.kind === 'version' ? onOpenVersion(item.id) : onOpenStory(item.id)
-            }
-            onOpenAuthor={() => onOpenUserProfile(item.author_id)}
-          />
+          // The LinkedIn-style card: a white entry on the grey feed canvas, with a
+          // visible gap between cards instead of a 1px rule (KNOT-023b).
+          <View style={styles.card}>
+            <FeedEntry
+              story={{
+                author_avatar_url: item.author_avatar_url,
+                author_display_name: item.author_display_name,
+                author_rooted: item.author_rooted ?? null,
+                comment_count: item.comment_count,
+                created_at: item.created_at,
+                first_media_type: item.first_media_type ?? null,
+                first_media_url: item.first_media_url ?? null,
+                first_media_width: item.first_media_width ?? null,
+                first_media_height: item.first_media_height ?? null,
+                id: item.id,
+                language: item.language,
+                language_count: item.language_count,
+                media_count: item.media_count,
+                pillar: item.pillar,
+                place: item.approximate_location,
+                preview: item.body,
+                preview_truncated: item.preview_truncated,
+                reactions: item.reactions,
+                // The original author's identity, only on an adaptation; the card
+                // heads a version with it. A story entry has no such fields, so
+                // the conditional narrows the union (KNOT-023a).
+                root_author_avatar_url:
+                  item.kind === 'version' ? item.root_author_avatar_url : undefined,
+                root_author_display_name:
+                  item.kind === 'version' ? item.root_author_display_name : undefined,
+                root_author_id: item.kind === 'version' ? item.root_author_id : undefined,
+                // Sensitive is inherited from the story, so it travels with both
+                // kinds of entry and the card holds its media until revealed
+                // (KNOT-023).
+                sensitive: item.sensitive,
+                title: item.title,
+                version_count: item.version_count,
+              }}
+              variant={item.kind === 'version' ? 'version' : 'story'}
+              versionNumber={item.kind === 'version' ? item.version_number : undefined}
+              attributionLine={item.kind === 'version' ? item.attribution_line : undefined}
+              // The feed separates cards with a gap, not a hairline (KNOT-023b).
+              showBottomHairline={false}
+              isMuted={isMuted}
+              isVisible={item.id === activeItemId}
+              onToggleMute={toggleMute}
+              onPress={() =>
+                item.kind === 'version' ? onOpenVersion(item.id) : onOpenStory(item.id)
+              }
+              onOpenAuthor={() => onOpenUserProfile(item.author_id)}
+            />
+          </View>
         )}
         ListEmptyComponent={
           loading ? (
@@ -383,8 +392,14 @@ const styles = StyleSheet.create({
   badgeText: {
     color: colors.text.onBrand,
   },
-  container: {
+  // One feed card: white on the grey canvas, with the thick inter-card gap below
+  // it. The gap is the Feed's separator; there is no 1px rule (KNOT-023b).
+  card: {
     backgroundColor: colors.bg.canvas,
+    marginBottom: spacing.md,
+  },
+  container: {
+    backgroundColor: colors.bg.sunken,
     flex: 1,
   },
   error: {

@@ -3,6 +3,7 @@ import type { ImageLoadEventData, NativeSyntheticEvent } from 'react-native';
 import { MAX_PORTRAIT_ASPECT_RATIO } from '../../utils/mediaFrame';
 import { typeScale } from '../../theme';
 import AuthorLine from '../AuthorLine';
+import Avatar from '../Avatar';
 import FeedEntry from '../FeedEntry';
 import FeedVideo from '../FeedVideo';
 import PillarTag from '../PillarTag';
@@ -220,9 +221,11 @@ describe('FeedEntry', () => {
 
     expect(authorLine).toBeDefined();
     expect(authorLine?.props?.rooted).toEqual({ place: 'Oaxaca', duration_bucket: 'many_years' });
-    expect(authorLine?.props?.showRootedOnNewLine).toBe(true);
+    // The feed's social-card block: name, Rooted, time, with a left avatar
+    // (KNOT-023b).
+    expect(authorLine?.props?.layout).toBe('stacked');
     expect(authorLine?.props?.size).toBe('large');
-    // The feed is the only caller of the compact time format (KNOT-023a).
+    // The feed is the only caller of the compact time format.
     expect(authorLine?.props?.timeFormat).toBe('short');
   });
 
@@ -407,23 +410,31 @@ describe('FeedEntry', () => {
       sensitive: false,
     };
 
-    it('sets the attribution line in the small body style, not the caption', () => {
+    it('renders the attribution header in the caption voice, with the inline root avatar', () => {
+      const sentence = 'Adapted from Ada Lovelace in English into Zapotec.';
       const element = FeedEntry({
         story: versionFeedItem,
         variant: 'version',
         versionNumber: 2,
-        attributionLine: 'Adapted from Ada Lovelace in English into Zapotec.',
+        attributionLine: sentence,
         onPress: () => undefined,
       });
-      const attribution = findElement(element, (props) => props.numberOfLines === 2);
 
-      expect(attribution).toBeDefined();
-      expect(attribution?.props?.style).toContain(typeScale.bodyS);
-      expect(attribution?.props?.style).not.toContain(typeScale.caption);
+      const header = findElement(element, (props) => props.testID === 'attribution-header');
+      expect(header).toBeDefined();
+
+      const line = findElement(element, (props) => props.testID === 'attribution-sentence');
+      expect(line?.props?.style).toContain(typeScale.caption);
+      expect(line?.props?.numberOfLines).toBe(2);
+
+      // The avatar is inline and small, as the single-line header requires.
+      expect(findElementByType(header, Avatar)?.props?.size).toBe('xs');
+      expect(collectText(element)).toContain(sentence);
     });
   });
 
   describe('the attribution header', () => {
+    const sentence = "Adapted from Ada Lovelace's original story in English into Zulu.";
     const adapted = {
       ...story,
       root_author_id: 'author-root',
@@ -431,54 +442,65 @@ describe('FeedEntry', () => {
       root_author_avatar_url: '/users/author-root/avatar?v=a.png',
     };
 
-    it('heads a version with the original author and a divider', () => {
+    it('heads a version with one inline avatar-and-sentence line', () => {
       const element = FeedEntry({
         story: adapted,
         variant: 'version',
         versionNumber: 2,
+        attributionLine: sentence,
         onPress: () => undefined,
       });
 
-      // The header is a structural marker, so its presence is asserted by test id
-      // rather than by the order of children.
-      expect(findElement(element, (props) => props.testID === 'attribution-header')).toBeDefined();
-      expect(findElement(element, (props) => props.testID === 'attribution-divider')).toBeDefined();
+      const header = findElement(element, (props) => props.testID === 'attribution-header');
+      expect(header).toBeDefined();
+      expect(findElementByType(header, Avatar)?.props?.size).toBe('xs');
+      expect(collectText(element)).toContain(sentence);
 
-      // The name takes the label voice, the possessive the caption voice.
-      expect(
-        findElement(element, (props) => props.testID === 'attribution-name')?.props?.style,
-      ).toEqual(expect.arrayContaining([typeScale.label]));
-      expect(
-        findElement(element, (props) => props.testID === 'attribution-suffix')?.props?.style,
-      ).toEqual(expect.arrayContaining([typeScale.caption]));
-
-      const text = collectText(element);
-      expect(text).toContain('Ada Lovelace');
-      expect(text).toContain("'s original story");
-    });
-
-    it('never heads a story entry, whose author block starts the card', () => {
-      const element = FeedEntry({ story, onPress: () => undefined });
-
-      expect(
-        findElement(element, (props) => props.testID === 'attribution-header'),
-      ).toBeUndefined();
+      // The old two-line shape (a divider under the header) is gone.
       expect(
         findElement(element, (props) => props.testID === 'attribution-divider'),
       ).toBeUndefined();
     });
 
-    it('omits the header when the payload carries no root author', () => {
+    it('never heads a story entry, even when root fields are present', () => {
       const element = FeedEntry({
-        story: { ...story, root_author_display_name: null },
-        variant: 'version',
-        versionNumber: 2,
+        story: { ...story, root_author_display_name: 'Ada Lovelace' },
+        attributionLine: sentence,
         onPress: () => undefined,
       });
 
       expect(
         findElement(element, (props) => props.testID === 'attribution-header'),
       ).toBeUndefined();
+    });
+
+    it('omits the header when neither the sentence nor the root author exists', () => {
+      const element = FeedEntry({
+        story: { ...story, root_author_display_name: null },
+        variant: 'version',
+        versionNumber: 2,
+        attributionLine: '',
+        onPress: () => undefined,
+      });
+
+      expect(
+        findElement(element, (props) => props.testID === 'attribution-header'),
+      ).toBeUndefined();
+    });
+
+    it('falls back to the structured root author when the sentence is missing', () => {
+      const element = FeedEntry({
+        story: adapted,
+        variant: 'version',
+        versionNumber: 2,
+        attributionLine: '',
+        onPress: () => undefined,
+      });
+
+      const text = collectText(element);
+      expect(text).toContain('Adapted from ');
+      expect(text).toContain('Ada Lovelace');
+      expect(text).toContain("'s original story.");
     });
   });
 });

@@ -17,6 +17,13 @@ export type AuthorLineSize = 'small' | 'medium' | 'large';
 export type AuthorLineTimeFormat = 'long' | 'short';
 
 /**
+ * How the author's details are arranged. `inline` is the byline every screen uses:
+ * name and time on one line. `stacked` is the Feed's social-card column: name,
+ * then Rooted, then time, with the avatar to the left (KNOT-023b).
+ */
+export type AuthorLineLayout = 'inline' | 'stacked';
+
+/**
  * The inline Rooted summary AuthorLine renders. It is typed as plain strings (not
  * the API's `AuthorRooted`) on purpose: the response types describe an optimistic
  * wire format, so the component takes the loosest shape its caller can supply and
@@ -50,9 +57,9 @@ type AuthorLineProps = {
    * Move the Rooted summary onto its own quieter second line, under the name and
    * time, instead of sitting inline beside them (KNOT-020c-fix2).
    *
-   * Defaults to `false`, which keeps the inline attribution every other screen
-   * already renders (Story Detail, Comment Thread, the Language Tree). The Feed
-   * passes `true`.
+   * Defaults to `false`, which keeps the inline attribution the existing screens
+   * render. The Feed uses `layout="stacked"` rather than this prop; it remains for
+   * a caller that wants the two-line inline form.
    */
   readonly showRootedOnNewLine?: boolean;
   /**
@@ -61,6 +68,13 @@ type AuthorLineProps = {
    * author block is already dense (KNOT-023a).
    */
   readonly timeFormat?: AuthorLineTimeFormat;
+  /**
+   * How the author's details are arranged. Defaults to `inline` (name and time on
+   * one line), which is what every existing screen already draws. `stacked` makes
+   * a left avatar and a three-line column — name, Rooted, time — for the Feed's
+   * social-card look (KNOT-023b).
+   */
+  readonly layout?: AuthorLineLayout;
   /**
    * Called when the author's avatar or name is tapped, to open their profile.
    *
@@ -98,10 +112,15 @@ const AVATAR_SIZE: Readonly<Record<AuthorLineSize, 'sm' | 'md' | 'lg'>> = {
  * (KNOT-015b-fix). A line with nothing at all to show renders `null` rather than an
  * empty row.
  *
- * When `showRootedOnNewLine` is set (the Feed), the line becomes a block: the
- * avatar stands to the left and the text column — the name with its time, then
- * the quiet Rooted line — hangs off it, so the avatar's left edge is the visual
- * guide for both lines. The Feed's Rooted line carries the place alone.
+ * When `showRootedOnNewLine` is set, the line becomes a block: the avatar stands
+ * to the left and the text column — the name with its time, then the quiet Rooted
+ * line — hangs off it, so the avatar's left edge is the visual guide for both
+ * lines. (The Feed now uses `layout="stacked"` instead; the prop remains for
+ * callers that want the two-line inline form.)
+ *
+ * `layout="stacked"` is the Feed's social-card block (KNOT-023b): the avatar on
+ * the left, then a column of the name, the quiet Rooted line, and the time — each
+ * on its own line, with no separators.
  *
  * When `onPress` is given, the avatar and name become a tap target for the
  * author's profile: a nested `Pressable` takes the touch itself, so the parent
@@ -115,6 +134,7 @@ export default function AuthorLine({
   size = 'small',
   showRootedOnNewLine = false,
   timeFormat = 'long',
+  layout = 'inline',
   onPress,
   testID,
 }: AuthorLineProps): React.ReactElement | null {
@@ -180,6 +200,62 @@ export default function AuthorLine({
         {hasLeadingSegment ? `· ${relative}` : relative}
       </Text>
     );
+
+  // The Feed's stacked author block (KNOT-023b): the avatar on the left, and a
+  // column on the right holding the name, the quiet Rooted line, then the time.
+  // Each detail gets its own line, which is what makes the card read like a
+  // social post rather than a byline. The name uses `typeScale.label` here even
+  // when the caller asked for a larger avatar, because the column is a compact
+  // identity block, not a headline.
+  if (layout === 'stacked') {
+    return (
+      <View style={styles.stackedRow} testID={testID}>
+        {onPress === undefined ? (
+          avatarNode
+        ) : (
+          <Pressable
+            onPress={onPress}
+            accessibilityRole="button"
+            accessibilityLabel={openProfileLabel}
+          >
+            {avatarNode}
+          </Pressable>
+        )}
+
+        <View style={styles.stackedDetails}>
+          {name === '' ? null : onPress === undefined ? (
+            <Text style={[typeScale.label, styles.name]} numberOfLines={1}>
+              {name}
+            </Text>
+          ) : (
+            <Pressable
+              style={styles.nameTarget}
+              onPress={onPress}
+              accessibilityRole="button"
+              accessibilityLabel={openProfileLabel}
+            >
+              <Text style={[typeScale.label, styles.name]} numberOfLines={1}>
+                {name}
+              </Text>
+            </Pressable>
+          )}
+
+          {hasRooted ? (
+            <RootedBadge
+              place={rootedPlace}
+              durationBucket={durationBucket}
+              variant="quiet"
+              showDuration={false}
+            />
+          ) : null}
+
+          {relative === '' ? null : (
+            <Text style={[typeScale.caption, styles.time]}>{relative}</Text>
+          )}
+        </View>
+      </View>
+    );
+  }
 
   // The Feed's author block: the avatar, then the text column — the name with its
   // time, and the quiet Rooted line beneath it, indented to the name's left edge
@@ -298,6 +374,16 @@ const styles = StyleSheet.create({
   // Lets a long name truncate inside its own tap target.
   nameTarget: {
     flexShrink: 1,
+  },
+  // The Feed's stacked block: a left avatar and a column of name, Rooted, time.
+  stackedDetails: {
+    flexShrink: 1,
+    gap: spacing.xs,
+  },
+  stackedRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
   },
   row: {
     alignItems: 'center',

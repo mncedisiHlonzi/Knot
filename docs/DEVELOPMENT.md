@@ -1412,6 +1412,29 @@ its author block starts the card directly.
   `timeFormat` prop (default `long`); only `FeedEntry` passes `"short"`, so every other
   screen keeps its prose time.
 
+### KNOT-023b — the feed card structure
+
+The feed now reads as **white cards on a grey canvas**, separated by a thick gap rather
+than a rule. The header and tab row stay on the white canvas above the list.
+
+- **The gap.** `FeedScreen` sets its container to `colors.bg.sunken` and wraps every entry
+  in a `styles.card` (`backgroundColor: colors.bg.canvas`, `marginBottom: spacing.md`).
+  `FeedEntry` gained `showBottomHairline?: boolean` (default `true`): the Feed passes
+  `false`, and a `paddingBottom` keeps the meta line off the card's edge. Place Stories
+  keeps the default, so its hairline-separated column is untouched.
+- **The stacked author.** `AuthorLine` gained `layout?: 'inline' | 'stacked'` (default
+  `'inline'`). Stacked puts the avatar on the left and a column on the right: name
+  (`typeScale.label`), the quiet Rooted line (when present), then the compact time on its
+  own line. `FeedEntry` passes `layout="stacked"` for both entry kinds; the other seven
+  screens keep the inline byline.
+- **The single-line header.** A version card opens with one caption line: an inline
+  20pt root avatar (`Avatar size="xs"`) and the server's `attribution_line`, clamped to
+  two lines. The sentence is used **verbatim** — the payload has no `root_language` /
+  `target_language`, so it is not recomposed or parsed. If the sentence is missing but the
+  structured root author is present, the line falls back to
+  `Adapted from {name}'s original story.`; with neither, the header is omitted. The old
+  two-line header, its divider, and the attribution sentence under the title are gone.
+
 ### Rooted, and the enrichment pattern
 
 `POST /users/me/rooted`, `GET /users/me/rooted`, and `GET /users/{id}/rooted` are served by

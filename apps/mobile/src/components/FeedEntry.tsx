@@ -103,11 +103,20 @@ type FeedEntryProps = {
   readonly versionNumber?: number;
   /**
    * The server-rendered sentence tracing this version back to the original, for
-   * the `version` variant. It is shown verbatim -- the server owns the wording --
-   * and is absent (or empty) when the lineage could not be resolved, in which case
-   * the entry simply shows no line (KNOT-021).
+   * the `version` variant. It is shown verbatim in the single-line attribution
+   * header -- the server owns the wording -- and is absent (or empty) when the
+   * lineage could not be resolved, in which case the header falls back to the
+   * structured root author and is omitted if that is missing too (KNOT-021,
+   * KNOT-023b).
    */
   readonly attributionLine?: string;
+  /**
+   * Whether the entry draws its own bottom hairline. The Feed replaces that
+   * inside-entry rule with a thick inter-card gap, so it passes `false`; Place
+   * Stories keeps the default and its column stays hairline-separated
+   * (KNOT-023b).
+   */
+  readonly showBottomHairline?: boolean;
   /** Called when the entry is tapped. */
   readonly onPress: () => void;
   /** Called when the author's identity is tapped. */
@@ -130,15 +139,9 @@ type FeedEntryProps = {
 const PREVIEW_LINES = 3;
 
 /**
- * The attribution header's line limit. A long name may wrap once, but the header
- * is a caption above the author block, so it must not grow without bound.
- */
-const ATTRIBUTION_NAME_LINES = 2;
-
-/**
- * The attribution sentence's line limit. It is clamped rather than wrapped freely
- * because a deep lineage produces a long sentence, and an entry must not grow
- * taller than its content is worth (KNOT-022).
+ * The single-line attribution header's line limit. The sentence wraps when the
+ * screen is narrow or the lineage is deep, but the header is a caption and must
+ * not grow without bound (KNOT-023b).
  */
 const ATTRIBUTION_LINES = 2;
 
@@ -177,18 +180,20 @@ function resolveAvatarUrl(path: string | null | undefined): string | undefined {
 }
 
 /**
- * One story in the feed, edge-to-edge with hairlines between entries.
+ * One story in the feed, as a white card on the feed's grey canvas.
  *
- * It is a full-bleed row on the canvas — no card, no border, no shadow — so the
- * feed reads as one continuous column. Its order is the reading order: the author
- * block, the pillar tag, the title, the opening lines, the media, then the meta
- * line. The whole entry is one tap target; the author identity inside it is a
- * nested target that opens the profile (KNOT-ADR-043).
+ * The card is full-bleed horizontally — no side border, no shadow — and its
+ * separation from the next card is the Feed's grey gap, not a rule. (Place
+ * Stories, the other caller, keeps the entry's bottom hairline.) Its order is the
+ * reading order: the author block, the pillar tag, the title, the opening lines,
+ * the media, then the meta line. The whole entry is one tap target; the author
+ * identity inside it is a nested target that opens the profile (KNOT-ADR-043).
  *
- * The author block is the design reference's three lines: avatar and name with the
- * relative time, then the quiet Rooted line (no dot, no pill), then the plain
- * pillar tag (no fill) — which is why the tag is asked for its `plain` variant
- * (KNOT-020c-fix3).
+ * The author block is a vertical stack (KNOT-023b): the avatar on the left and,
+ * on the right, the name, the quiet Rooted line, then the compact time. A version
+ * card additionally opens with a single caption line — an inline 20pt root avatar
+ * and the server's attribution sentence — which is the only place that sentence
+ * is drawn.
  *
  * The text column keeps the feed's horizontal inset, but the **media is
  * full-bleed**: no horizontal padding and no corner rounding. An image draws
@@ -215,6 +220,7 @@ export default function FeedEntry({
   variant = 'story',
   versionNumber,
   attributionLine,
+  showBottomHairline = true,
   onPress,
   onOpenAuthor,
   isVisible = false,
@@ -259,12 +265,14 @@ export default function FeedEntry({
 
   const isVersion = variant === 'version';
   // The original author, for the version variant's header. A payload from a server
-  // that predates the structured fields carries no name, and the header is then
-  // omitted rather than drawn as a nameless phrase (KNOT-023a).
+  // that predates the structured fields carries no name, and the header then falls
+  // back to the attribution sentence -- and is omitted only when neither exists
+  // (KNOT-023b).
   const rootAuthorName =
     typeof story.root_author_display_name === 'string' ? story.root_author_display_name.trim() : '';
   const rootAuthorAvatarUrl = resolveAvatarUrl(story.root_author_avatar_url);
-  const showAttributionHeader = isVersion && rootAuthorName !== '';
+  const attributionText = typeof attributionLine === 'string' ? attributionLine.trim() : '';
+  const showAttributionHeader = isVersion && (attributionText !== '' || rootAuthorName !== '');
   // The badge names the version and the language it was written in, which is what
   // makes an adaptation legible before the text is read: "Version 2 · Zulu". The
   // style upper-cases it, so the wording is written in sentence case here.
@@ -275,7 +283,7 @@ export default function FeedEntry({
 
   return (
     <Pressable
-      style={styles.entry}
+      style={[styles.entry, showBottomHairline ? null : styles.entryCard]}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={
@@ -284,37 +292,42 @@ export default function FeedEntry({
       testID={testID}
     >
       <View style={styles.padded}>
-        {/* An adaptation is headed by the person it descends from, in structured
-            form: the payload names the root author, so the card never parses the
-            attribution sentence to find them (KNOT-023a). The header belongs to
-            the version variant only; a story card starts with its own author. */}
+        {/* A single caption line at the top of the card: the inline root avatar,
+            then the server's attribution sentence (or, if it is missing, the
+            structured root author). It replaces both the old two-line header and
+            the sentence under the title (KNOT-023b). */}
         {showAttributionHeader ? (
-          <>
-            <View style={styles.attributionHeader} testID="attribution-header">
-              <Avatar
-                uri={rootAuthorAvatarUrl}
-                displayName={rootAuthorName}
-                size="sm"
-                accessibilityLabel={`${rootAuthorName}'s profile picture`}
-              />
+          <View style={styles.attributionHeader} testID="attribution-header">
+            <Avatar
+              uri={rootAuthorAvatarUrl}
+              displayName={rootAuthorName}
+              size="xs"
+              accessibilityLabel={
+                rootAuthorName === ''
+                  ? 'Original author\u2019s profile picture'
+                  : `${rootAuthorName}'s profile picture`
+              }
+            />
+            {attributionText !== '' ? (
               <Text
-                testID="attribution-name"
-                style={[typeScale.label, styles.attributionName]}
-                numberOfLines={ATTRIBUTION_NAME_LINES}
+                testID="attribution-sentence"
+                style={[typeScale.caption, styles.attributionText]}
+                numberOfLines={ATTRIBUTION_LINES}
               >
-                {rootAuthorName}
-                <Text
-                  testID="attribution-suffix"
-                  style={[typeScale.caption, styles.attributionSuffix]}
-                >
-                  {"'s original story"}
-                </Text>
+                {attributionText}
               </Text>
-            </View>
-            {/* One step darker than a hairline: it separates two blocks inside
-                the entry, not two entries (KNOT-023a). */}
-            <View style={styles.attributionDivider} testID="attribution-divider" />
-          </>
+            ) : (
+              <Text
+                testID="attribution-sentence"
+                style={[typeScale.caption, styles.attributionText]}
+                numberOfLines={ATTRIBUTION_LINES}
+              >
+                {'Adapted from '}
+                <Text style={[typeScale.label, styles.attributionName]}>{rootAuthorName}</Text>
+                {"'s original story."}
+              </Text>
+            )}
+          </View>
         ) : null}
 
         <AuthorLine
@@ -323,8 +336,9 @@ export default function FeedEntry({
           createdAt={story.created_at}
           rooted={story.author_rooted ?? null}
           size="large"
-          showRootedOnNewLine
-          // The feed's own compact form: "3d" rather than "3 days ago" (KNOT-023a).
+          // The feed's social-card author block: name, Rooted, then time, with a
+          // left avatar. The compact time is the feed's alone (KNOT-023b).
+          layout="stacked"
           timeFormat="short"
           onPress={onOpenAuthor}
         />
@@ -346,15 +360,6 @@ export default function FeedEntry({
         )}
 
         <Text style={[typeScale.title, styles.title]}>{story.title}</Text>
-
-        {/* The attribution sentence sits under the title: the title says what this
-            version is called, and the line under it says whose story it adapts. It
-            is rendered verbatim, because the server owns the wording (KNOT-021). */}
-        {isVersion && attributionLine !== undefined && attributionLine !== '' ? (
-          <Text style={[typeScale.bodyS, styles.attribution]} numberOfLines={ATTRIBUTION_LINES}>
-            {attributionLine}
-          </Text>
-        ) : null}
 
         <Text style={[typeScale.body, styles.preview]} numberOfLines={PREVIEW_LINES}>
           {story.preview}
@@ -452,38 +457,27 @@ export default function FeedEntry({
           <Text style={[typeScale.caption, tabularNums, styles.metaText]}>{metaLine}</Text>
         ) : null}
 
-        <View style={styles.hairline} />
+        {showBottomHairline ? <View style={styles.hairline} /> : null}
       </View>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  // The version header: a small avatar, then the original author's name with the
-  // quiet possessive. It is a caption above the author block, not a byline.
+  // The single-line attribution header: a small inline avatar, then one caption
+  // sentence. It is a label above the author block, not a byline of its own.
   attributionHeader: {
     alignItems: 'center',
     flexDirection: 'row',
     gap: spacing.sm,
+    marginBottom: spacing.sm,
   },
   attributionName: {
     color: colors.text.primary,
+  },
+  attributionText: {
+    color: colors.text.tertiary,
     flexShrink: 1,
-  },
-  attributionSuffix: {
-    color: colors.text.tertiary,
-  },
-  attributionDivider: {
-    backgroundColor: colors.border.divider,
-    height: 1,
-    marginBottom: spacing.md,
-    marginTop: spacing.sm,
-  },
-  attribution: {
-    // Quiet: the attribution supports the entry, it does not compete with the
-    // title or the preview (KNOT-022).
-    color: colors.text.tertiary,
-    marginTop: spacing.xs,
   },
   countBadge: {
     alignItems: 'center',
@@ -507,6 +501,12 @@ const styles = StyleSheet.create({
   },
   entry: {
     paddingTop: spacing.lg,
+  },
+  // The Feed's card form: without its bottom hairline, the entry needs its own
+  // bottom inset so the next card's grey gap does not touch the meta line
+  // (KNOT-023b).
+  entryCard: {
+    paddingBottom: spacing.lg,
   },
   hairline: {
     backgroundColor: colors.border.hairline,
