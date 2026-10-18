@@ -43,6 +43,26 @@ type FeedVideoProps = {
    * what shape to be (KNOT-020g-fix7).
    */
   readonly onLoadSize?: (width: number, height: number) => void;
+  /**
+   * The duration the payload already knows, in milliseconds. It seeds the duration
+   * badge so the Story Detail carousel can show `0:48` before the player has
+   * loaded; the player's own report replaces it once metadata arrives. Optional,
+   * and ignored when it is not a positive number (KNOT-025).
+   */
+  readonly durationMs?: number | null;
+  /**
+   * Whether the small "Video" tag is drawn in the top-left. Defaults to `true`,
+   * the Feed's presentation; the Story Detail carousel passes `false` because its
+   * counter pill and caption already identify the media (KNOT-025).
+   */
+  readonly showTag?: boolean;
+  /**
+   * Where the duration badge sits. Defaults to `top-right`, the Feed's place. The
+   * Story Detail carousel asks for `bottom-left`, leaving the top-right corner for
+   * the carousel's counter pill (KNOT-025). The mute control keeps the
+   * bottom-right corner in both cases.
+   */
+  readonly durationPosition?: 'top-right' | 'bottom-left';
   /** Test identifier. */
   readonly testID?: string;
 };
@@ -78,9 +98,18 @@ export default function FeedVideo({
   isMuted = true,
   onToggleMute = NOOP,
   onLoadSize,
+  durationMs,
+  showTag = true,
+  durationPosition = 'top-right',
   testID,
 }: FeedVideoProps): React.ReactElement {
-  const [durationSeconds, setDurationSeconds] = useState(0);
+  // The payload's duration, when it has one, is the first thing the badge can
+  // show; the player replaces it with the authoritative value on load.
+  const [durationSeconds, setDurationSeconds] = useState(() =>
+    typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs > 0
+      ? durationMs / 1000
+      : 0,
+  );
 
   // The duration and the natural size are both known only once the file's
   // metadata has loaded; before that the duration badge is simply absent and the
@@ -125,12 +154,22 @@ export default function FeedVideo({
         onLoad={handleLoad}
       />
 
-      <View style={styles.mediaTag} pointerEvents="none">
-        <Text style={[typeScale.caption, styles.badgeText]}>Video</Text>
-      </View>
+      {showTag ? (
+        <View style={styles.mediaTag} pointerEvents="none">
+          <Text style={[typeScale.caption, styles.badgeText]}>Video</Text>
+        </View>
+      ) : null}
 
       {durationLabel !== '' ? (
-        <View style={styles.durationBadge} pointerEvents="none">
+        <View
+          style={[
+            styles.durationBadge,
+            durationPosition === 'bottom-left'
+              ? styles.durationBottomLeft
+              : styles.durationTopRight,
+          ]}
+          pointerEvents="none"
+        >
           <Text style={[typeScale.caption, tabularNums, styles.badgeText]}>{durationLabel}</Text>
         </View>
       ) : null}
@@ -164,6 +203,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: 2,
     position: 'absolute',
+  },
+  durationBottomLeft: {
+    bottom: spacing.sm,
+    left: spacing.sm,
+  },
+  durationTopRight: {
     right: spacing.sm,
     top: spacing.sm,
   },

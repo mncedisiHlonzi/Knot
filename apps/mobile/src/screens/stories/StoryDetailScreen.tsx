@@ -1,17 +1,19 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
   Pressable,
   ScrollView,
-  StyleProp,
   StyleSheet,
   Text,
   View,
-  ViewStyle,
+  useWindowDimensions,
+  type ImageLoadEventData,
+  type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
 } from 'react-native';
-import { ArrowLeft, CaretDown, DotsThree, GitBranch } from 'phosphor-react-native';
-import Video from 'react-native-video';
+import { ArrowLeft, DotsThree, GitBranch } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { EMPTY_REACTION_COUNTS } from '../../api/reactions';
@@ -19,7 +21,7 @@ import { type Story, type StoryMedia, storiesApi } from '../../api/stories';
 import { versionsApi } from '../../api/versions';
 import AuthorLine from '../../components/AuthorLine';
 import Button from '../../components/Button';
-import CameraCaptureBadge from '../../components/CameraCaptureBadge';
+import FeedVideo from '../../components/FeedVideo';
 import Header from '../../components/Header';
 import MediaGalleryModal from '../../components/MediaGalleryModal';
 import PillarTag from '../../components/PillarTag';
@@ -28,68 +30,95 @@ import ReportModal from '../../components/ReportModal';
 import { API_BASE_URL } from '../../config/api';
 import { languageName } from '../../data/languages';
 import { colors, layout, radius, spacing, tabularNums, typeScale } from '../../theme';
+import { PLACEHOLDER_MEDIA_ASPECT_RATIO, resolveMediaAspectRatio } from '../../utils/mediaFrame';
+import { useMediaAspectRatio } from '../../utils/useMediaAspectRatio';
+import { carouselCounter, carouselIndex, carouselPositionLabel } from './detailCarousel';
 
 /** Resolves a relative media path returned by the API against the base URL. */
 function resolveMediaUrl(url: string): string {
   return `${API_BASE_URL}${url}`;
 }
 
-/** The hero's aspect ratio (4:3), per the design brief. */
-const HERO_ASPECT_RATIO = 4 / 3;
-
-/** The floating header's height, used to inset the body when there is no hero. */
-const HEADER_HEIGHT = 56;
-
-/** A still image or a paused video with a play control and the capture badge. */
-function MediaTile({
+/**
+ * One page of the Story Detail carousel: a full-width media frame at the shape
+ * the media itself reports.
+ *
+ * The page owns the media's natural-ratio resolution (payload dimensions first,
+ * then the media's own load, capped at 4:5 by `resolveMediaAspectRatio`) and
+ * reports the result up, because the pager's height follows the ACTIVE page
+ * (KNOT-025). A video is handed to `FeedVideo`, so the one player keeps its
+ * autoplay and mute behaviour; an image draws directly.
+ */
+function CarouselPage({
   media,
-  onOpen,
-  style,
+  width,
+  height,
+  index,
+  total,
+  isActive,
+  isMuted,
+  onToggleMute,
+  onPress,
+  onAspectRatio,
 }: {
   readonly media: StoryMedia;
-  readonly onOpen: () => void;
-  readonly style?: StyleProp<ViewStyle>;
+  readonly width: number;
+  readonly height: number;
+  readonly index: number;
+  readonly total: number;
+  readonly isActive: boolean;
+  readonly isMuted: boolean;
+  readonly onToggleMute: () => void;
+  readonly onPress: () => void;
+  readonly onAspectRatio: (mediaId: string, ratio: number | null) => void;
 }): React.ReactElement {
-  const [paused, setPaused] = useState(true);
+  const { aspectRatio, onLoadSize } = useMediaAspectRatio(media.width, media.height);
   const uri = resolveMediaUrl(media.url);
 
-  return (
-    <View style={[styles.tile, style]}>
-      {/* A full-tile tap target, under the play button so the play button still
-          receives its own taps. */}
-      <Pressable
-        style={styles.tileOpenTarget}
-        onPress={onOpen}
-        accessibilityRole="button"
-        accessibilityLabel="Open media full screen"
-      />
+  // The carousel's frame takes the active page's shape, so a page reports the
+  // ratio it resolved. `null` means the media has not reported one yet, which the
+  // screen ignores rather than overwriting a known ratio.
+  useEffect(() => {
+    onAspectRatio(media.id, aspectRatio);
+  }, [aspectRatio, media.id, onAspectRatio]);
 
+  const handleImageLoad = (event: NativeSyntheticEvent<ImageLoadEventData>): void => {
+    const { width: loadedWidth, height: loadedHeight } = event.nativeEvent.source;
+    onLoadSize(loadedWidth, loadedHeight);
+  };
+
+  return (
+    <Pressable
+      style={[styles.page, { height, width }]}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Open ${carouselPositionLabel(
+        media.media_type,
+        index,
+        total,
+      )} full screen`}
+    >
       {media.media_type === 'video' ? (
-        <Video
-          source={{ uri }}
-          style={styles.tileMedia}
-          paused={paused}
-          resizeMode="cover"
-          repeat
-          muted
+        <FeedVideo
+          uri={uri}
+          isVisible={isActive}
+          isMuted={isMuted}
+          onToggleMute={onToggleMute}
+          onLoadSize={onLoadSize}
+          durationMs={media.duration_ms}
+          showTag={false}
+          durationPosition="bottom-left"
         />
       ) : (
-        <Image style={styles.tileMedia} source={{ uri }} resizeMode="cover" />
+        <Image
+          source={{ uri }}
+          style={styles.pageMedia}
+          resizeMode="cover"
+          onLoad={handleImageLoad}
+          accessibilityIgnoresInvertColors
+        />
       )}
-
-      {media.media_type === 'video' && paused ? (
-        <Pressable
-          style={styles.playButton}
-          onPress={() => setPaused(false)}
-          accessibilityRole="button"
-          accessibilityLabel="Play video"
-        >
-          <Text style={styles.playButtonIcon}>▶</Text>
-        </Pressable>
-      ) : null}
-
-      {media.source === 'camera' ? <CameraCaptureBadge style={styles.tileBadge} /> : null}
-    </View>
+    </Pressable>
   );
 }
 
@@ -122,12 +151,16 @@ type StoryDetailScreenProps = {
 /**
  * One story in full, as an edge-to-edge reading flow.
  *
- * The layout is the design reference's: a transparent header (back, overflow) over
- * a 4:3 hero, then a reading column (pillar tag, title, author line, the language
- * row that names the root language and its version count, the body, then any
- * extra media), a hairline, the four perspective signals, and the two calls to
- * action — adapt this story, or join its conversation. The report flow sits behind
- * the header's overflow control.
+ * The layout is the KNOT-025 design reference's (Claude mockup v2): the standard
+ * 56-point header, then a full-bleed paging media carousel, then a reading column
+ * (pillar tag, large title, the author block with the inline Rooted badge, the
+ * language-tree button, the body), a hairline-bounded reaction bar, the
+ * conversation link, and the "Tell this to your people" action. The report flow
+ * sits behind the header's overflow control.
+ *
+ * The header is a normal row above the ScrollView rather than an overlay: the
+ * mockup draws it above the carousel, and an opaque bar keeps the back/overflow
+ * controls legible over any media (KNOT-025).
  *
  * A story that does not exist is reported as a normal error message rather than a
  * crash: the server answers 404 with a readable message, and `describeError`
@@ -151,8 +184,30 @@ export default function StoryDetailScreen({
   const [viewerIndex, setViewerIndex] = useState<number | undefined>(undefined);
   const [reportVisible, setReportVisible] = useState(false);
 
+  // The carousel's own state: which page is showing, the shape each page has
+  // reported, the one mute control, and whether the carousel is still on screen
+  // (which pauses its video once the reader scrolls past it).
+  const { width: pageWidth } = useWindowDimensions();
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [ratios, setRatios] = useState<Readonly<Record<string, number>>>({});
+  const [isMuted, setIsMuted] = useState(true);
+  const [carouselVisible, setCarouselVisible] = useState(true);
+  const carouselBottom = useRef(0);
+
   const media = story?.media ?? [];
-  const hero = media.length > 0 ? media[0] : undefined;
+  const safeIndex = media.length === 0 ? 0 : Math.min(activeIndex, media.length - 1);
+  const activeMedia = media[safeIndex];
+  // The frame takes the active media's shape: the shape the page reported, else
+  // the payload's own dimensions, else the neutral square placeholder. The 4:5
+  // cap is applied inside `resolveMediaAspectRatio` (KNOT-020g-fix7).
+  const activeRatio =
+    (activeMedia === undefined ? undefined : ratios[activeMedia.id]) ??
+    (activeMedia === undefined
+      ? undefined
+      : resolveMediaAspectRatio(activeMedia.width, activeMedia.height)) ??
+    PLACEHOLDER_MEDIA_ASPECT_RATIO;
+  const carouselHeight = pageWidth / activeRatio;
+  const videoActive = carouselVisible && viewerIndex === undefined && !reportVisible;
 
   const load = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -178,100 +233,194 @@ export default function StoryDetailScreen({
     void load();
   }, [load]);
 
+  // A different story starts at its first page: the overlay reuses this component
+  // instance when one detail replaces another, so the previous page index and
+  // shapes must not leak into the new story.
+  useEffect(() => {
+    setActiveIndex(0);
+    setRatios({});
+  }, [id]);
+
+  /** Records a page's resolved shape, ignoring the "not known yet" answer. */
+  const handlePageRatio = useCallback((mediaId: string, ratio: number | null): void => {
+    if (ratio === null) {
+      return;
+    }
+    setRatios((previous) =>
+      previous[mediaId] === ratio ? previous : { ...previous, [mediaId]: ratio },
+    );
+  }, []);
+
+  /** Remembers where the carousel ends, so vertical scrolling can pause its video. */
+  const handleCarouselLayout = (event: LayoutChangeEvent): void => {
+    carouselBottom.current = event.nativeEvent.layout.y + event.nativeEvent.layout.height;
+  };
+
+  /** Settles the counter on the page a paging swipe landed on. */
+  const handleCarouselEnd = (event: NativeSyntheticEvent<NativeScrollEvent>): void => {
+    setActiveIndex(carouselIndex(event.nativeEvent.contentOffset.x, pageWidth, media.length));
+  };
+
+  /** Pauses the video when the reader scrolls the carousel out of view. */
+  const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>): void => {
+    const visible = event.nativeEvent.contentOffset.y < carouselBottom.current;
+    setCarouselVisible((previous) => (previous === visible ? previous : visible));
+  };
+
+  const toggleMute = useCallback((): void => {
+    setIsMuted((previous) => !previous);
+  }, []);
+
+  const language = story === undefined ? '' : languageName(story.language);
+  const versionsLabel = `${versionCount} ${versionCount === 1 ? 'version' : 'versions'}`;
+  const commentCount = typeof story?.comment_count === 'number' ? story.comment_count : 0;
+  const conversationLabel =
+    commentCount > 0
+      ? `Join the conversation in ${language} · ${commentCount}`
+      : `Join the conversation in ${language}`;
+
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
-        {hero !== undefined ? (
-          <Image
-            source={{ uri: resolveMediaUrl(hero.url) }}
-            style={styles.hero}
-            resizeMode="cover"
-            accessibilityIgnoresInvertColors
-          />
-        ) : (
-          // With no media the reading column starts below the floating header.
-          <View style={styles.heroSpacer} />
-        )}
+      <Header
+        left={
+          <Pressable
+            style={styles.iconButton}
+            onPress={onBack}
+            accessibilityRole="button"
+            accessibilityLabel="Back"
+          >
+            <ArrowLeft color={colors.text.primary} size={24} />
+          </Pressable>
+        }
+        right={
+          token !== undefined ? (
+            <Pressable
+              style={styles.iconButton}
+              onPress={() => setReportVisible(true)}
+              accessibilityRole="button"
+              accessibilityLabel="More options"
+            >
+              <DotsThree color={colors.text.primary} size={24} weight="bold" />
+            </Pressable>
+          ) : null
+        }
+      />
 
-        <View style={styles.body}>
-          {loading ? <ActivityIndicator style={styles.spinner} /> : null}
-          {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
-
-          {story !== undefined ? (
-            <>
-              <PillarTag pillar={story.pillar} place={story.approximate_location} />
-
-              <Text style={[typeScale.h1, styles.title]}>{story.title}</Text>
-
-              <View style={styles.authorRow}>
-                <AuthorLine
-                  displayName={story.author_display_name}
-                  avatarUrl={story.author_avatar_url}
-                  createdAt={story.created_at}
-                  rooted={story.author_rooted}
-                  size="medium"
-                  onPress={() => onOpenUserProfile(story.author_id)}
-                />
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+        onScroll={handleScroll}
+        scrollEventThrottle={16}
+      >
+        {loading || error !== undefined ? (
+          <View style={styles.status}>
+            {loading ? <ActivityIndicator /> : null}
+            {error !== undefined ? <Text style={styles.error}>{error}</Text> : null}
+            {!loading && error !== undefined ? (
+              <View style={styles.retry}>
+                <Button variant="secondary" label="Try again" onPress={() => void load()} />
               </View>
+            ) : null}
+          </View>
+        ) : null}
 
-              <View style={styles.languageRow}>
-                <View style={styles.languageLeft}>
-                  <GitBranch color={colors.brand.primary} size={20} />
-                  <Text style={[typeScale.label, styles.languageName]} numberOfLines={1}>
-                    {languageName(story.language)}
-                  </Text>
-                  <CaretDown color={colors.text.tertiary} size={16} />
-                </View>
-                <Pressable
-                  onPress={onViewTree}
-                  hitSlop={spacing.sm}
-                  accessibilityRole="button"
-                  accessibilityLabel={`View the language tree, ${versionCount} ${
-                    versionCount === 1 ? 'version' : 'versions'
-                  }`}
-                >
-                  <Text style={[typeScale.caption, tabularNums, styles.versionCount]}>
-                    {versionCount} {versionCount === 1 ? 'version' : 'versions'}
-                  </Text>
-                </Pressable>
-              </View>
-
-              <Text style={[typeScale.reading, styles.storyBody]}>{story.body}</Text>
-
-              {media.length > 1 ? (
+        {story !== undefined ? (
+          <>
+            {media.length > 0 ? (
+              <View style={styles.carousel} onLayout={handleCarouselLayout}>
                 <ScrollView
                   horizontal
+                  pagingEnabled
                   showsHorizontalScrollIndicator={false}
-                  style={styles.carousel}
-                  contentContainerStyle={styles.carouselContent}
+                  onMomentumScrollEnd={handleCarouselEnd}
+                  style={{ height: carouselHeight }}
                 >
                   {media.map((item, index) => (
-                    <MediaTile
+                    <CarouselPage
                       key={item.id}
                       media={item}
-                      onOpen={() => setViewerIndex(index)}
-                      style={styles.carouselItem}
+                      width={pageWidth}
+                      height={carouselHeight}
+                      index={index}
+                      total={media.length}
+                      isActive={index === safeIndex && videoActive}
+                      isMuted={isMuted}
+                      onToggleMute={toggleMute}
+                      onPress={() => setViewerIndex(index)}
+                      onAspectRatio={handlePageRatio}
                     />
                   ))}
                 </ScrollView>
-              ) : null}
 
-              <View style={styles.hairline} />
+                {media.length > 1 ? (
+                  <View style={styles.counterPill} pointerEvents="none">
+                    <Text style={[typeScale.caption, tabularNums, styles.counterText]}>
+                      {carouselCounter(safeIndex, media.length)}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
 
-              <ReactionBar
-                entityType="story"
-                entityId={story.id}
-                counts={story.reactions ?? EMPTY_REACTION_COUNTS}
-                myReactions={story.my_reactions ?? []}
-                token={token}
-                onChange={(counts, mine) =>
-                  setStory((previous) =>
-                    previous === undefined
-                      ? previous
-                      : { ...previous, my_reactions: mine, reactions: counts },
-                  )
-                }
+            <View style={styles.body}>
+              <PillarTag pillar={story.pillar} place={story.approximate_location} variant="plain" />
+
+              <Text style={[typeScale.h1, styles.title]}>{story.title}</Text>
+
+              <AuthorLine
+                displayName={story.author_display_name}
+                avatarUrl={story.author_avatar_url}
+                createdAt={story.created_at}
+                rooted={story.author_rooted}
+                size="large"
+                onPress={() => onOpenUserProfile(story.author_id)}
               />
+
+              <Pressable
+                style={styles.languageRow}
+                onPress={onViewTree}
+                accessibilityRole="button"
+                accessibilityLabel={`View the language tree, ${versionsLabel}`}
+              >
+                <View style={styles.languageLeft}>
+                  <GitBranch color={colors.brand.primary} size={20} />
+                  <Text style={[typeScale.button, styles.languageName]} numberOfLines={1}>
+                    {language}
+                  </Text>
+                </View>
+                <Text style={[typeScale.bodyS, tabularNums, styles.versionCount]}>
+                  {versionsLabel}
+                </Text>
+              </Pressable>
+
+              <Text style={[typeScale.reading, styles.storyBody]}>{story.body}</Text>
+
+              <View style={styles.reactions}>
+                <ReactionBar
+                  entityType="story"
+                  entityId={story.id}
+                  counts={story.reactions ?? EMPTY_REACTION_COUNTS}
+                  myReactions={story.my_reactions ?? []}
+                  token={token}
+                  onChange={(counts, mine) =>
+                    setStory((previous) =>
+                      previous === undefined
+                        ? previous
+                        : { ...previous, my_reactions: mine, reactions: counts },
+                    )
+                  }
+                />
+              </View>
+
+              <Pressable
+                style={styles.conversationRow}
+                onPress={() => onConversation(story.root_version_id)}
+                accessibilityRole="button"
+                accessibilityLabel={`Join the conversation in ${language}`}
+              >
+                <Text style={[typeScale.button, styles.conversation]}>{conversationLabel}</Text>
+              </Pressable>
 
               <View style={styles.actions}>
                 <Button
@@ -280,51 +429,11 @@ export default function StoryDetailScreen({
                   label="Tell this to your people"
                   onPress={() => onAdapt(story.root_version_id)}
                 />
-                <View style={styles.actionGap} />
-                <Button
-                  variant="ghost"
-                  fullWidth
-                  label={`Join the conversation in ${languageName(story.language)}`}
-                  onPress={() => onConversation(story.root_version_id)}
-                />
               </View>
-            </>
-          ) : null}
-
-          {!loading && story === undefined && error !== undefined ? (
-            <View style={styles.retry}>
-              <Button variant="secondary" label="Try again" onPress={() => void load()} />
             </View>
-          ) : null}
-        </View>
+          </>
+        ) : null}
       </ScrollView>
-
-      <View style={styles.headerOverlay} pointerEvents="box-none">
-        <Header
-          left={
-            <Pressable
-              style={styles.iconButton}
-              onPress={onBack}
-              accessibilityRole="button"
-              accessibilityLabel="Back"
-            >
-              <ArrowLeft color={colors.text.primary} size={24} />
-            </Pressable>
-          }
-          right={
-            token !== undefined ? (
-              <Pressable
-                style={styles.iconButton}
-                onPress={() => setReportVisible(true)}
-                accessibilityRole="button"
-                accessibilityLabel="More options"
-              >
-                <DotsThree color={colors.text.primary} size={24} weight="bold" />
-              </Pressable>
-            ) : null
-          }
-        />
-      </View>
 
       {story !== undefined && token !== undefined ? (
         <ReportModal
@@ -348,27 +457,17 @@ export default function StoryDetailScreen({
 }
 
 const styles = StyleSheet.create({
-  actionGap: {
-    height: spacing.sm,
-  },
   actions: {
-    marginTop: spacing.lg,
-  },
-  authorRow: {
-    marginTop: spacing.md,
+    marginTop: spacing.xl,
   },
   body: {
     paddingHorizontal: layout.screenPaddingReading,
-    paddingTop: spacing.lg,
+    paddingTop: spacing.xl,
   },
+  // The carousel runs edge to edge under the header; its height is set per active
+  // page. The sunken fill is what shows while a page's media is loading.
   carousel: {
-    marginTop: spacing.lg,
-  },
-  carouselContent: {
-    paddingRight: spacing.md,
-  },
-  carouselItem: {
-    marginRight: spacing.md,
+    backgroundColor: colors.bg.sunken,
   },
   container: {
     backgroundColor: colors.bg.canvas,
@@ -377,29 +476,30 @@ const styles = StyleSheet.create({
   content: {
     paddingBottom: spacing.xxxl,
   },
+  conversation: {
+    color: colors.brand.primary,
+  },
+  // The mockup's conversation entry is a brand-ink line, not a second filled
+  // button; it keeps the existing conversation route (KNOT-025).
+  conversationRow: {
+    marginTop: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  counterText: {
+    color: colors.text.onBrand,
+  },
+  counterPill: {
+    backgroundColor: colors.scrim.overlay,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    position: 'absolute',
+    right: spacing.md,
+    top: spacing.md,
+  },
   error: {
     color: colors.state.danger,
-    marginTop: spacing.lg,
-  },
-  hairline: {
-    backgroundColor: colors.border.hairline,
-    height: 1,
-    marginTop: spacing.xl,
-  },
-  headerOverlay: {
-    left: 0,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-    zIndex: 1,
-  },
-  hero: {
-    aspectRatio: HERO_ASPECT_RATIO,
-    backgroundColor: colors.bg.sunken,
-    width: '100%',
-  },
-  heroSpacer: {
-    height: HEADER_HEIGHT,
+    marginTop: spacing.sm,
   },
   iconButton: {
     alignItems: 'center',
@@ -417,6 +517,8 @@ const styles = StyleSheet.create({
     color: colors.text.primary,
     flexShrink: 1,
   },
+  // The language-tree row: a bordered, intrinsic-width button whose left side
+  // names the language and whose right side counts the versions (KNOT-025).
   languageRow: {
     alignItems: 'center',
     backgroundColor: colors.bg.paper,
@@ -426,63 +528,48 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     height: 48,
     justifyContent: 'space-between',
+    marginBottom: spacing.lg,
     marginTop: spacing.lg,
     paddingHorizontal: spacing.md,
   },
-  playButton: {
-    alignItems: 'center',
-    backgroundColor: colors.brand.primary,
-    borderRadius: radius.pill,
-    height: 44,
-    justifyContent: 'center',
-    left: '50%',
-    marginLeft: -22,
-    marginTop: -22,
-    position: 'absolute',
-    top: '50%',
-    width: 44,
-  },
-  playButtonIcon: {
-    color: colors.text.onBrand,
-    marginLeft: 3,
-  },
-  retry: {
-    marginTop: spacing.xl,
-  },
-  spinner: {
-    marginTop: spacing.xl,
-  },
-  storyBody: {
-    color: colors.text.primary,
-    marginTop: spacing.lg,
-  },
-  tile: {
-    backgroundColor: colors.bg.paper,
-    borderColor: colors.border.hairline,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    height: 200,
+  page: {
+    backgroundColor: colors.bg.sunken,
     overflow: 'hidden',
-    width: 200,
   },
-  tileBadge: {
-    left: spacing.xs,
-    position: 'absolute',
-    top: spacing.xs,
-  },
-  tileMedia: {
+  pageMedia: {
     height: '100%',
     width: '100%',
   },
-  tileOpenTarget: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 1,
+  // The reaction bar sits between the reading column and the conversation link,
+  // framed by the design's hairlines rather than floating (KNOT-025).
+  reactions: {
+    borderBottomColor: colors.border.hairline,
+    borderBottomWidth: 1,
+    borderTopColor: colors.border.hairline,
+    borderTopWidth: 1,
+    marginTop: spacing.xl,
+  },
+  retry: {
+    marginTop: spacing.lg,
+  },
+  scroll: {
+    flex: 1,
+  },
+  status: {
+    paddingHorizontal: layout.screenPaddingReading,
+    paddingTop: spacing.xl,
+  },
+  storyBody: {
+    color: colors.text.secondary,
   },
   title: {
     color: colors.text.primary,
-    marginTop: spacing.md,
+    marginBottom: spacing.lg,
+    marginTop: spacing.sm,
   },
   versionCount: {
     color: colors.text.tertiary,
+    flexShrink: 0,
+    marginLeft: spacing.sm,
   },
 });

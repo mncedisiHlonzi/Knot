@@ -1482,6 +1482,41 @@ so the client draws one avatar (it compares the ids first).
   no extra query. `FeedScreen` passes them into `FeedEntry`; the card renders them at
   `Avatar size="sm"` in lineage order with a canvas ring on the overlap.
 
+### KNOT-025 — the Story Detail redesign
+
+The Story Detail follows the Claude mockup v2 (`docs/design-reference/story-detail-v2/`).
+It is a column of its own: the standard 56pt `Header` (Back + the report overflow) sits
+**above** the ScrollView rather than floating over it, so the controls stay legible over any
+media; the mockup draws the bar there too.
+
+- **The carousel** is a horizontal `pagingEnabled` ScrollView of full-width pages. Each
+  page is a file-local `CarouselPage`: it resolves the media's own shape through
+  `useMediaAspectRatio` (payload dimensions, then the media's load, 4:5 cap — the KNOT-020g
+  -fix7 rule) and reports it up, because the pager's **height follows the active page**. A
+  video is handed to `FeedVideo` (autoplay only while its page is active, one shared mute);
+  an image draws directly. A `n / N` counter pill sits top-right when there is more than one
+  item. The pure offset/counter arithmetic lives in `screens/stories/detailCarousel.ts`
+  (`carouselCounter`, `carouselIndex`, `carouselPositionLabel`) and is tested without a
+  renderer.
+- **Video chrome for the detail:** `FeedVideo` gained `durationMs` (seed the badge from the
+  payload), `showTag={false}` (the carousel's counter and caption replace the "Video" tag),
+  and `durationPosition="bottom-left"` (the Feed keeps the default top-right). The mute
+  control stays bottom-right at 44pt, the design system's minimum touch target.
+- **Scrolling past the media pauses it:** the screen measures where the carousel ends
+  (`onLayout`) and flips one state flag when the vertical scroll crosses it, rather than
+  updating state on every scroll frame. Opening the viewer or the report sheet pauses it
+  too.
+- **Text column:** plain `PillarTag`, `typeScale.h1` title, `AuthorLine size="large"`
+  (inline Rooted + relative time), the bordered language-tree row (GitBranch + language +
+  `N versions`, the whole row tappable), `typeScale.reading` body in `text.secondary`, the
+  `ReactionBar` between hairlines, a brand-ink conversation link (it replaces the old ghost
+  button but keeps the route), and the full-width primary CTA at the end of the scroll.
+- **Deliberate omissions (brief vs mockup):** no Save/bookmark control (no save feature), no
+  thumbnail strip (the brief makes it optional), no centre play button (the video
+  autoplays), no caption/credit row (`StoryMedia` carries none of those fields), no
+  scroll-linked header title, and no second "N versions · N languages" row. The block flow
+  still lives on the author's profile, not the header.
+
 ### Rooted, and the enrichment pattern
 
 `POST /users/me/rooted`, `GET /users/me/rooted`, and `GET /users/{id}/rooted` are served by
