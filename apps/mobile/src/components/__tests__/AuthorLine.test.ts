@@ -189,4 +189,69 @@ describe('AuthorLine', () => {
     expect(findElementByType(column[0], 'Text')).toBeDefined();
     expect((column[1] as { type: unknown }).type).toBe(RootedBadge);
   });
+
+  // The Story Detail's two-line block (KNOT-025-fix1): name + inline Rooted on
+  // line one, language + relative time on line two, both in the column beside the
+  // avatar so the second line starts at the name's edge.
+  describe('the detail layout', () => {
+    const detail = {
+      displayName: 'Nomsa Khan',
+      avatarUrl: null,
+      createdAt: '2026-10-09T12:00:00.000Z',
+      rooted: { place: 'Oaxaca', duration_bucket: 'many_years' },
+      size: 'large' as const,
+      layout: 'detail' as const,
+      languageLabel: 'Zapotec',
+    };
+
+    it('puts the name and the Rooted badge on the first line', () => {
+      const element = AuthorLine(detail) as unknown as {
+        props: { children: readonly unknown[] };
+      };
+
+      // Two children: the avatar slot and the text column.
+      expect(element.props.children).toHaveLength(2);
+      expect(findElementByType(element.props.children[0], Avatar)?.props?.size).toBe('lg');
+
+      const details = element.props.children[1] as {
+        props: { children: readonly unknown[] };
+      };
+      const [nameRow] = details.props.children;
+      const badge = findElementByType(nameRow, RootedBadge);
+
+      expect(badge).toBeDefined();
+      // The duration is dropped so a typical name and place stay on one line.
+      expect(badge?.props?.showDuration).toBe(false);
+      // The name truncates rather than pushing the badge off the row.
+      expect(findElementByType(nameRow, 'Text')?.props?.numberOfLines).toBe(1);
+    });
+
+    it('puts the language and relative time on the second line', () => {
+      const element = AuthorLine(detail) as unknown as {
+        props: { children: readonly unknown[] };
+      };
+
+      const details = element.props.children[1] as {
+        props: { children: readonly unknown[] };
+      };
+      const meta = details.props.children[1] as {
+        type: unknown;
+        props: { children: unknown };
+      };
+
+      expect(meta.type).toBe('Text');
+      expect(typeof meta.props.children).toBe('string');
+      expect(meta.props.children as string).toMatch(/^Zapotec · /);
+    });
+
+    it('keeps the inline layout rendering its identity, badge, and time', () => {
+      const element = AuthorLine({ ...detail, layout: 'inline' }) as unknown as {
+        props: { children: readonly unknown[] };
+      };
+
+      // Identity, Rooted badge, and time on one row.
+      expect(element.props.children).toHaveLength(3);
+      expect(findElementByType(element, RootedBadge)).toBeDefined();
+    });
+  });
 });

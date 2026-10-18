@@ -13,7 +13,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
-import { ArrowLeft, DotsThree, GitBranch } from 'phosphor-react-native';
+import { ArrowLeft, DotsThree, GitBranch, Play } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { EMPTY_REACTION_COUNTS } from '../../api/reactions';
@@ -38,6 +38,13 @@ import { carouselCounter, carouselIndex, carouselPositionLabel } from './detailC
 function resolveMediaUrl(url: string): string {
   return `${API_BASE_URL}${url}`;
 }
+
+/** The thumbnail strip's square item, per the design reference (KNOT-025-fix1). */
+const THUMBNAIL_SIZE = 48;
+
+/** The circular play mark on a video thumbnail, and its glyph. */
+const THUMBNAIL_PLAY_SIZE = 16;
+const THUMBNAIL_PLAY_ICON_SIZE = 8;
 
 /**
  * One page of the Story Detail carousel: a full-width media frame at the shape
@@ -193,6 +200,8 @@ export default function StoryDetailScreen({
   const [isMuted, setIsMuted] = useState(true);
   const [carouselVisible, setCarouselVisible] = useState(true);
   const carouselBottom = useRef(0);
+  const carouselRef = useRef<ScrollView>(null);
+  const stripRef = useRef<ScrollView>(null);
 
   const media = story?.media ?? [];
   const safeIndex = media.length === 0 ? 0 : Math.min(activeIndex, media.length - 1);
@@ -241,6 +250,19 @@ export default function StoryDetailScreen({
     setRatios({});
   }, [id]);
 
+  // Keep the active thumbnail in view: the strip scrolls itself to centre the
+  // page the carousel settled on, so a long strip never hides the current item
+  // (KNOT-025-fix1).
+  useEffect(() => {
+    if (media.length <= 1) {
+      return;
+    }
+    const stride = THUMBNAIL_SIZE + spacing.sm;
+    const offset =
+      layout.screenPaddingFeed + activeIndex * stride + THUMBNAIL_SIZE / 2 - pageWidth / 2;
+    stripRef.current?.scrollTo({ x: Math.max(0, offset), animated: true });
+  }, [activeIndex, media.length, pageWidth]);
+
   /** Records a page's resolved shape, ignoring the "not known yet" answer. */
   const handlePageRatio = useCallback((mediaId: string, ratio: number | null): void => {
     if (ratio === null) {
@@ -270,6 +292,12 @@ export default function StoryDetailScreen({
   const toggleMute = useCallback((): void => {
     setIsMuted((previous) => !previous);
   }, []);
+
+  /** Sends both the pager and its strip to the chosen item. */
+  const handleThumbnailPress = (index: number): void => {
+    setActiveIndex(index);
+    carouselRef.current?.scrollTo({ x: index * pageWidth, animated: true });
+  };
 
   const language = story === undefined ? '' : languageName(story.language);
   const versionsLabel = `${versionCount} ${versionCount === 1 ? 'version' : 'versions'}`;
@@ -330,6 +358,7 @@ export default function StoryDetailScreen({
             {media.length > 0 ? (
               <View style={styles.carousel} onLayout={handleCarouselLayout}>
                 <ScrollView
+                  ref={carouselRef}
                   horizontal
                   pagingEnabled
                   showsHorizontalScrollIndicator={false}
@@ -363,6 +392,65 @@ export default function StoryDetailScreen({
               </View>
             ) : null}
 
+            {/* The thumbnail strip anchors the carousel: one tap sends the pager
+                to that item, and the strip scrolls itself to keep the active
+                thumbnail in view (KNOT-025-fix1). */}
+            {media.length > 1 ? (
+              <ScrollView
+                ref={stripRef}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.thumbnailStrip}
+                contentContainerStyle={styles.thumbnailContent}
+                snapToInterval={THUMBNAIL_SIZE + spacing.sm}
+                decelerationRate="fast"
+              >
+                {media.map((item, index) => {
+                  const active = index === safeIndex;
+
+                  return (
+                    <Pressable
+                      key={item.id}
+                      style={[
+                        styles.thumbnail,
+                        active ? styles.thumbnailActive : styles.thumbnailInactive,
+                      ]}
+                      onPress={() => handleThumbnailPress(index)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                      accessibilityLabel={`Show ${carouselPositionLabel(
+                        item.media_type,
+                        index,
+                        media.length,
+                      )}`}
+                    >
+                      {item.media_type === 'video' ? (
+                        // The API stores no poster frame, so a video thumbnail is
+                        // the same neutral sunken block the feed uses, marked with
+                        // a small play badge (KNOT-025-fix1).
+                        <View style={styles.thumbnailFallback}>
+                          <View style={styles.thumbnailPlay}>
+                            <Play
+                              color={colors.text.onBrand}
+                              size={THUMBNAIL_PLAY_ICON_SIZE}
+                              weight="fill"
+                            />
+                          </View>
+                        </View>
+                      ) : (
+                        <Image
+                          source={{ uri: resolveMediaUrl(item.url) }}
+                          style={styles.thumbnailMedia}
+                          resizeMode="cover"
+                          accessibilityIgnoresInvertColors
+                        />
+                      )}
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            ) : null}
+
             <View style={styles.body}>
               <PillarTag pillar={story.pillar} place={story.approximate_location} variant="plain" />
 
@@ -374,6 +462,11 @@ export default function StoryDetailScreen({
                 createdAt={story.created_at}
                 rooted={story.author_rooted}
                 size="large"
+                // Line one: avatar + name + inline Rooted badge. Line two: the
+                // language and the relative time, indented to the name
+                // (KNOT-025-fix1).
+                layout="detail"
+                languageLabel={language}
                 onPress={() => onOpenUserProfile(story.author_id)}
               />
 
@@ -462,7 +555,7 @@ const styles = StyleSheet.create({
   },
   body: {
     paddingHorizontal: layout.screenPaddingReading,
-    paddingTop: spacing.xl,
+    paddingTop: spacing.lg,
   },
   // The carousel runs edge to edge under the header; its height is set per active
   // page. The sunken fill is what shows while a page's media is loading.
@@ -562,9 +655,58 @@ const styles = StyleSheet.create({
   storyBody: {
     color: colors.text.secondary,
   },
+  // The thumbnail strip lives outside the reading column, so it keeps the feed's
+  // 16-point gutter while the text keeps the 24-point reading inset.
+  thumbnail: {
+    borderRadius: radius.md,
+    height: THUMBNAIL_SIZE,
+    overflow: 'hidden',
+    width: THUMBNAIL_SIZE,
+  },
+  thumbnailActive: {
+    borderColor: colors.brand.primary,
+    borderWidth: 2,
+  },
+  thumbnailContent: {
+    gap: spacing.sm,
+    paddingHorizontal: layout.screenPaddingFeed,
+    paddingVertical: spacing.md,
+  },
+  thumbnailFallback: {
+    alignItems: 'center',
+    backgroundColor: colors.bg.sunken,
+    height: '100%',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  thumbnailInactive: {
+    borderColor: colors.border.hairline,
+    borderWidth: 2,
+    opacity: 0.8,
+  },
+  thumbnailMedia: {
+    height: '100%',
+    width: '100%',
+  },
+  thumbnailPlay: {
+    alignItems: 'center',
+    backgroundColor: colors.scrim.overlay,
+    borderRadius: radius.pill,
+    bottom: spacing.xs,
+    height: THUMBNAIL_PLAY_SIZE,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: spacing.xs,
+    width: THUMBNAIL_PLAY_SIZE,
+  },
+  thumbnailStrip: {
+    flexGrow: 0,
+  },
+  // The editorial rhythm: 8pt above the title, 12pt below it into the author
+  // block, then 16pt from the author block to the language-tree row (KNOT-025-fix1).
   title: {
     color: colors.text.primary,
-    marginBottom: spacing.lg,
+    marginBottom: spacing.md,
     marginTop: spacing.sm,
   },
   versionCount: {
