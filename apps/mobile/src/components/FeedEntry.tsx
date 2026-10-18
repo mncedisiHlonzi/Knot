@@ -11,7 +11,6 @@ import {
 import { Images } from 'phosphor-react-native';
 
 import { API_BASE_URL } from '../config/api';
-import { languageName } from '../data/languages';
 import { colors, layout, radius, spacing, tabularNums, typeScale } from '../theme';
 import { PLACEHOLDER_MEDIA_ASPECT_RATIO } from '../utils/mediaFrame';
 import { useMediaAspectRatio } from '../utils/useMediaAspectRatio';
@@ -105,8 +104,10 @@ type FeedEntryProps = {
    */
   readonly variant?: 'story' | 'version';
   /**
-   * The entry's position in its lineage, counting the original as 1, for the
-   * `version` variant's badge. The server sends it as `version_number`.
+   * The entry's position in its lineage, counting the original as 1. The server
+   * sends it as `version_number`, and it is still carried here for callers, but the
+   * feed card no longer displays it: the attribution sentence ends after the
+   * language (KNOT-025-fix4).
    */
   readonly versionNumber?: number;
   /**
@@ -237,9 +238,10 @@ function lineageAvatarLabel(name: string): string {
  * on the right, the name, the quiet Rooted line, then the compact time. A version
  * card additionally opens with an attribution row — a small stack of the LINEAGE
  * authors' avatars (the direct parent and the original) beside the server's
- * sentence, whose names are bolded — which is the only place that sentence, and
- * the "Version N · Language" label, are drawn. The poster is the AuthorLine below,
- * not a face in that stack (KNOT-022-fix1, KNOT-022-fix2).
+ * sentence, whose names are bolded — which is the only place that sentence is
+ * drawn. The version number is deliberately absent from the feed: the credit ends
+ * after the language (KNOT-025-fix4). The poster is the AuthorLine below, not a
+ * face in that stack (KNOT-022-fix1, KNOT-022-fix2).
  *
  * The text column keeps the feed's horizontal inset, but the **media is
  * full-bleed**: no horizontal padding and no corner rounding. An image draws
@@ -264,7 +266,6 @@ function lineageAvatarLabel(name: string): string {
 export default function FeedEntry({
   story,
   variant = 'story',
-  versionNumber,
   attributionLine,
   showBottomHairline = true,
   onPress,
@@ -362,22 +363,11 @@ export default function FeedEntry({
     attributionText !== ''
       ? attributionSegments(attributionText)
       : fallbackAttributionRuns(adapterName, rootAuthorName);
-  // The version's position rides in this row, quietly, so the card's overline can
-  // stay the pillar tag alone (KNOT-022-fix1). The sentence no longer carries the
-  // target language either -- the reader is already looking at that telling -- so
-  // a sentence contributes only the number; when it is missing, the full label is
-  // drawn (KNOT-022-fix2).
-  const versionLabel =
-    versionNumber === undefined
-      ? `Version in ${languageName(story.language)}`
-      : `Version ${versionNumber} · ${languageName(story.language)}`;
-  const attributionMeta =
-    attributionText === '' || versionNumber === undefined
-      ? versionLabel
-      : `Version ${versionNumber}`;
-  // A version card always carries a version label, so the row is drawn even when
-  // the lineage could not be resolved; in that case it is the label alone.
-  const showAttributionHeader = isVersion;
+  // The row is drawn only when there is a sentence (or a structured root author to
+  // fall back to). The quiet "· Version N" tail is gone: the credit ends after the
+  // language, and the version number lives on the Story Version screen instead
+  // (KNOT-025-fix4).
+  const showAttributionHeader = isVersion && (attributionText !== '' || rootAuthorName !== '');
 
   return (
     <Pressable
@@ -392,9 +382,9 @@ export default function FeedEntry({
       <View style={styles.padded}>
         {/* The attribution row: the lineage authors -- the direct parent and the
             original -- as stacked avatars, then a two-line social credit (the
-            server's sentence with its names bolded, plus the quiet version
-            label). The poster is deliberately absent: they are the AuthorLine
-            below, not the lineage (KNOT-023b, KNOT-022-fix1, KNOT-022-fix2). */}
+            server's sentence with its names bolded). The poster is deliberately
+            absent: they are the AuthorLine below, not the lineage
+            (KNOT-023b, KNOT-022-fix1, KNOT-022-fix2, KNOT-025-fix4). */}
         {showAttributionHeader ? (
           <View style={styles.attributionRow} testID="attribution-header">
             {lineageAvatars.length > 0 ? (
@@ -428,8 +418,6 @@ export default function FeedEntry({
                   run.text
                 ),
               )}
-              {attributionRuns.length > 0 ? ' · ' : null}
-              <Text style={[typeScale.caption, styles.attributionMeta]}>{attributionMeta}</Text>
             </Text>
           </View>
         ) : null}
@@ -552,11 +540,6 @@ const styles = StyleSheet.create({
   },
   attributionName: {
     color: colors.text.primary,
-  },
-  // The version label rides at the end of the sentence in the quietest ink, so
-  // the credit reads as one line rather than a badge (KNOT-022-fix1).
-  attributionMeta: {
-    color: colors.text.tertiary,
   },
   attributionText: {
     color: colors.text.secondary,

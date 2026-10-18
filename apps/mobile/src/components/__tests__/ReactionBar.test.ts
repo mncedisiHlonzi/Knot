@@ -1,5 +1,5 @@
 import ReactionBar from '../ReactionBar';
-import { colors } from '../../theme';
+import { colors, typeScale } from '../../theme';
 
 // ReactionBar is stateful, so the project's renderer-less pattern stubs the hook
 // primitives and calls the component as a plain function. The initial state is the
@@ -118,6 +118,26 @@ describe('ReactionBar', () => {
     const label = findElement(element, (props) => props.children === 'Know it differently');
 
     expect(label?.props?.numberOfLines).toBe(1);
+  });
+
+  it('uses a bordered paper pill with the label type, held to 36pt in the grid', () => {
+    const element = render({});
+    const pill = findElement(
+      element,
+      (props) =>
+        typeof props.accessibilityLabel === 'string' &&
+        props.accessibilityLabel.startsWith('Rings true'),
+    );
+    const styles = Array.isArray(pill?.props?.style)
+      ? (pill?.props?.style as Array<Record<string, unknown>>)
+      : [];
+
+    expect(styles.some((style) => style?.backgroundColor === colors.bg.paper)).toBe(true);
+    expect(styles.some((style) => style?.borderWidth === 1)).toBe(true);
+    expect(styles.some((style) => style?.height === 36)).toBe(true);
+
+    const label = findElement(element, (props) => props.children === 'Rings true');
+    expect(label?.props?.style).toEqual(expect.arrayContaining([typeScale.label]));
   });
 
   it('fills a held signal with the brand tint', () => {

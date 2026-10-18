@@ -558,7 +558,7 @@ describe('FeedEntry', () => {
       ).toBeUndefined();
     });
 
-    it('falls back to the quiet version label when neither the sentence nor the root author exists', () => {
+    it('omits the attribution row when neither the sentence nor the root author exists', () => {
       const element = FeedEntry({
         story: { ...story, root_author_display_name: null },
         variant: 'version',
@@ -567,10 +567,12 @@ describe('FeedEntry', () => {
         onPress: () => undefined,
       });
 
-      // The version label is the one thing an adaptation must not lose, so the
-      // row is still drawn with it alone (KNOT-022-fix1).
-      expect(findElement(element, (props) => props.testID === 'attribution-header')).toBeDefined();
-      expect(collectText(element)).toContain('Version 2 · Zapotec');
+      // Nothing to credit means no empty row, and no version label to fall back to
+      // (KNOT-025-fix4).
+      expect(
+        findElement(element, (props) => props.testID === 'attribution-header'),
+      ).toBeUndefined();
+      expect(collectText(element).some((value) => value.startsWith('Version '))).toBe(false);
     });
 
     it('falls back to the structured lineage when the sentence is missing', () => {
@@ -588,6 +590,7 @@ describe('FeedEntry', () => {
       expect(text).toContain(' from ');
       expect(text).toContain('Ada Lovelace');
       expect(text).toContain("'s original story.");
+      expect(text.some((value) => value.startsWith('Version '))).toBe(false);
     });
   });
 });
@@ -745,7 +748,7 @@ const version = {
 const ATTRIBUTION = "Adapted by Nomsa Khan from Ada Lovelace's original story in English.";
 
 describe('FeedEntry version variant', () => {
-  it('labels an adaptation with its inherited pillar and moves the version into the credit', () => {
+  it('labels an adaptation with its inherited pillar and no version tail', () => {
     const element = FeedEntry({
       story: version,
       variant: 'version',
@@ -762,10 +765,11 @@ describe('FeedEntry version variant', () => {
     expect(findElementByType(element, PillarTag)?.props?.variant).toBe('plain');
     expect(findElementByType(element, PillarTag)?.props?.place).toBe('Oaxaca, Mexico');
 
-    // The version rides quietly at the end of the attribution row instead of
-    // occupying the overline slot as an uppercase badge.
-    expect(collectText(element)).toContain('Version 2');
-    expect(findTextElement(element, (value) => value === 'Version 2 · Zulu')).toBeUndefined();
+    // The credit ends after the language: no "Version N" anywhere on the card
+    // (KNOT-025-fix4).
+    const text = collectText(element);
+    expect(text.some((value) => value.startsWith('Version '))).toBe(false);
+    expect(text).toContain("'s original story in English.");
   });
 
   it('splits the attribution sentence so the name takes the bold voice', () => {
@@ -789,7 +793,7 @@ describe('FeedEntry version variant', () => {
     expect(boldName?.props?.style).toEqual(expect.arrayContaining([typeScale.label]));
   });
 
-  it('shows no attribution line when the server could not resolve one', () => {
+  it('omits the attribution line when the server could not resolve one', () => {
     const element = FeedEntry({
       story: version,
       variant: 'version',
@@ -798,20 +802,23 @@ describe('FeedEntry version variant', () => {
       onPress: () => undefined,
     });
 
-    expect(collectText(element)).not.toContain(ATTRIBUTION);
-    // The badge still marks the entry, so a reader knows it is an adaptation.
-    expect(collectText(element)).toContain('Version 2 · Zulu');
+    const text = collectText(element);
+    expect(text).not.toContain(ATTRIBUTION);
+    expect(text.some((value) => value.startsWith('Version '))).toBe(false);
   });
 
-  it('names the version without a number when the server sent none', () => {
+  it('ends the adaptation credit after the language, with no version tail', () => {
     const element = FeedEntry({
       story: version,
       variant: 'version',
+      versionNumber: 3,
       attributionLine: ATTRIBUTION,
       onPress: () => undefined,
     });
 
-    expect(collectText(element)).toContain('Version in Zulu');
+    const text = collectText(element);
+    expect(text.some((value) => value.startsWith('Version '))).toBe(false);
+    expect(text).toContain("'s original story in English.");
   });
 
   it('still renders the story shape when the variant is not given', () => {

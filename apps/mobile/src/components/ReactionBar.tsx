@@ -127,6 +127,7 @@ export default function ReactionBar({
         return (
           <Pressable
             key={type}
+            hitSlop={spacing.xs}
             style={[
               styles.pill,
               inGrid ? styles.gridPill : styles.rowPill,
@@ -141,7 +142,7 @@ export default function ReactionBar({
           >
             <Text
               style={[
-                typeScale.caption,
+                typeScale.label,
                 inGrid ? styles.gridLabel : styles.rowLabel,
                 active ? styles.activeText : styles.idleLabel,
               ]}
@@ -152,7 +153,7 @@ export default function ReactionBar({
             {count > 0 ? (
               <Text
                 style={[
-                  typeScale.caption,
+                  typeScale.label,
                   tabularNums,
                   styles.count,
                   active ? styles.activeText : null,
@@ -191,17 +192,24 @@ const styles = StyleSheet.create({
     textAlign: 'left',
   },
   gridPill: {
+    height: 36,
+    minHeight: 36,
+    paddingHorizontal: spacing.sm,
     width: '49%',
   },
   idleLabel: {
     color: colors.text.secondary,
   },
-  // The shared pill: a quiet sunken surface at rest, the brand tint when held.
+  // The shared pill: a bordered paper surface at rest, the brand tint when held.
+  // The grid holds it to 36pt for a consistent rhythm; `hitSlop` keeps the touch
+  // target at the design system's 44pt minimum.
   pill: {
     alignItems: 'center',
+    borderColor: colors.border.hairline,
     borderRadius: radius.pill,
+    borderWidth: 1,
     flexDirection: 'row',
-    gap: spacing.sm,
+    gap: spacing.xs,
     justifyContent: 'space-between',
     minHeight: 44,
     paddingHorizontal: spacing.md,
@@ -211,7 +219,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.brand.tint,
   },
   pillIdle: {
-    backgroundColor: colors.bg.sunken,
+    backgroundColor: colors.bg.paper,
   },
   // The four-column bar the Feed, version, and inquiry surfaces use. The count
   // sits under the label so a narrow column still reads as one unit.

@@ -1485,9 +1485,9 @@ so the client draws one avatar (it compares the ids first).
 ### KNOT-025 — the Story Detail redesign
 
 The Story Detail follows the Claude mockup v2 (`docs/design-reference/story-detail-v2/`).
-It is a column of its own: the standard 56pt `Header` (Back + the report overflow) sits
-**above** the ScrollView rather than floating over it, so the controls stay legible over any
-media; the mockup draws the bar there too.
+It is a column of its own: the media carousel runs edge-to-edge behind a **floating** 56pt
+`Header` (Back + the report overflow) on dark discs over a soft scrim, so the controls stay
+legible over any media (KNOT-025-fix4).
 
 - **The carousel** is a horizontal `pagingEnabled` ScrollView of full-width pages. Each
   page is a file-local `CarouselPage`: it resolves the media's own shape through
@@ -1507,7 +1507,7 @@ media; the mockup draws the bar there too.
   updating state on every scroll frame. Opening the viewer or the report sheet pauses it
   too.
 - **Text column:** plain `PillarTag`, `typeScale.h1` title, `AuthorLine size="large"`
-  (inline Rooted + relative time), the bordered language-tree row (GitBranch + language +
+  `layout="stacked"` (the Feed's block: name, quiet Rooted line, compact time), the bordered language-tree row (GitBranch + language +
   `N versions`, the whole row tappable), `typeScale.reading` body in `text.secondary`, the
   `ReactionBar` between hairlines, a brand-ink conversation link (it replaces the old ghost
   button but keeps the route), and the full-width primary CTA at the end of the scroll.
@@ -1535,6 +1535,22 @@ media; the mockup draws the bar there too.
   the strip is on screen and no viewer/report sheet is open, and it pauses otherwise, so
   one decoder runs at a time. The play disc is replaced by a duration badge; `useTextureView`
   still keeps the Android surface inside the rounded tile.
+- **KNOT-025-fix4:** the strip is **static again** — `VideoThumbnail` lost `isVisible` and
+  `durationMs`, so it mounts a paused, muted player per video tile and shows its first
+  frame with a small play disc; only the main carousel autoplays. The carousel now runs
+  **edge-to-edge behind a floating header**: this screen alone mounts a `StatusBar` with
+  `translucent` and a transparent background, the ScrollView starts at y=0, and a
+  `HEADER_BAND`-sized scrim (`scrim.overlay`) plus a `HEADER_TOP`-offset overlay put
+  `Header` above the media with the Back/More controls on 44pt dark discs. `HEADER_TOP` is
+  `StatusBar.currentHeight` on Android and 0 on iOS, where the app root's `SafeAreaView`
+  already insets the screen — so iOS starts the carousel below the notch rather than
+  behind it (no safe-area-inset dependency is installed). The band and the light status
+  icons are Android-only and drawn only when the story has media; a media-less story
+  keeps the canvas and dark icons. The counter pill and the loading/error block clear
+  the band, and a no-media story gets a band-sized spacer. Reaction pills are refined: a
+  hairline border on `bg.paper`, `typeScale.label`, 44pt in the row layout and 36pt in
+  the grid, brand tint when held. The Feed's adaptation credit ends after the language
+  — the `· Version N` tail is gone (the number still lives on the Story Version screen).
 
 ### Rooted, and the enrichment pattern
 

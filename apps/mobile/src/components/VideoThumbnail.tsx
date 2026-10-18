@@ -1,63 +1,47 @@
 import React, { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { Play } from 'phosphor-react-native';
 import Video from 'react-native-video';
 
-import { colors, radius, spacing, tabularNums, typeScale } from '../theme';
-import { formatDuration } from './feedVideoMeta';
+import { colors, radius, spacing } from '../theme';
+
+/** The play disc drawn over a video thumbnail, and its glyph. */
+const PLAY_DISC_SIZE = 16;
+const PLAY_ICON_SIZE = 8;
 
 type VideoThumbnailProps = {
   /** The resolved, absolute URL of the video. */
   readonly uri: string;
-  /**
-   * Whether the tile is the one allowed to play. The strip passes `true` only for
-   * the carousel's active item while the strip is on screen and no viewer is open,
-   * so a video preview never keeps decoding in the background (KNOT-025-fix3).
-   */
-  readonly isVisible: boolean;
-  /**
-   * The duration the payload already knows, in milliseconds. It seeds the badge
-   * before the player has loaded; omitted or non-positive values draw no badge.
-   */
-  readonly durationMs?: number | null;
 };
 
 /**
- * A small, looping video preview for the thumbnail strip.
+ * A video's first frame, used as a static strip thumbnail.
  *
- * The video is always **muted** and loops. Playback is driven entirely by
- * `isVisible`: the strip pauses a preview when its item is not the carousel's
- * active one, when the strip has scrolled off the screen, or when the viewer or
- * report sheet is open. That is one player at a time, which is the performance
- * rule the Feed's viewability pattern exists for.
+ * `react-native-video` has no API that exports a decoded frame as an image, so
+ * this draws a **paused, muted player**: both native players render their first
+ * decoded frame on the video surface, which is exactly the poster the API does
+ * not store. `onLoad` and `onReadyForDisplay` (the first-frame-rendered event)
+ * retire the sunken placeholder; if the source cannot be decoded neither fires,
+ * so the placeholder stays and the strip never shows a blank tile. The play disc
+ * marks the item as a video. The strip is deliberately static — the main carousel
+ * is the only place a video plays (KNOT-025-fix4).
  *
- * `react-native-video` has no API that exports a frame as an image, so the video
- * surface itself is the thumbnail. `onLoad` / `onReadyForDisplay` retire a sunken
- * placeholder once there is something to show; if the source cannot be decoded,
- * the placeholder stays. `useTextureView` keeps the surface inside the tile's
- * rounded, clipped box on Android — a SurfaceView punches through the RN
- * hierarchy and ignores the clip (the same rule as the map surfaces).
+ * `useTextureView` keeps the surface inside the tile's rounded, clipped box on
+ * Android — a SurfaceView punches through the RN hierarchy and ignores the clip
+ * (the same rule as the map surfaces).
  */
-export default function VideoThumbnail({
-  uri,
-  isVisible,
-  durationMs,
-}: VideoThumbnailProps): React.ReactElement {
+export default function VideoThumbnail({ uri }: VideoThumbnailProps): React.ReactElement {
   const [ready, setReady] = useState(false);
   const handleReady = (): void => setReady(true);
-
-  const durationLabel =
-    typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs > 0
-      ? formatDuration(durationMs / 1000)
-      : '';
 
   return (
     <View style={styles.container}>
       <Video
         source={{ uri }}
         style={styles.video}
-        paused={!isVisible}
+        paused
         muted
-        repeat
+        repeat={false}
         resizeMode="cover"
         useTextureView
         onLoad={handleReady}
@@ -66,11 +50,9 @@ export default function VideoThumbnail({
 
       {ready ? null : <View style={styles.fallback} testID="video-thumbnail-fallback" />}
 
-      {durationLabel === '' ? null : (
-        <View style={styles.duration} pointerEvents="none">
-          <Text style={[typeScale.caption, tabularNums, styles.durationText]}>{durationLabel}</Text>
-        </View>
-      )}
+      <View style={styles.play}>
+        <Play color={colors.text.onBrand} size={PLAY_ICON_SIZE} weight="fill" />
+      </View>
     </View>
   );
 }
@@ -78,18 +60,6 @@ export default function VideoThumbnail({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  },
-  duration: {
-    backgroundColor: colors.scrim.overlay,
-    borderRadius: radius.sm,
-    bottom: spacing.xs,
-    left: spacing.xs,
-    paddingHorizontal: spacing.xs,
-    paddingVertical: 1,
-    position: 'absolute',
-  },
-  durationText: {
-    color: colors.text.onBrand,
   },
   // Painted above the video until the first frame is ready, so the tile is a calm
   // sunken square rather than a black flash while the decoder starts.
@@ -100,6 +70,17 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 0,
     top: 0,
+  },
+  play: {
+    alignItems: 'center',
+    backgroundColor: colors.scrim.overlay,
+    borderRadius: radius.pill,
+    bottom: spacing.xs,
+    height: PLAY_DISC_SIZE,
+    justifyContent: 'center',
+    position: 'absolute',
+    right: spacing.xs,
+    width: PLAY_DISC_SIZE,
   },
   video: {
     bottom: 0,
