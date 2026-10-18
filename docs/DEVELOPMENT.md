@@ -1524,10 +1524,17 @@ media; the mockup draws the bar there too.
   author block uses the **Feed's `layout="stacked"`** (with the compact time), not the
   short-lived `detail` layout. The rhythm is 8pt pillar→title, 12pt title→author, 16pt
   author→language row, with 16pt above the text column. The bottom is one hairline-
-  separated action area: `ReactionBar layout="grid"` (two-by-two, 20pt glyphs, labels on
+  separated action area: `ReactionBar layout="grid"` (two-by-two text pills, labels on
   one line), then a full-width secondary conversation button and the primary CTA with
-  24pt of air around the stack. `ReactionBar`'s default `row` layout is unchanged, so the
-  Feed and other surfaces are untouched.
+  24pt of air around the stack.
+- **KNOT-025-fix3:** the custom reaction SVGs are gone from the app. `ReactionBar` is now
+  a set of **text pills** — label plus count on a `bg.sunken` surface, brand tint when
+  held — in both its row and grid layouts, so no surface still draws the old glyphs. The
+  story strip's active video tile is now a **muted looping preview** (`VideoThumbnail`
+  gained `isVisible` and `durationMs`): it plays only for the carousel's active item while
+  the strip is on screen and no viewer/report sheet is open, and it pauses otherwise, so
+  one decoder runs at a time. The play disc is replaced by a duration badge; `useTextureView`
+  still keeps the Android surface inside the rounded tile.
 
 ### Rooted, and the enrichment pattern
 

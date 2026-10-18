@@ -1,11 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
-import type { SvgProps } from 'react-native-svg';
 
-import AddSomethingNewGlyph from '../assets/brand/reaction-adds-something-new.svg';
-import KnowItDifferentlyGlyph from '../assets/brand/reaction-know-it-differently.svg';
-import NeedsASourceGlyph from '../assets/brand/reaction-needs-a-source.svg';
-import RingsTrueGlyph from '../assets/brand/reaction-rings-true.svg';
 import { describeError } from '../api/client';
 import {
   ReactionCounts,
@@ -14,9 +9,8 @@ import {
   REACTION_TYPES,
   reactionsApi,
 } from '../api/reactions';
-import { colors, fontWeights, radius, spacing, tabularNums, typeScale } from '../theme';
+import { colors, radius, spacing, tabularNums, typeScale } from '../theme';
 import { applyReactionToggle, asReactionTypes, holdsReaction } from './reactionToggle';
-import SvgImage from './SvgImage';
 
 /** The content kinds a reaction can target that the app exposes today. */
 export type ReactionBarEntityType = 'story' | 'version' | 'inquiry';
@@ -37,8 +31,6 @@ type ReactionBarProps = {
    * signals, so the parent keeps its copy in step across a re-render.
    */
   readonly onChange: (counts: ReactionCounts, myReactions: readonly ReactionType[]) => void;
-  /** When true, only the icon and count are drawn (for dense list rows). */
-  readonly compact?: boolean;
   /**
    * The bar's geometry. `row` (the default) is the four equal columns every list
    * and detail currently uses; `grid` is the Story Detail's two-by-two block,
@@ -49,36 +41,22 @@ type ReactionBarProps = {
 };
 
 /**
- * The brand's own reaction glyph for each signal (KNOT-020b-fix). Each asset is a
- * 24 x 24 stroke drawn with `currentColor`, so it is tinted through the `color`
- * prop of `SvgImage`. The fifth glyph, `reaction-bridge.svg`, is an unused brand
- * asset: reactions target stories, versions, comments, and inquiries only.
- */
-const REACTION_ICONS: Readonly<Record<ReactionType, React.ComponentType<SvgProps>>> = {
-  rings_true: RingsTrueGlyph,
-  know_it_differently: KnowItDifferentlyGlyph,
-  adds_something_new: AddSomethingNewGlyph,
-  needs_a_source: NeedsASourceGlyph,
-};
-
-/** The icon size drawn in each column. */
-const ICON_SIZE = 22;
-
-/** The smaller glyph the two-column grid uses. */
-const GRID_ICON_SIZE = 20;
-
-/**
- * The four perspective signals on one piece of content, as a row of equal columns.
+ * The four perspective signals on one piece of content, as a row of equal text
+ * pills.
  *
- * Each column reads `[glyph] [label] [count]` — the count is hidden while it is
- * zero, and the label is hidden in the compact variant. A signal the reader holds
- * is highlighted on three counts: the column takes the brand tint fill, the glyph
- * and text take the brand colour, and the label takes the semibold weight — so a
- * selection is paired with weight rather than signalled by colour alone. Tapping
- * toggles it: the change is applied optimistically and reverted if the server
- * refuses.
+ * Each pill reads `[label] [count]`; the count is hidden while it is zero. A
+ * signal the reader holds takes the brand tint fill and brand ink, so a selection
+ * is a visible surface change rather than a tinted glyph. The custom reaction
+ * SVGs are deliberately gone (KNOT-025-fix3): the pills are more legible at small
+ * sizes, match the modern social pattern, and remove the one-off icon set from
+ * the app.
  *
- * The bar is a perspective, not a like: the four columns never compete, and a
+ * `layout="row"` is the four-column bar every existing surface uses; the Story
+ * Detail opts into `layout="grid"`, which gives each pill half the width so its
+ * label never wraps. Tapping toggles a signal optimistically and reverts it if
+ * the server refuses.
+ *
+ * The bar is a perspective, not a like: the four signals never compete, and a
  * reader may hold any combination (KNOT-ADR-050). Signed-out readers are invited
  * to sign in rather than shown a control that cannot work.
  */
@@ -89,7 +67,6 @@ export default function ReactionBar({
   myReactions,
   token,
   onChange,
-  compact = false,
   layout = 'row',
 }: ReactionBarProps): React.ReactElement {
   const inGrid = layout === 'grid';
@@ -146,16 +123,14 @@ export default function ReactionBar({
       {REACTION_TYPES.map((type) => {
         const active = holdsReaction(localMine, type);
         const count = localCounts[type];
-        const IconComponent = REACTION_ICONS[type];
-        const tint = active ? colors.brand.primary : colors.text.tertiary;
 
         return (
           <Pressable
             key={type}
             style={[
-              styles.column,
-              inGrid ? styles.gridColumn : styles.rowColumn,
-              active ? styles.columnActive : null,
+              styles.pill,
+              inGrid ? styles.gridPill : styles.rowPill,
+              active ? styles.pillActive : styles.pillIdle,
             ]}
             onPress={() => {
               void toggle(type);
@@ -164,20 +139,16 @@ export default function ReactionBar({
             accessibilityState={{ selected: active }}
             accessibilityLabel={`${REACTION_LABELS[type]}${count > 0 ? `, ${count}` : ''}`}
           >
-            <SvgImage
-              source={IconComponent}
-              size={inGrid ? GRID_ICON_SIZE : ICON_SIZE}
-              color={tint}
-              decorative
-            />
-            {compact ? null : (
-              <Text
-                style={[typeScale.caption, styles.label, active ? styles.activeText : null]}
-                numberOfLines={inGrid ? 1 : 2}
-              >
-                {REACTION_LABELS[type]}
-              </Text>
-            )}
+            <Text
+              style={[
+                typeScale.caption,
+                inGrid ? styles.gridLabel : styles.rowLabel,
+                active ? styles.activeText : styles.idleLabel,
+              ]}
+              numberOfLines={inGrid ? 1 : 2}
+            >
+              {REACTION_LABELS[type]}
+            </Text>
             {count > 0 ? (
               <Text
                 style={[
@@ -200,43 +171,59 @@ export default function ReactionBar({
 const styles = StyleSheet.create({
   activeText: {
     color: colors.brand.primary,
-    fontWeight: fontWeights.semibold,
   },
   bar: {
     flexDirection: 'row',
     marginTop: spacing.md,
   },
-  column: {
-    alignItems: 'center',
-    borderRadius: radius.lg,
-    gap: spacing.xs,
-    justifyContent: 'flex-start',
-    minHeight: 44,
-    paddingHorizontal: spacing.xs,
-    paddingVertical: spacing.sm,
-  },
-  columnActive: {
-    backgroundColor: colors.brand.tint,
+  count: {
+    color: colors.text.tertiary,
   },
   // Two columns, each just under half the width so the space-between gutter keeps
-  // adjacent tint fills apart. The label gets the whole cell and fits on one line.
+  // adjacent pills apart. The label gets the whole pill and stays on one line.
   grid: {
     flexWrap: 'wrap',
     justifyContent: 'space-between',
     rowGap: spacing.xs,
   },
-  gridColumn: {
+  gridLabel: {
+    flexShrink: 1,
+    textAlign: 'left',
+  },
+  gridPill: {
     width: '49%',
   },
-  // The four-column bar the Feed, version, and inquiry surfaces use.
-  rowColumn: {
-    flex: 1,
+  idleLabel: {
+    color: colors.text.secondary,
   },
-  count: {
-    color: colors.text.tertiary,
+  // The shared pill: a quiet sunken surface at rest, the brand tint when held.
+  pill: {
+    alignItems: 'center',
+    borderRadius: radius.pill,
+    flexDirection: 'row',
+    gap: spacing.sm,
+    justifyContent: 'space-between',
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
-  label: {
-    color: colors.text.tertiary,
+  pillActive: {
+    backgroundColor: colors.brand.tint,
+  },
+  pillIdle: {
+    backgroundColor: colors.bg.sunken,
+  },
+  // The four-column bar the Feed, version, and inquiry surfaces use. The count
+  // sits under the label so a narrow column still reads as one unit.
+  rowLabel: {
     textAlign: 'center',
+  },
+  rowPill: {
+    flex: 1,
+    flexDirection: 'column',
+    gap: spacing.xs,
+    justifyContent: 'center',
+    marginHorizontal: spacing.xs,
+    paddingHorizontal: spacing.xs,
   },
 });

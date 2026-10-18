@@ -196,7 +196,9 @@ export default function StoryDetailScreen({
   const [ratios, setRatios] = useState<Readonly<Record<string, number>>>({});
   const [isMuted, setIsMuted] = useState(true);
   const [carouselVisible, setCarouselVisible] = useState(true);
+  const [stripVisible, setStripVisible] = useState(true);
   const carouselBottom = useRef(0);
+  const stripBottom = useRef(0);
   const carouselRef = useRef<ScrollView>(null);
   const stripRef = useRef<ScrollView>(null);
 
@@ -214,6 +216,9 @@ export default function StoryDetailScreen({
     PLACEHOLDER_MEDIA_ASPECT_RATIO;
   const carouselHeight = pageWidth / activeRatio;
   const videoActive = carouselVisible && viewerIndex === undefined && !reportVisible;
+  // A strip preview plays only while the strip is on screen and no overlay is
+  // covering it; the selected item adds the "this is the active one" rule.
+  const stripVideoActive = stripVisible && viewerIndex === undefined && !reportVisible;
 
   const load = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -275,15 +280,23 @@ export default function StoryDetailScreen({
     carouselBottom.current = event.nativeEvent.layout.y + event.nativeEvent.layout.height;
   };
 
+  /** Remembers where the strip ends, so scrolling past it pauses its previews. */
+  const handleStripLayout = (event: LayoutChangeEvent): void => {
+    stripBottom.current = event.nativeEvent.layout.y + event.nativeEvent.layout.height;
+  };
+
   /** Settles the counter on the page a paging swipe landed on. */
   const handleCarouselEnd = (event: NativeSyntheticEvent<NativeScrollEvent>): void => {
     setActiveIndex(carouselIndex(event.nativeEvent.contentOffset.x, pageWidth, media.length));
   };
 
-  /** Pauses the video when the reader scrolls the carousel out of view. */
+  /** Pauses the carousel and strip videos when the reader scrolls past them. */
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>): void => {
-    const visible = event.nativeEvent.contentOffset.y < carouselBottom.current;
-    setCarouselVisible((previous) => (previous === visible ? previous : visible));
+    const offsetY = event.nativeEvent.contentOffset.y;
+    const carouselOnScreen = offsetY < carouselBottom.current;
+    const stripOnScreen = offsetY < stripBottom.current;
+    setCarouselVisible((previous) => (previous === carouselOnScreen ? previous : carouselOnScreen));
+    setStripVisible((previous) => (previous === stripOnScreen ? previous : stripOnScreen));
   };
 
   const toggleMute = useCallback((): void => {
@@ -391,12 +404,14 @@ export default function StoryDetailScreen({
 
             {/* The thumbnail strip anchors the carousel: one tap sends the pager
                 to that item, and the strip scrolls itself to keep the active
-                thumbnail in view (KNOT-025-fix1). */}
+                thumbnail in view (KNOT-025-fix1). The active item's video preview
+                loops while the strip is on screen (KNOT-025-fix3). */}
             {media.length > 1 ? (
               <ScrollView
                 ref={stripRef}
                 horizontal
                 showsHorizontalScrollIndicator={false}
+                onLayout={handleStripLayout}
                 style={styles.thumbnailStrip}
                 contentContainerStyle={styles.thumbnailContent}
                 snapToInterval={THUMBNAIL_SIZE + spacing.sm}
@@ -422,9 +437,14 @@ export default function StoryDetailScreen({
                       )}`}
                     >
                       {item.media_type === 'video' ? (
-                        // A paused player gives the tile a real first frame; the
-                        // API stores no poster image (KNOT-025-fix2).
-                        <VideoThumbnail uri={resolveMediaUrl(item.url)} />
+                        // The active item's preview autoplays muted; every other
+                        // tile is paused, so one decoder runs at a time
+                        // (KNOT-025-fix3).
+                        <VideoThumbnail
+                          uri={resolveMediaUrl(item.url)}
+                          isVisible={stripVideoActive && index === safeIndex}
+                          durationMs={item.duration_ms}
+                        />
                       ) : (
                         <Image
                           source={{ uri: resolveMediaUrl(item.url) }}
