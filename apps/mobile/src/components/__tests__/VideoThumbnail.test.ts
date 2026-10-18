@@ -91,6 +91,22 @@ describe('VideoThumbnail', () => {
     expect(typeof video?.props?.onReadyForDisplay).toBe('function');
   });
 
+  it('sizes the frame and the player explicitly, so the surface cannot measure itself', () => {
+    const element = VideoThumbnail({ uri: URI, size: 64 });
+    const video = findElementByType(element, 'Video');
+
+    // The square comes from the frame's own width/height (KNOT-025-fix5)...
+    expect(element.props?.style).toEqual(expect.arrayContaining([{ height: 64, width: 64 }]));
+    // ...and the player only ever fills it, so it cannot grow past the tile.
+    expect(video?.props?.style).toEqual({ height: '100%', width: '100%' });
+  });
+
+  it('defaults the frame to a 64-point square', () => {
+    const element = VideoThumbnail({ uri: URI });
+
+    expect(element.props?.style).toEqual(expect.arrayContaining([{ height: 64, width: 64 }]));
+  });
+
   it('covers the tile with a sunken placeholder until the first frame loads', () => {
     const element = VideoThumbnail({ uri: URI });
     const fallback = findElement(element, (props) => props.testID === 'video-thumbnail-fallback');

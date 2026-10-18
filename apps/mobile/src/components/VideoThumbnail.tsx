@@ -9,9 +9,19 @@ import { colors, radius, spacing } from '../theme';
 const PLAY_DISC_SIZE = 16;
 const PLAY_ICON_SIZE = 8;
 
+/** The square's side when a caller does not pass one. */
+const DEFAULT_SIZE = 64;
+
 type VideoThumbnailProps = {
   /** The resolved, absolute URL of the video. */
   readonly uri: string;
+  /**
+   * The square tile's side, in points. The player is sized **explicitly** rather
+   * than by `flex`, so the native video surface can never take its layout from
+   * the clip's natural size — the stretched, growing tiles the strip showed
+   * (KNOT-025-fix5).
+   */
+  readonly size?: number;
 };
 
 /**
@@ -29,13 +39,20 @@ type VideoThumbnailProps = {
  * `useTextureView` keeps the surface inside the tile's rounded, clipped box on
  * Android — a SurfaceView punches through the RN hierarchy and ignores the clip
  * (the same rule as the map surfaces).
+ *
+ * The square is a **fixed, explicit size**: the frame carries the tile's
+ * width/height and the player fills it at `100%` with `cover`, so the frame's
+ * shape — not the clip's — decides the surface's size (KNOT-025-fix5).
  */
-export default function VideoThumbnail({ uri }: VideoThumbnailProps): React.ReactElement {
+export default function VideoThumbnail({
+  uri,
+  size = DEFAULT_SIZE,
+}: VideoThumbnailProps): React.ReactElement {
   const [ready, setReady] = useState(false);
   const handleReady = (): void => setReady(true);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.frame, { height: size, width: size }]}>
       <Video
         source={{ uri }}
         style={styles.video}
@@ -58,8 +75,12 @@ export default function VideoThumbnail({ uri }: VideoThumbnailProps): React.Reac
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
+  // The square the frame fills. It clips its own corners so the component stays
+  // correct even where the caller does not clip it.
+  frame: {
+    backgroundColor: colors.bg.sunken,
+    borderRadius: radius.md,
+    overflow: 'hidden',
   },
   // Painted above the video until the first frame is ready, so the tile is a calm
   // sunken square rather than a black flash while the decoder starts.
@@ -82,11 +103,10 @@ const styles = StyleSheet.create({
     right: spacing.xs,
     width: PLAY_DISC_SIZE,
   },
+  // `cover` plus a full-size style: the frame's square wins, and the video's own
+  // aspect ratio is cropped rather than distorted.
   video: {
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-    right: 0,
-    top: 0,
+    height: '100%',
+    width: '100%',
   },
 });

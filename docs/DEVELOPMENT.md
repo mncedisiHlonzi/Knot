@@ -1546,11 +1546,27 @@ legible over any media (KNOT-025-fix4).
   already insets the screen — so iOS starts the carousel below the notch rather than
   behind it (no safe-area-inset dependency is installed). The band and the light status
   icons are Android-only and drawn only when the story has media; a media-less story
-  keeps the canvas and dark icons. The counter pill and the loading/error block clear
-  the band, and a no-media story gets a band-sized spacer. Reaction pills are refined: a
+  keeps the canvas and dark icons (the band itself was removed again in fix5, below). The
+  counter pill and the loading/error block clear the band, and a no-media story gets a
+  band-sized spacer. Reaction pills are refined: a
   hairline border on `bg.paper`, `typeScale.label`, 44pt in the row layout and 36pt in
   the grid, brand tint when held. The Feed's adaptation credit ends after the language
   — the `· Version N` tail is gone (the number still lives on the Story Version screen).
+- **KNOT-025-fix5:** the scrim band is **gone** — the review found it dimmed the media's
+  top, so nothing is painted behind the status bar now and the carousel is bright to the
+  top edge. Legibility rests on Android's `light-content` icons plus the header's own dark
+  discs; React Native cannot give the system icons a shadow, so a very bright photo is
+  still a weaker case (disclosed). The strip tiles went 48pt → **64pt with a 12pt gap**
+  (`THUMBNAIL_GAP`, which also sets the snap stride and the auto-centre offset), and the
+  active/hairline ring is now an **overlay View** rather than the tile's border, so the
+  media keeps its full square. `VideoThumbnail` takes a `size` and draws an **explicit**
+  square frame with the player at `100%`/`cover` — a flex or absolute-fill player let the
+  native surface measure itself and the tiles read stretched/growing. The viewer is out
+  of the tap flow: `CarouselPage` is a plain `View` (no `onPress`, no page label) and the
+  strip tiles are non-interactive `View`s, so `viewerIndex`, the `MediaGalleryModal`
+  render, `carouselRef` and `handleThumbnailPress` are all gone from this screen. The
+  modal component and its wiring are untouched; the strip now only *follows* the pager and
+  no longer jumps it. Both removals are marked `TODO: Re-enable viewer in a future task`.
 
 ### Rooted, and the enrichment pattern
 

@@ -25,7 +25,6 @@ import AuthorLine from '../../components/AuthorLine';
 import Button from '../../components/Button';
 import FeedVideo from '../../components/FeedVideo';
 import Header from '../../components/Header';
-import MediaGalleryModal from '../../components/MediaGalleryModal';
 import PillarTag from '../../components/PillarTag';
 import ReactionBar from '../../components/ReactionBar';
 import ReportModal from '../../components/ReportModal';
@@ -42,8 +41,11 @@ function resolveMediaUrl(url: string): string {
   return `${API_BASE_URL}${url}`;
 }
 
-/** The thumbnail strip's square item, per the design reference (KNOT-025-fix1). */
-const THUMBNAIL_SIZE = 48;
+/** The thumbnail strip's square item (KNOT-025-fix1, enlarged in fix5). */
+const THUMBNAIL_SIZE = 64;
+
+/** The gap between thumbnail tiles, which also sets the strip's snap stride. */
+const THUMBNAIL_GAP = spacing.md;
 
 /** The floating header's own height, matching the `Header` component. */
 const HEADER_HEIGHT = 56;
@@ -60,9 +62,14 @@ const HEADER_BAND = HEADER_TOP + HEADER_HEIGHT;
 
 /**
  * The bar is transparent, so Android's icons are white whenever media sits
- * behind it; with no media the band is the page's own canvas, so they stay dark.
- * iOS never puts content behind the bar (the app root's `SafeAreaView` insets
- * the screen), so its icons are always dark over the white strip.
+ * behind it; with no media the page's own canvas is behind the bar, so they stay
+ * dark. iOS never puts content behind the bar (the app root's `SafeAreaView`
+ * insets the screen), so its icons are always dark over the white strip.
+ *
+ * Nothing is painted behind the bar: the media runs to the top edge at full
+ * brightness, as the review asked (KNOT-025-fix5). React Native cannot give the
+ * system's own status icons a shadow, so the white icons take their contrast
+ * from the media itself.
  */
 function statusBarStyle(hasMedia: boolean): 'light-content' | 'dark-content' {
   return Platform.OS === 'android' && hasMedia ? 'light-content' : 'dark-content';
@@ -82,23 +89,17 @@ function CarouselPage({
   media,
   width,
   height,
-  index,
-  total,
   isActive,
   isMuted,
   onToggleMute,
-  onPress,
   onAspectRatio,
 }: {
   readonly media: StoryMedia;
   readonly width: number;
   readonly height: number;
-  readonly index: number;
-  readonly total: number;
   readonly isActive: boolean;
   readonly isMuted: boolean;
   readonly onToggleMute: () => void;
-  readonly onPress: () => void;
   readonly onAspectRatio: (mediaId: string, ratio: number | null) => void;
 }): React.ReactElement {
   const { aspectRatio, onLoadSize } = useMediaAspectRatio(media.width, media.height);
@@ -117,16 +118,10 @@ function CarouselPage({
   };
 
   return (
-    <Pressable
-      style={[styles.page, { height, width }]}
-      onPress={onPress}
-      accessibilityRole="button"
-      accessibilityLabel={`Open ${carouselPositionLabel(
-        media.media_type,
-        index,
-        total,
-      )} full screen`}
-    >
+    // TODO: Re-enable viewer in a future task. The page is a plain view on
+    // purpose: tapping the media must do nothing until the viewer returns
+    // (KNOT-025-fix5).
+    <View style={[styles.page, { height, width }]}>
       {media.media_type === 'video' ? (
         <FeedVideo
           uri={uri}
@@ -147,7 +142,7 @@ function CarouselPage({
           accessibilityIgnoresInvertColors
         />
       )}
-    </Pressable>
+    </View>
   );
 }
 
@@ -186,15 +181,19 @@ type StoryDetailScreenProps = {
  * (pillar tag, large title, the Feed's author block, the language-tree button,
  * the body), a hairline-separated action area, and the primary CTA.
  *
- * This screen alone makes the status bar translucent: the media sits behind it,
- * a `scrim.overlay` band darkens that top band (and Android's status icons turn
- * white with it), and the Back/More controls float on their own dark discs so
- * they stay legible over any media (KNOT-025-fix4). A story with no media draws
- * no band, because the canvas itself is already behind the bar. Android is laid
- * out under the bar, so the header clears `StatusBar.currentHeight`; iOS is
- * already inset by the app root's `SafeAreaView`, so its carousel starts at the
- * safe-area top rather than behind the notch (there is no safe-area-inset source
- * in the installed dependencies).
+ * This screen alone makes the status bar translucent: the media sits behind it
+ * at full brightness (no scrim — the review found the band too heavy,
+ * KNOT-025-fix5), Android's status icons turn white with it, and the Back/More
+ * controls float on their own dark discs so they stay legible over any media. A
+ * story with no media keeps dark icons, because the canvas itself is behind the
+ * bar. Android is laid out under the bar, so the header clears
+ * `StatusBar.currentHeight`; iOS is already inset by the app root's
+ * `SafeAreaView`, so its carousel starts at the safe-area top rather than behind
+ * the notch (there is no safe-area-inset source in the installed dependencies).
+ *
+ * The media is not tappable: the full-screen viewer is out of the tap flow
+ * until the media pass is signed off, so the carousel pages and the strip tiles
+ * are plain views (KNOT-025-fix5).
  *
  * A story that does not exist is reported as a normal error message rather than a
  * crash: the server answers 404 with a readable message, and `describeError`
@@ -213,9 +212,6 @@ export default function StoryDetailScreen({
   const [versionCount, setVersionCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>(undefined);
-  // The index of the item shown full screen, or undefined when the viewer is
-  // closed.
-  const [viewerIndex, setViewerIndex] = useState<number | undefined>(undefined);
   const [reportVisible, setReportVisible] = useState(false);
 
   // The carousel's own state: which page is showing, the shape each page has
@@ -227,7 +223,6 @@ export default function StoryDetailScreen({
   const [isMuted, setIsMuted] = useState(true);
   const [carouselVisible, setCarouselVisible] = useState(true);
   const carouselBottom = useRef(0);
-  const carouselRef = useRef<ScrollView>(null);
   const stripRef = useRef<ScrollView>(null);
 
   const media = story?.media ?? [];
@@ -243,7 +238,10 @@ export default function StoryDetailScreen({
       : resolveMediaAspectRatio(activeMedia.width, activeMedia.height)) ??
     PLACEHOLDER_MEDIA_ASPECT_RATIO;
   const carouselHeight = pageWidth / activeRatio;
-  const videoActive = carouselVisible && viewerIndex === undefined && !reportVisible;
+  // TODO: Re-enable viewer in a future task. With no viewer, the carousel only
+  // pauses when the reader scrolls past it or opens the report sheet
+  // (KNOT-025-fix5).
+  const videoActive = carouselVisible && !reportVisible;
 
   const load = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -284,7 +282,7 @@ export default function StoryDetailScreen({
     if (media.length <= 1) {
       return;
     }
-    const stride = THUMBNAIL_SIZE + spacing.sm;
+    const stride = THUMBNAIL_SIZE + THUMBNAIL_GAP;
     const offset =
       layout.screenPaddingFeed + activeIndex * stride + THUMBNAIL_SIZE / 2 - pageWidth / 2;
     stripRef.current?.scrollTo({ x: Math.max(0, offset), animated: true });
@@ -319,12 +317,6 @@ export default function StoryDetailScreen({
   const toggleMute = useCallback((): void => {
     setIsMuted((previous) => !previous);
   }, []);
-
-  /** Sends both the pager and its strip to the chosen item. */
-  const handleThumbnailPress = (index: number): void => {
-    setActiveIndex(index);
-    carouselRef.current?.scrollTo({ x: index * pageWidth, animated: true });
-  };
 
   const language = story === undefined ? '' : languageName(story.language);
   const versionsLabel = `${versionCount} ${versionCount === 1 ? 'version' : 'versions'}`;
@@ -368,7 +360,6 @@ export default function StoryDetailScreen({
             {media.length > 0 ? (
               <View style={styles.carousel} onLayout={handleCarouselLayout}>
                 <ScrollView
-                  ref={carouselRef}
                   horizontal
                   pagingEnabled
                   showsHorizontalScrollIndicator={false}
@@ -381,12 +372,9 @@ export default function StoryDetailScreen({
                       media={item}
                       width={pageWidth}
                       height={carouselHeight}
-                      index={index}
-                      total={media.length}
                       isActive={index === safeIndex && videoActive}
                       isMuted={isMuted}
                       onToggleMute={toggleMute}
-                      onPress={() => setViewerIndex(index)}
                       onAspectRatio={handlePageRatio}
                     />
                   ))}
@@ -405,10 +393,10 @@ export default function StoryDetailScreen({
               </View>
             ) : null}
 
-            {/* The thumbnail strip anchors the carousel: one tap sends the pager
-                to that item, and the strip scrolls itself to keep the active
-                thumbnail in view. The tiles are static; only the main carousel
-                plays video (KNOT-025-fix1, KNOT-025-fix4). */}
+            {/* The thumbnail strip follows the pager: it scrolls itself to keep
+                the active page's tile in view. The tiles are static first
+                frames, and tapping one does nothing while the viewer is out of
+                the tap flow (KNOT-025-fix1, KNOT-025-fix4, KNOT-025-fix5). */}
             {media.length > 1 ? (
               <ScrollView
                 ref={stripRef}
@@ -416,32 +404,28 @@ export default function StoryDetailScreen({
                 showsHorizontalScrollIndicator={false}
                 style={styles.thumbnailStrip}
                 contentContainerStyle={styles.thumbnailContent}
-                snapToInterval={THUMBNAIL_SIZE + spacing.sm}
+                snapToInterval={THUMBNAIL_SIZE + THUMBNAIL_GAP}
                 decelerationRate="fast"
               >
                 {media.map((item, index) => {
                   const active = index === safeIndex;
 
                   return (
-                    <Pressable
+                    <View
                       key={item.id}
-                      style={[
-                        styles.thumbnail,
-                        active ? styles.thumbnailActive : styles.thumbnailInactive,
-                      ]}
-                      onPress={() => handleThumbnailPress(index)}
-                      accessibilityRole="button"
+                      style={[styles.thumbnail, active ? null : styles.thumbnailInactive]}
+                      accessibilityRole="image"
                       accessibilityState={{ selected: active }}
-                      accessibilityLabel={`Show ${carouselPositionLabel(
+                      accessibilityLabel={carouselPositionLabel(
                         item.media_type,
                         index,
                         media.length,
-                      )}`}
+                      )}
                     >
                       {item.media_type === 'video' ? (
                         // A paused player renders the first frame; the strip is
                         // static (KNOT-025-fix2, KNOT-025-fix4).
-                        <VideoThumbnail uri={resolveMediaUrl(item.url)} />
+                        <VideoThumbnail uri={resolveMediaUrl(item.url)} size={THUMBNAIL_SIZE} />
                       ) : (
                         <Image
                           source={{ uri: resolveMediaUrl(item.url) }}
@@ -450,7 +434,15 @@ export default function StoryDetailScreen({
                           accessibilityIgnoresInvertColors
                         />
                       )}
-                    </Pressable>
+
+                      {/* The ring is drawn over the media rather than as the
+                          tile's border, so the media keeps its full 64pt
+                          square (KNOT-025-fix5). */}
+                      <View
+                        pointerEvents="none"
+                        style={[styles.thumbnailRing, active ? styles.thumbnailRingActive : null]}
+                      />
+                    </View>
                   );
                 })}
               </ScrollView>
@@ -536,13 +528,6 @@ export default function StoryDetailScreen({
         ) : null}
       </ScrollView>
 
-      {/* A scrim over the media, and the controls' own darker discs, keep the white
-          status icons and glyphs legible over any photo. A story without media
-          keeps the page's own canvas behind the bar, so no band is drawn. */}
-      {Platform.OS === 'android' && media.length > 0 ? (
-        <View pointerEvents="none" style={[styles.headerBand, { height: HEADER_BAND }]} />
-      ) : null}
-
       <View pointerEvents="box-none" style={[styles.headerOverlay, { top: HEADER_TOP }]}>
         <Header
           left={
@@ -581,12 +566,9 @@ export default function StoryDetailScreen({
         />
       ) : null}
 
-      <MediaGalleryModal
-        visible={viewerIndex !== undefined}
-        media={media}
-        initialIndex={viewerIndex ?? 0}
-        onClose={() => setViewerIndex(undefined)}
-      />
+      {/* TODO: Re-enable viewer in a future task. `MediaGalleryModal` is kept for
+          that: the component and its wiring are intact, only this screen's
+          trigger is gone (KNOT-025-fix5). */}
     </View>
   );
 }
@@ -635,16 +617,8 @@ const styles = StyleSheet.create({
     color: colors.state.danger,
     marginTop: spacing.sm,
   },
-  // The band behind the status bar and header: the media's brightest content
-  // would otherwise swallow white status icons. The buttons add their own disc
-  // on top of it.
-  headerBand: {
-    backgroundColor: colors.scrim.overlay,
-    left: 0,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-  },
+  // The band behind the status bar and header was removed: the media runs to the
+  // top edge at full brightness (KNOT-025-fix5).
   headerOverlay: {
     left: 0,
     position: 'absolute',
@@ -707,29 +681,39 @@ const styles = StyleSheet.create({
   },
   // The thumbnail strip lives outside the reading column, so it keeps the feed's
   // 16-point gutter while the text keeps the 24-point reading inset.
+  // The tile is the media's own 64pt square: the state ring is drawn as an
+  // overlay, so a border never eats into the frame (KNOT-025-fix5).
   thumbnail: {
     borderRadius: radius.md,
     height: THUMBNAIL_SIZE,
     overflow: 'hidden',
     width: THUMBNAIL_SIZE,
   },
-  thumbnailActive: {
-    borderColor: colors.brand.primary,
-    borderWidth: 2,
-  },
   thumbnailContent: {
-    gap: spacing.sm,
+    gap: THUMBNAIL_GAP,
     paddingHorizontal: layout.screenPaddingFeed,
     paddingVertical: spacing.md,
   },
   thumbnailInactive: {
-    borderColor: colors.border.hairline,
-    borderWidth: 2,
     opacity: 0.8,
   },
   thumbnailMedia: {
     height: '100%',
     width: '100%',
+  },
+  // The 2pt ring sits on the tile's edge in every state; only its ink changes.
+  thumbnailRing: {
+    borderColor: colors.border.hairline,
+    borderRadius: radius.md,
+    borderWidth: 2,
+    bottom: 0,
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  thumbnailRingActive: {
+    borderColor: colors.brand.primary,
   },
   thumbnailStrip: {
     flexGrow: 0,
