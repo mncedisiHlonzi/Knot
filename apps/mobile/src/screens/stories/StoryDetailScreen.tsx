@@ -13,7 +13,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
-import { ArrowLeft, DotsThree, GitBranch, Play } from 'phosphor-react-native';
+import { ArrowLeft, DotsThree, GitBranch } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { EMPTY_REACTION_COUNTS } from '../../api/reactions';
@@ -27,6 +27,7 @@ import MediaGalleryModal from '../../components/MediaGalleryModal';
 import PillarTag from '../../components/PillarTag';
 import ReactionBar from '../../components/ReactionBar';
 import ReportModal from '../../components/ReportModal';
+import VideoThumbnail from '../../components/VideoThumbnail';
 import { API_BASE_URL } from '../../config/api';
 import { languageName } from '../../data/languages';
 import { colors, layout, radius, spacing, tabularNums, typeScale } from '../../theme';
@@ -41,10 +42,6 @@ function resolveMediaUrl(url: string): string {
 
 /** The thumbnail strip's square item, per the design reference (KNOT-025-fix1). */
 const THUMBNAIL_SIZE = 48;
-
-/** The circular play mark on a video thumbnail, and its glyph. */
-const THUMBNAIL_PLAY_SIZE = 16;
-const THUMBNAIL_PLAY_ICON_SIZE = 8;
 
 /**
  * One page of the Story Detail carousel: a full-width media frame at the shape
@@ -425,18 +422,9 @@ export default function StoryDetailScreen({
                       )}`}
                     >
                       {item.media_type === 'video' ? (
-                        // The API stores no poster frame, so a video thumbnail is
-                        // the same neutral sunken block the feed uses, marked with
-                        // a small play badge (KNOT-025-fix1).
-                        <View style={styles.thumbnailFallback}>
-                          <View style={styles.thumbnailPlay}>
-                            <Play
-                              color={colors.text.onBrand}
-                              size={THUMBNAIL_PLAY_ICON_SIZE}
-                              weight="fill"
-                            />
-                          </View>
-                        </View>
+                        // A paused player gives the tile a real first frame; the
+                        // API stores no poster image (KNOT-025-fix2).
+                        <VideoThumbnail uri={resolveMediaUrl(item.url)} />
                       ) : (
                         <Image
                           source={{ uri: resolveMediaUrl(item.url) }}
@@ -462,11 +450,10 @@ export default function StoryDetailScreen({
                 createdAt={story.created_at}
                 rooted={story.author_rooted}
                 size="large"
-                // Line one: avatar + name + inline Rooted badge. Line two: the
-                // language and the relative time, indented to the name
-                // (KNOT-025-fix1).
-                layout="detail"
-                languageLabel={language}
+                // The same stacked author block the Feed draws: name, quiet Rooted
+                // line, then the compact time beside a 48pt avatar (KNOT-025-fix2).
+                layout="stacked"
+                timeFormat="short"
                 onPress={() => onOpenUserProfile(story.author_id)}
               />
 
@@ -489,8 +476,13 @@ export default function StoryDetailScreen({
 
               <Text style={[typeScale.reading, styles.storyBody]}>{story.body}</Text>
 
-              <View style={styles.reactions}>
+              {/* The action area: one hairline separates it from the story, the
+                  four signals sit in a two-by-two grid so their labels never
+                  wrap, then the secondary conversation action and the primary
+                  adaptation, with generous air between them (KNOT-025-fix2). */}
+              <View style={styles.actionsSection}>
                 <ReactionBar
+                  layout="grid"
                   entityType="story"
                   entityId={story.id}
                   counts={story.reactions ?? EMPTY_REACTION_COUNTS}
@@ -504,24 +496,21 @@ export default function StoryDetailScreen({
                     )
                   }
                 />
-              </View>
 
-              <Pressable
-                style={styles.conversationRow}
-                onPress={() => onConversation(story.root_version_id)}
-                accessibilityRole="button"
-                accessibilityLabel={`Join the conversation in ${language}`}
-              >
-                <Text style={[typeScale.button, styles.conversation]}>{conversationLabel}</Text>
-              </Pressable>
-
-              <View style={styles.actions}>
-                <Button
-                  variant="primary"
-                  fullWidth
-                  label="Tell this to your people"
-                  onPress={() => onAdapt(story.root_version_id)}
-                />
+                <View style={styles.actionButtons}>
+                  <Button
+                    variant="secondary"
+                    fullWidth
+                    label={conversationLabel}
+                    onPress={() => onConversation(story.root_version_id)}
+                  />
+                  <Button
+                    variant="primary"
+                    fullWidth
+                    label="Tell this to your people"
+                    onPress={() => onAdapt(story.root_version_id)}
+                  />
+                </View>
               </View>
             </View>
           </>
@@ -550,8 +539,17 @@ export default function StoryDetailScreen({
 }
 
 const styles = StyleSheet.create({
-  actions: {
+  actionButtons: {
+    gap: spacing.xl,
     marginTop: spacing.xl,
+  },
+  // The whole bottom action area shares one hairline above it; the reaction grid
+  // and the two buttons then flow with generous vertical air.
+  actionsSection: {
+    borderTopColor: colors.border.hairline,
+    borderTopWidth: 1,
+    marginTop: spacing.xl,
+    paddingTop: spacing.lg,
   },
   body: {
     paddingHorizontal: layout.screenPaddingReading,
@@ -568,15 +566,6 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingBottom: spacing.xxxl,
-  },
-  conversation: {
-    color: colors.brand.primary,
-  },
-  // The mockup's conversation entry is a brand-ink line, not a second filled
-  // button; it keeps the existing conversation route (KNOT-025).
-  conversationRow: {
-    marginTop: spacing.md,
-    paddingVertical: spacing.md,
   },
   counterText: {
     color: colors.text.onBrand,
@@ -633,15 +622,6 @@ const styles = StyleSheet.create({
     height: '100%',
     width: '100%',
   },
-  // The reaction bar sits between the reading column and the conversation link,
-  // framed by the design's hairlines rather than floating (KNOT-025).
-  reactions: {
-    borderBottomColor: colors.border.hairline,
-    borderBottomWidth: 1,
-    borderTopColor: colors.border.hairline,
-    borderTopWidth: 1,
-    marginTop: spacing.xl,
-  },
   retry: {
     marginTop: spacing.lg,
   },
@@ -672,13 +652,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: layout.screenPaddingFeed,
     paddingVertical: spacing.md,
   },
-  thumbnailFallback: {
-    alignItems: 'center',
-    backgroundColor: colors.bg.sunken,
-    height: '100%',
-    justifyContent: 'center',
-    width: '100%',
-  },
   thumbnailInactive: {
     borderColor: colors.border.hairline,
     borderWidth: 2,
@@ -687,17 +660,6 @@ const styles = StyleSheet.create({
   thumbnailMedia: {
     height: '100%',
     width: '100%',
-  },
-  thumbnailPlay: {
-    alignItems: 'center',
-    backgroundColor: colors.scrim.overlay,
-    borderRadius: radius.pill,
-    bottom: spacing.xs,
-    height: THUMBNAIL_PLAY_SIZE,
-    justifyContent: 'center',
-    position: 'absolute',
-    right: spacing.xs,
-    width: THUMBNAIL_PLAY_SIZE,
   },
   thumbnailStrip: {
     flexGrow: 0,

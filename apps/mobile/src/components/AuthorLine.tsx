@@ -19,12 +19,9 @@ export type AuthorLineTimeFormat = 'long' | 'short';
 /**
  * How the author's details are arranged. `inline` is the byline every screen uses:
  * name and time on one line. `stacked` is the Feed's social-card column: name,
- * then Rooted, then time, with the avatar to the left (KNOT-023b). `detail` is the
- * Story Detail's two-line block: the name and the Rooted badge share line one,
- * and the language plus the relative time share line two, indented to the name
- * (KNOT-025-fix1).
+ * then Rooted, then time, with the avatar to the left (KNOT-023b).
  */
-export type AuthorLineLayout = 'inline' | 'stacked' | 'detail';
+export type AuthorLineLayout = 'inline' | 'stacked';
 
 /**
  * The inline Rooted summary AuthorLine renders. It is typed as plain strings (not
@@ -75,15 +72,9 @@ type AuthorLineProps = {
    * How the author's details are arranged. Defaults to `inline` (name and time on
    * one line), which is what every existing screen already draws. `stacked` makes
    * a left avatar and a three-line column — name, Rooted, time — for the Feed's
-   * social-card look (KNOT-023b). `detail` makes a two-line block for the Story
-   * Detail: name + Rooted on line one, language + time on line two (KNOT-025-fix1).
+   * social-card look (KNOT-023b).
    */
   readonly layout?: AuthorLineLayout;
-  /**
-   * The language name shown on the `detail` layout's second line, e.g. "Zapotec"
-   * in "Zapotec · 2 days ago". Ignored by the other layouts (KNOT-025-fix1).
-   */
-  readonly languageLabel?: string;
   /**
    * Called when the author's avatar or name is tapped, to open their profile.
    *
@@ -131,10 +122,6 @@ const AVATAR_SIZE: Readonly<Record<AuthorLineSize, 'sm' | 'md' | 'lg'>> = {
  * the left, then a column of the name, the quiet Rooted line, and the time — each
  * on its own line, with no separators.
  *
- * `layout="detail"` is the Story Detail's editorial block (KNOT-025-fix1): the
- * avatar on the left, then a column whose first line is the name with the Rooted
- * badge inline, and whose second line is the language and the relative time.
- *
  * When `onPress` is given, the avatar and name become a tap target for the
  * author's profile: a nested `Pressable` takes the touch itself, so the parent
  * card's own onPress does not fire for it (KNOT-ADR-043).
@@ -148,12 +135,10 @@ export default function AuthorLine({
   showRootedOnNewLine = false,
   timeFormat = 'long',
   layout = 'inline',
-  languageLabel,
   onPress,
   testID,
 }: AuthorLineProps): React.ReactElement | null {
   const name = typeof displayName === 'string' ? displayName.trim() : '';
-  const language = typeof languageLabel === 'string' ? languageLabel.trim() : '';
 
   const path = typeof avatarUrl === 'string' ? avatarUrl.trim() : '';
   const avatarUri = path === '' ? undefined : `${API_BASE_URL}${path}`;
@@ -215,65 +200,6 @@ export default function AuthorLine({
         {hasLeadingSegment ? `· ${relative}` : relative}
       </Text>
     );
-
-  // The Story Detail's two-line block (KNOT-025-fix1): the avatar, then a column
-  // whose first line is the name with the Rooted badge inline beside it, and whose
-  // second line is the language and the relative time. The second line hangs off
-  // the name's left edge because it lives in the same column as the name, not
-  // under the avatar. The duration is dropped from the badge so the name and pill
-  // stay on one line with a typical place; a long name truncates first.
-  if (layout === 'detail') {
-    const meta = [language, relative].filter((part) => part !== '').join(' · ');
-
-    return (
-      <View style={styles.detailRow} testID={testID}>
-        {onPress === undefined ? (
-          avatarNode
-        ) : (
-          <Pressable
-            onPress={onPress}
-            accessibilityRole="button"
-            accessibilityLabel={openProfileLabel}
-          >
-            {avatarNode}
-          </Pressable>
-        )}
-
-        <View style={styles.detailDetails}>
-          <View style={styles.detailNameRow}>
-            {name === '' ? null : onPress === undefined ? (
-              nameNode
-            ) : (
-              <Pressable
-                style={styles.nameTarget}
-                onPress={onPress}
-                accessibilityRole="button"
-                accessibilityLabel={openProfileLabel}
-              >
-                {nameNode}
-              </Pressable>
-            )}
-
-            {hasRooted ? (
-              <View style={styles.detailBadge}>
-                <RootedBadge
-                  place={rootedPlace}
-                  durationBucket={durationBucket}
-                  showDuration={false}
-                />
-              </View>
-            ) : null}
-          </View>
-
-          {meta === '' ? null : (
-            <Text style={[typeScale.caption, styles.time]} numberOfLines={1}>
-              {meta}
-            </Text>
-          )}
-        </View>
-      </View>
-    );
-  }
 
   // The Feed's stacked author block (KNOT-023b): the avatar on the left, and a
   // column on the right holding the name, the quiet Rooted line, then the time.
@@ -417,27 +343,6 @@ export default function AuthorLine({
 }
 
 const styles = StyleSheet.create({
-  // A badge that may shrink beside a long name in the detail layout, so the two
-  // stay on one line and the place truncates rather than pushing the pill away.
-  detailBadge: {
-    flexShrink: 1,
-    maxWidth: '100%',
-  },
-  detailDetails: {
-    flexShrink: 1,
-    gap: spacing.xs,
-  },
-  detailNameRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexShrink: 1,
-    gap: spacing.sm,
-  },
-  detailRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
   // The Feed's author block: avatar beside the text column, both centred against
   // each other so the avatar's left edge guides the name and the Rooted line.
   details: {

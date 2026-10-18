@@ -39,6 +39,13 @@ type ReactionBarProps = {
   readonly onChange: (counts: ReactionCounts, myReactions: readonly ReactionType[]) => void;
   /** When true, only the icon and count are drawn (for dense list rows). */
   readonly compact?: boolean;
+  /**
+   * The bar's geometry. `row` (the default) is the four equal columns every list
+   * and detail currently uses; `grid` is the Story Detail's two-by-two block,
+   * where each signal has twice the width and its label fits on one line
+   * (KNOT-025-fix2).
+   */
+  readonly layout?: 'row' | 'grid';
 };
 
 /**
@@ -56,6 +63,9 @@ const REACTION_ICONS: Readonly<Record<ReactionType, React.ComponentType<SvgProps
 
 /** The icon size drawn in each column. */
 const ICON_SIZE = 22;
+
+/** The smaller glyph the two-column grid uses. */
+const GRID_ICON_SIZE = 20;
 
 /**
  * The four perspective signals on one piece of content, as a row of equal columns.
@@ -80,7 +90,9 @@ export default function ReactionBar({
   token,
   onChange,
   compact = false,
+  layout = 'row',
 }: ReactionBarProps): React.ReactElement {
+  const inGrid = layout === 'grid';
   const [localCounts, setLocalCounts] = useState<ReactionCounts>(counts);
   const [localMine, setLocalMine] = useState<readonly ReactionType[]>(() =>
     asReactionTypes(myReactions),
@@ -130,7 +142,7 @@ export default function ReactionBar({
   );
 
   return (
-    <View style={styles.bar}>
+    <View style={[styles.bar, inGrid ? styles.grid : null]}>
       {REACTION_TYPES.map((type) => {
         const active = holdsReaction(localMine, type);
         const count = localCounts[type];
@@ -140,7 +152,11 @@ export default function ReactionBar({
         return (
           <Pressable
             key={type}
-            style={[styles.column, active ? styles.columnActive : null]}
+            style={[
+              styles.column,
+              inGrid ? styles.gridColumn : styles.rowColumn,
+              active ? styles.columnActive : null,
+            ]}
             onPress={() => {
               void toggle(type);
             }}
@@ -148,11 +164,16 @@ export default function ReactionBar({
             accessibilityState={{ selected: active }}
             accessibilityLabel={`${REACTION_LABELS[type]}${count > 0 ? `, ${count}` : ''}`}
           >
-            <SvgImage source={IconComponent} size={ICON_SIZE} color={tint} decorative />
+            <SvgImage
+              source={IconComponent}
+              size={inGrid ? GRID_ICON_SIZE : ICON_SIZE}
+              color={tint}
+              decorative
+            />
             {compact ? null : (
               <Text
                 style={[typeScale.caption, styles.label, active ? styles.activeText : null]}
-                numberOfLines={2}
+                numberOfLines={inGrid ? 1 : 2}
               >
                 {REACTION_LABELS[type]}
               </Text>
@@ -188,7 +209,6 @@ const styles = StyleSheet.create({
   column: {
     alignItems: 'center',
     borderRadius: radius.lg,
-    flex: 1,
     gap: spacing.xs,
     justifyContent: 'flex-start',
     minHeight: 44,
@@ -197,6 +217,20 @@ const styles = StyleSheet.create({
   },
   columnActive: {
     backgroundColor: colors.brand.tint,
+  },
+  // Two columns, each just under half the width so the space-between gutter keeps
+  // adjacent tint fills apart. The label gets the whole cell and fits on one line.
+  grid: {
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: spacing.xs,
+  },
+  gridColumn: {
+    width: '49%',
+  },
+  // The four-column bar the Feed, version, and inquiry surfaces use.
+  rowColumn: {
+    flex: 1,
   },
   count: {
     color: colors.text.tertiary,

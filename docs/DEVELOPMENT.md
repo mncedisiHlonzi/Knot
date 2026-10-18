@@ -1515,14 +1515,19 @@ media; the mockup draws the bar there too.
   centre play button (the video autoplays), no caption/credit row (`StoryMedia` carries
   none of those fields), no scroll-linked header title, and no second "N versions · N
   languages" row. The block flow still lives on the author's profile, not the header.
-- **KNOT-025-fix1:** the thumbnail strip was added (48pt squares, 8pt gap, the active one
-  ringed in `brand.primary`; tapping scrolls the pager, and the strip centres the active
-  item itself). Video thumbs are the sunken fallback with a small play mark, because no
-  poster frame is stored. The author block gained `AuthorLine layout="detail"` (name +
-  inline Rooted on line one, `languageLabel` · relative time on line two, both in the
-  column beside the avatar) — `inline` and `stacked` are unchanged, so the other eight
-  screens are untouched. The rhythm is now 8pt pillar→title, 12pt title→author, 16pt
-  author→language row, with 16pt above the text column.
+- **KNOT-025-fix1/fix2:** the thumbnail strip was added (48pt squares, 8pt gap, the
+  active one ringed in `brand.primary`; tapping scrolls the pager, and the strip centres
+  the active item itself). Video tiles now render a **real first frame** through
+  `VideoThumbnail` — a paused, muted `react-native-video` player, because the library
+  cannot export a frame as an image and the API stores no poster; `onLoad` /
+  `onReadyForDisplay` retire a sunken placeholder, which stays if the source fails. The
+  author block uses the **Feed's `layout="stacked"`** (with the compact time), not the
+  short-lived `detail` layout. The rhythm is 8pt pillar→title, 12pt title→author, 16pt
+  author→language row, with 16pt above the text column. The bottom is one hairline-
+  separated action area: `ReactionBar layout="grid"` (two-by-two, 20pt glyphs, labels on
+  one line), then a full-width secondary conversation button and the primary CTA with
+  24pt of air around the stack. `ReactionBar`'s default `row` layout is unchanged, so the
+  Feed and other surfaces are untouched.
 
 ### Rooted, and the enrichment pattern
 
