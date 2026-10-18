@@ -737,6 +737,16 @@ func applyVersionCardFields(
 		return
 	}
 
+	// The root link names the original author the card heads the entry with. The
+	// name and avatar come from the same batched author read the sentence uses, so
+	// this is a map lookup rather than another query (KNOT-023a).
+	if root, hasRoot := chain.Root(); hasRoot {
+		rootAttribution := attributions[root.AuthorID]
+		item.RootAuthorID = root.AuthorID
+		item.RootAuthorDisplayName = rootAttribution.DisplayName
+		item.RootAuthorAvatarURL = optionalString(rootAttribution.AvatarURL)
+	}
+
 	// VersionNumber counts the original as 1, so a chain of depth n -- n
 	// adaptations away from the root -- is version n+1.
 	item.VersionNumber = chain.Depth() + 1

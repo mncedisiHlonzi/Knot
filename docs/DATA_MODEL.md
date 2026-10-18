@@ -284,6 +284,13 @@ recursive query walks `parent_version_id` from every requested version to its ro
 returns the union of those rows, so a page of N adaptations costs one read rather than N
 walks (migration `0017` adds the ordering index the feed's own query seeks by).
 
+The version feed entry also carries the root author's structured identity —
+`root_author_id`, `root_author_display_name`, and `root_author_avatar_url` — taken from the
+**first link** of that same chain and the same batched author read. It is a projection, not
+a column: no schema change, no migration, and no extra query. The fields exist so a card can
+head an adaptation with "{name}'s original story" without parsing the attribution sentence
+(KNOT-023a).
+
 ### The feed reads both tables
 
 The feed is a **union of the two tables above**, not a query over `stories` alone:

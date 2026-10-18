@@ -16,6 +16,7 @@ import { colors, layout, radius, spacing, tabularNums, typeScale } from '../them
 import { PLACEHOLDER_MEDIA_ASPECT_RATIO } from '../utils/mediaFrame';
 import { useMediaAspectRatio } from '../utils/useMediaAspectRatio';
 import AuthorLine from './AuthorLine';
+import Avatar from './Avatar';
 import { feedMetaLine, isPreviewTruncated } from './feedEntryMeta';
 import FeedVideo, { VIDEO_MUTE_BUTTON_SIZE } from './FeedVideo';
 import PillarTag from './PillarTag';
@@ -51,6 +52,15 @@ type FeedEntryStory = {
   readonly author_display_name?: string | null;
   readonly author_avatar_url?: string | null;
   readonly author_rooted?: { readonly place: string; readonly duration_bucket: string } | null;
+  /**
+   * The ORIGINAL author of the story an adaptation adapts: the first link of its
+   * lineage. The version variant heads the card with "{name}'s original story",
+   * and these fields are what it reads -- the attribution sentence is never
+   * parsed for them (KNOT-023a). A story entry carries none of them.
+   */
+  readonly root_author_id?: string;
+  readonly root_author_display_name?: string | null;
+  readonly root_author_avatar_url?: string | null;
   readonly created_at: string;
   readonly version_count?: number;
   readonly language_count?: number;
@@ -120,6 +130,12 @@ type FeedEntryProps = {
 const PREVIEW_LINES = 3;
 
 /**
+ * The attribution header's line limit. A long name may wrap once, but the header
+ * is a caption above the author block, so it must not grow without bound.
+ */
+const ATTRIBUTION_NAME_LINES = 2;
+
+/**
  * The attribution sentence's line limit. It is clamped rather than wrapped freely
  * because a deep lineage produces a long sentence, and an entry must not grow
  * taller than its content is worth (KNOT-022).
@@ -149,6 +165,15 @@ const NOOP = (): void => undefined;
 function resolveMediaUrl(path: string | null | undefined): string {
   const trimmed = typeof path === 'string' ? path.trim() : '';
   return trimmed === '' ? '' : `${API_BASE_URL}${trimmed}`;
+}
+
+/**
+ * Resolves an avatar path returned by the API against the base URL. A missing or
+ * blank path resolves to `undefined`, which `Avatar` reads as "draw initials".
+ */
+function resolveAvatarUrl(path: string | null | undefined): string | undefined {
+  const trimmed = typeof path === 'string' ? path.trim() : '';
+  return trimmed === '' ? undefined : `${API_BASE_URL}${trimmed}`;
 }
 
 /**
@@ -233,6 +258,13 @@ export default function FeedEntry({
   });
 
   const isVersion = variant === 'version';
+  // The original author, for the version variant's header. A payload from a server
+  // that predates the structured fields carries no name, and the header is then
+  // omitted rather than drawn as a nameless phrase (KNOT-023a).
+  const rootAuthorName =
+    typeof story.root_author_display_name === 'string' ? story.root_author_display_name.trim() : '';
+  const rootAuthorAvatarUrl = resolveAvatarUrl(story.root_author_avatar_url);
+  const showAttributionHeader = isVersion && rootAuthorName !== '';
   // The badge names the version and the language it was written in, which is what
   // makes an adaptation legible before the text is read: "Version 2 · Zulu". The
   // style upper-cases it, so the wording is written in sentence case here.
@@ -252,6 +284,39 @@ export default function FeedEntry({
       testID={testID}
     >
       <View style={styles.padded}>
+        {/* An adaptation is headed by the person it descends from, in structured
+            form: the payload names the root author, so the card never parses the
+            attribution sentence to find them (KNOT-023a). The header belongs to
+            the version variant only; a story card starts with its own author. */}
+        {showAttributionHeader ? (
+          <>
+            <View style={styles.attributionHeader} testID="attribution-header">
+              <Avatar
+                uri={rootAuthorAvatarUrl}
+                displayName={rootAuthorName}
+                size="sm"
+                accessibilityLabel={`${rootAuthorName}'s profile picture`}
+              />
+              <Text
+                testID="attribution-name"
+                style={[typeScale.label, styles.attributionName]}
+                numberOfLines={ATTRIBUTION_NAME_LINES}
+              >
+                {rootAuthorName}
+                <Text
+                  testID="attribution-suffix"
+                  style={[typeScale.caption, styles.attributionSuffix]}
+                >
+                  {"'s original story"}
+                </Text>
+              </Text>
+            </View>
+            {/* One step darker than a hairline: it separates two blocks inside
+                the entry, not two entries (KNOT-023a). */}
+            <View style={styles.attributionDivider} testID="attribution-divider" />
+          </>
+        ) : null}
+
         <AuthorLine
           displayName={story.author_display_name}
           avatarUrl={story.author_avatar_url}
@@ -259,6 +324,8 @@ export default function FeedEntry({
           rooted={story.author_rooted ?? null}
           size="large"
           showRootedOnNewLine
+          // The feed's own compact form: "3d" rather than "3 days ago" (KNOT-023a).
+          timeFormat="short"
           onPress={onOpenAuthor}
         />
 
@@ -392,6 +459,26 @@ export default function FeedEntry({
 }
 
 const styles = StyleSheet.create({
+  // The version header: a small avatar, then the original author's name with the
+  // quiet possessive. It is a caption above the author block, not a byline.
+  attributionHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  attributionName: {
+    color: colors.text.primary,
+    flexShrink: 1,
+  },
+  attributionSuffix: {
+    color: colors.text.tertiary,
+  },
+  attributionDivider: {
+    backgroundColor: colors.border.divider,
+    height: 1,
+    marginBottom: spacing.md,
+    marginTop: spacing.sm,
+  },
   attribution: {
     // Quiet: the attribution supports the entry, it does not compete with the
     // title or the preview (KNOT-022).

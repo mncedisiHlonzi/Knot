@@ -61,6 +61,17 @@ export const colors = {
   },
   border: {
     hairline: active.line,
+    /**
+     * The line drawn between two blocks *inside* one entry — the attribution
+     * header and the author block — where a hairline would read as the entry's
+     * own edge. It is one step darker than `hairline` so the two never read as
+     * the same rule when they appear near each other (KNOT-023a).
+     *
+     * It has no palette swatch in the design reference; like `scrim.overlay`, it
+     * is a role this layer owns so the value stays defined in one place. The
+     * light value is the reference's field-border grey.
+     */
+    divider: '#D5D9E0',
     /** @deprecated use `border.hairline`. */
     subtle: active.line,
     /** @deprecated use `border.hairline`. */

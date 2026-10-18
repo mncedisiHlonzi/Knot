@@ -1388,6 +1388,30 @@ badge agree even though the schema still permits the value.
   `typeScale.caption`) and keeps its two-line clamp, so it reads as context rather than a
   footnote.
 
+### KNOT-023a — the feed card's attribution header
+
+A version card now **opens with who it descends from**: a small avatar and
+"{name}'s original story" — the name in `typeScale.label` at `colors.text.primary`, the
+possessive in `typeScale.caption` at `colors.text.tertiary` — then a one-pixel
+`colors.border.divider` rule, then the poster's author block. A story card has no header:
+its author block starts the card directly.
+
+- The values come from **structured fields on the version feed item** —
+  `root_author_id`, `root_author_display_name`, `root_author_avatar_url` — not from parsing
+  `attribution_line`. The backend fills them from the first link of the lineage it already
+  resolves for the sentence, so the fields cost no query. See `docs/API.md`.
+- `colors.border.divider` is new and is **#D5D9E0**, one step darker than
+  `border.hairline` (#E8EAEE). It marks a boundary *inside* an entry; hairlines still
+  separate entries (and the Feed still draws one at the bottom of each).
+- The header is inline in `FeedEntry`, not a mode of `AuthorLine`: it names a **second**
+  person (the original author), and `AuthorLine`'s contract is one author's byline. The
+  poster's line below it is still `AuthorLine`, unchanged for the other seven screens.
+- The feed uses a **compact** relative time, `formatRelativeTimeShort` in
+  `src/utils/time.ts`: `now`, `5m`, `3h`, `2d`, `2w`, `3mo`, `1y`. `m` is **minutes** and
+  `mo` is **months**, so the two can never be confused. `AuthorLine` gained an opt-in
+  `timeFormat` prop (default `long`); only `FeedEntry` passes `"short"`, so every other
+  screen keeps its prose time.
+
 ### Rooted, and the enrichment pattern
 
 `POST /users/me/rooted`, `GET /users/me/rooted`, and `GET /users/{id}/rooted` are served by

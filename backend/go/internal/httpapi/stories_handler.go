@@ -243,9 +243,19 @@ type feedVersionItem struct {
 	AuthorDisplayName string         `json:"author_display_name"`
 	AuthorAvatarURL   *string        `json:"author_avatar_url"`
 	AuthorRooted      *rootedSummary `json:"author_rooted"`
-	Language          string         `json:"language"`
-	Title             string         `json:"title"`
-	Body              string         `json:"body"`
+	// RootAuthorID, RootAuthorDisplayName, and RootAuthorAvatarURL describe the
+	// ORIGINAL author: the first link of the lineage. They let a card head an
+	// adaptation with "{name}'s original story" from structured data instead of
+	// parsing the attribution sentence (KNOT-023a). They are derived from the same
+	// batched chain and author read the sentence uses, so they cost no extra query;
+	// the avatar is null when the root author has none, and the name is empty when
+	// the lineage could not be resolved.
+	RootAuthorID          string  `json:"root_author_id"`
+	RootAuthorDisplayName string  `json:"root_author_display_name"`
+	RootAuthorAvatarURL   *string `json:"root_author_avatar_url"`
+	Language              string  `json:"language"`
+	Title                 string  `json:"title"`
+	Body                  string  `json:"body"`
 	// Pillar is the story's pillar, inherited: a pillar frames the story, and an
 	// adaptation of a heritage story is still heritage.
 	Pillar stories.Pillar `json:"pillar"`

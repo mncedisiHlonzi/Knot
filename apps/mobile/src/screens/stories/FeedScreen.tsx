@@ -316,6 +316,14 @@ export default function FeedScreen({
               preview: item.body,
               preview_truncated: item.preview_truncated,
               reactions: item.reactions,
+              // The original author's identity, only on an adaptation; the card
+              // heads a version with it. A story entry has no such fields, so
+              // the conditional narrows the union (KNOT-023a).
+              root_author_avatar_url:
+                item.kind === 'version' ? item.root_author_avatar_url : undefined,
+              root_author_display_name:
+                item.kind === 'version' ? item.root_author_display_name : undefined,
+              root_author_id: item.kind === 'version' ? item.root_author_id : undefined,
               // Sensitive is inherited from the story, so it travels with both
               // kinds of entry and the card holds its media until revealed
               // (KNOT-023).

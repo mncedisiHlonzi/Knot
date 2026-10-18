@@ -190,6 +190,16 @@ export type VersionFeedItem = {
   readonly author_display_name?: string;
   readonly author_avatar_url?: string | null;
   readonly author_rooted?: AuthorRooted | null;
+  /**
+   * The ORIGINAL author of the story this version adapts -- the first link of its
+   * lineage -- so a card can head the entry with "{name}'s original story" from
+   * structured data rather than parsing `attribution_line` (KNOT-023a). The name is
+   * empty when the lineage could not be resolved, and the avatar is null when the
+   * original author has none.
+   */
+  readonly root_author_id?: string;
+  readonly root_author_display_name?: string;
+  readonly root_author_avatar_url?: string | null;
   readonly language: string;
   readonly title: string;
   readonly body: string;

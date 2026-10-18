@@ -222,6 +222,8 @@ describe('FeedEntry', () => {
     expect(authorLine?.props?.rooted).toEqual({ place: 'Oaxaca', duration_bucket: 'many_years' });
     expect(authorLine?.props?.showRootedOnNewLine).toBe(true);
     expect(authorLine?.props?.size).toBe('large');
+    // The feed is the only caller of the compact time format (KNOT-023a).
+    expect(authorLine?.props?.timeFormat).toBe('short');
   });
 
   it('passes a null Rooted summary when the author has no signal', () => {
@@ -418,6 +420,65 @@ describe('FeedEntry', () => {
       expect(attribution).toBeDefined();
       expect(attribution?.props?.style).toContain(typeScale.bodyS);
       expect(attribution?.props?.style).not.toContain(typeScale.caption);
+    });
+  });
+
+  describe('the attribution header', () => {
+    const adapted = {
+      ...story,
+      root_author_id: 'author-root',
+      root_author_display_name: 'Ada Lovelace',
+      root_author_avatar_url: '/users/author-root/avatar?v=a.png',
+    };
+
+    it('heads a version with the original author and a divider', () => {
+      const element = FeedEntry({
+        story: adapted,
+        variant: 'version',
+        versionNumber: 2,
+        onPress: () => undefined,
+      });
+
+      // The header is a structural marker, so its presence is asserted by test id
+      // rather than by the order of children.
+      expect(findElement(element, (props) => props.testID === 'attribution-header')).toBeDefined();
+      expect(findElement(element, (props) => props.testID === 'attribution-divider')).toBeDefined();
+
+      // The name takes the label voice, the possessive the caption voice.
+      expect(
+        findElement(element, (props) => props.testID === 'attribution-name')?.props?.style,
+      ).toEqual(expect.arrayContaining([typeScale.label]));
+      expect(
+        findElement(element, (props) => props.testID === 'attribution-suffix')?.props?.style,
+      ).toEqual(expect.arrayContaining([typeScale.caption]));
+
+      const text = collectText(element);
+      expect(text).toContain('Ada Lovelace');
+      expect(text).toContain("'s original story");
+    });
+
+    it('never heads a story entry, whose author block starts the card', () => {
+      const element = FeedEntry({ story, onPress: () => undefined });
+
+      expect(
+        findElement(element, (props) => props.testID === 'attribution-header'),
+      ).toBeUndefined();
+      expect(
+        findElement(element, (props) => props.testID === 'attribution-divider'),
+      ).toBeUndefined();
+    });
+
+    it('omits the header when the payload carries no root author', () => {
+      const element = FeedEntry({
+        story: { ...story, root_author_display_name: null },
+        variant: 'version',
+        versionNumber: 2,
+        onPress: () => undefined,
+      });
+
+      expect(
+        findElement(element, (props) => props.testID === 'attribution-header'),
+      ).toBeUndefined();
     });
   });
 });

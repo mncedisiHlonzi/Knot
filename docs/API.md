@@ -480,6 +480,9 @@ two entry kinds** — a story and somebody's adaptation of one — and every ent
       "title": "Imvula yokuqala",
       "version_number": 2,
       "attribution_line": "Adapted from Nomsa Khan's original story in English into Zulu.",
+      "root_author_id": "…",
+      "root_author_display_name": "Nomsa Khan",
+      "root_author_avatar_url": "/users/…/avatar?v=a.png",
       "created_at": "…"
     },
     { "kind": "story", "id": "…", "title": "The first rain", "created_at": "…" }
@@ -532,6 +535,7 @@ one card component can draw both. What differs:
 | `reactions`, `my_reactions` | the story's | the **version's**: a reader reacts to the adaptation they are reading (KNOT-021) |
 | `version_number` | absent | the entry's position in its lineage, counting the original as **1**, so a first adaptation is `2` |
 | `attribution_line` | absent | the server-rendered sentence tracing this version back to the original, shown **verbatim**; empty when the lineage could not be resolved |
+| `root_author_id`, `root_author_display_name`, `root_author_avatar_url` | absent | the **original** author — the first link of the lineage — as structured data, so a card can head the entry with "{name}'s original story" without parsing `attribution_line`. The name is empty when the lineage could not be resolved; the avatar is `null` when the original author has none (KNOT-023a) |
 | `root_version_id`, `updated_at`, `version_depth`, `media` | present (`version_depth` is `0`) | absent |
 
 `attribution_line` is the same wording the version endpoints use (see
@@ -542,6 +546,11 @@ what a reader says out loud.
 `version_number` is `0` and `attribution_line` is empty when the lineage could not be
 resolved. Attribution is enrichment: a page that cannot resolve a lineage is still served,
 and the entry simply shows no sentence.
+
+The three `root_author_*` fields are filled by the **same** batched enrichment as
+`attribution_line` — one ancestry read plus the page's single author read — so they add no
+query. They are present on every version entry: an unresolvable lineage yields an empty
+name and a null avatar, which a client reads as "do not draw the header" (KNOT-023a).
 
 Ordering is `(created_at DESC, id DESC)` over **both kinds**, keyed by each entry's own
 `created_at`: an adaptation appears where it was written, not where its story was published.

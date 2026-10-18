@@ -64,3 +64,61 @@ export function formatRelativeTime(value: string, now: Date = new Date()): strin
   const years = Math.round(elapsed / (365 * DAY));
   return years <= 1 ? '1 year ago' : `${years} years ago`;
 }
+
+/**
+ * Formats an ISO-8601 timestamp as the feed's compact relative phrase: "now",
+ * "5m", "3h", "2d", "2w", "3mo", "1y".
+ *
+ * The feed is the only caller. A card's author block already names the person and
+ * the place, so a two-word phrase would crowd it; the compact form keeps the line
+ * to the width of the meta text beside it (KNOT-023a).
+ *
+ * **The units are deliberately unambiguous:** `m` is minutes and `mo` is months,
+ * so "1m" and "1mo" can never be confused. Hours are `h`, days `d`, weeks `w`,
+ * years `y`. The thresholds match `formatRelativeTime`, so the two forms only
+ * differ in wording and never disagree about which unit applies.
+ *
+ * A timestamp that cannot be parsed is returned verbatim, and a future timestamp
+ * reads as "now", for the same reasons the long form does.
+ *
+ * @param value An ISO-8601 timestamp, as the API returns them.
+ * @param now The instant to compare against. Defaults to the current time.
+ */
+export function formatRelativeTimeShort(value: string, now: Date = new Date()): string {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  const elapsed = now.getTime() - parsed.getTime();
+  if (elapsed < 45 * SECOND) {
+    return 'now';
+  }
+  if (elapsed < 90 * SECOND) {
+    return '1m';
+  }
+  if (elapsed < HOUR) {
+    return `${Math.round(elapsed / MINUTE)}m`;
+  }
+  if (elapsed < 2 * HOUR) {
+    return '1h';
+  }
+  if (elapsed < DAY) {
+    return `${Math.round(elapsed / HOUR)}h`;
+  }
+  if (elapsed < 2 * DAY) {
+    return '1d';
+  }
+  if (elapsed < WEEK) {
+    return `${Math.round(elapsed / DAY)}d`;
+  }
+  if (elapsed < 5 * WEEK) {
+    return `${Math.round(elapsed / WEEK)}w`;
+  }
+  if (elapsed < 365 * DAY) {
+    return `${Math.round(elapsed / (30 * DAY))}mo`;
+  }
+
+  const years = Math.round(elapsed / (365 * DAY));
+  return years <= 1 ? '1y' : `${years}y`;
+}

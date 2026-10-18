@@ -3,12 +3,18 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { API_BASE_URL } from '../config/api';
 import { colors, spacing, typeScale } from '../theme';
-import { formatRelativeTime } from '../utils/time';
+import { formatRelativeTime, formatRelativeTimeShort } from '../utils/time';
 import Avatar from './Avatar';
 import RootedBadge from './RootedBadge';
 
 /** The three sizes AuthorLine offers. */
 export type AuthorLineSize = 'small' | 'medium' | 'large';
+
+/**
+ * How the timestamp reads. `long` is "3 days ago" and is the default every screen
+ * already uses; `short` is the feed's compact "3d" (KNOT-023a).
+ */
+export type AuthorLineTimeFormat = 'long' | 'short';
 
 /**
  * The inline Rooted summary AuthorLine renders. It is typed as plain strings (not
@@ -49,6 +55,12 @@ type AuthorLineProps = {
    * passes `true`.
    */
   readonly showRootedOnNewLine?: boolean;
+  /**
+   * How to word the timestamp. Defaults to `long` ("3 days ago"), which is what
+   * every existing screen gets; the Feed opts into `short` ("3d") because its
+   * author block is already dense (KNOT-023a).
+   */
+  readonly timeFormat?: AuthorLineTimeFormat;
   /**
    * Called when the author's avatar or name is tapped, to open their profile.
    *
@@ -102,6 +114,7 @@ export default function AuthorLine({
   rooted,
   size = 'small',
   showRootedOnNewLine = false,
+  timeFormat = 'long',
   onPress,
   testID,
 }: AuthorLineProps): React.ReactElement | null {
@@ -111,7 +124,11 @@ export default function AuthorLine({
   const avatarUri = path === '' ? undefined : `${API_BASE_URL}${path}`;
 
   const relative =
-    typeof createdAt === 'string' && createdAt !== '' ? formatRelativeTime(createdAt) : '';
+    typeof createdAt === 'string' && createdAt !== ''
+      ? timeFormat === 'short'
+        ? formatRelativeTimeShort(createdAt)
+        : formatRelativeTime(createdAt)
+      : '';
 
   const hasRootedObject = rooted !== null && rooted !== undefined;
   const rootedPlace =

@@ -81,7 +81,7 @@ func feedFixture(t *testing.T) (http.Handler, *memoryStoryStore, feedLookups) {
 
 	lookups := feedLookups{
 		authors: &fakeAuthorService{users: map[string]*identity.User{
-			feedAuthorID:  {ID: feedAuthorID, DisplayName: feedAuthorName},
+			feedAuthorID:  {ID: feedAuthorID, DisplayName: feedAuthorName, AvatarURL: "avatars/nomsa.png"},
 			feedAdapterID: {ID: feedAdapterID, DisplayName: feedAdapterName},
 		}},
 		rooted: &fakeRootedService{batchResult: rootedSignals(map[string]string{feedAdapterID: "Durban"})},
@@ -189,6 +189,17 @@ func TestFeedCarriesAdaptationEntries(t *testing.T) {
 	}
 	if adaptation.AttributionLine != feedAttribution {
 		t.Errorf("attribution line = %q, want %q", adaptation.AttributionLine, feedAttribution)
+	}
+	// The root author is structured data on the entry, so a card can head it with
+	// "{name}'s original story" without parsing the sentence (KNOT-023a).
+	if adaptation.RootAuthorID != feedAuthorID {
+		t.Errorf("root author id = %q, want the original's %q", adaptation.RootAuthorID, feedAuthorID)
+	}
+	if adaptation.RootAuthorDisplayName != feedAuthorName {
+		t.Errorf("root author display name = %q, want %q", adaptation.RootAuthorDisplayName, feedAuthorName)
+	}
+	if adaptation.RootAuthorAvatarURL == nil || !strings.Contains(*adaptation.RootAuthorAvatarURL, feedAuthorID) {
+		t.Errorf("root author avatar = %v, want the original's avatar path", adaptation.RootAuthorAvatarURL)
 	}
 	if !adaptation.CreatedAt.Equal(testNow) {
 		t.Errorf("created at = %v, want the version's own timestamp %v", adaptation.CreatedAt, testNow)
