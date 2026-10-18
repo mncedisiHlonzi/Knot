@@ -43,6 +43,12 @@ type VideoThumbnailProps = {
  * The square is a **fixed, explicit size**: the frame carries the tile's
  * width/height and the player fills it at `100%` with `cover`, so the frame's
  * shape — not the clip's — decides the surface's size (KNOT-025-fix5).
+ *
+ * The player also sits inside an **absolute-fill** view. That takes it out of
+ * layout flow and gives the native surface a box with all four insets resolved,
+ * so it cannot grow past the frame; the frame's `overflow: 'hidden'` then clips
+ * it. Without the anchor an Android video surface measured itself and bled up
+ * into the carousel when its tile was active (KNOT-025-fix6).
  */
 export default function VideoThumbnail({
   uri,
@@ -53,17 +59,21 @@ export default function VideoThumbnail({
 
   return (
     <View style={[styles.frame, { height: size, width: size }]}>
-      <Video
-        source={{ uri }}
-        style={styles.video}
-        paused
-        muted
-        repeat={false}
-        resizeMode="cover"
-        useTextureView
-        onLoad={handleReady}
-        onReadyForDisplay={handleReady}
-      />
+      {/* The clipping anchor: a full-bleed, out-of-flow box the player fills
+          exactly (KNOT-025-fix6). */}
+      <View style={StyleSheet.absoluteFillObject}>
+        <Video
+          source={{ uri }}
+          style={styles.video}
+          paused
+          muted
+          repeat={false}
+          resizeMode="cover"
+          useTextureView
+          onLoad={handleReady}
+          onReadyForDisplay={handleReady}
+        />
+      </View>
 
       {ready ? null : <View style={styles.fallback} testID="video-thumbnail-fallback" />}
 

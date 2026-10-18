@@ -10,7 +10,11 @@ jest.mock('react', () => ({
 }));
 
 jest.mock('react-native', () => ({
-  StyleSheet: { create: (styles: unknown) => styles },
+  StyleSheet: {
+    // The real shape, so the anchor's props can be asserted as they are on device.
+    absoluteFillObject: { bottom: 0, left: 0, position: 'absolute', right: 0, top: 0 },
+    create: (styles: unknown) => styles,
+  },
   View: 'View',
 }));
 
@@ -105,6 +109,36 @@ describe('VideoThumbnail', () => {
     const element = VideoThumbnail({ uri: URI });
 
     expect(element.props?.style).toEqual(expect.arrayContaining([{ height: 64, width: 64 }]));
+  });
+
+  it('clips the player inside an absolute-fill anchor within the fixed square', () => {
+    const element = VideoThumbnail({ uri: URI, size: 64 });
+    const frameStyles = element.props?.style as Array<Record<string, unknown>>;
+
+    // The outermost wrapper is the explicit square that owns the clip (fix6).
+    expect(frameStyles[1]).toEqual({ height: 64, width: 64 });
+    expect(frameStyles[0]).toMatchObject({ overflow: 'hidden' });
+
+    const anchor = findElement(element, (props) => {
+      const style = props.style as Record<string, unknown> | undefined;
+
+      return (
+        style?.position === 'absolute' &&
+        style.top === 0 &&
+        style.bottom === 0 &&
+        style.left === 0 &&
+        style.right === 0 &&
+        // Excludes the absolute placeholder, which paints a fill.
+        style.backgroundColor === undefined
+      );
+    });
+
+    // The player only ever lays out inside that anchor...
+    expect(anchor).toBeDefined();
+    expect(findElementByType(anchor?.props?.children, 'Video')).toBeDefined();
+    // ...while the overlays stay siblings of it, inside the clipped frame.
+    expect(findElementByType(anchor?.props?.children, 'Play')).toBeUndefined();
+    expect(findElementByType(element, 'Play')).toBeDefined();
   });
 
   it('covers the tile with a sunken placeholder until the first frame loads', () => {

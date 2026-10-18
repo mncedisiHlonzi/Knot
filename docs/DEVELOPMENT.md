@@ -1560,13 +1560,25 @@ legible over any media (KNOT-025-fix4).
   (`THUMBNAIL_GAP`, which also sets the snap stride and the auto-centre offset), and the
   active/hairline ring is now an **overlay View** rather than the tile's border, so the
   media keeps its full square. `VideoThumbnail` takes a `size` and draws an **explicit**
-  square frame with the player at `100%`/`cover` — a flex or absolute-fill player let the
-  native surface measure itself and the tiles read stretched/growing. The viewer is out
+  square frame with the player at `100%`/`cover` — a bare flex player let the native
+  surface measure itself and the tiles read stretched/growing. The viewer is out
   of the tap flow: `CarouselPage` is a plain `View` (no `onPress`, no page label) and the
   strip tiles are non-interactive `View`s, so `viewerIndex`, the `MediaGalleryModal`
   render, `carouselRef` and `handleThumbnailPress` are all gone from this screen. The
   modal component and its wiring are untouched; the strip now only *follows* the pager and
   no longer jumps it. Both removals are marked `TODO: Re-enable viewer in a future task`.
+- **KNOT-025-fix6:** an **active video tile bled upward out of its square into the
+  carousel** on Android — an image never did. The fix is structural: inside
+  `VideoThumbnail`'s fixed `size`×`size` frame (`overflow: 'hidden'`, `radius.md`) the
+  `<Video>` now sits in a **`StyleSheet.absoluteFillObject` view**. That gives the native
+  surface a box with all four insets resolved, so it cannot take its own size from the
+  clip; the frame's `overflow: 'hidden'` then clips it. The player keeps
+  `width: '100%' / height: '100%'`, `cover`, `useTextureView` and `paused`, and the
+  placeholder and play disc remain **siblings** of the anchor inside the clipped frame.
+  ⚠️ Strip tiles take the SAME rules already — `StoryDetailScreen`'s `styles.thumbnail`
+  is `THUMBNAIL_SIZE`² with `overflow: 'hidden'` and `radius.md` — so the image tile needed
+  no change (and an `Image` has no native surface to escape). Tests 384→**385/36** (`+1`
+  asserting the anchor exists, holds the player, and leaves the overlays outside it).
 
 ### Rooted, and the enrichment pattern
 
