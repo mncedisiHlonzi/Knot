@@ -608,6 +608,9 @@ export default function App(): React.ReactElement {
             onOpenStory={(storyId) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId }))
             }
+            onConversation={(storyId, versionId) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'comments', storyId, versionId }))
+            }
             onViewTree={(storyId) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'tree', storyId }))
             }

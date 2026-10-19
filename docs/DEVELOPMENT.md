@@ -1647,6 +1647,14 @@ The adapter's optional note is kept as a quiet note block rather than the old bo
 so it does not disturb the Story Detail's rhythm. The Language Tree row pushes the story's
 tree, so it opens the tree from a version that was reached another way.
 
+KNOT-027 polishes that credit and action area after on-device review. The attribution
+sentence now lives in its own block with `marginTop: spacing.md` below the **whole** author
+line — avatar, name, Rooted line, and time — because at 4pt it read as cramped against the
+Rooted badge. It remains a two-line `caption` in `text.tertiary`. The action area also gained
+the Story Detail's secondary **Join the conversation** button, which pushes the existing
+`comments` overlay with the version's story id and version id. The version payload has no
+comment count, so the label is unnumbered.
+
 ### Rooted, and the enrichment pattern
 
 `POST /users/me/rooted`, `GET /users/me/rooted`, and `GET /users/{id}/rooted` are served by

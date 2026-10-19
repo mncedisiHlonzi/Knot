@@ -166,6 +166,11 @@ type StoryVersionScreenProps = {
   /** Called when the person wants to read the story the version belongs to. */
   readonly onOpenStory: (storyId: string) => void;
   /**
+   * Called to open the conversation on this version. The comment thread needs
+   * both ids: the version whose comments are shown and the story it belongs to.
+   */
+  readonly onConversation: (storyId: string, versionId: string) => void;
+  /**
    * Called when the person wants to see every version of the story. The argument
    * is the story id, because the tree is the story's.
    */
@@ -206,6 +211,7 @@ export default function StoryVersionScreen({
   onBack,
   onAdapt,
   onOpenStory,
+  onConversation,
   onViewTree,
   onOpenUserProfile,
 }: StoryVersionScreenProps): React.ReactElement {
@@ -480,11 +486,17 @@ export default function StoryVersionScreen({
               {/* Who this version was adapted from, in whose language, and from
                   whom in turn. The server renders the sentence; this screen shows
                   it verbatim and renders nothing when it is absent, so an older
-                  server does not leave a blank line (KNOT-021, KNOT-026). */}
+                  server does not leave a blank line (KNOT-021, KNOT-026).
+
+                  It sits in its own block below the WHOLE author line — avatar,
+                  name, Rooted line, and time — so it can never crowd or overlap
+                  the badge above it (KNOT-027). */}
               {attributionLine === '' ? null : (
-                <Text style={[typeScale.caption, styles.attribution]} numberOfLines={2}>
-                  {attributionLine}
-                </Text>
+                <View style={styles.attributionBlock}>
+                  <Text style={[typeScale.caption, styles.attribution]} numberOfLines={2}>
+                    {attributionLine}
+                  </Text>
+                </View>
               )}
 
               <Pressable
@@ -516,8 +528,9 @@ export default function StoryVersionScreen({
               )}
 
               {/* The action area mirrors the Story Detail: one hairline above it,
-                  the four signals in a two-by-two grid, then the version's two
-                  actions (KNOT-025-fix2, KNOT-026). */}
+                  the four signals in a two-by-two grid, then the version's three
+                  actions — conversation, original story, adaptation
+                  (KNOT-025-fix2, KNOT-026, KNOT-027). */}
               <View style={styles.actionsSection}>
                 <ReactionBar
                   layout="grid"
@@ -536,6 +549,12 @@ export default function StoryVersionScreen({
                 />
 
                 <View style={styles.actionButtons}>
+                  <Button
+                    variant="secondary"
+                    fullWidth
+                    label="Join the conversation"
+                    onPress={() => onConversation(version.story_id, version.id)}
+                  />
                   <Button
                     variant="ghost"
                     fullWidth
@@ -609,12 +628,15 @@ const styles = StyleSheet.create({
     marginTop: spacing.xl,
     paddingTop: spacing.lg,
   },
-  // The lineage sentence under the adapter's byline: quiet enough to read as a
-  // note rather than as a second headline, and directly below the author block so
-  // it never competes with the person's name (KNOT-021, KNOT-026).
+  // The lineage sentence sits in its own block below the whole author line —
+  // avatar, name, Rooted line, and time — so it can never crowd or overlap the
+  // badge above it. `spacing.md` matches the air the title leaves before the
+  // author block (KNOT-021, KNOT-027).
+  attributionBlock: {
+    marginTop: spacing.md,
+  },
   attribution: {
     color: colors.text.tertiary,
-    marginTop: spacing.xs,
   },
   body: {
     paddingHorizontal: layout.screenPaddingReading,

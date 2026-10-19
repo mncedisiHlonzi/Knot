@@ -204,8 +204,38 @@ function findByType(tree: unknown, type: unknown): ElementLike | undefined {
   return found;
 }
 
+/** Every `Button` in the tree, so actions can be asserted by their label. */
+function buttonElements(tree: unknown): ElementLike[] {
+  const found: ElementLike[] = [];
+  collect(tree, (element) => {
+    if (element.type === Button) {
+      found.push(element);
+    }
+  });
+  return found;
+}
+
+/** Finds the first `Text` whose drawn content matches. */
+function findText(tree: unknown, value: string): ElementLike | undefined {
+  let found: ElementLike | undefined;
+  collect(tree, (element) => {
+    if (
+      found === undefined &&
+      element.type === 'Text' &&
+      textContent(element.props?.children) === value
+    ) {
+      found = element;
+    }
+  });
+  return found;
+}
+
+type RenderOverrides = {
+  readonly onConversation?: (storyId: string, versionId: string) => void;
+};
+
 /** Calls the screen in its loaded state: a version and its parent story. */
-function renderLoaded(): unknown {
+function renderLoaded(overrides: RenderOverrides = {}): unknown {
   mockStateValues = [version, story, false];
   mockStateCursor = 0;
 
@@ -215,6 +245,7 @@ function renderLoaded(): unknown {
     onBack: () => undefined,
     onAdapt: () => undefined,
     onOpenStory: () => undefined,
+    onConversation: overrides.onConversation ?? (() => undefined),
     onViewTree: () => undefined,
     onOpenUserProfile: () => undefined,
   });
@@ -225,6 +256,8 @@ describe('StoryVersionScreen', () => {
     const tree = renderLoaded();
 
     expect(drawnText(tree)).toContain(attributionLine);
+    // The credit is a clamped caption, so a long lineage cannot push the layout.
+    expect(findText(tree, attributionLine)?.props).toMatchObject({ numberOfLines: 2 });
     expect(carouselMediaIds(tree)).toEqual([storyMedia.id, storyVideo.id]);
   });
 
@@ -239,13 +272,24 @@ describe('StoryVersionScreen', () => {
       timeFormat: 'short',
     });
 
-    const labels: unknown[] = [];
-    collect(tree, (element) => {
-      if (element.type === Button) {
-        labels.push(element.props?.label);
-      }
-    });
-    expect(labels).toEqual(['View original story', 'Adapt this version']);
+    expect(buttonElements(tree).map((element) => element.props?.label)).toEqual([
+      'Join the conversation',
+      'View original story',
+      'Adapt this version',
+    ]);
+  });
+
+  it('opens the conversation on this version', () => {
+    const onConversation = jest.fn();
+    const tree = renderLoaded({ onConversation });
+
+    const commentButton = buttonElements(tree).find(
+      (element) => element.props?.label === 'Join the conversation',
+    );
+    expect(commentButton).toBeDefined();
+
+    (commentButton?.props?.onPress as (() => void) | undefined)?.();
+    expect(onConversation).toHaveBeenCalledWith(version.story_id, version.id);
   });
 
   it("shows the inherited pillar and the language tree's version count", () => {
