@@ -41,14 +41,16 @@ type VideoThumbnailProps = {
  * (the same rule as the map surfaces).
  *
  * The square is a **fixed, explicit size**: the frame carries the tile's
- * width/height and the player fills it at `100%` with `cover`, so the frame's
- * shape — not the clip's — decides the surface's size (KNOT-025-fix5).
+ * width/height and the player sits in an identically sized box with `cover`, so
+ * the frame's shape — not the clip's — decides the surface's size (KNOT-025-fix5).
  *
- * The player also sits inside an **absolute-fill** view. That takes it out of
- * layout flow and gives the native surface a box with all four insets resolved,
- * so it cannot grow past the frame; the frame's `overflow: 'hidden'` then clips
- * it. Without the anchor an Android video surface measured itself and bled up
- * into the carousel when its tile was active (KNOT-025-fix6).
+ * Both the anchor and the player are **absolutely positioned with explicit
+ * width/height** (not `absoluteFillObject`, and no percentage sizes). That takes
+ * the native surface out of the document flow entirely, so it cannot contribute
+ * to any parent's measured height and cannot be stretched by flexbox. The
+ * frame's `overflow: 'hidden'` then clips it. An Android TextureView ignored the
+ * absolute-fill anchor and still measured itself against the clip, bleeding up
+ * into the carousel (KNOT-025-fix8).
  */
 export default function VideoThumbnail({
   uri,
@@ -59,12 +61,29 @@ export default function VideoThumbnail({
 
   return (
     <View style={[styles.frame, { height: size, width: size }]}>
-      {/* The clipping anchor: a full-bleed, out-of-flow box the player fills
-          exactly (KNOT-025-fix6). */}
-      <View style={StyleSheet.absoluteFillObject}>
+      {/* The clipping anchor: an out-of-flow box with explicit dimensions, so a
+          native surface can never take its size from anything but this square
+          (KNOT-025-fix8). */}
+      <View
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: size,
+          height: size,
+        }}
+      >
         <Video
           source={{ uri }}
-          style={styles.video}
+          // Absolute and explicitly sized on the player too: `100%` dimensions
+          // let Android's TextureView resolve its own measurement (fix8).
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: size,
+            height: size,
+          }}
           paused
           muted
           repeat={false}
@@ -112,11 +131,5 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: spacing.xs,
     width: PLAY_DISC_SIZE,
-  },
-  // `cover` plus a full-size style: the frame's square wins, and the video's own
-  // aspect ratio is cropped rather than distorted.
-  video: {
-    height: '100%',
-    width: '100%',
   },
 });

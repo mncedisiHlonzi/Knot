@@ -10,9 +10,9 @@ jest.mock('react', () => ({
 }));
 
 jest.mock('react-native', () => ({
+  // The component must NOT rely on `absoluteFillObject` any more; leaving it out
+  // of this mock makes a regression there fail loudly (KNOT-025-fix8).
   StyleSheet: {
-    // The real shape, so the anchor's props can be asserted as they are on device.
-    absoluteFillObject: { bottom: 0, left: 0, position: 'absolute', right: 0, top: 0 },
     create: (styles: unknown) => styles,
   },
   View: 'View',
@@ -101,8 +101,15 @@ describe('VideoThumbnail', () => {
 
     // The square comes from the frame's own width/height (KNOT-025-fix5)...
     expect(element.props?.style).toEqual(expect.arrayContaining([{ height: 64, width: 64 }]));
-    // ...and the player only ever fills it, so it cannot grow past the tile.
-    expect(video?.props?.style).toEqual({ height: '100%', width: '100%' });
+    // ...and the player carries the same explicit absolute box. Percentage sizes
+    // let Android's TextureView resolve its own measurement (KNOT-025-fix8).
+    expect(video?.props?.style).toEqual({
+      height: 64,
+      left: 0,
+      position: 'absolute',
+      top: 0,
+      width: 64,
+    });
   });
 
   it('defaults the frame to a 64-point square', () => {
@@ -111,13 +118,17 @@ describe('VideoThumbnail', () => {
     expect(element.props?.style).toEqual(expect.arrayContaining([{ height: 64, width: 64 }]));
   });
 
-  it('clips the player inside an absolute-fill anchor within the fixed square', () => {
+  it('clips the player inside an explicit absolute anchor within the fixed square', () => {
     const element = VideoThumbnail({ uri: URI, size: 64 });
     const frameStyles = element.props?.style as Array<Record<string, unknown>>;
 
-    // The outermost wrapper is the explicit square that owns the clip (fix6).
+    // The outermost wrapper is the explicit square that owns the clip (fix6)...
     expect(frameStyles[1]).toEqual({ height: 64, width: 64 });
     expect(frameStyles[0]).toMatchObject({ overflow: 'hidden' });
+    // ...and it carries no flex styling that could stretch it (fix8).
+    expect(frameStyles[0]).not.toHaveProperty('flex');
+    expect(frameStyles[0]).not.toHaveProperty('flexGrow');
+    expect(frameStyles[0]).not.toHaveProperty('flexShrink');
 
     const anchor = findElement(element, (props) => {
       const style = props.style as Record<string, unknown> | undefined;
@@ -125,16 +136,27 @@ describe('VideoThumbnail', () => {
       return (
         style?.position === 'absolute' &&
         style.top === 0 &&
-        style.bottom === 0 &&
         style.left === 0 &&
-        style.right === 0 &&
+        style.width === 64 &&
+        style.height === 64 &&
         // Excludes the absolute placeholder, which paints a fill.
         style.backgroundColor === undefined
       );
     });
 
-    // The player only ever lays out inside that anchor...
     expect(anchor).toBeDefined();
+    // Explicit dimensions, NOT absoluteFillObject's four insets (fix8).
+    expect(anchor?.props?.style).toEqual({
+      height: 64,
+      left: 0,
+      position: 'absolute',
+      top: 0,
+      width: 64,
+    });
+    expect(anchor?.props?.style).not.toHaveProperty('right');
+    expect(anchor?.props?.style).not.toHaveProperty('bottom');
+
+    // The player only ever lays out inside that anchor...
     expect(findElementByType(anchor?.props?.children, 'Video')).toBeDefined();
     // ...while the overlays stay siblings of it, inside the clipped frame.
     expect(findElementByType(anchor?.props?.children, 'Play')).toBeUndefined();

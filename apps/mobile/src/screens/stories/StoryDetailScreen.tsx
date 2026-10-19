@@ -47,6 +47,13 @@ const THUMBNAIL_SIZE = 64;
 /** The gap between thumbnail tiles, which also sets the strip's snap stride. */
 const THUMBNAIL_GAP = spacing.md;
 
+/**
+ * The strip's hard height: the 64pt tile plus the content container's 12pt
+ * vertical padding at each end. The strip is clipped to this band, so a native
+ * video surface can never grow it or push the text column down (KNOT-025-fix8).
+ */
+const THUMBNAIL_STRIP_HEIGHT = THUMBNAIL_SIZE + spacing.md * 2;
+
 /** The floating header's own height, matching the `Header` component. */
 const HEADER_HEIGHT = 56;
 
@@ -715,8 +722,14 @@ const styles = StyleSheet.create({
   thumbnailRingActive: {
     borderColor: colors.brand.primary,
   },
+  // A fixed, clipped band: a horizontal ScrollView is content-sized on its
+  // cross axis, so without an explicit height a native video surface that
+  // measured itself would grow the strip and push the body down (KNOT-025-fix8).
+  // `scrollEnabled` stays true because the strip must still scroll sideways.
   thumbnailStrip: {
     flexGrow: 0,
+    height: THUMBNAIL_STRIP_HEIGHT,
+    overflow: 'hidden',
   },
   // The editorial rhythm: 8pt above the title, 12pt below it into the author
   // block, then 16pt from the author block to the language-tree row (KNOT-025-fix1).
