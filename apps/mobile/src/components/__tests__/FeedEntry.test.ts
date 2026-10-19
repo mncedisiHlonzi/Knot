@@ -369,7 +369,6 @@ describe('FeedEntry', () => {
       const header = findElementByType(element, SocialProofHeader);
       expect(header?.props).toMatchObject({
         attributionLine: sentence,
-        adapterName: 'Nomsa Khan',
         originalAuthorName: 'Ada Lovelace',
       });
 
@@ -415,7 +414,6 @@ describe('FeedEntry', () => {
       const header = findElementByType(element, SocialProofHeader);
       expect(header?.props).toMatchObject({
         attributionLine: sentence,
-        adapterName: 'Nomsa Khan',
         originalAuthorName: 'Ada Lovelace',
       });
 
@@ -485,7 +483,6 @@ describe('FeedEntry', () => {
       expect(header).toBeDefined();
       expect(header?.props).toMatchObject({
         attributionLine: '',
-        adapterName: '',
         originalAuthorName: '',
       });
       expect(header?.props?.lineageAvatars).toEqual([]);
@@ -586,7 +583,6 @@ describe('FeedEntry', () => {
 
       expect(findElementByType(element, SocialProofHeader)?.props).toMatchObject({
         attributionLine: '',
-        adapterName: 'Nomsa Khan',
         originalAuthorName: 'Ada Lovelace',
       });
       expect(collectText(element).some((value) => value.startsWith('Version '))).toBe(false);

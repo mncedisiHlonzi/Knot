@@ -120,7 +120,7 @@ describe('SocialProofHeader', () => {
           actor_avatar_url: null,
         }),
       ],
-      attributionLine: 'Adapted by somebody from somebody else.',
+      attributionLine: "Adapted from somebody else's original story.",
       lineageAvatars,
     });
 
@@ -151,6 +151,19 @@ describe('SocialProofHeader', () => {
     expect(elementsByType(element, Avatar)).toHaveLength(1);
   });
 
+  it('names one actor once when they both reacted and commented', () => {
+    const element = SocialProofHeader({
+      interactions: [
+        interaction({ actor_display_name: 'Yantuntu', detail: 'rings_true' }),
+        interaction({ type: 'comment', detail: null, actor_display_name: 'Yantuntu' }),
+      ],
+    });
+
+    expect(collectText(element).join('')).toContain('Yantuntu finds this true and commented.');
+    // One face and one name for the person, not two (KNOT-030).
+    expect(elementsByType(element, Avatar)).toHaveLength(1);
+  });
+
   it('renders for a story card when interactions exist and there is no attribution', () => {
     // A story has no hereditary sentence and no lineage avatars; the header must
     // still draw its interactions (KNOT-029).
@@ -166,15 +179,13 @@ describe('SocialProofHeader', () => {
   it('falls back to the attribution sentence and its lineage faces', () => {
     const element = SocialProofHeader({
       interactions: [],
-      attributionLine: "Adapted by Nomsa Khan from Ada Lovelace's original story in English.",
-      adapterName: 'Nomsa Khan',
+      attributionLine: "Adapted from Ada Lovelace's original story in English.",
       originalAuthorName: 'Ada Lovelace',
       lineageAvatars,
     });
 
     const text = collectText(element).join('');
-    expect(text).toContain('Adapted by ');
-    expect(text).toContain('Nomsa Khan');
+    expect(text).toContain('Adapted from ');
     expect(text).toContain('Ada Lovelace');
 
     const avatars = elementsByType(element, Avatar);
@@ -185,17 +196,14 @@ describe('SocialProofHeader', () => {
     expect(findByTestId(element, 'attribution-divider')).toBeDefined();
   });
 
-  it('builds the fallback sentence when the server sent none', () => {
+  it('builds the concise fallback sentence when the server sent none', () => {
     const element = SocialProofHeader({
       attributionLine: '',
-      adapterName: 'Nomsa Khan',
       originalAuthorName: 'Ada Lovelace',
       lineageAvatars,
     });
 
-    expect(collectText(element).join('')).toContain(
-      "Adapted by Nomsa Khan from Ada Lovelace's original story.",
-    );
+    expect(collectText(element).join('')).toContain("Adapted from Ada Lovelace's original story.");
   });
 
   it('renders nothing when there are no interactions and nothing to attribute', () => {
@@ -203,7 +211,6 @@ describe('SocialProofHeader', () => {
       SocialProofHeader({
         interactions: [],
         attributionLine: '',
-        adapterName: '',
         originalAuthorName: '',
       }),
     ).toBeNull();

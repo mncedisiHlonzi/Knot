@@ -1512,11 +1512,12 @@ the story's original author (`root_author_*`) — never the poster, who is the e
 so the client draws one avatar (it compares the ids first).
 
 - The sentence is rendered by `versions.FormatAttribution` and shown verbatim:
-  `Adapted by {adapter} from {root}'s original story in {language}.` (N=2),
-  `Adapted by {adapter} from {middle}'s {language} version of {root}'s original story in
-  {language}.` (N=3), and `Adapted by {adapter} from {parent}'s {language} version,
-  tracing back to {root}'s original story.` (N=4+). The target language is deliberately not
-  repeated: the reader is already looking at that telling (KNOT-022-fix2).
+  `Adapted from {root}'s original story in {language}.` (N=2),
+  `Adapted from {middle}'s {language} version of {root}'s original story.` (N=3), and
+  `Adapted from {parent}'s {language} version, tracing back to {root}'s original story.`
+  (N=4+). The adapter is deliberately not named: their avatar and name are the author line
+  below, so repeating them made the credit long (KNOT-030). The target language is likewise
+  not repeated: the reader is already looking at that telling (KNOT-022-fix2).
 - `feedEntryMeta.attributionSegments` splits **every** name the sentence mentions, so all
   of them take the bold label voice; `attributionParts` remains as a first-name view. The
   older `Adapted from …` shapes are still parsed, so a newer client styles a sentence from
@@ -1546,6 +1547,15 @@ numbers, so a conjugation is a data change rather than a new string template.
 `FeedEntry` passes a 16pt `ShareNetwork` in `brand.primary`, labelled "Adapted story", for
 every version card. It is independent of the header, so the adaptation remains visible
 when interactions have replaced the attribution sentence (KNOT-029).
+
+KNOT-030 fixes the two phrasings that still read poorly on device. The header now groups its
+latest two interactions **by actor first**, so one person who both reacted and commented is
+named once and drawn once — "Yantuntu finds this true and commented." — instead of
+"Yantuntu finds this true and Yantuntu commented on this."; a reaction leads within that
+pair, because its phrase carries "this". `versions.FormatAttribution` also dropped the
+adapter from every adaptation sentence: the credit now names only the people the telling was
+adapted **from**, since the adapter is already the author line. The client's structured
+fallback uses the same concise wording.
 
 ### KNOT-025 — the Story Detail redesign
 

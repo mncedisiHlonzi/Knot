@@ -480,7 +480,7 @@ two entry kinds** — a story and somebody's adaptation of one — and every ent
       "language": "zul",
       "title": "Imvula yokuqala",
       "version_number": 2,
-      "attribution_line": "Adapted by Sipho Dlamini from Nomsa Khan's original story in English.",
+      "attribution_line": "Adapted from Nomsa Khan's original story in English.",
       "recent_interactions": [
         {
           "type": "reaction",
@@ -803,9 +803,8 @@ Neither is stored. Both are resolved at read time by walking `parent_version_id`
 root (KNOT-ADR-069), so the tree stays the single source of truth and the sentence can never
 drift from it. **The server renders the sentence and a client shows it verbatim** — a client
 must not re-format it, because the wording is one decision in one place. An author whose
-account cannot be resolved is named `another author` in the lineage and `someone` as the
-adapter, and a language that is missing or unrecognised reads `their language`, so the
-sentence never has a hole in it.
+account cannot be resolved is named `another author`, and a language that is missing or
+unrecognised reads `their language`, so the sentence never has a hole in it.
 
 The wording depends on how many versions the lineage holds (write `N` for that count;
 `version_depth` is `N - 1`):
@@ -813,15 +812,16 @@ The wording depends on how many versions the lineage holds (write `N` for that c
 | N  | `attribution_line` |
 | -- | ------------------ |
 | 1  | `Original story by {author} in {language}.` |
-| 2  | `Adapted by {adapter} from {root author}'s original story in {root language}.` |
-| 3  | `Adapted by {adapter} from {middle author}'s {middle language} version of {root author}'s original story in {root language}.` |
-| 4+ | `Adapted by {adapter} from {parent author}'s {parent language} version, tracing back to {root author}'s original story.` |
+| 2  | `Adapted from {root author}'s original story in {root language}.` |
+| 3  | `Adapted from {middle author}'s {middle language} version of {root author}'s original story.` |
+| 4+ | `Adapted from {parent author}'s {parent language} version, tracing back to {root author}'s original story.` |
 
-Every adaptation shape names the **adapter first**, because the telling is theirs. The
-target language is deliberately absent: the reader is already looking at that version, and
-repeating "into {language}" made the sentence read like a data log (KNOT-022-fix2). From
-four links on, the middle of the lineage is compressed into "tracing back to", so a long
-chain still reads as one sentence rather than a list.
+An adaptation names the people it was adapted **from**, never the adapter: the adapter is
+already the author line on the card, so repeating their name made the credit long and said
+the same thing twice (KNOT-030). The target language is deliberately absent: the reader is
+already looking at that version, and repeating "into {language}" made the sentence read like
+a data log (KNOT-022-fix2). From four links on, the middle of the lineage is compressed into
+"tracing back to", so a long chain still reads as one sentence rather than a list.
 
 **The tree resolves every chain in memory.** The tree endpoint loads a story's versions
 once and then walks the parent pointers it already holds, so a page of N versions costs the

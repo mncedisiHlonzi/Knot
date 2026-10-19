@@ -274,8 +274,6 @@ export default function FeedEntry({
   // below, so repeating them in the stack credited the wrong person
   // (KNOT-022-fix2). The sentence is never parsed for these; the server sends the
   // structured fields from the same batched author read.
-  const adapterName =
-    typeof story.author_display_name === 'string' ? story.author_display_name.trim() : '';
   const rootAuthorID = typeof story.root_author_id === 'string' ? story.root_author_id.trim() : '';
   const rootAuthorName =
     typeof story.root_author_display_name === 'string' ? story.root_author_display_name.trim() : '';
@@ -353,7 +351,6 @@ export default function FeedEntry({
         <SocialProofHeader
           interactions={story.recent_interactions}
           attributionLine={isVersion ? attributionText : ''}
-          adapterName={isVersion ? adapterName : ''}
           originalAuthorName={isVersion ? rootAuthorName : ''}
           lineageAvatars={isVersion ? lineageAvatars : []}
         />

@@ -35,7 +35,7 @@ const (
 	// feedAttribution is the exact sentence the server renders for the fixture
 	// below: a two-link chain, the adapter's own name followed by the original
 	// (KNOT-021, KNOT-022, KNOT-022-fix2).
-	feedAttribution = "Adapted by Sipho Dlamini from Nomsa Khan's original story in English."
+	feedAttribution = "Adapted from Nomsa Khan's original story in English."
 )
 
 // feedFixture builds the store, the enrichment dependencies, and the router for

@@ -63,6 +63,28 @@ describe('socialProofRuns', () => {
     ).toBe('Yantuntu commented on this.');
   });
 
+  it('names one actor once when they both reacted and commented', () => {
+    const both = [
+      interaction({ actor_display_name: 'Yantuntu', detail: 'rings_true' }),
+      interaction({ type: 'comment', detail: null, actor_display_name: 'Yantuntu' }),
+    ];
+
+    expect(sentence(both)).toBe('Yantuntu finds this true and commented.');
+    expect(boldNames(both)).toEqual(['Yantuntu']);
+    // One actor, not two: the avatar stack draws one face and the name once.
+    expect(socialProofActors(both)).toHaveLength(1);
+  });
+
+  it('puts the reaction first even when the comment is newer', () => {
+    const both = [
+      interaction({ type: 'comment', detail: null, actor_display_name: 'Yantuntu' }),
+      interaction({ actor_display_name: 'Yantuntu', detail: 'know_it_differently' }),
+    ];
+
+    expect(sentence(both)).toBe('Yantuntu knows this differently and commented.');
+    expect(boldNames(both)).toEqual(['Yantuntu']);
+  });
+
   it('groups two reactions of the same signal', () => {
     expect(
       sentence([
@@ -132,36 +154,24 @@ describe('socialProofRuns', () => {
 describe('attributionRuns', () => {
   it('splits the server sentence and bolds its names', () => {
     const runs = attributionRuns(
-      "Adapted by Nomsa Khan from Ada Lovelace's original story in English.",
-      'Nomsa Khan',
+      "Adapted from Ada Lovelace's original story in English.",
       'Ada Lovelace',
     );
 
-    expect(runs.filter((run) => run.bold).map((run) => run.text)).toEqual([
-      'Nomsa Khan',
-      'Ada Lovelace',
-    ]);
+    expect(runs.filter((run) => run.bold).map((run) => run.text)).toEqual(['Ada Lovelace']);
   });
 
-  it('builds the fallback sentence from the structured lineage', () => {
+  it('builds the concise fallback sentence from the structured lineage', () => {
     expect(
-      attributionRuns('', 'Nomsa Khan', 'Ada Lovelace')
-        .map((run) => run.text)
-        .join(''),
-    ).toBe("Adapted by Nomsa Khan from Ada Lovelace's original story.");
-  });
-
-  it('omits the adapter when their name is unknown', () => {
-    expect(
-      attributionRuns('', '', 'Ada Lovelace')
+      attributionRuns('', 'Ada Lovelace')
         .map((run) => run.text)
         .join(''),
     ).toBe("Adapted from Ada Lovelace's original story.");
   });
 
-  it('draws nothing when there is no sentence and no root author', () => {
-    expect(attributionRuns('', 'Nomsa Khan', '')).toEqual([]);
-    expect(attributionRuns(undefined, '', '')).toEqual([]);
+  it('draws no attribution when there is no sentence and no root author', () => {
+    expect(attributionRuns('', '')).toEqual([]);
+    expect(attributionRuns(undefined, '')).toEqual([]);
   });
 });
 

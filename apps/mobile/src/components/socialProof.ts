@@ -55,22 +55,57 @@ const COMMENT_PHRASE: ReactionPhrase = {
   plural: 'commented on this',
 };
 
+/** One actor and the actions the header credits them with. */
+export type SocialProofActorGroup = {
+  /** The actor's display name, trimmed; empty when the account is unresolved. */
+  readonly name: string;
+  /** The actor's avatar path, or null when they have none. */
+  readonly avatarUrl: string | null;
+  /** The actor's distinct actions, newest first. */
+  readonly interactions: readonly RecentInteraction[];
+};
+
+/** The actor's display name for the sentence; a nameless account is "Someone". */
+function displayActorName(name: string): string {
+  return name === '' ? 'Someone' : name;
+}
+
+/** The actor's trimmed display name. */
+function rawActorName(interaction: RecentInteraction): string {
+  return typeof interaction.actor_display_name === 'string'
+    ? interaction.actor_display_name.trim()
+    : '';
+}
+
+/** The actor's trimmed avatar path, or null when they have none. */
+function rawActorAvatar(interaction: RecentInteraction): string | null {
+  const url =
+    typeof interaction.actor_avatar_url === 'string' ? interaction.actor_avatar_url.trim() : '';
+  return url === '' ? null : url;
+}
+
 /**
- * The interactions worth drawing: at most the first two, and only the two kinds
- * the API defines.
+ * The interactions worth drawing, grouped BY ACTOR and capped at two actors.
+ *
+ * The latest two interactions are considered. Grouping by actor first is what
+ * keeps one person's name from appearing twice: a reader who both reacted and
+ * commented is one actor with two actions, not two actors (KNOT-030). The wire
+ * carries no actor id, so two interactions are the same person when their display
+ * name AND avatar path match.
  *
  * The runtime filter matters because the response types describe the wire format
  * optimistically; an unknown `type` must not make a card render a malformed
- * sentence.
+ * sentence. Duplicate action keys within one actor are dropped, so an actor never
+ * reads "finds this true and finds this true".
  */
 export function socialProofActors(
   interactions: readonly RecentInteraction[] | undefined,
-): readonly RecentInteraction[] {
+): readonly SocialProofActorGroup[] {
   if (!Array.isArray(interactions)) {
     return [];
   }
 
-  return interactions
+  const latest = interactions
     .filter(
       (interaction): interaction is RecentInteraction =>
         interaction !== null &&
@@ -78,6 +113,49 @@ export function socialProofActors(
         (interaction.type === 'reaction' || interaction.type === 'comment'),
     )
     .slice(0, SOCIAL_PROOF_MAX_ACTORS);
+
+  const groups: Array<{
+    name: string;
+    avatarUrl: string | null;
+    interactions: RecentInteraction[];
+    actionKeys: Set<string>;
+  }> = [];
+  const indexByActor = new Map<string, number>();
+
+  for (const interaction of latest) {
+    const name = rawActorName(interaction);
+    const avatarUrl = rawActorAvatar(interaction);
+    const actorKey = `${name}\u0000${avatarUrl ?? ''}`;
+    const existing = indexByActor.get(actorKey);
+
+    if (existing !== undefined) {
+      const group = groups[existing];
+      const key = actionKey(interaction);
+      if (!group.actionKeys.has(key)) {
+        group.interactions.push(interaction);
+        group.actionKeys.add(key);
+      }
+      continue;
+    }
+
+    if (groups.length >= SOCIAL_PROOF_MAX_ACTORS) {
+      continue;
+    }
+
+    indexByActor.set(actorKey, groups.length);
+    groups.push({
+      name,
+      avatarUrl,
+      interactions: [interaction],
+      actionKeys: new Set([actionKey(interaction)]),
+    });
+  }
+
+  return groups.map((group) => ({
+    name: group.name,
+    avatarUrl: group.avatarUrl,
+    interactions: group.interactions,
+  }));
 }
 
 /** The verb phrase for one interaction, in both grammatical numbers. */
@@ -104,70 +182,86 @@ function actionKey(interaction: RecentInteraction): string {
   return `reaction:${detail}`;
 }
 
-/** The name to draw for an actor; a nameless account still reads grammatically. */
-function actorName(interaction: RecentInteraction): string {
-  const name =
-    typeof interaction.actor_display_name === 'string' ? interaction.actor_display_name.trim() : '';
-  return name === '' ? 'Someone' : name;
-}
-
 /**
  * Formats the interaction header's sentence as styled runs.
  *
- * The four shapes the brief fixes (KNOT-029):
+ * The shapes (KNOT-030):
  *
- *   One reaction:        {Name} finds this true.
- *                        {Name} knows this differently.
- *                        {Name} adds something new.
- *                        {Name} needs a source.
- *   One comment:         {Name} commented on this.
- *   Two, same action:    {A} & {B} know this differently.
- *   Two, mixed actions:  {A} finds this true and {B} commented on this.
+ *   One actor, one action:    {Name} finds this true.
+ *                             {Name} commented on this.
+ *   One actor, two actions:   {Name} finds this true and commented.
+ *   Two actors, same action:  {A} & {B} know this differently.
+ *   Two actors, different:    {A} finds this true and {B} commented on this.
  *
- * "Same action" means both are comments, or both are reactions of the SAME
- * signal — two different signals read as two clauses rather than being merged
- * into one inaccurate verb. The verb carries its own object, so no phrase ends
- * with a dangling "this".
- *
- * Names are bold runs; every other run is plain, so the caller can give the
- * sentence its two inks without parsing it again.
+ * Actors are grouped FIRST, so a person who both reacted and commented is named
+ * once. Within one actor a reaction always leads, because its phrase carries
+ * "this"; the comment then reads simply "commented", so the object is not said
+ * twice. Two actors are joined with "&" when they share an action and with "and"
+ * when they do not. Names are bold runs; every other run is plain.
  */
 export function socialProofRuns(
-  interactions: readonly RecentInteraction[],
+  interactions: readonly RecentInteraction[] | undefined,
 ): readonly SocialProofRun[] {
   const actors = socialProofActors(interactions);
   if (actors.length === 0) {
     return [];
   }
-
-  const first = actors[0];
-  const firstName = actorName(first);
-
   if (actors.length === 1) {
-    return [
-      { text: firstName, bold: true },
-      { text: ` ${actionPhrase(first).singular}.`, bold: false },
-    ];
+    return singleActorRuns(actors[0]);
   }
 
+  const first = actors[0];
   const second = actors[1];
-  const secondName = actorName(second);
-  const sameAction = actionKey(first) === actionKey(second);
+  const firstAction = first.interactions[0];
+  const secondAction = second.interactions[0];
+  const firstName = displayActorName(first.name);
+  const secondName = displayActorName(second.name);
 
-  if (sameAction) {
+  if (actionKey(firstAction) === actionKey(secondAction)) {
     return [
       { text: firstName, bold: true },
       { text: ' & ', bold: false },
       { text: secondName, bold: true },
-      { text: ` ${actionPhrase(first).plural}.`, bold: false },
+      { text: ` ${actionPhrase(firstAction).plural}.`, bold: false },
     ];
   }
 
   return [
     { text: firstName, bold: true },
-    { text: ` ${actionPhrase(first).singular} and `, bold: false },
+    { text: ` ${actionPhrase(firstAction).singular} and `, bold: false },
     { text: secondName, bold: true },
-    { text: ` ${actionPhrase(second).singular}.`, bold: false },
+    { text: ` ${actionPhrase(secondAction).singular}.`, bold: false },
+  ];
+}
+
+/**
+ * One actor's sentence. A single action reads normally; two actions share the
+ * name once and join with "and". A reaction leads when both exist, because its
+ * phrase carries the object ("finds this true") and the comment can then read
+ * simply "commented" (KNOT-030).
+ */
+function singleActorRuns(actor: SocialProofActorGroup): readonly SocialProofRun[] {
+  const name = displayActorName(actor.name);
+  const actions = actor.interactions;
+
+  if (actions.length === 1) {
+    return [
+      { text: name, bold: true },
+      { text: ` ${actionPhrase(actions[0]).singular}.`, bold: false },
+    ];
+  }
+
+  const ordered = [
+    ...actions.filter((action) => action.type === 'reaction'),
+    ...actions.filter((action) => action.type === 'comment'),
+  ];
+  const first = ordered[0];
+  const second = ordered[1];
+  const secondPhrase = second.type === 'comment' ? 'commented' : actionPhrase(second).singular;
+
+  return [
+    { text: name, bold: true },
+    { text: ` ${actionPhrase(first).singular} and ${secondPhrase}.`, bold: false },
   ];
 }
 
@@ -175,12 +269,11 @@ export function socialProofRuns(
  * The attribution runs for a version with no interactions: the server's sentence
  * when it sent one, otherwise a sentence built from the structured lineage.
  *
- * This is the same wording the card drew before KNOT-028, so a quiet entry reads
- * exactly as it did.
+ * The adapter is deliberately absent — their name is the AuthorLine below the
+ * header — so the fallback matches the server's concise wording (KNOT-030).
  */
 export function attributionRuns(
   attributionLine: string | undefined,
-  adapterName: string,
   rootAuthorName: string,
 ): readonly AttributionSegment[] {
   const sentence = typeof attributionLine === 'string' ? attributionLine.trim() : '';
@@ -191,18 +284,9 @@ export function attributionRuns(
   if (rootAuthorName === '') {
     return [];
   }
-  if (adapterName === '') {
-    return [
-      { text: 'Adapted from ', bold: false },
-      { text: rootAuthorName, bold: true },
-      { text: "'s original story.", bold: false },
-    ];
-  }
 
   return [
-    { text: 'Adapted by ', bold: false },
-    { text: adapterName, bold: true },
-    { text: ' from ', bold: false },
+    { text: 'Adapted from ', bold: false },
     { text: rootAuthorName, bold: true },
     { text: "'s original story.", bold: false },
   ];

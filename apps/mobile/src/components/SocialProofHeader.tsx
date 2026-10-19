@@ -23,8 +23,6 @@ type SocialProofHeaderProps = {
   readonly interactions?: readonly RecentInteraction[];
   /** The server-rendered hereditary sentence, used when there are no interactions. */
   readonly attributionLine?: string;
-  /** The poster's name, for the structured fallback sentence. */
-  readonly adapterName?: string;
   /** The original author's name, for the structured fallback sentence. */
   readonly originalAuthorName?: string;
   /** The lineage faces the attribution fallback draws, in credit order. */
@@ -54,10 +52,11 @@ function avatarLabel(name: string): string {
  *
  * It draws one of three states, in this order:
  *
- * 1. **Interactions exist** — the newest two actors' avatars beside a natural
- *    sentence naming what each did ("Tycoon finds this true", "Tycoon &
- *    Yantuntu know this differently", "Tycoon finds this true and Yantuntu
- *    commented on this").
+ * 1. **Interactions exist** — one avatar per actor beside a natural sentence
+ *    naming what each did ("Tycoon finds this true", "Tycoon finds this true and
+ *    commented", "Tycoon & Yantuntu know this differently", "Tycoon finds this
+ *    true and Yantuntu commented on this"). A person who took two actions is
+ *    drawn once and named once (KNOT-030).
  * 2. **No interactions, but attribution exists** — the lineage faces beside the
  *    server's hereditary sentence, with every name bolded. This is the card's
  *    pre-KNOT-028 header, unchanged. Only a version card has this input; a story
@@ -71,34 +70,30 @@ function avatarLabel(name: string): string {
 export default function SocialProofHeader({
   interactions,
   attributionLine,
-  adapterName = '',
   originalAuthorName = '',
   lineageAvatars = [],
 }: SocialProofHeaderProps): React.ReactElement | null {
   const actors = socialProofActors(interactions);
   const runs =
     actors.length > 0
-      ? socialProofRuns(actors)
-      : attributionRuns(attributionLine, adapterName, originalAuthorName);
+      ? socialProofRuns(interactions)
+      : attributionRuns(attributionLine, originalAuthorName);
 
   if (runs.length === 0) {
     return null;
   }
 
-  // With interactions, the stack is the actors themselves (newest first). With
-  // none, it is the lineage the attribution credits.
+  // With interactions, the stack is one face per ACTOR (newest first), so a
+  // person who both reacted and commented is drawn once (KNOT-030). With none,
+  // it is the lineage the attribution credits.
   const avatars: readonly SocialProofAvatar[] =
     actors.length > 0
-      ? actors.map((actor, index) => {
-          const name =
-            typeof actor.actor_display_name === 'string' ? actor.actor_display_name.trim() : '';
-          return {
-            key: `actor-${index}`,
-            uri: resolveAvatarUrl(actor.actor_avatar_url),
-            name,
-            label: avatarLabel(name),
-          };
-        })
+      ? actors.map((actor, index) => ({
+          key: `actor-${index}`,
+          uri: resolveAvatarUrl(actor.avatarUrl),
+          name: actor.name,
+          label: avatarLabel(actor.name),
+        }))
       : lineageAvatars;
 
   return (

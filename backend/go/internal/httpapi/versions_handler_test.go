@@ -647,7 +647,7 @@ func TestAdaptIncludesAttribution(t *testing.T) {
 	if body.Version.VersionDepth != 1 {
 		t.Errorf("version_depth = %d, want 1 for a first adaptation", body.Version.VersionDepth)
 	}
-	want := "Adapted by someone from another author's original story in English."
+	want := "Adapted from another author's original story in English."
 	if body.Version.AttributionLine != want {
 		t.Errorf("attribution_line = %q, want %q", body.Version.AttributionLine, want)
 	}
@@ -691,7 +691,7 @@ func TestTreeIncludesAttributionForEveryVersion(t *testing.T) {
 	if adaptation.VersionDepth != 1 {
 		t.Errorf("adaptation version_depth = %d, want 1", adaptation.VersionDepth)
 	}
-	want := "Adapted by someone from another author's original story in English."
+	want := "Adapted from another author's original story in English."
 	if adaptation.AttributionLine != want {
 		t.Errorf("adaptation attribution_line = %q, want %q", adaptation.AttributionLine, want)
 	}
