@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import React from 'react';
+import { Image, StyleSheet, View } from 'react-native';
 import { Play } from 'phosphor-react-native';
-import Video from 'react-native-video';
 
 import { colors, radius, spacing } from '../theme';
 
@@ -13,57 +12,40 @@ const PLAY_ICON_SIZE = 8;
 const DEFAULT_SIZE = 64;
 
 type VideoThumbnailProps = {
-  /** The resolved, absolute URL of the video. */
-  readonly uri: string;
   /**
-   * The square tile's side, in points. The player is sized **explicitly** rather
-   * than by `flex`, so the native video surface can never take its layout from
-   * the clip's natural size — the stretched, growing tiles the strip showed
-   * (KNOT-025-fix5).
+   * A still image representing the video. Optional because the API does not
+   * store a poster yet; without one the tile draws a sunken placeholder.
+   */
+  readonly posterUrl?: string;
+  /**
+   * The square tile's side, in points. The frame and the media box carry this
+   * explicitly rather than sizing by `flex`.
    */
   readonly size?: number;
 };
 
 /**
- * A video's first frame, used as a static strip thumbnail.
+ * A **static** representation of a video for the media strip: a poster image
+ * when one exists, otherwise a sunken placeholder, always with a play disc.
  *
- * `react-native-video` has no API that exports a decoded frame as an image, so
- * this draws a **paused, muted player**: both native players render their first
- * decoded frame on the video surface, which is exactly the poster the API does
- * not store. `onLoad` and `onReadyForDisplay` (the first-frame-rendered event)
- * retire the sunken placeholder; if the source cannot be decoded neither fires,
- * so the placeholder stays and the strip never shows a blank tile. The play disc
- * marks the item as a video. The strip is deliberately static — the main carousel
- * is the only place a video plays (KNOT-025-fix4).
+ * The strip used to render a paused, muted `<Video>` so its first decoded frame
+ * acted as the poster, but Android's native TextureView ignored every layout
+ * constraint — including explicit absolute sizing and a clipped, fixed-height
+ * strip — and expanded past its 64pt tile, pushing the layout and bleeding into
+ * the carousel (KNOT-025-fix8). An `<Image>` or plain `<View>` has no native
+ * surface, so it cannot do that (KNOT-025-fix9).
  *
- * `useTextureView` keeps the surface inside the tile's rounded, clipped box on
- * Android — a SurfaceView punches through the RN hierarchy and ignores the clip
- * (the same rule as the map surfaces).
- *
- * The square is a **fixed, explicit size**: the frame carries the tile's
- * width/height and the player sits in an identically sized box with `cover`, so
- * the frame's shape — not the clip's — decides the surface's size (KNOT-025-fix5).
- *
- * Both the anchor and the player are **absolutely positioned with explicit
- * width/height** (not `absoluteFillObject`, and no percentage sizes). That takes
- * the native surface out of the document flow entirely, so it cannot contribute
- * to any parent's measured height and cannot be stretched by flexbox. The
- * frame's `overflow: 'hidden'` then clips it. An Android TextureView ignored the
- * absolute-fill anchor and still measured itself against the clip, bleeding up
- * into the carousel (KNOT-025-fix8).
+ * The fix8 geometry is preserved exactly: a fixed square frame with
+ * `overflow: 'hidden'`, and the media inside an absolutely positioned box with
+ * explicit width/height. The carousel is still the only place a video plays.
  */
 export default function VideoThumbnail({
-  uri,
+  posterUrl,
   size = DEFAULT_SIZE,
 }: VideoThumbnailProps): React.ReactElement {
-  const [ready, setReady] = useState(false);
-  const handleReady = (): void => setReady(true);
-
   return (
     <View style={[styles.frame, { height: size, width: size }]}>
-      {/* The clipping anchor: an out-of-flow box with explicit dimensions, so a
-          native surface can never take its size from anything but this square
-          (KNOT-025-fix8). */}
+      {/* The clipped, out-of-flow box from fix8: the still media fills it. */}
       <View
         style={{
           position: 'absolute',
@@ -73,28 +55,17 @@ export default function VideoThumbnail({
           height: size,
         }}
       >
-        <Video
-          source={{ uri }}
-          // Absolute and explicitly sized on the player too: `100%` dimensions
-          // let Android's TextureView resolve its own measurement (fix8).
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: size,
-            height: size,
-          }}
-          paused
-          muted
-          repeat={false}
-          resizeMode="cover"
-          useTextureView
-          onLoad={handleReady}
-          onReadyForDisplay={handleReady}
-        />
+        {posterUrl === undefined ? (
+          <View style={styles.placeholder} testID="video-thumbnail-placeholder" />
+        ) : (
+          <Image
+            source={{ uri: posterUrl }}
+            style={styles.media}
+            resizeMode="cover"
+            accessibilityIgnoresInvertColors
+          />
+        )}
       </View>
-
-      {ready ? null : <View style={styles.fallback} testID="video-thumbnail-fallback" />}
 
       <View style={styles.play}>
         <Play color={colors.text.onBrand} size={PLAY_ICON_SIZE} weight="fill" />
@@ -111,15 +82,17 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     overflow: 'hidden',
   },
-  // Painted above the video until the first frame is ready, so the tile is a calm
-  // sunken square rather than a black flash while the decoder starts.
-  fallback: {
+  // The poster fills the anchor exactly (`cover` crops, never distorts).
+  media: {
+    height: '100%',
+    width: '100%',
+  },
+  // No poster stored yet: a calm sunken square marks the video item without a
+  // native surface that could escape the tile.
+  placeholder: {
     backgroundColor: colors.bg.sunken,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-    right: 0,
-    top: 0,
+    height: '100%',
+    width: '100%',
   },
   play: {
     alignItems: 'center',

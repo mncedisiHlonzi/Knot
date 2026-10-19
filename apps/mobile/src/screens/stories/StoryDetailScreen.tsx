@@ -401,9 +401,9 @@ export default function StoryDetailScreen({
             ) : null}
 
             {/* The thumbnail strip follows the pager: it scrolls itself to keep
-                the active page's tile in view. The tiles are static first
-                frames, and tapping one does nothing while the viewer is out of
-                the tap flow (KNOT-025-fix1, KNOT-025-fix4, KNOT-025-fix5). */}
+                the active page's tile in view. The tiles are static images or
+                placeholders, and tapping one does nothing while the viewer is
+                out of the tap flow (KNOT-025-fix1, KNOT-025-fix4, KNOT-025-fix9). */}
             {media.length > 1 ? (
               <ScrollView
                 ref={stripRef}
@@ -430,9 +430,10 @@ export default function StoryDetailScreen({
                       )}
                     >
                       {item.media_type === 'video' ? (
-                        // A paused player renders the first frame; the strip is
-                        // static (KNOT-025-fix2, KNOT-025-fix4).
-                        <VideoThumbnail uri={resolveMediaUrl(item.url)} size={THUMBNAIL_SIZE} />
+                        // `StoryMedia` has no poster field yet, so the optional
+                        // prop is omitted and the tile is the sunken placeholder.
+                        // A still cannot escape its box (KNOT-025-fix9).
+                        <VideoThumbnail size={THUMBNAIL_SIZE} />
                       ) : (
                         <Image
                           source={{ uri: resolveMediaUrl(item.url) }}
