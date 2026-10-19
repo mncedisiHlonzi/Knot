@@ -8,7 +8,7 @@ import {
   type ImageLoadEventData,
   type NativeSyntheticEvent,
 } from 'react-native';
-import { Images, ShareNetwork } from 'phosphor-react-native';
+import { DotsThree, Images, ShareNetwork } from 'phosphor-react-native';
 
 import type { RecentInteraction } from '../api/stories';
 import { API_BASE_URL } from '../config/api';
@@ -123,16 +123,22 @@ type FeedEntryProps = {
    */
   readonly attributionLine?: string;
   /**
-   * Whether the entry draws its own bottom hairline. The Feed replaces that
-   * inside-entry rule with a thick inter-card gap, so it passes `false`; Place
-   * Stories keeps the default and its column stays hairline-separated
-   * (KNOT-023b).
+   * Whether the entry draws its own bottom hairline. The Feed closes its cards
+   * with its own full-bleed rule instead, so it passes `false`; Place Stories
+   * keeps the default and its column stays hairline-separated (KNOT-023b,
+   * KNOT-031).
    */
   readonly showBottomHairline?: boolean;
   /** Called when the entry is tapped. */
   readonly onPress: () => void;
   /** Called when the author's identity is tapped. */
   readonly onOpenAuthor?: () => void;
+  /**
+   * Called when the card's overflow control is tapped, to open the post menu.
+   * When omitted, no control is drawn (Place Stories uses the card without a
+   * menu). The Feed passes it for every entry (KNOT-031).
+   */
+  readonly onOpenOptions?: () => void;
   /**
    * True when this entry is the one the feed judges to be on screen. It is the
    * single input that plays or pauses the entry's video, so only one video in the
@@ -155,6 +161,9 @@ const COUNT_ICON_SIZE = 14;
 
 /** The adaptation marker's glyph size: small enough to ride beside the name. */
 const ADAPT_BADGE_SIZE = 16;
+
+/** The overflow glyph's size; its button is the 44pt touch target. */
+const MENU_ICON_SIZE = 22;
 
 /** A no-op for the mute control when a caller renders an entry without wiring one. */
 const NOOP = (): void => undefined;
@@ -188,12 +197,14 @@ function lineageAvatarLabel(name: string): string {
 /**
  * One story in the feed, as a white card on the feed's grey canvas.
  *
- * The card is full-bleed horizontally — no side border, no shadow — and its
- * separation from the next card is the Feed's grey gap, not a rule. (Place
+ * The card is full-bleed horizontally — no side border, no shadow — and the Feed
+ * closes each card with its own rule below it rather than the entry's. (Place
  * Stories, the other caller, keeps the entry's bottom hairline.) Its order is the
  * reading order: the author block, the pillar tag, the title, the opening lines,
  * the media, then the meta line. The whole entry is one tap target; the author
- * identity inside it is a nested target that opens the profile (KNOT-ADR-043).
+ * identity inside it is a nested target that opens the profile (KNOT-ADR-043),
+ * and so is the overflow control when the Feed supplies `onOpenOptions`
+ * (KNOT-031).
  *
  * The author block is a vertical stack (KNOT-023b): the avatar on the left and,
  * on the right, the name, the quiet Rooted line, then the compact time. Every card
@@ -233,6 +244,7 @@ export default function FeedEntry({
   showBottomHairline = true,
   onPress,
   onOpenAuthor,
+  onOpenOptions,
   isVisible = false,
   isMuted = true,
   onToggleMute = NOOP,
@@ -355,19 +367,38 @@ export default function FeedEntry({
           lineageAvatars={isVersion ? lineageAvatars : []}
         />
 
-        <AuthorLine
-          displayName={story.author_display_name}
-          avatarUrl={story.author_avatar_url}
-          createdAt={story.created_at}
-          rooted={story.author_rooted ?? null}
-          size="large"
-          // The feed's social-card author block: name, Rooted, then time, with a
-          // left avatar. The compact time is the feed's alone (KNOT-023b).
-          layout="stacked"
-          timeFormat="short"
-          badge={adaptBadge}
-          onPress={onOpenAuthor}
-        />
+        <View style={styles.authorRow}>
+          <View style={styles.authorLine}>
+            <AuthorLine
+              displayName={story.author_display_name}
+              avatarUrl={story.author_avatar_url}
+              createdAt={story.created_at}
+              rooted={story.author_rooted ?? null}
+              size="large"
+              // The feed's social-card author block: name, Rooted, then time, with
+              // a left avatar. The compact time is the feed's alone (KNOT-023b).
+              layout="stacked"
+              timeFormat="short"
+              badge={adaptBadge}
+              onPress={onOpenAuthor}
+            />
+          </View>
+
+          {/* A nested Pressable takes the touch itself, so opening the menu never
+              also opens the card (the same isolation the author target uses,
+              KNOT-ADR-043). Its 44pt box is the touch target (KNOT-031). */}
+          {onOpenOptions === undefined ? null : (
+            <Pressable
+              style={styles.menuButton}
+              onPress={onOpenOptions}
+              accessibilityRole="button"
+              accessibilityLabel="Post options"
+              testID="post-options"
+            >
+              <DotsThree color={colors.text.tertiary} size={MENU_ICON_SIZE} weight="bold" />
+            </Pressable>
+          )}
+        </View>
 
         {/* Both kinds open with the same pillar tag -- "WONDER · ARLIT" -- so an
             adaptation reads as a story filed under a pillar. Which telling it is
@@ -435,7 +466,7 @@ export default function FeedEntry({
 
       <View style={styles.padded}>
         {metaLine !== '' ? (
-          <Text style={[typeScale.caption, tabularNums, styles.metaText]}>{metaLine}</Text>
+          <Text style={[typeScale.label, tabularNums, styles.metaText]}>{metaLine}</Text>
         ) : null}
 
         {showBottomHairline ? <View style={styles.hairline} /> : null}
@@ -445,6 +476,16 @@ export default function FeedEntry({
 }
 
 const styles = StyleSheet.create({
+  // The author block keeps the row's width; the overflow control sits at its end.
+  // The control is level with the avatar, not centred on the block, because the
+  // block grows as the Rooted line is added (KNOT-031).
+  authorLine: {
+    flex: 1,
+  },
+  authorRow: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+  },
   countBadge: {
     alignItems: 'center',
     backgroundColor: colors.scrim.overlay,
@@ -481,8 +522,10 @@ const styles = StyleSheet.create({
   entryCard: {
     paddingBottom: spacing.lg,
   },
+  // One step darker than the hairline, so a rule between entries is clearly
+  // visible rather than dissolving into the canvas (KNOT-031).
   hairline: {
-    backgroundColor: colors.border.hairline,
+    backgroundColor: colors.border.divider,
     height: 1,
     marginTop: spacing.lg,
   },
@@ -499,8 +542,18 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     width: '100%',
   },
+  // The overflow control's box: the 44pt minimum touch target, holding a 22pt
+  // glyph (KNOT-031).
+  menuButton: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
+  },
+  // The stats row carries real counts, so it reads in the secondary ink and the
+  // bolder label voice rather than as a caption (KNOT-031).
   metaText: {
-    color: colors.text.tertiary,
+    color: colors.text.secondary,
     marginTop: spacing.md,
   },
   // The text column keeps the feed inset; only the media leaves it.

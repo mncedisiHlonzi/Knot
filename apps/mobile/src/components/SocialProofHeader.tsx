@@ -66,6 +66,10 @@ function avatarLabel(name: string): string {
  * The decision and the wording live in `socialProof.ts`; this component only
  * maps runs onto the design system's two inks. A hairline closes the header so
  * the credit reads as distinct from the poster's author block below it.
+ *
+ * The header is a caption, not a paragraph: it is a step down in type from the
+ * author block it introduces, its faces are the smallest avatar, and it hugs the
+ * card's edges rather than opening a gap above them (KNOT-031).
  */
 export default function SocialProofHeader({
   interactions,
@@ -97,7 +101,7 @@ export default function SocialProofHeader({
       : lineageAvatars;
 
   return (
-    <View testID="social-proof-header">
+    <View style={styles.container} testID="social-proof-header">
       <View style={styles.row}>
         {avatars.length > 0 ? (
           <View style={styles.avatars}>
@@ -106,7 +110,7 @@ export default function SocialProofHeader({
                 <Avatar
                   uri={actor.uri}
                   displayName={actor.name}
-                  size="sm"
+                  size="xs"
                   accessibilityLabel={actor.label}
                 />
               </View>
@@ -116,7 +120,7 @@ export default function SocialProofHeader({
 
         <Text
           testID="social-proof-sentence"
-          style={[typeScale.bodyS, styles.text]}
+          style={[typeScale.caption, styles.text]}
           numberOfLines={SOCIAL_PROOF_LINES}
         >
           {runs.map((run, index) =>
@@ -139,25 +143,35 @@ export default function SocialProofHeader({
 
 const styles = StyleSheet.create({
   // Each later face sits over the one before it, ringed in the canvas so the
-  // faces stay legible where they meet (KNOT-022-fix2).
+  // faces stay legible where they meet (KNOT-022-fix2). The overlap is one
+  // spacing step, which is what an xs face can carry without hiding the one
+  // beneath (KNOT-031).
   avatarStacked: {
     backgroundColor: colors.bg.canvas,
     borderColor: colors.bg.canvas,
     borderRadius: radius.pill,
     borderWidth: 2,
-    marginLeft: -spacing.sm,
+    marginLeft: -spacing.xs,
   },
   avatars: {
     alignItems: 'center',
     flexDirection: 'row',
   },
+  // The header sits flush at the top of the card: a single small vertical step,
+  // no opening gap. The rule below it stays the design system's hairline — it
+  // separates two blocks inside one card, unlike the heavier rule BETWEEN cards
+  // (KNOT-031).
+  container: {
+    paddingVertical: spacing.xs,
+  },
   // The rule between the credit and the poster's author block (KNOT-023c). It is
-  // the design system's hairline, not the heavier divider.
+  // the design system's hairline, not the heavier divider, and it hugs the author
+  // block below it (KNOT-031).
   divider: {
     backgroundColor: colors.border.hairline,
     height: 1,
-    marginBottom: spacing.sm,
-    marginTop: spacing.sm,
+    marginBottom: spacing.xs,
+    marginTop: 0,
   },
   name: {
     color: colors.text.primary,

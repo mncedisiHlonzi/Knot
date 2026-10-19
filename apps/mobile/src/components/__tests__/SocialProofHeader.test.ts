@@ -131,14 +131,14 @@ describe('SocialProofHeader', () => {
 
     const avatars = elementsByType(element, Avatar);
     expect(avatars).toHaveLength(2);
-    expect(avatars.map((avatar) => avatar.props?.size)).toEqual(['sm', 'sm']);
+    expect(avatars.map((avatar) => avatar.props?.size)).toEqual(['xs', 'xs']);
     expect(avatars[0].props?.uri).toBe('http://localhost:8080/users/tycoon/avatar?v=t.png');
     // A missing avatar falls back to initials, not to an empty frame.
     expect(avatars[1].props?.uri).toBeUndefined();
 
     // The sentence keeps the body-small voice and the two-line clamp.
     const line = findByTestId(element, 'social-proof-sentence');
-    expect(line?.props?.style).toContain(typeScale.bodyS);
+    expect(line?.props?.style).toContain(typeScale.caption);
     expect(line?.props?.numberOfLines).toBe(2);
   });
 

@@ -1557,6 +1557,40 @@ adapter from every adaptation sentence: the credit now names only the people the
 adapted **from**, since the adapter is already the author line. The client's structured
 fallback uses the same concise wording.
 
+### KNOT-031 — the feed card menu and its polish
+
+Every feed card now carries an overflow control, and the card's typography and separation were
+tightened to match the reference.
+
+- **The control** is `FeedEntry`'s new optional `onOpenOptions`, drawn as a 44pt `DotsThree`
+  in `text.tertiary` at the top-right of the author row. Omitting the prop draws nothing, so
+  Place Stories — which reuses the card — keeps a card with no menu rather than a dead one.
+  The control is a **nested** `Pressable` inside the card's own, so it takes the touch itself
+  and a menu tap never also opens the story; that is the isolation `AuthorLine`'s author
+  target already relies on.
+- **The menu** (`FeedScreen`'s file-local `PostOptionsSheet`) is a bottom sheet: handle,
+  "Hide this post", "Report post", then Cancel, each row at the 44pt minimum. It is local to
+  the screen rather than a shared component because the feed is the only place it is drawn —
+  the same call the profile's options sheet makes.
+- **Hiding is local to the session.** There is no hide endpoint, so the entry leaves the list
+  and returns on the next refresh or page load: it is a "not now", and the app does not
+  pretend it is a mute. Reporting hands the entry to the existing `ReportModal` with
+  `entityType` taken from the entry's `kind` (`version` or `story`) and the entry's own id,
+  so a report names the thing that was on screen. The entry is **not** removed after a
+  report — moderation is asynchronous, and hiding it would claim an outcome the app cannot
+  promise.
+- **The header got quieter.** `SocialProofHeader` is a caption, not a paragraph: the sentence
+  is `typeScale.caption` (12/16) and the faces are `Avatar size="xs"` (20pt) overlapping by one
+  spacing step, and the block has a single small vertical step at the top of the card instead
+  of an opening gap. The hairline that closes it still separates two blocks **inside** one
+  card, so it stays `border.hairline` and now hugs the author block below it.
+- **Cards are finally ruled.** The gap alone read as one long column, so `styles.card` gained a
+  full-bleed bottom border in `border.divider` — one step darker than the hairline and the
+  token reserved for exactly this boundary. The `marginBottom` gap stays; rule and gap
+  together are the separator.
+- **The stats row** moved from a 12pt caption in `text.tertiary` to `typeScale.label` (13/16
+  bold) in `text.secondary`, because it carries real counts rather than metadata about them.
+
 ### KNOT-025 — the Story Detail redesign
 
 The Story Detail follows the Claude mockup v2 (`docs/design-reference/story-detail-v2/`).

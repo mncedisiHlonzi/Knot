@@ -37,6 +37,7 @@ jest.mock('react-native', () => ({
 }));
 
 jest.mock('phosphor-react-native', () => ({
+  DotsThree: () => null,
   Images: () => null,
   ShareNetwork: () => null,
 }));
@@ -825,5 +826,69 @@ describe('FeedEntry version variant', () => {
     expect(text).toContain(version.title);
     expect(text).toContain(version.preview);
     expect(findByLabel(element, (label) => label.startsWith('Read more'))).toBeDefined();
+  });
+});
+
+/** The card's overflow control, or undefined when the card drew none. */
+function postOptions(element: unknown): { props?: Record<string, unknown> } | undefined {
+  return findByLabel(element, (label) => label === 'Post options');
+}
+
+describe('FeedEntry post options', () => {
+  it('draws no overflow control when the screen gave it no handler', () => {
+    // Place Stories renders the same card without a menu, so the control must be
+    // absent rather than dead (KNOT-031).
+    const element = FeedEntry({ story, onPress: () => undefined, onOpenAuthor: () => undefined });
+
+    expect(postOptions(element)).toBeUndefined();
+  });
+
+  it('draws a labelled control whose press opens the menu, never the card', () => {
+    const onPress = jest.fn();
+    const onOpenAuthor = jest.fn();
+    const onOpenOptions = jest.fn();
+
+    const element = FeedEntry({ story, onPress, onOpenAuthor, onOpenOptions });
+    const control = postOptions(element);
+
+    expect(control).toBeDefined();
+    expect(control?.props?.accessibilityRole).toBe('button');
+    expect(control?.props?.testID).toBe('post-options');
+
+    (control?.props?.onPress as () => void)();
+
+    // The control is nested inside the card's own Pressable. There is no renderer
+    // here, so the isolation is asserted structurally: the control carries its own
+    // handler, and no handler of the card's fired (KNOT-031).
+    expect(onOpenOptions).toHaveBeenCalledTimes(1);
+    expect(onPress).not.toHaveBeenCalled();
+    expect(onOpenAuthor).not.toHaveBeenCalled();
+  });
+
+  it('gives the control the 44pt touch target the design system requires', () => {
+    const element = FeedEntry({
+      story,
+      onPress: () => undefined,
+      onOpenOptions: () => undefined,
+    });
+    const style = postOptions(element)?.props?.style as
+      { height?: number; width?: number } | undefined;
+
+    expect(style?.height).toBe(44);
+    expect(style?.width).toBe(44);
+  });
+
+  it('keeps the author block beside the control, so neither is pushed away', () => {
+    const withMenu = FeedEntry({
+      story,
+      onPress: () => undefined,
+      onOpenAuthor: () => undefined,
+      onOpenOptions: () => undefined,
+    });
+
+    // The AuthorLine and the control are siblings: the card still draws the author
+    // block whether or not a menu is offered.
+    expect(findElementByType(withMenu, AuthorLine)).toBeDefined();
+    expect(postOptions(withMenu)).toBeDefined();
   });
 });

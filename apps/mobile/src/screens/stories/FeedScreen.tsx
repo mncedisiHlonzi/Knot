@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Modal,
   Pressable,
   RefreshControl,
   StyleSheet,
@@ -9,7 +10,7 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import { Bell, MagnifyingGlass } from 'phosphor-react-native';
+import { Bell, EyeSlash, Flag, MagnifyingGlass, type Icon } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { notificationsApi } from '../../api/notifications';
@@ -18,8 +19,18 @@ import EmptyState from '../../components/EmptyState';
 import FeedEntry from '../../components/FeedEntry';
 import Header from '../../components/Header';
 import Logomark from '../../components/Logomark';
+import ReportModal from '../../components/ReportModal';
 import TheThread from '../../components/TheThread';
-import { colors, layout, radius, spacing, tabularNums, typeScale } from '../../theme';
+import {
+  colors,
+  elevation,
+  fontWeights,
+  layout,
+  radius,
+  spacing,
+  tabularNums,
+  typeScale,
+} from '../../theme';
 import {
   VIEWABILITY_CONFIG,
   type ViewableItemsInfo,
@@ -68,8 +79,10 @@ type FeedScreenProps = {
 /**
  * The public story feed, newest first, as white cards on a grey canvas.
  *
- * Each entry is a white card separated from the next by a thick background-coloured
- * gap — the LinkedIn pattern — rather than by a 1px rule (KNOT-023b).
+ * Each entry is a white card, closed by a full-bleed rule one step darker than a
+ * hairline and held apart from the next by a background-coloured gap — the
+ * LinkedIn pattern, with the rule making the boundary legible at a glance
+ * (KNOT-023b, strengthened in KNOT-031).
  *
  * The layout pins everything but the list: the header and the four text tabs are
  * fixed siblings ABOVE the FlatList, so only the feed entries scroll beneath them
@@ -109,6 +122,11 @@ export default function FeedScreen({
   // One mute setting for the whole feed, muted to begin with: a video that starts
   // itself must never make a sound.
   const [isMuted, setIsMuted] = useState(true);
+  // The entry whose options sheet is open, if any (KNOT-031).
+  const [menuItem, setMenuItem] = useState<FeedItem | undefined>(undefined);
+  // The entry being reported. The report modal owns its own form state, so this
+  // only says which entry the form is about.
+  const [reportItem, setReportItem] = useState<FeedItem | undefined>(undefined);
   // The Thread spans the list while a pull-to-refresh is in flight (KNOT-020h).
   const { width: pageWidth } = useWindowDimensions();
 
@@ -215,6 +233,45 @@ export default function FeedScreen({
   const bellLabel =
     unreadCount === 0 ? 'Notifications, none unread' : `Notifications, ${unreadCount} unread`;
 
+  /** Closes the options sheet without acting on the entry. */
+  const closePostOptions = useCallback((): void => {
+    setMenuItem(undefined);
+  }, []);
+
+  /**
+   * Hides one entry from this feed.
+   *
+   * Hiding is local to the session. There is no hide endpoint, so the entry leaves
+   * the list but returns on the next refresh or page load — it is a "not now",
+   * not a mute, and the app does not pretend otherwise (KNOT-031).
+   */
+  const hidePost = useCallback((): void => {
+    const hidden = menuItem;
+    setMenuItem(undefined);
+
+    if (hidden === undefined) {
+      return;
+    }
+
+    setItems((existing) => existing.filter((entry) => entry.id !== hidden.id));
+  }, [menuItem]);
+
+  /** Hands the entry from the options sheet to the report modal. */
+  const reportPost = useCallback((): void => {
+    setReportItem(menuItem);
+    setMenuItem(undefined);
+  }, [menuItem]);
+
+  /**
+   * Closes the report modal.
+   *
+   * The entry stays in place after a report is sent: moderation is asynchronous,
+   * so hiding it locally would claim an outcome the app cannot promise.
+   */
+  const closeReport = useCallback((): void => {
+    setReportItem(undefined);
+  }, []);
+
   return (
     <View style={styles.container}>
       {/* The fixed top region: the header and the tab row never scroll and never
@@ -319,8 +376,9 @@ export default function FeedScreen({
         }}
         onEndReachedThreshold={0.5}
         renderItem={({ item }) => (
-          // The LinkedIn-style card: a white entry on the grey feed canvas, with a
-          // visible gap between cards instead of a 1px rule (KNOT-023b).
+          // The LinkedIn-style card: a white entry on the grey feed canvas, closed
+          // by a full-bleed rule and followed by a visible gap (KNOT-023b,
+          // strengthened in KNOT-031).
           <View style={styles.card}>
             <FeedEntry
               story={{
@@ -364,7 +422,8 @@ export default function FeedScreen({
               variant={item.kind === 'version' ? 'version' : 'story'}
               versionNumber={item.kind === 'version' ? item.version_number : undefined}
               attributionLine={item.kind === 'version' ? item.attribution_line : undefined}
-              // The feed separates cards with a gap, not a hairline (KNOT-023b).
+              // The card's own rule is the feed's separator, so the entry does not
+              // draw a second one (KNOT-023b).
               showBottomHairline={false}
               isMuted={isMuted}
               isVisible={item.id === activeItemId}
@@ -373,6 +432,7 @@ export default function FeedScreen({
                 item.kind === 'version' ? onOpenVersion(item.id) : onOpenStory(item.id)
               }
               onOpenAuthor={() => onOpenUserProfile(item.author_id)}
+              onOpenOptions={() => setMenuItem(item)}
             />
           </View>
         )}
@@ -397,7 +457,115 @@ export default function FeedScreen({
           ) : null
         }
       />
+
+      <PostOptionsSheet
+        item={menuItem}
+        onHide={hidePost}
+        onReport={reportPost}
+        onClose={closePostOptions}
+      />
+
+      <ReportModal
+        visible={reportItem !== undefined}
+        token={token}
+        // A feed entry is either a story or somebody's version of one, so the
+        // report names the thing that was actually on screen (KNOT-031).
+        entityType={reportItem?.kind === 'version' ? 'version' : 'story'}
+        entityId={reportItem?.id ?? ''}
+        onClose={closeReport}
+        onSubmitted={closeReport}
+      />
     </View>
+  );
+}
+
+/**
+ * The post options sheet: the actions a reader can take on one feed entry — hide
+ * it from this feed, or report it to the moderators.
+ *
+ * It is local to this file rather than a shared component, because the feed is the
+ * only place it is drawn (the same choice the profile's options sheet makes,
+ * KNOT-020g-fix). A sheet rather than an inline popover keeps the rows at a
+ * comfortable touch size on any card height and puts Cancel where the thumb
+ * expects it (KNOT-031).
+ */
+function PostOptionsSheet({
+  item,
+  onHide,
+  onReport,
+  onClose,
+}: {
+  readonly item: FeedItem | undefined;
+  readonly onHide: () => void;
+  readonly onReport: () => void;
+  readonly onClose: () => void;
+}): React.ReactElement {
+  return (
+    <Modal visible={item !== undefined} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable
+        style={styles.sheetBackdrop}
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Close the post options"
+      >
+        {/* The sheet swallows its own taps, so pressing a row never falls through
+            to the backdrop and closes the menu before the action runs. */}
+        <Pressable style={styles.sheet} onPress={() => undefined}>
+          <View style={styles.sheetHandleArea}>
+            <View style={styles.sheetHandle} />
+          </View>
+
+          <View style={styles.sheetBody}>
+            <PostOptionRow icon={EyeSlash} label="Hide this post" onPress={onHide} />
+            <PostOptionRow icon={Flag} label="Report post" danger onPress={onReport} />
+          </View>
+
+          <Pressable
+            style={styles.sheetCancel}
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel"
+          >
+            <Text style={[typeScale.button, styles.sheetCancelText]}>Cancel</Text>
+          </Pressable>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+/**
+ * One row of the post options sheet: a leading icon and a label, 44pt tall, with
+ * `danger` reserved for the action that reports somebody's work.
+ */
+function PostOptionRow({
+  icon,
+  label,
+  danger = false,
+  onPress,
+}: {
+  readonly icon: Icon;
+  readonly label: string;
+  readonly danger?: boolean;
+  readonly onPress: () => void;
+}): React.ReactElement {
+  const IconComponent = icon;
+  return (
+    <Pressable
+      style={styles.option}
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <IconComponent
+        color={danger ? colors.state.danger : colors.text.tertiary}
+        size={20}
+        weight="bold"
+      />
+      <Text style={[typeScale.body, styles.optionLabel, danger ? styles.optionLabelDanger : null]}>
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
@@ -416,10 +584,14 @@ const styles = StyleSheet.create({
   badgeText: {
     color: colors.text.onBrand,
   },
-  // One feed card: white on the grey canvas, with the thick inter-card gap below
-  // it. The gap is the Feed's separator; there is no 1px rule (KNOT-023b).
+  // One feed card: white on the grey canvas, closed by a full-bleed rule one step
+  // darker than a hairline and followed by the inter-card gap. The rule and the
+  // gap together are the separator; the rule is what makes the boundary legible
+  // (KNOT-023b, strengthened in KNOT-031).
   card: {
     backgroundColor: colors.bg.canvas,
+    borderBottomColor: colors.border.divider,
+    borderBottomWidth: 1,
     marginBottom: spacing.sm,
   },
   container: {
@@ -457,6 +629,65 @@ const styles = StyleSheet.create({
   // the feed's 16pt content column (KNOT-020g-fix13).
   logomark: {
     marginLeft: LOGOMARK_INSET,
+  },
+  // One row of the post options sheet: a leading icon and the label, at the 44pt
+  // minimum touch size. Rows are separated by spacing alone — no drawn dividers.
+  option: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.md,
+    minHeight: 44,
+    paddingVertical: spacing.md,
+  },
+  optionLabel: {
+    color: colors.text.primary,
+    flex: 1,
+    fontWeight: fontWeights.bold,
+  },
+  optionLabelDanger: {
+    color: colors.state.danger,
+  },
+  // The options sheet: rounded top corners, the canvas fill, and the floating-bar
+  // shadow (elevation 3, whose offset points up) — the profile sheet's treatment.
+  sheet: {
+    ...elevation[3],
+    backgroundColor: colors.bg.canvas,
+    borderTopLeftRadius: radius.xxl,
+    borderTopRightRadius: radius.xxl,
+    paddingBottom: spacing.xl,
+  },
+  sheetBackdrop: {
+    backgroundColor: colors.scrim.overlay,
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  sheetBody: {
+    paddingHorizontal: spacing.lg,
+  },
+  // Cancel is a plain full-width row rather than a third option: it acts on the
+  // sheet, not on the post.
+  sheetCancel: {
+    alignItems: 'center',
+    borderTopColor: colors.border.hairline,
+    borderTopWidth: 1,
+    justifyContent: 'center',
+    marginTop: spacing.sm,
+    minHeight: 48,
+    paddingTop: spacing.md,
+  },
+  sheetCancelText: {
+    color: colors.text.secondary,
+  },
+  sheetHandle: {
+    backgroundColor: colors.border.hairline,
+    borderRadius: radius.pill,
+    height: 4,
+    width: 32,
+  },
+  sheetHandleArea: {
+    alignItems: 'center',
+    paddingBottom: spacing.sm,
+    paddingTop: spacing.sm,
   },
   spinner: {
     marginTop: spacing.xl,
