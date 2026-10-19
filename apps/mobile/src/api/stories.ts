@@ -144,6 +144,23 @@ export type Story = {
 };
 
 /**
+ * One actor's latest action on a feed entry, for the card's social-proof header
+ * (KNOT-028).
+ *
+ * The server merges at most the newest reaction and the newest comment into this
+ * list, newest first. `detail` is the reaction type (for example "rings_true")
+ * for a reaction and null for a comment, so the client names the action without
+ * parsing a sentence.
+ */
+export type RecentInteraction = {
+  readonly type: 'reaction' | 'comment';
+  readonly actor_display_name: string;
+  /** A relative avatar path on the API, or null when the actor has none. */
+  readonly actor_avatar_url: string | null;
+  readonly detail: string | null;
+};
+
+/**
  * One entry of the merged feed: a story, or somebody's adaptation of one
  * (KNOT-022).
  *
@@ -157,6 +174,8 @@ export type FeedItem = StoryFeedItem | VersionFeedItem;
 /** A story entry in the feed: the story, marked as one. */
 export type StoryFeedItem = Story & {
   readonly kind: 'story';
+  /** The entry's social proof; always sent by the current server. */
+  readonly recent_interactions?: readonly RecentInteraction[];
 };
 
 /**
@@ -245,6 +264,12 @@ export type VersionFeedItem = {
    * line.
    */
   readonly attribution_line: string;
+  /**
+   * The entry's social proof: at most the newest reaction and the newest comment,
+   * newest first, naming those actors. The card heads the entry with this when it
+   * is non-empty, and falls back to `attribution_line` when it is not (KNOT-028).
+   */
+  readonly recent_interactions?: readonly RecentInteraction[];
   /** Whether `body` is longer than the preview window a card draws. */
   readonly preview_truncated?: boolean;
 };

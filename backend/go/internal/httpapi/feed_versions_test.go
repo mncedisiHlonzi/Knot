@@ -95,6 +95,7 @@ func feedFixture(t *testing.T) (http.Handler, *memoryStoryStore, feedLookups) {
 		stats: &fakeStoryStatsLookup{byStory: map[string]storystats.Counts{
 			feedStoryID: {Versions: 2, Languages: 2, Comments: 3, Media: 1},
 		}},
+		interactions: &fakeInteractionsLookup{},
 		chains: &fakeVersionChainLookup{chains: map[string]versions.Chain{
 			feedVersionID: {
 				{

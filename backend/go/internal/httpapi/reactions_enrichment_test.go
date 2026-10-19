@@ -37,7 +37,7 @@ func TestStoryDetailCarriesReactionsAndMyReactions(t *testing.T) {
 	}
 	storiesService := &fakeStoriesService{getResult: stories.Story{ID: testEnrichedEntityID, AuthorID: testReactionAuthorID}}
 
-	handler, err := NewStoriesHandler(storiesService, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, lookup, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger)
+	handler, err := NewStoriesHandler(storiesService, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, lookup, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, &fakeInteractionsLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
@@ -70,7 +70,7 @@ func TestStoryDetailAnonymousHasEmptyMyReactions(t *testing.T) {
 	lookup := &fakeReactionsLookup{summaries: map[string]reactions.Summary{testEnrichedEntityID: {RingsTrue: 2}}}
 	storiesService := &fakeStoriesService{getResult: stories.Story{ID: testEnrichedEntityID, AuthorID: testReactionAuthorID}}
 
-	handler, err := NewStoriesHandler(storiesService, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, lookup, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger)
+	handler, err := NewStoriesHandler(storiesService, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, lookup, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, &fakeInteractionsLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
@@ -104,7 +104,7 @@ func TestStoryFeedBatchesReactionsOnce(t *testing.T) {
 	lookup := &fakeReactionsLookup{summaries: map[string]reactions.Summary{testEnrichedEntityID: {AddsSomethingNew: 1}}}
 	storiesService := &fakeStoriesService{listResult: feedOf(stories.Story{ID: testEnrichedEntityID, AuthorID: testReactionAuthorID})}
 
-	handler, err := NewStoriesHandler(storiesService, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, lookup, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger)
+	handler, err := NewStoriesHandler(storiesService, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, lookup, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, &fakeInteractionsLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
@@ -200,7 +200,7 @@ func TestReactionEnrichmentSwallowsLookupFailure(t *testing.T) {
 	lookup := &fakeReactionsLookup{err: io.ErrUnexpectedEOF}
 	storiesService := &fakeStoriesService{getResult: stories.Story{ID: testEnrichedEntityID, AuthorID: testReactionAuthorID}}
 
-	handler, err := NewStoriesHandler(storiesService, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, lookup, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger)
+	handler, err := NewStoriesHandler(storiesService, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, lookup, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, &fakeInteractionsLookup{}, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}

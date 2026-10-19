@@ -1,12 +1,11 @@
 import type { ImageLoadEventData, NativeSyntheticEvent } from 'react-native';
 
 import { MAX_PORTRAIT_ASPECT_RATIO } from '../../utils/mediaFrame';
-import { typeScale } from '../../theme';
 import AuthorLine from '../AuthorLine';
-import Avatar from '../Avatar';
 import FeedEntry from '../FeedEntry';
 import FeedVideo from '../FeedVideo';
 import PillarTag from '../PillarTag';
+import SocialProofHeader from '../SocialProofHeader';
 
 /**
  * FeedEntry resolves its media frame from the payload or from the media's own
@@ -103,37 +102,6 @@ function findElementByType(
     return findElementByType(element.props.children, type);
   }
   return undefined;
-}
-
-/**
- * Collects EVERY element of the given component type, so a stack can be asserted
- * by the props of each face rather than only by how many were built
- * (KNOT-022-fix2).
- */
-function elementsByType(
-  node: unknown,
-  type: unknown,
-  found: Array<{ props?: Record<string, unknown> }> = [],
-): Array<{ props?: Record<string, unknown> }> {
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      elementsByType(child, type, found);
-    }
-    return found;
-  }
-  if (node === null || node === undefined || typeof node !== 'object') {
-    return found;
-  }
-
-  const element = node as { type?: unknown; props?: { children?: unknown } };
-  if (element.type === type) {
-    found.push(element as { props?: Record<string, unknown> });
-  }
-  if (element.props !== undefined) {
-    elementsByType(element.props.children, type, found);
-  }
-
-  return found;
 }
 
 /** The entry every assertion below is built from. */
@@ -374,36 +342,6 @@ describe('FeedEntry', () => {
     expect(typeof video?.props?.onLoadSize).toBe('function');
   });
 
-  /**
-   * Finds the first element whose props satisfy the predicate. Structural marker
-   * assertions (the attribution header, divider, and sentence) need to look at
-   * props a string host component carries, which `findElementByType` cannot
-   * express.
-   */
-  function findElement(
-    node: unknown,
-    predicate: (props: Record<string, unknown>) => boolean,
-  ): { props?: Record<string, unknown> } | undefined {
-    if (Array.isArray(node)) {
-      for (const child of node) {
-        const found = findElement(child, predicate);
-        if (found !== undefined) {
-          return found;
-        }
-      }
-      return undefined;
-    }
-    if (node === null || node === undefined || typeof node !== 'object') {
-      return undefined;
-    }
-
-    const element = node as { props?: Record<string, unknown>; children?: unknown };
-    if (element.props !== undefined && predicate(element.props)) {
-      return element;
-    }
-    return findElement(element.props?.children, predicate);
-  }
-
   describe('the version variant', () => {
     const versionFeedItem = {
       ...withMedia,
@@ -415,7 +353,7 @@ describe('FeedEntry', () => {
       root_author_avatar_url: '/users/author-root/avatar?v=a.png',
     };
 
-    it('renders the attribution row in the body-small voice, with small lineage avatars', () => {
+    it('hands the hereditary credit to the social-proof header', () => {
       const sentence = "Adapted by Nomsa Khan from Ada Lovelace's original story in English.";
       const element = FeedEntry({
         story: versionFeedItem,
@@ -425,32 +363,30 @@ describe('FeedEntry', () => {
         onPress: () => undefined,
       });
 
-      const header = findElement(element, (props) => props.testID === 'attribution-header');
-      expect(header).toBeDefined();
+      const header = findElementByType(element, SocialProofHeader);
+      expect(header?.props).toMatchObject({
+        attributionLine: sentence,
+        adapterName: 'Nomsa Khan',
+        originalAuthorName: 'Ada Lovelace',
+      });
 
-      const line = findElement(element, (props) => props.testID === 'attribution-sentence');
-      expect(line?.props?.style).toContain(typeScale.bodyS);
-      expect(line?.props?.numberOfLines).toBe(2);
-
-      // The row leads with the lineage's parent author, at the small size the
-      // stack uses (KNOT-022-fix2).
-      expect(findElementByType(header, Avatar)?.props?.size).toBe('sm');
-
-      // The parser splits the sentence around its names, so the text is asserted
-      // by its runs rather than as one string.
-      const text = collectText(element);
-      expect(text).toContain('Adapted by ');
-      expect(text).toContain('Nomsa Khan');
-      expect(text).toContain('Ada Lovelace');
-      expect(text).toContain("'s original story in English.");
+      const lineage = header?.props?.lineageAvatars as ReadonlyArray<{
+        name: string;
+        uri: string | undefined;
+      }>;
+      expect(lineage.map((actor) => actor.name)).toEqual(['MaEnzy', 'Ada Lovelace']);
+      expect(lineage.map((actor) => actor.uri)).toEqual([
+        'http://localhost:8080/users/author-parent/avatar?v=p.png',
+        'http://localhost:8080/users/author-root/avatar?v=a.png',
+      ]);
     });
   });
 
-  describe('the attribution header', () => {
+  describe('the social-proof header', () => {
     // The founder's shape: the poster (Nomsa) is version 3's author, MaEnzy wrote
-    // the version it adapts, and Ada wrote the original. The stack must show the
-    // lineage -- MaEnzy and Ada -- never the poster, who is the AuthorLine below
-    // (KNOT-022-fix2).
+    // the version it adapts, and Ada wrote the original. The header must receive
+    // the lineage -- MaEnzy and Ada -- never the poster, who is the AuthorLine
+    // below (KNOT-022-fix2, KNOT-028).
     const sentence =
       "Adapted by Nomsa Khan from MaEnzy's Zulu version of Ada Lovelace's original story in English.";
     const adapted = {
@@ -464,7 +400,7 @@ describe('FeedEntry', () => {
       root_author_avatar_url: '/users/author-root/avatar?v=a.png',
     };
 
-    it('stacks the parent and original authors beside the bolded sentence', () => {
+    it('hands the lineage and the sentence to the header', () => {
       const element = FeedEntry({
         story: adapted,
         variant: 'version',
@@ -473,42 +409,30 @@ describe('FeedEntry', () => {
         onPress: () => undefined,
       });
 
-      const header = findElement(element, (props) => props.testID === 'attribution-header');
-      expect(header).toBeDefined();
+      const header = findElementByType(element, SocialProofHeader);
+      expect(header?.props).toMatchObject({
+        attributionLine: sentence,
+        adapterName: 'Nomsa Khan',
+        originalAuthorName: 'Ada Lovelace',
+      });
 
-      // Two small avatars, stacked in lineage order: the direct parent, then the
-      // original (KNOT-022-fix2).
-      const avatars = elementsByType(header, Avatar);
-      expect(avatars).toHaveLength(2);
-      expect(avatars.map((avatar) => avatar.props?.uri)).toEqual([
+      const lineage = header?.props?.lineageAvatars as ReadonlyArray<{
+        name: string;
+        uri: string | undefined;
+      }>;
+      expect(lineage.map((actor) => actor.name)).toEqual(['MaEnzy', 'Ada Lovelace']);
+      expect(lineage.map((actor) => actor.uri)).toEqual([
         'http://localhost:8080/users/author-parent/avatar?v=p.png',
         'http://localhost:8080/users/author-root/avatar?v=a.png',
       ]);
-      expect(avatars.map((avatar) => avatar.props?.size)).toEqual(['sm', 'sm']);
 
       // The poster is deliberately not in the stack; they are the author line.
-      expect(avatars.map((avatar) => avatar.props?.uri)).not.toContain(
+      expect(lineage.map((actor) => actor.uri)).not.toContain(
         'http://localhost:8080/users/author-poster/avatar?v=poster.png',
       );
-
-      // Every name the sentence mentions is split out and given the bold label
-      // voice (KNOT-023c, KNOT-022-fix2).
-      for (const name of ['Nomsa Khan', 'MaEnzy', 'Ada Lovelace']) {
-        const boldName = findTextElement(element, (value) => value === name);
-        expect(boldName?.props?.style).toEqual(expect.arrayContaining([typeScale.label]));
-      }
-
-      const text = collectText(element);
-      expect(text).toContain('Adapted by ');
-      expect(text).toContain(' from ');
-      expect(text).toContain("'s Zulu version of ");
-      expect(text).toContain("'s original story in English.");
-
-      // A hairline now separates the header from the author block.
-      expect(findElement(element, (props) => props.testID === 'attribution-divider')).toBeDefined();
     });
 
-    it('draws one avatar when the parent is the original author', () => {
+    it('draws one lineage face when the parent is the original author', () => {
       const element = FeedEntry({
         story: {
           ...adapted,
@@ -522,14 +446,15 @@ describe('FeedEntry', () => {
         onPress: () => undefined,
       });
 
-      const header = findElement(element, (props) => props.testID === 'attribution-header');
-      const avatars = elementsByType(header, Avatar);
+      const lineage = findElementByType(element, SocialProofHeader)?.props?.lineageAvatars as
+        ReadonlyArray<{ name: string; uri: string | undefined }> | undefined;
 
-      expect(avatars).toHaveLength(1);
-      expect(avatars[0].props?.uri).toBe('http://localhost:8080/users/author-root/avatar?v=a.png');
+      expect(lineage).toHaveLength(1);
+      expect(lineage?.[0].name).toBe('Ada Lovelace');
+      expect(lineage?.[0].uri).toBe('http://localhost:8080/users/author-root/avatar?v=a.png');
     });
 
-    it('bolds the name in the original-story form too', () => {
+    it('passes an original-story sentence through unchanged', () => {
       const element = FeedEntry({
         story: adapted,
         variant: 'version',
@@ -538,12 +463,9 @@ describe('FeedEntry', () => {
         onPress: () => undefined,
       });
 
-      const boldName = findTextElement(element, (value) => value === 'Ada Lovelace');
-      expect(boldName?.props?.style).toEqual(expect.arrayContaining([typeScale.label]));
-
-      const text = collectText(element);
-      expect(text).toContain('Original story by ');
-      expect(text).toContain(' in English.');
+      expect(findElementByType(element, SocialProofHeader)?.props?.attributionLine).toBe(
+        'Original story by Ada Lovelace in English.',
+      );
     });
 
     it('never heads a story entry, even when root fields are present', () => {
@@ -553,12 +475,10 @@ describe('FeedEntry', () => {
         onPress: () => undefined,
       });
 
-      expect(
-        findElement(element, (props) => props.testID === 'attribution-header'),
-      ).toBeUndefined();
+      expect(findElementByType(element, SocialProofHeader)).toBeUndefined();
     });
 
-    it('omits the attribution row when neither the sentence nor the root author exists', () => {
+    it('passes nothing to credit when neither the sentence nor the root author exists', () => {
       const element = FeedEntry({
         story: { ...story, root_author_display_name: null },
         variant: 'version',
@@ -567,15 +487,15 @@ describe('FeedEntry', () => {
         onPress: () => undefined,
       });
 
-      // Nothing to credit means no empty row, and no version label to fall back to
-      // (KNOT-025-fix4).
-      expect(
-        findElement(element, (props) => props.testID === 'attribution-header'),
-      ).toBeUndefined();
+      // The header is handed the empty state and decides to draw nothing; no
+      // "Version N" fallback is left behind (KNOT-025-fix4, KNOT-028).
+      const header = findElementByType(element, SocialProofHeader);
+      expect(header?.props?.attributionLine).toBe('');
+      expect(header?.props?.originalAuthorName).toBe('');
       expect(collectText(element).some((value) => value.startsWith('Version '))).toBe(false);
     });
 
-    it('falls back to the structured lineage when the sentence is missing', () => {
+    it('hands the structured lineage to the fallback when the sentence is missing', () => {
       const element = FeedEntry({
         story: adapted,
         variant: 'version',
@@ -584,13 +504,12 @@ describe('FeedEntry', () => {
         onPress: () => undefined,
       });
 
-      const text = collectText(element);
-      expect(text).toContain('Adapted by ');
-      expect(text).toContain('Nomsa Khan');
-      expect(text).toContain(' from ');
-      expect(text).toContain('Ada Lovelace');
-      expect(text).toContain("'s original story.");
-      expect(text.some((value) => value.startsWith('Version '))).toBe(false);
+      expect(findElementByType(element, SocialProofHeader)?.props).toMatchObject({
+        attributionLine: '',
+        adapterName: 'Nomsa Khan',
+        originalAuthorName: 'Ada Lovelace',
+      });
+      expect(collectText(element).some((value) => value.startsWith('Version '))).toBe(false);
     });
   });
 });
@@ -706,36 +625,6 @@ function collectText(node: unknown, found: string[] = []): string[] {
   return found;
 }
 
-/** The first text element whose content matches the predicate, if any. */
-function findTextElement(
-  node: unknown,
-  matches: (text: string) => boolean,
-): { props?: Record<string, unknown> } | undefined {
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      const found = findTextElement(child, matches);
-      if (found !== undefined) {
-        return found;
-      }
-    }
-    return undefined;
-  }
-  if (node === null || node === undefined || typeof node !== 'object') {
-    return undefined;
-  }
-
-  const element = node as { type?: unknown; props?: { children?: unknown } };
-  const children = element.props?.children;
-  if (typeof children === 'string' && matches(children)) {
-    return element as { props?: Record<string, unknown> };
-  }
-  if (element.props !== undefined) {
-    return findTextElement(children, matches);
-  }
-
-  return undefined;
-}
-
 /** The fixture the version-variant assertions below are built from. */
 const version = {
   ...story,
@@ -769,10 +658,10 @@ describe('FeedEntry version variant', () => {
     // (KNOT-025-fix4).
     const text = collectText(element);
     expect(text.some((value) => value.startsWith('Version '))).toBe(false);
-    expect(text).toContain("'s original story in English.");
+    expect(findElementByType(element, SocialProofHeader)?.props?.attributionLine).toBe(ATTRIBUTION);
   });
 
-  it('splits the attribution sentence so the name takes the bold voice', () => {
+  it('passes the attribution sentence to the header unchanged', () => {
     const element = FeedEntry({
       story: version,
       variant: 'version',
@@ -781,16 +670,7 @@ describe('FeedEntry version variant', () => {
       onPress: () => undefined,
     });
 
-    const text = collectText(element);
-    expect(text).toContain('Adapted by ');
-    expect(text).toContain('Nomsa Khan');
-    expect(text).toContain(' from ');
-    expect(text).toContain('Ada Lovelace');
-    expect(text).toContain("'s original story in English.");
-
-    // The sentence opens with the adapter, who is bolded like the original.
-    const boldName = findTextElement(element, (value) => value === 'Nomsa Khan');
-    expect(boldName?.props?.style).toEqual(expect.arrayContaining([typeScale.label]));
+    expect(findElementByType(element, SocialProofHeader)?.props?.attributionLine).toBe(ATTRIBUTION);
   });
 
   it('omits the attribution line when the server could not resolve one', () => {
@@ -805,6 +685,7 @@ describe('FeedEntry version variant', () => {
     const text = collectText(element);
     expect(text).not.toContain(ATTRIBUTION);
     expect(text.some((value) => value.startsWith('Version '))).toBe(false);
+    expect(findElementByType(element, SocialProofHeader)?.props?.attributionLine).toBe('');
   });
 
   it('ends the adaptation credit after the language, with no version tail', () => {
@@ -818,7 +699,7 @@ describe('FeedEntry version variant', () => {
 
     const text = collectText(element);
     expect(text.some((value) => value.startsWith('Version '))).toBe(false);
-    expect(text).toContain("'s original story in English.");
+    expect(findElementByType(element, SocialProofHeader)?.props?.attributionLine).toBe(ATTRIBUTION);
   });
 
   it('still renders the story shape when the variant is not given', () => {

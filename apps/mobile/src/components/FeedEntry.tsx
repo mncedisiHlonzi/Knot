@@ -10,20 +10,16 @@ import {
 } from 'react-native';
 import { Images } from 'phosphor-react-native';
 
+import type { RecentInteraction } from '../api/stories';
 import { API_BASE_URL } from '../config/api';
 import { colors, layout, radius, spacing, tabularNums, typeScale } from '../theme';
 import { PLACEHOLDER_MEDIA_ASPECT_RATIO } from '../utils/mediaFrame';
 import { useMediaAspectRatio } from '../utils/useMediaAspectRatio';
 import AuthorLine from './AuthorLine';
-import Avatar from './Avatar';
-import {
-  attributionSegments,
-  feedMetaLine,
-  isPreviewTruncated,
-  type AttributionSegment,
-} from './feedEntryMeta';
+import { feedMetaLine, isPreviewTruncated } from './feedEntryMeta';
 import FeedVideo, { VIDEO_MUTE_BUTTON_SIZE } from './FeedVideo';
 import PillarTag from './PillarTag';
+import SocialProofHeader, { type SocialProofAvatar } from './SocialProofHeader';
 
 /**
  * The content a feed entry renders, in the shape both kinds share: a story, and --
@@ -91,6 +87,11 @@ type FeedEntryStory = {
     readonly adds_something_new: number;
     readonly needs_a_source: number;
   };
+  /**
+   * The entry's latest social proof, newest first. A version card heads the entry
+   * with it, falling back to `attributionLine` when it is empty (KNOT-028).
+   */
+  readonly recent_interactions?: readonly RecentInteraction[];
 };
 
 type FeedEntryProps = {
@@ -148,13 +149,6 @@ type FeedEntryProps = {
 /** The preview's line limit. */
 const PREVIEW_LINES = 3;
 
-/**
- * The single-line attribution header's line limit. The sentence wraps when the
- * screen is narrow or the lineage is deep, but the header is a caption and must
- * not grow without bound (KNOT-023b).
- */
-const ATTRIBUTION_LINES = 2;
-
 /** The media-count badge's glyph size. */
 const COUNT_ICON_SIZE = 14;
 
@@ -182,43 +176,6 @@ function resolveAvatarUrl(path: string | null | undefined): string | undefined {
   return trimmed === '' ? undefined : `${API_BASE_URL}${trimmed}`;
 }
 
-/**
- * The attribution runs for a server that sent no sentence: the adapter and the
- * original author, in the same shape `attributionSegments` produces, so the row
- * renders the fallback as just another sentence (KNOT-022-fix1, KNOT-022-fix2).
- */
-function fallbackAttributionRuns(
-  adapterName: string,
-  rootAuthorName: string,
-): readonly AttributionSegment[] {
-  if (rootAuthorName === '') {
-    return [];
-  }
-  if (adapterName === '') {
-    return [
-      { text: 'Adapted from ', bold: false },
-      { text: rootAuthorName, bold: true },
-      { text: "'s original story.", bold: false },
-    ];
-  }
-
-  return [
-    { text: 'Adapted by ', bold: false },
-    { text: adapterName, bold: true },
-    { text: ' from ', bold: false },
-    { text: rootAuthorName, bold: true },
-    { text: "'s original story.", bold: false },
-  ];
-}
-
-/** One face in the attribution row's lineage stack. */
-type LineageAvatar = {
-  readonly key: 'parent' | 'root';
-  readonly uri: string | undefined;
-  readonly name: string;
-  readonly label: string;
-};
-
 /** The accessibility label for a lineage avatar, tolerating an unresolved name. */
 function lineageAvatarLabel(name: string): string {
   return name === '' ? 'Lineage author\u2019s profile picture' : `${name}'s profile picture`;
@@ -236,12 +193,11 @@ function lineageAvatarLabel(name: string): string {
  *
  * The author block is a vertical stack (KNOT-023b): the avatar on the left and,
  * on the right, the name, the quiet Rooted line, then the compact time. A version
- * card additionally opens with an attribution row — a small stack of the LINEAGE
- * authors' avatars (the direct parent and the original) beside the server's
- * sentence, whose names are bolded — which is the only place that sentence is
- * drawn. The version number is deliberately absent from the feed: the credit ends
- * after the language (KNOT-025-fix4). The poster is the AuthorLine below, not a
- * face in that stack (KNOT-022-fix1, KNOT-022-fix2).
+ * card additionally opens with a `SocialProofHeader`: the newest interactions if
+ * there are any, otherwise the lineage avatars and the server's attribution
+ * sentence (KNOT-028). The poster is the AuthorLine below, not a face in that
+ * header (KNOT-022-fix1, KNOT-022-fix2). The version number is deliberately
+ * absent from the feed: the credit ends after the language (KNOT-025-fix4).
  *
  * The text column keeps the feed's horizontal inset, but the **media is
  * full-bleed**: no horizontal padding and no corner rounding. An image draws
@@ -337,7 +293,7 @@ export default function FeedEntry({
       ? parentAuthorID === rootAuthorID
       : parentAuthorName !== '' && parentAuthorName === rootAuthorName);
 
-  const lineageAvatars: LineageAvatar[] = [];
+  const lineageAvatars: SocialProofAvatar[] = [];
   if (parentKnown) {
     lineageAvatars.push({
       key: 'parent',
@@ -356,18 +312,6 @@ export default function FeedEntry({
   }
 
   const attributionText = typeof attributionLine === 'string' ? attributionLine.trim() : '';
-  // The sentence names the people in the lineage, so it is split into runs and
-  // every name is drawn in the bold label voice (KNOT-022-fix1). Parsing is
-  // display-only; an unexpected sentence falls back to one plain run.
-  const attributionRuns: readonly AttributionSegment[] =
-    attributionText !== ''
-      ? attributionSegments(attributionText)
-      : fallbackAttributionRuns(adapterName, rootAuthorName);
-  // The row is drawn only when there is a sentence (or a structured root author to
-  // fall back to). The quiet "· Version N" tail is gone: the credit ends after the
-  // language, and the version number lives on the Story Version screen instead
-  // (KNOT-025-fix4).
-  const showAttributionHeader = isVersion && (attributionText !== '' || rootAuthorName !== '');
 
   return (
     <Pressable
@@ -380,52 +324,17 @@ export default function FeedEntry({
       testID={testID}
     >
       <View style={styles.padded}>
-        {/* The attribution row: the lineage authors -- the direct parent and the
-            original -- as stacked avatars, then a two-line social credit (the
-            server's sentence with its names bolded). The poster is deliberately
-            absent: they are the AuthorLine below, not the lineage
-            (KNOT-023b, KNOT-022-fix1, KNOT-022-fix2, KNOT-025-fix4). */}
-        {showAttributionHeader ? (
-          <View style={styles.attributionRow} testID="attribution-header">
-            {lineageAvatars.length > 0 ? (
-              <View style={styles.attributionAvatars}>
-                {lineageAvatars.map((actor, index) => (
-                  <View
-                    key={actor.key}
-                    style={index === 0 ? null : styles.attributionAvatarStacked}
-                  >
-                    <Avatar
-                      uri={actor.uri}
-                      displayName={actor.name}
-                      size="sm"
-                      accessibilityLabel={actor.label}
-                    />
-                  </View>
-                ))}
-              </View>
-            ) : null}
-            <Text
-              testID="attribution-sentence"
-              style={[typeScale.bodyS, styles.attributionText]}
-              numberOfLines={ATTRIBUTION_LINES}
-            >
-              {attributionRuns.map((run, index) =>
-                run.bold ? (
-                  <Text key={index} style={[typeScale.label, styles.attributionName]}>
-                    {run.text}
-                  </Text>
-                ) : (
-                  run.text
-                ),
-              )}
-            </Text>
-          </View>
-        ) : null}
-
-        {/* A hairline separates the attribution line from the poster's author
-            block, so the two identities read as distinct (KNOT-023c). */}
-        {showAttributionHeader ? (
-          <View style={styles.attributionDivider} testID="attribution-divider" />
+        {/* The social-proof header: the newest interactions, or the hereditary
+            attribution when there are none (KNOT-028). Story entries have
+            neither today, so they draw no header. */}
+        {isVersion ? (
+          <SocialProofHeader
+            interactions={story.recent_interactions}
+            attributionLine={attributionText}
+            adapterName={adapterName}
+            originalAuthorName={rootAuthorName}
+            lineageAvatars={lineageAvatars}
+          />
         ) : null}
 
         <AuthorLine
@@ -517,42 +426,6 @@ export default function FeedEntry({
 }
 
 const styles = StyleSheet.create({
-  // The attribution row: stacked avatars on the left, a two-line social credit on
-  // the right. It is a label above the author block, not a byline of its own
-  // (KNOT-022-fix1).
-  attributionRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  attributionAvatars: {
-    alignItems: 'center',
-    flexDirection: 'row',
-  },
-  // Each later lineage face sits over the one before it, ringed in the canvas so
-  // the faces stay legible where they meet (KNOT-022-fix2).
-  attributionAvatarStacked: {
-    backgroundColor: colors.bg.canvas,
-    borderColor: colors.bg.canvas,
-    borderRadius: radius.pill,
-    borderWidth: 2,
-    marginLeft: -spacing.sm,
-  },
-  attributionName: {
-    color: colors.text.primary,
-  },
-  attributionText: {
-    color: colors.text.secondary,
-    flexShrink: 1,
-  },
-  // The rule between the attribution line and the poster's author block
-  // (KNOT-023c). It is the design system's hairline, not the heavier divider.
-  attributionDivider: {
-    backgroundColor: colors.border.hairline,
-    height: 1,
-    marginBottom: spacing.sm,
-    marginTop: spacing.sm,
-  },
   countBadge: {
     alignItems: 'center',
     backgroundColor: colors.scrim.overlay,

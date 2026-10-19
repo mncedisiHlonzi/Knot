@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/knot/backend/internal/interactions"
 	"github.com/knot/backend/internal/stories"
 	"github.com/knot/backend/internal/storymedia"
 	"github.com/knot/backend/internal/versions"
@@ -189,6 +190,26 @@ func (f *fakeVersionChainLookup) ChainsFor(_ context.Context, versionIDs []strin
 	return f.chains, nil
 }
 
+// fakeInteractionsLookup returns canned social proof, so a feed test can assert
+// what the page's one interaction read cost and what each entry carries
+// (KNOT-028).
+type fakeInteractionsLookup struct {
+	latest map[string][]interactions.Interaction
+	err    error
+
+	calls      int
+	gotTargets []interactions.Target
+}
+
+func (f *fakeInteractionsLookup) Latest(_ context.Context, targets []interactions.Target) (map[string][]interactions.Interaction, error) {
+	f.calls++
+	f.gotTargets = targets
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.latest, nil
+}
+
 // feedPage is the GET /stories body as a test reads it: the entries kept raw, so
 // a test can decode either kind from the same page and can also assert the order
 // the two kinds appear in (KNOT-022).
@@ -311,12 +332,13 @@ func newRouterWithLookups(t *testing.T, logger *slog.Logger, service StoriesServ
 	t.Helper()
 
 	return newRouterWithFeedLookups(t, logger, service, feedLookups{
-		authors:   &fakeAuthorService{},
-		rooted:    &fakeRootedService{},
-		media:     lookup,
-		reactions: &fakeReactionsLookup{},
-		stats:     stats,
-		chains:    &fakeVersionChainLookup{},
+		authors:      &fakeAuthorService{},
+		rooted:       &fakeRootedService{},
+		media:        lookup,
+		reactions:    &fakeReactionsLookup{},
+		stats:        stats,
+		chains:       &fakeVersionChainLookup{},
+		interactions: &fakeInteractionsLookup{},
 	})
 }
 
@@ -324,12 +346,13 @@ func newRouterWithLookups(t *testing.T, logger *slog.Logger, service StoriesServ
 // can seed what a page's entries are decorated with and assert what each
 // decoration cost.
 type feedLookups struct {
-	authors   AuthorLookup
-	rooted    RootedLookup
-	media     StoryMediaLookup
-	reactions ReactionsLookup
-	stats     StoryStatsLookup
-	chains    VersionChainLookup
+	authors      AuthorLookup
+	rooted       RootedLookup
+	media        StoryMediaLookup
+	reactions    ReactionsLookup
+	stats        StoryStatsLookup
+	chains       VersionChainLookup
+	interactions InteractionLookup
 }
 
 // newRouterWithFeedLookups assembles the full router with explicit feed
@@ -342,7 +365,7 @@ func newRouterWithFeedLookups(t *testing.T, logger *slog.Logger, service Stories
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandler(service, lookups.authors, lookups.rooted, lookups.media, lookups.reactions, lookups.stats, lookups.chains, logger)
+	storiesHandler, err := NewStoriesHandler(service, lookups.authors, lookups.rooted, lookups.media, lookups.reactions, lookups.stats, lookups.chains, lookups.interactions, logger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
@@ -881,30 +904,35 @@ func TestListStoriesUnexpectedFailureIsInternalError(t *testing.T) {
 func TestNewStoriesHandlerRejectsMissingDependencies(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	if _, err := NewStoriesHandler(nil, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger); err == nil {
+	if _, err := NewStoriesHandler(nil, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, &fakeInteractionsLookup{}, logger); err == nil {
 		t.Error("NewStoriesHandler(nil service) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, nil, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger); err == nil {
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, nil, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, &fakeInteractionsLookup{}, logger); err == nil {
 		t.Error("NewStoriesHandler(nil authors) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, nil, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger); err == nil {
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, nil, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, &fakeInteractionsLookup{}, logger); err == nil {
 		t.Error("NewStoriesHandler(nil rooted) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, nil, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger); err == nil {
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, nil, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, &fakeInteractionsLookup{}, logger); err == nil {
 		t.Error("NewStoriesHandler(nil media) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, nil, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, logger); err == nil {
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, nil, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, &fakeInteractionsLookup{}, logger); err == nil {
 		t.Error("NewStoriesHandler(nil reactions) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, nil, &fakeVersionChainLookup{}, logger); err == nil {
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, nil, &fakeVersionChainLookup{}, &fakeInteractionsLookup{}, logger); err == nil {
 		t.Error("NewStoriesHandler(nil stats) error = nil, want an error")
 	}
 	// The chain lookup is what attributes an adaptation in the feed, so a handler
 	// without one would serve entries it cannot attribute (KNOT-022).
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, nil, logger); err == nil {
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, nil, &fakeInteractionsLookup{}, logger); err == nil {
 		t.Error("NewStoriesHandler(nil chains) error = nil, want an error")
 	}
-	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, nil); err == nil {
+	// The interaction lookup is the social proof header, so a handler without one
+	// would silently serve every entry without it (KNOT-028).
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, nil, logger); err == nil {
+		t.Error("NewStoriesHandler(nil interactions) error = nil, want an error")
+	}
+	if _, err := NewStoriesHandler(&fakeStoriesService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeStoryMediaLookup{}, &fakeReactionsLookup{}, &fakeStoryStatsLookup{}, &fakeVersionChainLookup{}, &fakeInteractionsLookup{}, nil); err == nil {
 		t.Error("NewStoriesHandler(nil logger) error = nil, want an error")
 	}
 }

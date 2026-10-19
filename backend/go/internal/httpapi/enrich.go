@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/knot/backend/internal/identity"
+	"github.com/knot/backend/internal/interactions"
 	"github.com/knot/backend/internal/reactions"
 	"github.com/knot/backend/internal/rooted"
 	"github.com/knot/backend/internal/storymedia"
@@ -451,6 +452,130 @@ func orEmptyStrings(values []string) []string {
 	return values
 }
 
+// InteractionLookup is the social-proof enrichment dependency: the newest
+// reaction and the newest comment for each feed item on a page.
+//
+// It is deliberately narrower than the read-model store. The stories handler only
+// decorates a feed entry with its interactions, so it depends on the one batched
+// read that does that rather than on the SQL behind it (KNOT-028).
+type InteractionLookup interface {
+	Latest(ctx context.Context, targets []interactions.Target) (map[string][]interactions.Interaction, error)
+}
+
+// recentInteractionResponse is one entry of a feed card's social-proof header.
+//
+// Detail carries the reaction type for a reaction ("rings_true", …) and is null
+// for a comment, which is what lets the client name the action without the server
+// rendering a sentence (KNOT-028).
+type recentInteractionResponse struct {
+	Type             string  `json:"type"`
+	ActorDisplayName string  `json:"actor_display_name"`
+	ActorAvatarURL   *string `json:"actor_avatar_url"`
+	Detail           *string `json:"detail"`
+}
+
+// latestInteractions reads a page's social proof in one batched call, keyed by
+// feed item id.
+//
+// Enrichment is supplementary, so a failure is logged and swallowed: a page must
+// stay readable when interactions cannot be read, and an entry simply falls back
+// to its attribution line (KNOT-028).
+func latestInteractions(ctx context.Context, lookup InteractionLookup, logger *slog.Logger, targets []interactions.Target) map[string][]interactions.Interaction {
+	if lookup == nil || len(targets) == 0 {
+		return nil
+	}
+
+	latest, err := lookup.Latest(ctx, targets)
+	if err != nil {
+		logger.WarnContext(
+			ctx,
+			"interaction enrichment failed",
+			slog.String("request_id", RequestIDFromContext(ctx)),
+			slog.String("error", err.Error()),
+		)
+		return nil
+	}
+
+	return latest
+}
+
+// interactionTargets names the two sources behind each feed entry's social proof.
+//
+// A story entry reacts as a story and its conversation is the root version's; an
+// adaptation entry reacts as a version and its conversation is its own. Both keys
+// use the feed item id, so the enrichment result maps straight back onto the page
+// (KNOT-021, KNOT-022, KNOT-028).
+func interactionTargets(stories []storyResponse, versions []feedVersionItem) []interactions.Target {
+	targets := make([]interactions.Target, 0, len(stories)+len(versions))
+
+	for i := range stories {
+		targets = append(targets, interactions.Target{
+			Key:                stories[i].ID,
+			ReactionEntityType: reactions.EntityStory,
+			ReactionEntityID:   stories[i].ID,
+			CommentVersionID:   stories[i].RootVersionID,
+		})
+	}
+	for i := range versions {
+		targets = append(targets, interactions.Target{
+			Key:                versions[i].ID,
+			ReactionEntityType: reactions.EntityVersion,
+			ReactionEntityID:   versions[i].ID,
+			CommentVersionID:   versions[i].ID,
+		})
+	}
+
+	return targets
+}
+
+// interactionActorIDs returns every actor the page's interactions name, so they
+// ride in the same batched author read as the entries' own authors rather than
+// becoming a read per interaction (KNOT-028).
+func interactionActorIDs(latest map[string][]interactions.Interaction) []string {
+	ids := make([]string, 0, len(latest)*2)
+	for _, list := range latest {
+		for _, item := range list {
+			ids = append(ids, item.ActorID)
+		}
+	}
+
+	return ids
+}
+
+// projectInteractions attaches each interaction's actor identity from the page's
+// one batched author read. A reaction carries its reaction type as the detail; a
+// comment's detail is null.
+func projectInteractions(list []interactions.Interaction, attributions map[string]authorAttribution) []recentInteractionResponse {
+	if len(list) == 0 {
+		return nil
+	}
+
+	out := make([]recentInteractionResponse, 0, len(list))
+	for _, item := range list {
+		attribution := attributions[item.ActorID]
+		response := recentInteractionResponse{
+			Type:             string(item.Kind),
+			ActorDisplayName: attribution.DisplayName,
+			ActorAvatarURL:   optionalString(attribution.AvatarURL),
+		}
+		if item.Kind == interactions.KindReaction {
+			response.Detail = optionalString(item.Detail)
+		}
+		out = append(out, response)
+	}
+
+	return out
+}
+
+// orEmptyInteractions returns a non-nil slice so a feed entry serialises its
+// social-proof field as [] rather than null when there is nothing to show.
+func orEmptyInteractions(values []recentInteractionResponse) []recentInteractionResponse {
+	if values == nil {
+		return []recentInteractionResponse{}
+	}
+	return values
+}
+
 // StoryStatsLookup is the aggregate-counts enrichment dependency: one batched
 // read of the version, language, comment, and media counts for a set of stories.
 //
@@ -608,13 +733,14 @@ func applyStoryCardFields(
 // be unioned without ambiguity. Reactions cannot -- an adaptation and a story are
 // different reaction entities -- so that lookup runs once per kind.
 type feedPageLookups struct {
-	authors   AuthorLookup
-	rooted    RootedLookup
-	media     StoryMediaLookup
-	reactions ReactionsLookup
-	stats     StoryStatsLookup
-	chains    VersionChainLookup
-	logger    *slog.Logger
+	authors      AuthorLookup
+	rooted       RootedLookup
+	media        StoryMediaLookup
+	reactions    ReactionsLookup
+	stats        StoryStatsLookup
+	chains       VersionChainLookup
+	interactions InteractionLookup
+	logger       *slog.Logger
 }
 
 // enrich decorates one page of the merged feed in place: the story entries and the
@@ -623,9 +749,9 @@ type feedPageLookups struct {
 //
 // Every enrichment is supplementary: a lookup failure is logged and swallowed by
 // the helper it belongs to, so an entry stays readable when a dependency is down.
-func (l feedPageLookups) enrich(ctx context.Context, stories []storyResponse, versions []feedVersionItem) {
+func (l feedPageLookups) enrich(ctx context.Context, stories []storyResponse, versions []feedVersionItem) map[string][]recentInteractionResponse {
 	if len(stories) == 0 && len(versions) == 0 {
-		return
+		return nil
 	}
 
 	storyIDs := make([]string, 0, len(stories))
@@ -657,6 +783,13 @@ func (l feedPageLookups) enrich(ctx context.Context, stories []storyResponse, ve
 		}
 	}
 
+	// Social proof is read BEFORE the author lookup, because the people it names
+	// must ride in that same batched read rather than a read per interaction. The
+	// read is two statements for the whole page -- one over reactions, one over
+	// comments -- however many entries it holds (KNOT-028).
+	latest := latestInteractions(ctx, l.interactions, l.logger, interactionTargets(stories, versions))
+	authorIDs = append(authorIDs, interactionActorIDs(latest)...)
+
 	// One read names and pictures every person the page mentions, and one more
 	// attaches the inline Rooted summary of every author who is ON the page. The
 	// originals named inside an attribution sentence are deliberately not looked up:
@@ -679,6 +812,18 @@ func (l feedPageLookups) enrich(ctx context.Context, stories []storyResponse, ve
 		applyVersionCardFields(&versions[i], chains, attributions, rootedSummaries, previews, counts)
 	}
 
+	// The interaction actors are now named, so every entry's social proof can be
+	// projected. Versions are filled here because this function owns their slice;
+	// stories are filled by the caller from the map this returns, since a story
+	// entry is not a storyResponse on the wire (KNOT-028).
+	projected := make(map[string][]recentInteractionResponse, len(latest))
+	for key, list := range latest {
+		projected[key] = projectInteractions(list, attributions)
+	}
+	for i := range versions {
+		versions[i].RecentInteractions = orEmptyInteractions(projected[versions[i].ID])
+	}
+
 	// Reactions are the one lookup that cannot span both kinds: a story entry
 	// reacts as a story and an adaptation as a version, so the page reads each
 	// entity set once. When a page carries one kind only, the other read is skipped
@@ -696,6 +841,8 @@ func (l feedPageLookups) enrich(ctx context.Context, stories []storyResponse, ve
 		versions[i].Reactions = versionReactions.Counts[versions[i].ID]
 		versions[i].MyReactions = orEmptyStrings(versionReactions.Mine[versions[i].ID])
 	}
+
+	return projected
 }
 
 // applyVersionCardFields fills one adaptation entry's enriched fields from the

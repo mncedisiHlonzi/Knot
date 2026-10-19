@@ -2495,3 +2495,38 @@ restoration of this flag.
 
 The moderation **report category** `sensitive_content` is deliberately kept: it is a
 user's report about content, a different concept from a self-declared story flag.
+
+## KNOT-ADR-073 — A feed entry's header is social proof first, attribution second
+
+**Context.** A version card was headed by a static hereditary sentence
+(`attribution_line`): it explains where the telling came from, but says nothing about
+whether anyone has engaged with it. The founder asked for LinkedIn's "Liked by X and Y"
+pattern, where the header shows the people who have just acted. (Numbered 073 because
+071 and 072 are already taken by the bridge retirement and sensitive-content removal.)
+
+**Decision.** A version card's header follows a fixed hierarchy:
+
+1. **Interactions win.** If the entry has any, show at most **two actors**: the newest
+   reaction and the newest comment, merged by `created_at` descending. One actor reads
+   "{Name} rings true this" or "{Name} commented on this"; two actors of the same action
+   read "{A} & {B} …"; mixed actions read "{A} rings true and {B} commented on this".
+   Names are bold. The maximum is two — there is no "and 14 others" and no pagination.
+2. **Attribution next.** With no interactions, fall back to the server's
+   `attribution_line` and the lineage avatars, exactly as KNOT-022-fix2 drew them.
+3. **Nothing last.** With neither, draw no header at all.
+
+Which entity is read is the entry's own: a story entry reads reactions on the story and
+comments on its root version (the conversation the card opens); an adaptation reads
+reactions and comments on the version itself. The server merges the two kinds so the
+client never has to. The read is two batched statements per page plus the page's existing
+single author read, never one query per entry; a failed read degrades to the attribution
+fallback. Story cards are not given a social-proof header in this task — the change is
+scoped to version cards.
+
+**Consequences.** The header reflects engagement rather than heredity whenever anyone has
+acted, so a reader sees the conversation before the lineage; the lineage remains one
+refresh away and is always shown on an untouched entry. Because the merge takes one
+interaction of each kind, an entry with two very recent comments and one older reaction
+shows the newest comment and the reaction, not the two comments — a deliberate reading of
+"one of each". The wording lives in the mobile app (`socialProof.ts`), so changing a
+verb is a client change, not a server one; the server sends structured data only.

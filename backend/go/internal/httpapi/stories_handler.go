@@ -40,14 +40,15 @@ const (
 
 // StoriesHandler serves the story endpoints.
 type StoriesHandler struct {
-	service   StoriesService
-	authors   AuthorLookup
-	rooted    RootedLookup
-	media     StoryMediaLookup
-	reactions ReactionsLookup
-	stats     StoryStatsLookup
-	chains    VersionChainLookup
-	logger    *slog.Logger
+	service      StoriesService
+	authors      AuthorLookup
+	rooted       RootedLookup
+	media        StoryMediaLookup
+	reactions    ReactionsLookup
+	stats        StoryStatsLookup
+	chains       VersionChainLookup
+	interactions InteractionLookup
+	logger       *slog.Logger
 }
 
 // NewStoriesHandler returns a handler backed by service. The author lookup names and
@@ -56,9 +57,10 @@ type StoriesHandler struct {
 // story's media (in full on the detail, as a single preview on the feed), the
 // reactions lookup attaches the perspective-reaction counts and the reader's own
 // signals, the stats lookup attaches the story's aggregate counts (versions,
-// languages, comments, media) in one batched read per response, and the chain
-// lookup attributes the adaptations a feed page carries (KNOT-022).
-func NewStoriesHandler(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, stats StoryStatsLookup, chains VersionChainLookup, logger *slog.Logger) (*StoriesHandler, error) {
+// languages, comments, media) in one batched read per response, the chain lookup
+// attributes the adaptations a feed page carries (KNOT-022), and the interaction
+// lookup attaches the social proof at the top of each feed entry (KNOT-028).
+func NewStoriesHandler(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, stats StoryStatsLookup, chains VersionChainLookup, interactions InteractionLookup, logger *slog.Logger) (*StoriesHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a service")
 	}
@@ -80,10 +82,13 @@ func NewStoriesHandler(service StoriesService, authors AuthorLookup, rooted Root
 	if chains == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a version chain lookup")
 	}
+	if interactions == nil {
+		return nil, fmt.Errorf("httpapi: stories handler requires an interaction lookup")
+	}
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a logger")
 	}
-	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, stats: stats, chains: chains, logger: logger}, nil
+	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, stats: stats, chains: chains, interactions: interactions, logger: logger}, nil
 }
 
 // createStoryRequest is the POST /stories body.
@@ -204,6 +209,12 @@ type storyEnvelope struct {
 // (KNOT-022).
 type feedStoryItem struct {
 	Kind string `json:"kind"`
+	// RecentInteractions is the social proof a card heads the entry with: at most
+	// the newest reaction and the newest comment, merged newest-first. It is
+	// always an array, never null, so a client can read it without a guard. An
+	// entry with none is empty, and the card falls back to its attribution
+	// (KNOT-028).
+	RecentInteractions []recentInteractionResponse `json:"recent_interactions"`
 	storyResponse
 }
 
@@ -304,6 +315,11 @@ type feedVersionItem struct {
 	// PreviewTruncated answers "is there more of this version's body than a card
 	// shows", the same contract a story entry follows (KNOT-020g-fix12).
 	PreviewTruncated bool `json:"preview_truncated"`
+	// RecentInteractions is the social proof a card heads the entry with: at most
+	// the newest reaction and the newest comment, merged newest-first. It is
+	// always an array, never null; an entry with none falls back to its
+	// attribution sentence (KNOT-028).
+	RecentInteractions []recentInteractionResponse `json:"recent_interactions"`
 }
 
 // newFeedVersionItem projects a stored feed version onto the wire. Everything the
@@ -332,8 +348,9 @@ func newFeedVersionItem(version stories.VersionFeedItem) feedVersionItem {
 		MediaURLs:           media,
 		CreatedAt:           version.CreatedAt,
 		PreviewTruncated:    bodyExceedsPreviewWindow(version.Body),
-		// Emit [] rather than null until the enrichment fills it in.
-		MyReactions: []string{},
+		// Emit [] rather than null until the enrichment fills them in.
+		MyReactions:        []string{},
+		RecentInteractions: []recentInteractionResponse{},
 	}
 }
 
@@ -473,19 +490,24 @@ func (h *StoriesHandler) List(w http.ResponseWriter, r *http.Request) {
 		storySlots = append(storySlots, i)
 	}
 
-	feedPageLookups{
-		authors:   h.authors,
-		rooted:    h.rooted,
-		media:     h.media,
-		reactions: h.reactions,
-		stats:     h.stats,
-		chains:    h.chains,
-		logger:    h.logger,
+	recent := feedPageLookups{
+		authors:      h.authors,
+		rooted:       h.rooted,
+		media:        h.media,
+		reactions:    h.reactions,
+		stats:        h.stats,
+		chains:       h.chains,
+		interactions: h.interactions,
+		logger:       h.logger,
 	}.enrich(r.Context(), storyItems, versionItems)
 
 	items := make([]any, len(page))
 	for i, slot := range storySlots {
-		items[slot] = feedStoryItem{Kind: feedKindStory, storyResponse: storyItems[i]}
+		items[slot] = feedStoryItem{
+			Kind:               feedKindStory,
+			RecentInteractions: orEmptyInteractions(recent[storyItems[i].ID]),
+			storyResponse:      storyItems[i],
+		}
 	}
 	for i, slot := range versionSlots {
 		items[slot] = versionItems[i]

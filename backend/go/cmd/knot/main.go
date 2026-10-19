@@ -34,6 +34,7 @@ import (
 	"github.com/knot/backend/internal/httpapi"
 	"github.com/knot/backend/internal/identity"
 	"github.com/knot/backend/internal/inquiries"
+	"github.com/knot/backend/internal/interactions"
 	"github.com/knot/backend/internal/moderation"
 	"github.com/knot/backend/internal/notifications"
 	"github.com/knot/backend/internal/profile"
@@ -229,6 +230,15 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
+	// Interactions: the newest reaction and comment on each feed entry, read in
+	// two batched statements per page rather than one query per entry. Like the
+	// stats store it spans the reaction and conversation domains, so it is a read
+	// model of its own (KNOT-028).
+	interactionsStore, err := interactions.NewPostgresStore(pool)
+	if err != nil {
+		return err
+	}
+
 	// The identity service doubles as the batched author lookup every content
 	// handler enriches with, so a response names and pictures its authors without
 	// a query per row (KNOT-ADR-041).
@@ -275,7 +285,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	// adaptations in one stream, so it is built after the versions service and
 	// takes it as its chain lookup: attributing a page of adaptations is a batched
 	// read of the version domain, not a query per entry (KNOT-022).
-	storiesHandler, err := httpapi.NewStoriesHandler(storiesService, service, rootedService, storyMediaService, reactionsService, storyStatsStore, versionsService, logger)
+	storiesHandler, err := httpapi.NewStoriesHandler(storiesService, service, rootedService, storyMediaService, reactionsService, storyStatsStore, versionsService, interactionsStore, logger)
 	if err != nil {
 		return err
 	}

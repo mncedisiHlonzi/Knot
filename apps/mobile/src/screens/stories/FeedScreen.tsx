@@ -342,6 +342,7 @@ export default function FeedScreen({
                 preview: item.body,
                 preview_truncated: item.preview_truncated,
                 reactions: item.reactions,
+                recent_interactions: item.recent_interactions,
                 // The original author's identity, only on an adaptation; the card
                 // heads a version with it. A story entry has no such fields, so
                 // the conditional narrows the union (KNOT-023a).

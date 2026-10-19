@@ -481,6 +481,14 @@ two entry kinds** — a story and somebody's adaptation of one — and every ent
       "title": "Imvula yokuqala",
       "version_number": 2,
       "attribution_line": "Adapted by Sipho Dlamini from Nomsa Khan's original story in English.",
+      "recent_interactions": [
+        {
+          "type": "reaction",
+          "actor_display_name": "Tycoon",
+          "actor_avatar_url": "/users/…/avatar?v=t.png",
+          "detail": "rings_true"
+        }
+      ],
       "parent_author_id": "…",
       "parent_author_display_name": "Nomsa Khan",
       "parent_author_avatar_url": "/users/…/avatar?v=b.png",
@@ -537,6 +545,7 @@ one card component can draw both. What differs:
 | `pillar`, `approximate_location`, `latitude`, `longitude`, `place_country`, `media_urls`, `media_count`, `first_media_*` | the story's own | **inherited from the story**: a version row carries no pillar, place, or media of its own (KNOT-ADR-030, KNOT-ADR-034) |
 | `version_count`, `language_count`, `comment_count` | the story's aggregates | the **story's** aggregates, so the entry can say how much adaptation it has |
 | `reactions`, `my_reactions` | the story's | the **version's**: a reader reacts to the adaptation they are reading (KNOT-021) |
+| `recent_interactions` | the story's social proof: reactions on the story and comments on its **root version** | the adaptation's social proof: reactions and comments on the **version** itself |
 | `version_number` | absent | the entry's position in its lineage, counting the original as **1**, so a first adaptation is `2` |
 | `attribution_line` | absent | the server-rendered sentence tracing this version back to the original, shown **verbatim**; empty when the lineage could not be resolved |
 | `parent_author_id`, `parent_author_display_name`, `parent_author_avatar_url` | absent | the author of the version this one **directly adapts**: the lineage actor a card credits first. For a first adaptation this is the same person as the root author, and a client renders one avatar (KNOT-022-fix2) |
@@ -562,6 +571,47 @@ The entry's own `author_*` fields are the **poster** (the adapter who wrote this
 while `parent_author_*` and `root_author_*` are the **lineage**. A card should draw the
 lineage avatars in the attribution row and the poster in the author line, so the two
 credits are distinct (KNOT-022-fix2).
+
+#### Social proof (`recent_interactions`)
+
+Every feed entry carries `recent_interactions`, always an array, never `null`. It is the
+social-proof header a card draws above its author line: at most the **newest reaction** and
+the **newest comment** on the entry, merged by `created_at` descending, so the list holds
+zero, one, or two items (KNOT-028).
+
+```json
+"recent_interactions": [
+  {
+    "type": "reaction",
+    "actor_display_name": "Tycoon",
+    "actor_avatar_url": "/users/…/avatar?v=t.png",
+    "detail": "rings_true"
+  },
+  {
+    "type": "comment",
+    "actor_display_name": "Yantuntu",
+    "actor_avatar_url": null,
+    "detail": null
+  }
+]
+```
+
+| Field | Rules |
+| --- | --- |
+| `type` | `"reaction"` or `"comment"` |
+| `actor_display_name` | the actor's name; empty when the account could not be resolved |
+| `actor_avatar_url` | the backend path, or `null` when the actor has no avatar |
+| `detail` | the reaction type (for example `"rings_true"`) for a reaction; **`null`** for a comment |
+
+The read is **batched**: one statement over `reactions` and one over `comments` for the whole
+page, and the actors ride in the page's single author read, so it adds no query per entry. It
+is enrichment: a failed read leaves `[]` and the page still serves. A story entry's comments
+are its **root version's** — the conversation the card opens — while an adaptation entry's are
+its own.
+
+The client draws the interactions when the list is non-empty; when it is empty it falls back
+to the version's `attribution_line`, and draws nothing when that is empty too. Names are bold;
+the rest of the sentence is secondary ink (KNOT-028, KNOT-ADR-073).
 
 Ordering is `(created_at DESC, id DESC)` over **both kinds**, keyed by each entry's own
 `created_at`: an adaptation appears where it was written, not where its story was published.
