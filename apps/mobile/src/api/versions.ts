@@ -12,6 +12,7 @@
 import { request } from './client';
 import type { ReactionCounts } from './reactions';
 import type { AuthorRooted } from './rooted';
+import type { Pillar, StoryMedia } from './stories';
 
 /** One written version of a story. */
 export type StoryVersion = {
@@ -60,6 +61,20 @@ export type StoryVersion = {
    * server omits it (the wire fields are untrusted, KNOT-ADR-042).
    */
   readonly version_depth?: number;
+  /**
+   * The parent story's presentation, inherited by every version.
+   *
+   * A version has no media, pillar, place, or version count of its own: those
+   * belong to the story it adapts. The current server does **not** repeat them on
+   * `GET /versions/{id}` (only the version's own fields plus its attribution), so
+   * these are optional and `StoryVersionScreen` falls back to reading the parent
+   * story through `storiesApi.getStory`. They are typed here so a future server
+   * can start sending them without a client change (KNOT-026).
+   */
+  readonly pillar?: Pillar;
+  readonly approximate_location?: string;
+  readonly media?: readonly StoryMedia[];
+  readonly version_count?: number;
 };
 
 /** The request body for POST /stories/{id}/adapt. */

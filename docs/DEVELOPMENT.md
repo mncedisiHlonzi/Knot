@@ -1624,6 +1624,29 @@ legible over any media (KNOT-025-fix4).
   no change (and an `Image` has no native surface to escape). Tests 384→**385/36** (`+1`
   asserting the anchor exists, holds the player, and leaves the overlays outside it).
 
+### KNOT-026 — the Version Detail shares the Story Detail's layout
+
+The two detail screens are now deliberately the same reading experience.
+`StoryVersionScreen` renders the Story Detail's carousel (file-local `CarouselPage`, the
+floating `Header` on dark discs, the static 64pt thumbnail strip), its reading column
+(plain `PillarTag`, `h1` title, the Feed's stacked `AuthorLine`, the bordered language-tree
+row, `typeScale.reading` body), and its action area (one hairline, a two-by-two
+`ReactionBar` grid, then the full-width actions). The adapter is the `AuthorLine`; the
+server's `attribution_line` is a quiet `caption` / `text.tertiary` line directly beneath it.
+
+A version has **no media, pillar, place, or version count of its own** — they are the
+parent story's. `GET /versions/{id}` does **not** repeat them today (its response is the
+version's own fields plus attribution), so the screen reads `GET /stories/{id}` once as
+enrichment and uses the story's media, pillar, place, and count. `StoryVersion` types those
+fields as optional, so a future enriched version response needs no client change. If the
+parent read fails, the version itself still renders — without inherited presentation.
+
+The CTAs are version-specific: a ghost **View original story** (the story's root detail)
+and the primary **Adapt this version** (the adapt flow with this version as the parent).
+The adapter's optional note is kept as a quiet note block rather than the old bordered card,
+so it does not disturb the Story Detail's rhythm. The Language Tree row pushes the story's
+tree, so it opens the tree from a version that was reached another way.
+
 ### Rooted, and the enrichment pattern
 
 `POST /users/me/rooted`, `GET /users/me/rooted`, and `GET /users/{id}/rooted` are served by
