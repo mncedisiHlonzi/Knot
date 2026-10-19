@@ -1581,15 +1581,38 @@ tightened to match the reference.
   promise.
 - **The header got quieter.** `SocialProofHeader` is a caption, not a paragraph: the sentence
   is `typeScale.caption` (12/16) and the faces are `Avatar size="xs"` (20pt) overlapping by one
-  spacing step, and the block has a single small vertical step at the top of the card instead
-  of an opening gap. The hairline that closes it still separates two blocks **inside** one
-  card, so it stays `border.hairline` and now hugs the author block below it.
-- **Cards are finally ruled.** The gap alone read as one long column, so `styles.card` gained a
-  full-bleed bottom border in `border.divider` — one step darker than the hairline and the
-  token reserved for exactly this boundary. The `marginBottom` gap stays; rule and gap
-  together are the separator.
+  spacing step. The hairline that closes it still separates two blocks **inside** one card, so
+  it stays `border.hairline` and hugs the author block below it.
+- **Cards were ruled.** `styles.card` briefly gained a full-bleed bottom border in
+  `border.divider`. KNOT-032 replaced that rule with a background gap — see below.
 - **The stats row** moved from a 12pt caption in `text.tertiary` to `typeScale.label` (13/16
   bold) in `text.secondary`, because it carries real counts rather than metadata about them.
+
+### KNOT-032 — the card structure, at a glance
+
+Three on-device findings, all structural: the quick actions, the header's breathing room, and
+the separation between cards.
+
+- **Two quick actions, side by side.** `FeedEntry` gained a second optional handler,
+  `onHide`, drawn as a 20pt `X` in `text.tertiary` beside `onOpenOptions` in one
+  `cardActions` row at the top-right of the author block. Each is its own 44pt `Pressable`
+  nested inside the card's, so a quick hide never opens the story and never opens the menu.
+  Either control disappears when its handler is omitted, which is what keeps Place Stories —
+  the card's other caller — free of dead targets. Both hide paths share one rule:
+  `FeedScreen.hideEntry(id)` filters the entry out of the list, and the sheet's "Hide this
+  post" row calls the same function.
+- **The header sits in the middle of its band.** `SocialProofHeader`'s container pads
+  `spacing.sm` top and bottom, so the faces and the sentence are centred between the card's
+  top edge and the hairline below, instead of being squashed onto that rule.
+- **The separation is a band of canvas, not a rule.** `styles.card` dropped
+  `borderBottomWidth` entirely and now reads: `backgroundColor: colors.bg.canvas`,
+  `marginHorizontal: spacing.sm`, `marginBottom: spacing.md`. The screen's root was already
+  `colors.bg.sunken`, so the result is what the reference draws — white blocks with grey
+  showing between them and down both sides. There is deliberately **no corner radius**: the
+  media inside a card is full-bleed, so rounding the card would need `overflow: 'hidden'` and
+  would clip the media's own edges. The horizontal inset is on the card rather than on the
+  list's `contentContainerStyle`, because the refresh indicator (`TheThread`) is sized to the
+  full page width and would overflow an inset content container.
 
 ### KNOT-025 — the Story Detail redesign
 

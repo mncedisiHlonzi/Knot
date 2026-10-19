@@ -79,10 +79,10 @@ type FeedScreenProps = {
 /**
  * The public story feed, newest first, as white cards on a grey canvas.
  *
- * Each entry is a white card, closed by a full-bleed rule one step darker than a
- * hairline and held apart from the next by a background-coloured gap — the
- * LinkedIn pattern, with the rule making the boundary legible at a glance
- * (KNOT-023b, strengthened in KNOT-031).
+ * Each entry is a white card, inset from the screen edges and separated from the
+ * next by a band of the grey canvas — the LinkedIn pattern. The separation is the
+ * gap itself, not a rule drawn on white, so the cards read as distinct blocks
+ * (KNOT-023b, KNOT-032).
  *
  * The layout pins everything but the list: the header and the four text tabs are
  * fixed siblings ABOVE the FlatList, so only the feed entries scroll beneath them
@@ -239,6 +239,17 @@ export default function FeedScreen({
   }, []);
 
   /**
+   * Removes one entry from the list, by id.
+   *
+   * Both hide paths land here: the options sheet's row, and the card's own
+   * one-tap `✕`. Holding the rule in one place keeps them the same rule
+   * (KNOT-032).
+   */
+  const hideEntry = useCallback((id: string): void => {
+    setItems((existing) => existing.filter((entry) => entry.id !== id));
+  }, []);
+
+  /**
    * Hides one entry from this feed.
    *
    * Hiding is local to the session. There is no hide endpoint, so the entry leaves
@@ -253,8 +264,8 @@ export default function FeedScreen({
       return;
     }
 
-    setItems((existing) => existing.filter((entry) => entry.id !== hidden.id));
-  }, [menuItem]);
+    hideEntry(hidden.id);
+  }, [hideEntry, menuItem]);
 
   /** Hands the entry from the options sheet to the report modal. */
   const reportPost = useCallback((): void => {
@@ -376,9 +387,9 @@ export default function FeedScreen({
         }}
         onEndReachedThreshold={0.5}
         renderItem={({ item }) => (
-          // The LinkedIn-style card: a white entry on the grey feed canvas, closed
-          // by a full-bleed rule and followed by a visible gap (KNOT-023b,
-          // strengthened in KNOT-031).
+          // The LinkedIn-style card: a white block inset on the grey feed canvas,
+          // held apart from its neighbours by that grey band rather than by a rule
+          // drawn on the card (KNOT-023b, KNOT-032).
           <View style={styles.card}>
             <FeedEntry
               story={{
@@ -422,8 +433,8 @@ export default function FeedScreen({
               variant={item.kind === 'version' ? 'version' : 'story'}
               versionNumber={item.kind === 'version' ? item.version_number : undefined}
               attributionLine={item.kind === 'version' ? item.attribution_line : undefined}
-              // The card's own rule is the feed's separator, so the entry does not
-              // draw a second one (KNOT-023b).
+              // The feed separates cards with its own grey band, so the entry draws
+              // no rule of its own (KNOT-023b, KNOT-032).
               showBottomHairline={false}
               isMuted={isMuted}
               isVisible={item.id === activeItemId}
@@ -433,6 +444,9 @@ export default function FeedScreen({
               }
               onOpenAuthor={() => onOpenUserProfile(item.author_id)}
               onOpenOptions={() => setMenuItem(item)}
+              // The one-tap hide, straight from the card: the same session-local
+              // rule the options sheet applies, without the extra sheet (KNOT-032).
+              onHide={() => hideEntry(item.id)}
             />
           </View>
         )}
@@ -584,15 +598,16 @@ const styles = StyleSheet.create({
   badgeText: {
     color: colors.text.onBrand,
   },
-  // One feed card: white on the grey canvas, closed by a full-bleed rule one step
-  // darker than a hairline and followed by the inter-card gap. The rule and the
-  // gap together are the separator; the rule is what makes the boundary legible
-  // (KNOT-023b, strengthened in KNOT-031).
+  // One feed card: a white block inset from the screen edges and held apart from
+  // the next by a band of the grey canvas. The band — not a rule drawn on the
+  // card — is what makes two adjacent entries read as separate things, which is
+  // the LinkedIn pattern (KNOT-023b, KNOT-032). There is deliberately no corner
+  // radius: the media inside is full-bleed, so rounding the card would need
+  // `overflow: hidden` and would clip the media's own edges.
   card: {
     backgroundColor: colors.bg.canvas,
-    borderBottomColor: colors.border.divider,
-    borderBottomWidth: 1,
-    marginBottom: spacing.sm,
+    marginBottom: spacing.md,
+    marginHorizontal: spacing.sm,
   },
   container: {
     backgroundColor: colors.bg.sunken,

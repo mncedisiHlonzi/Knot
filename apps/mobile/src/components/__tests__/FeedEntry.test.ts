@@ -40,6 +40,7 @@ jest.mock('phosphor-react-native', () => ({
   DotsThree: () => null,
   Images: () => null,
   ShareNetwork: () => null,
+  X: () => null,
 }));
 
 // FeedEntry renders a video preview with react-native-video, which is a native
@@ -834,6 +835,11 @@ function postOptions(element: unknown): { props?: Record<string, unknown> } | un
   return findByLabel(element, (label) => label === 'Post options');
 }
 
+/** The card's one-tap hide control, or undefined when the card drew none. */
+function hideControl(element: unknown): { props?: Record<string, unknown> } | undefined {
+  return findByLabel(element, (label) => label === 'Hide this post');
+}
+
 describe('FeedEntry post options', () => {
   it('draws no overflow control when the screen gave it no handler', () => {
     // Place Stories renders the same card without a menu, so the control must be
@@ -890,5 +896,68 @@ describe('FeedEntry post options', () => {
     // block whether or not a menu is offered.
     expect(findElementByType(withMenu, AuthorLine)).toBeDefined();
     expect(postOptions(withMenu)).toBeDefined();
+  });
+});
+
+describe('FeedEntry hide control', () => {
+  it('draws no hide control when the screen gave it no handler', () => {
+    // Place Stories reuses the card, so an unhandled quick hide must be absent
+    // rather than a dead target (KNOT-032).
+    const element = FeedEntry({
+      story,
+      onPress: () => undefined,
+      onOpenOptions: () => undefined,
+    });
+
+    expect(hideControl(element)).toBeUndefined();
+  });
+
+  it('draws both quick actions when the screen supplies both handlers', () => {
+    const element = FeedEntry({
+      story,
+      onPress: () => undefined,
+      onOpenOptions: () => undefined,
+      onHide: () => undefined,
+    });
+
+    // The pair is what the card is for: the menu for anything else, the `✕` for
+    // the one-tap hide (KNOT-032).
+    expect(postOptions(element)).toBeDefined();
+    expect(hideControl(element)).toBeDefined();
+    expect(hideControl(element)?.props?.testID).toBe('post-hide');
+    expect(postOptions(element)?.props?.testID).toBe('post-options');
+  });
+
+  it('hides without opening the card or the menu', () => {
+    const onPress = jest.fn();
+    const onOpenOptions = jest.fn();
+    const onHide = jest.fn();
+
+    const element = FeedEntry({ story, onPress, onOpenOptions, onHide });
+    const control = hideControl(element);
+
+    expect(control).toBeDefined();
+    expect(control?.props?.accessibilityRole).toBe('button');
+
+    (control?.props?.onPress as () => void)();
+
+    // Nested targets: the `✕` carries its own handler, and neither the card nor
+    // the menu was opened by the tap (KNOT-031, KNOT-032).
+    expect(onHide).toHaveBeenCalledTimes(1);
+    expect(onPress).not.toHaveBeenCalled();
+    expect(onOpenOptions).not.toHaveBeenCalled();
+  });
+
+  it('gives the hide control the 44pt touch target the design system requires', () => {
+    const element = FeedEntry({
+      story,
+      onPress: () => undefined,
+      onHide: () => undefined,
+    });
+    const style = hideControl(element)?.props?.style as
+      { height?: number; width?: number } | undefined;
+
+    expect(style?.height).toBe(44);
+    expect(style?.width).toBe(44);
   });
 });

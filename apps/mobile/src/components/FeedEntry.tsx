@@ -8,7 +8,7 @@ import {
   type ImageLoadEventData,
   type NativeSyntheticEvent,
 } from 'react-native';
-import { DotsThree, Images, ShareNetwork } from 'phosphor-react-native';
+import { DotsThree, Images, ShareNetwork, X } from 'phosphor-react-native';
 
 import type { RecentInteraction } from '../api/stories';
 import { API_BASE_URL } from '../config/api';
@@ -123,10 +123,10 @@ type FeedEntryProps = {
    */
   readonly attributionLine?: string;
   /**
-   * Whether the entry draws its own bottom hairline. The Feed closes its cards
-   * with its own full-bleed rule instead, so it passes `false`; Place Stories
-   * keeps the default and its column stays hairline-separated (KNOT-023b,
-   * KNOT-031).
+   * Whether the entry draws its own bottom hairline. The Feed separates its cards
+   * with a background gap instead, so it passes `false`; Place Stories keeps the
+   * default and its column stays hairline-separated (KNOT-023b, KNOT-031,
+   * KNOT-032).
    */
   readonly showBottomHairline?: boolean;
   /** Called when the entry is tapped. */
@@ -139,6 +139,12 @@ type FeedEntryProps = {
    * menu). The Feed passes it for every entry (KNOT-031).
    */
   readonly onOpenOptions?: () => void;
+  /**
+   * Called when the card's hide control is tapped: a one-tap "hide this post"
+   * that skips the menu entirely. When omitted, no control is drawn, so a caller
+   * that has nothing to hide the entry from draws no dead target (KNOT-032).
+   */
+  readonly onHide?: () => void;
   /**
    * True when this entry is the one the feed judges to be on screen. It is the
    * single input that plays or pauses the entry's video, so only one video in the
@@ -164,6 +170,10 @@ const ADAPT_BADGE_SIZE = 16;
 
 /** The overflow glyph's size; its button is the 44pt touch target. */
 const MENU_ICON_SIZE = 22;
+
+/** The hide glyph's size: one step smaller than the overflow mark, so the pair
+ * reads as `⋯` then `✕` rather than as two equal, competing buttons. */
+const HIDE_ICON_SIZE = 20;
 
 /** A no-op for the mute control when a caller renders an entry without wiring one. */
 const NOOP = (): void => undefined;
@@ -198,13 +208,14 @@ function lineageAvatarLabel(name: string): string {
  * One story in the feed, as a white card on the feed's grey canvas.
  *
  * The card is full-bleed horizontally — no side border, no shadow — and the Feed
- * closes each card with its own rule below it rather than the entry's. (Place
- * Stories, the other caller, keeps the entry's bottom hairline.) Its order is the
- * reading order: the author block, the pillar tag, the title, the opening lines,
- * the media, then the meta line. The whole entry is one tap target; the author
- * identity inside it is a nested target that opens the profile (KNOT-ADR-043),
- * and so is the overflow control when the Feed supplies `onOpenOptions`
- * (KNOT-031).
+ * separates one card from the next with its own background gap rather than with a
+ * rule in the entry. (Place Stories, the other caller, keeps the entry's bottom
+ * hairline.) Its order is the reading order: the author block, the pillar tag, the
+ * title, the opening lines, the media, then the meta line. The whole entry is one
+ * tap target; the author identity inside it is a nested target that opens the
+ * profile (KNOT-ADR-043), and so are the two quick actions the Feed supplies —
+ * the overflow control (`onOpenOptions`) and the one-tap hide (`onHide`)
+ * (KNOT-031, KNOT-032).
  *
  * The author block is a vertical stack (KNOT-023b): the avatar on the left and,
  * on the right, the name, the quiet Rooted line, then the compact time. Every card
@@ -245,6 +256,7 @@ export default function FeedEntry({
   onPress,
   onOpenAuthor,
   onOpenOptions,
+  onHide,
   isVisible = false,
   isMuted = true,
   onToggleMute = NOOP,
@@ -384,19 +396,38 @@ export default function FeedEntry({
             />
           </View>
 
-          {/* A nested Pressable takes the touch itself, so opening the menu never
-              also opens the card (the same isolation the author target uses,
-              KNOT-ADR-043). Its 44pt box is the touch target (KNOT-031). */}
-          {onOpenOptions === undefined ? null : (
-            <Pressable
-              style={styles.menuButton}
-              onPress={onOpenOptions}
-              accessibilityRole="button"
-              accessibilityLabel="Post options"
-              testID="post-options"
-            >
-              <DotsThree color={colors.text.tertiary} size={MENU_ICON_SIZE} weight="bold" />
-            </Pressable>
+          {/* Two nested Pressables take the touch themselves, so a quick action
+              never also opens the card (the same isolation the author target
+              uses, KNOT-ADR-043). Each 44pt box is its own touch target, and the
+              pair sits at the card's top-right in the order a reader scans them:
+              `⋯` for the menu, then `✕` for the one-tap hide (KNOT-031,
+              KNOT-032). */}
+          {onOpenOptions === undefined && onHide === undefined ? null : (
+            <View style={styles.cardActions}>
+              {onOpenOptions === undefined ? null : (
+                <Pressable
+                  style={styles.cardAction}
+                  onPress={onOpenOptions}
+                  accessibilityRole="button"
+                  accessibilityLabel="Post options"
+                  testID="post-options"
+                >
+                  <DotsThree color={colors.text.tertiary} size={MENU_ICON_SIZE} weight="bold" />
+                </Pressable>
+              )}
+
+              {onHide === undefined ? null : (
+                <Pressable
+                  style={styles.cardAction}
+                  onPress={onHide}
+                  accessibilityRole="button"
+                  accessibilityLabel="Hide this post"
+                  testID="post-hide"
+                >
+                  <X color={colors.text.tertiary} size={HIDE_ICON_SIZE} weight="bold" />
+                </Pressable>
+              )}
+            </View>
           )}
         </View>
 
@@ -476,15 +507,27 @@ export default function FeedEntry({
 }
 
 const styles = StyleSheet.create({
-  // The author block keeps the row's width; the overflow control sits at its end.
-  // The control is level with the avatar, not centred on the block, because the
-  // block grows as the Rooted line is added (KNOT-031).
+  // The author block keeps the row's width; the quick actions sit at its end. They
+  // are level with the avatar, not centred on the block, because the block grows as
+  // the Rooted line is added (KNOT-031).
   authorLine: {
     flex: 1,
   },
   authorRow: {
     alignItems: 'flex-start',
     flexDirection: 'row',
+  },
+  // The quick actions share one row so the two 44pt targets sit side by side and
+  // never stack, which would push the `✕` down into the pillar tag (KNOT-032).
+  cardActions: {
+    flexDirection: 'row',
+  },
+  // One quick action's box: the 44pt minimum touch target around a small glyph.
+  cardAction: {
+    alignItems: 'center',
+    height: 44,
+    justifyContent: 'center',
+    width: 44,
   },
   countBadge: {
     alignItems: 'center',
@@ -541,14 +584,6 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     overflow: 'hidden',
     width: '100%',
-  },
-  // The overflow control's box: the 44pt minimum touch target, holding a 22pt
-  // glyph (KNOT-031).
-  menuButton: {
-    alignItems: 'center',
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
   },
   // The stats row carries real counts, so it reads in the secondary ink and the
   // bolder label voice rather than as a caption (KNOT-031).

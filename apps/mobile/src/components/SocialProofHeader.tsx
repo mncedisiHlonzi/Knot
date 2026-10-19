@@ -68,8 +68,9 @@ function avatarLabel(name: string): string {
  * the credit reads as distinct from the poster's author block below it.
  *
  * The header is a caption, not a paragraph: it is a step down in type from the
- * author block it introduces, its faces are the smallest avatar, and it hugs the
- * card's edges rather than opening a gap above them (KNOT-031).
+ * author block it introduces, its faces are the smallest avatar, and its band has
+ * balanced vertical padding so the credit sits in the middle of it rather than
+ * squashed against the rule below (KNOT-031, KNOT-032).
  */
 export default function SocialProofHeader({
   interactions,
@@ -157,12 +158,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
   },
-  // The header sits flush at the top of the card: a single small vertical step,
-  // no opening gap. The rule below it stays the design system's hairline — it
-  // separates two blocks inside one card, unlike the heavier rule BETWEEN cards
-  // (KNOT-031).
+  // The header sits flush at the top of the card with balanced breathing room
+  // above and below: one spacing step each way, so the faces and the sentence are
+  // centred in the band rather than squashed against the rule below them
+  // (KNOT-031, KNOT-032). The rule below it stays the design system's hairline —
+  // it separates two blocks inside one card, unlike the gap BETWEEN cards.
   container: {
-    paddingVertical: spacing.xs,
+    paddingVertical: spacing.sm,
   },
   // The rule between the credit and the poster's author block (KNOT-023c). It is
   // the design system's hairline, not the heavier divider, and it hugs the author
