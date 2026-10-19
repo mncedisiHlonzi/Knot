@@ -1,3 +1,5 @@
+import React from 'react';
+
 import AuthorLine from '../AuthorLine';
 import Avatar from '../Avatar';
 import RootedBadge from '../RootedBadge';
@@ -116,6 +118,20 @@ describe('AuthorLine', () => {
 
     expect(element).not.toBeNull();
     expect(onPress).not.toHaveBeenCalled();
+  });
+
+  it('draws an optional badge beside the name', () => {
+    const badge = React.createElement('Badge', { testID: 'adapt-badge' });
+
+    const element = AuthorLine({
+      displayName: 'Ada Lovelace',
+      avatarUrl: null,
+      createdAt: '2026-10-09T12:00:00.000Z',
+      layout: 'stacked',
+      badge,
+    });
+
+    expect(findElementByType(element, 'Badge')).toBeDefined();
   });
 
   // The Feed's two-line form (KNOT-020c-fix2): the Rooted summary leaves the

@@ -1,6 +1,8 @@
 import type { ImageLoadEventData, NativeSyntheticEvent } from 'react-native';
 
 import { MAX_PORTRAIT_ASPECT_RATIO } from '../../utils/mediaFrame';
+import { ShareNetwork } from 'phosphor-react-native';
+
 import AuthorLine from '../AuthorLine';
 import FeedEntry from '../FeedEntry';
 import FeedVideo from '../FeedVideo';
@@ -36,6 +38,7 @@ jest.mock('react-native', () => ({
 
 jest.mock('phosphor-react-native', () => ({
   Images: () => null,
+  ShareNetwork: () => null,
 }));
 
 // FeedEntry renders a video preview with react-native-video, which is a native
@@ -468,14 +471,91 @@ describe('FeedEntry', () => {
       );
     });
 
-    it('never heads a story entry, even when root fields are present', () => {
+    it('draws no header for a story with no interactions', () => {
       const element = FeedEntry({
         story: { ...story, root_author_display_name: 'Ada Lovelace' },
         attributionLine: sentence,
         onPress: () => undefined,
       });
 
-      expect(findElementByType(element, SocialProofHeader)).toBeUndefined();
+      // The header is universal now, but a story carries no hereditary credit,
+      // so with no interactions it is handed an empty state and draws nothing
+      // (KNOT-029).
+      const header = findElementByType(element, SocialProofHeader);
+      expect(header).toBeDefined();
+      expect(header?.props).toMatchObject({
+        attributionLine: '',
+        adapterName: '',
+        originalAuthorName: '',
+      });
+      expect(header?.props?.lineageAvatars).toEqual([]);
+      expect(header?.props?.interactions).toBeUndefined();
+    });
+
+    it('heads a story card with its interactions', () => {
+      const interactions = [
+        {
+          type: 'reaction' as const,
+          actor_display_name: 'Tycoon',
+          actor_avatar_url: null,
+          detail: 'rings_true',
+        },
+      ];
+      const element = FeedEntry({
+        story: { ...story, recent_interactions: interactions },
+        onPress: () => undefined,
+      });
+
+      expect(findElementByType(element, SocialProofHeader)?.props?.interactions).toEqual(
+        interactions,
+      );
+    });
+
+    it('always marks a version card as adapted', () => {
+      const element = FeedEntry({
+        story: adapted,
+        variant: 'version',
+        versionNumber: 3,
+        attributionLine: sentence,
+        onPress: () => undefined,
+      });
+
+      const badge = findElementByType(element, AuthorLine)?.props?.badge;
+      expect(badge).toBeTruthy();
+      expect(findElementByType(badge, ShareNetwork)).toBeDefined();
+
+      const badgeElement = badge as { props?: Record<string, unknown> };
+      expect(badgeElement.props?.testID).toBe('adapt-badge');
+      expect(badgeElement.props?.accessibilityLabel).toBe('Adapted story');
+    });
+
+    it('keeps the adaptation marker when interactions replace the attribution', () => {
+      const element = FeedEntry({
+        story: {
+          ...adapted,
+          recent_interactions: [
+            {
+              type: 'comment' as const,
+              actor_display_name: 'Yantuntu',
+              actor_avatar_url: null,
+              detail: null,
+            },
+          ],
+        },
+        variant: 'version',
+        versionNumber: 3,
+        attributionLine: sentence,
+        onPress: () => undefined,
+      });
+
+      expect(findElementByType(element, SocialProofHeader)?.props?.interactions).toBeDefined();
+      expect(findElementByType(element, AuthorLine)?.props?.badge).toBeTruthy();
+    });
+
+    it('does not mark a story card as adapted', () => {
+      const element = FeedEntry({ story, onPress: () => undefined });
+
+      expect(findElementByType(element, AuthorLine)?.props?.badge).toBeNull();
     });
 
     it('passes nothing to credit when neither the sentence nor the root author exists', () => {

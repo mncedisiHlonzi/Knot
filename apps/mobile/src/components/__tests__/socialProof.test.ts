@@ -37,17 +37,30 @@ describe('socialProofRuns', () => {
     expect(socialProofRuns([])).toEqual([]);
   });
 
-  it('formats one reaction: name, signal, "this"', () => {
+  it('formats one reaction as a sentence, with no trailing "this"', () => {
     const runs = socialProofRuns([interaction({ detail: 'needs_a_source' })]);
 
-    expect(runs.map((run) => run.text).join('')).toBe('Tycoon needs a source this');
+    expect(runs.map((run) => run.text).join('')).toBe('Tycoon needs a source.');
     expect(boldNames([interaction({ detail: 'needs_a_source' })])).toEqual(['Tycoon']);
+  });
+
+  it('uses a natural verb for every reaction', () => {
+    const cases = [
+      ['rings_true', 'Tycoon finds this true.'],
+      ['know_it_differently', 'Tycoon knows this differently.'],
+      ['adds_something_new', 'Tycoon adds something new.'],
+      ['needs_a_source', 'Tycoon needs a source.'],
+    ] as const;
+
+    for (const [detail, expected] of cases) {
+      expect(sentence([interaction({ detail })])).toBe(expected);
+    }
   });
 
   it('formats one comment', () => {
     expect(
       sentence([interaction({ type: 'comment', detail: null, actor_display_name: 'Yantuntu' })]),
-    ).toBe('Yantuntu commented on this');
+    ).toBe('Yantuntu commented on this.');
   });
 
   it('groups two reactions of the same signal', () => {
@@ -56,7 +69,7 @@ describe('socialProofRuns', () => {
         interaction({ actor_display_name: 'Tycoon', detail: 'know_it_differently' }),
         interaction({ actor_display_name: 'Yantuntu', detail: 'know_it_differently' }),
       ]),
-    ).toBe('Tycoon & Yantuntu know it differently this');
+    ).toBe('Tycoon & Yantuntu know this differently.');
   });
 
   it('groups two comments', () => {
@@ -65,7 +78,7 @@ describe('socialProofRuns', () => {
         interaction({ type: 'comment', detail: null, actor_display_name: 'Tycoon' }),
         interaction({ type: 'comment', detail: null, actor_display_name: 'Yantuntu' }),
       ]),
-    ).toBe('Tycoon & Yantuntu commented on this');
+    ).toBe('Tycoon & Yantuntu commented on this.');
   });
 
   it('joins mixed actions with "and" and a shared "this"', () => {
@@ -74,7 +87,7 @@ describe('socialProofRuns', () => {
         interaction({ actor_display_name: 'Tycoon', detail: 'rings_true' }),
         interaction({ type: 'comment', detail: null, actor_display_name: 'Yantuntu' }),
       ]),
-    ).toBe('Tycoon rings true and Yantuntu commented on this');
+    ).toBe('Tycoon finds this true and Yantuntu commented on this.');
   });
 
   it('keeps two different reaction signals as two clauses', () => {
@@ -83,7 +96,7 @@ describe('socialProofRuns', () => {
         interaction({ actor_display_name: 'Tycoon', detail: 'rings_true' }),
         interaction({ actor_display_name: 'Yantuntu', detail: 'needs_a_source' }),
       ]),
-    ).toBe('Tycoon rings true and Yantuntu needs a source this');
+    ).toBe('Tycoon finds this true and Yantuntu needs a source.');
   });
 
   it('handles a comment before a reaction', () => {
@@ -92,7 +105,7 @@ describe('socialProofRuns', () => {
         interaction({ type: 'comment', detail: null, actor_display_name: 'Tycoon' }),
         interaction({ actor_display_name: 'Yantuntu', detail: 'rings_true' }),
       ]),
-    ).toBe('Tycoon commented on and Yantuntu rings true this');
+    ).toBe('Tycoon commented on this and Yantuntu finds this true.');
   });
 
   it('draws at most two actors', () => {
@@ -108,11 +121,11 @@ describe('socialProofRuns', () => {
   });
 
   it('degrades an unknown reaction type to a generic verb', () => {
-    expect(sentence([interaction({ detail: 'shares_something' })])).toBe('Tycoon reacted to this');
+    expect(sentence([interaction({ detail: 'shares_something' })])).toBe('Tycoon reacted to this.');
   });
 
   it('names a blank actor "Someone" so the sentence stays grammatical', () => {
-    expect(sentence([interaction({ actor_display_name: '  ' })])).toBe('Someone rings true this');
+    expect(sentence([interaction({ actor_display_name: '  ' })])).toBe('Someone finds this true.');
   });
 });
 

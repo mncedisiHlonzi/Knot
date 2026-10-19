@@ -1526,6 +1526,27 @@ so the client draws one avatar (it compares the ids first).
   no extra query. `FeedScreen` passes them into `FeedEntry`; the card renders them at
   `Avatar size="sm"` in lineage order with a canvas ring on the overlap.
 
+### KNOT-029 — universal social proof and the adapt badge
+
+`SocialProofHeader` is now rendered by **every** feed card, not only a version. The
+hierarchy is unchanged — interactions, then hereditary attribution, then nothing — but the
+inputs differ by kind: a story passes only its `recent_interactions` (it has no
+`attribution_line`), so an untouched story draws no header, while a version falls back to
+its sentence and lineage. `FeedEntry` therefore renders the header unconditionally and
+passes the attribution props only for `variant="version"`.
+
+The copy is a sentence rather than a verb phrase with a dangling "this": one actor reads
+"Tycoon finds this true", "Tycoon knows this differently", "Tycoon adds something new",
+"Tycoon needs a source", or "Tycoon commented on this". Two actors sharing a signal take
+the plural verb ("Tycoon & Yantuntu know this differently"); mixed actions read "Tycoon
+finds this true and Yantuntu commented on this". `socialProof.ts` owns both grammatical
+numbers, so a conjugation is a data change rather than a new string template.
+
+`AuthorLine` gained an optional `badge` slot, drawn beside the name in the stacked block.
+`FeedEntry` passes a 16pt `ShareNetwork` in `brand.primary`, labelled "Adapted story", for
+every version card. It is independent of the header, so the adaptation remains visible
+when interactions have replaced the attribution sentence (KNOT-029).
+
 ### KNOT-025 — the Story Detail redesign
 
 The Story Detail follows the Claude mockup v2 (`docs/design-reference/story-detail-v2/`).

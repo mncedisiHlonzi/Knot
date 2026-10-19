@@ -49,16 +49,19 @@ function avatarLabel(name: string): string {
 }
 
 /**
- * The social-proof header at the top of a feed card (KNOT-028).
+ * The social-proof header at the top of a feed card (KNOT-028, universal since
+ * KNOT-029).
  *
  * It draws one of three states, in this order:
  *
- * 1. **Interactions exist** — the newest two actors' avatars beside a sentence
- *    naming what each did ("Tycoon rings true this", "Tycoon & Yantuntu know it
- *    differently this", "Tycoon rings true and Yantuntu commented on this").
+ * 1. **Interactions exist** — the newest two actors' avatars beside a natural
+ *    sentence naming what each did ("Tycoon finds this true", "Tycoon &
+ *    Yantuntu know this differently", "Tycoon finds this true and Yantuntu
+ *    commented on this").
  * 2. **No interactions, but attribution exists** — the lineage faces beside the
  *    server's hereditary sentence, with every name bolded. This is the card's
- *    pre-KNOT-028 header, unchanged.
+ *    pre-KNOT-028 header, unchanged. Only a version card has this input; a story
+ *    card draws state 1 or 3.
  * 3. **Neither** — nothing at all.
  *
  * The decision and the wording live in `socialProof.ts`; this component only

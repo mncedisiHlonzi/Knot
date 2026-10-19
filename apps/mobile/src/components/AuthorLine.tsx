@@ -74,8 +74,12 @@ type AuthorLineProps = {
    * a left avatar and a three-line column — name, Rooted, time — for the Feed's
    * social-card look (KNOT-023b).
    */
-  readonly layout?: AuthorLineLayout;
-  /**
+  readonly layout?: AuthorLineLayout; /**
+   * An optional marker drawn beside the name, such as the Feed's adaptation
+   * glyph. It is a status marker, not a tap target, so it stays outside the
+   * profile Pressable (KNOT-029).
+   */
+  readonly badge?: React.ReactNode; /**
    * Called when the author's avatar or name is tapped, to open their profile.
    *
    * When omitted, the identity is plain (not a tap target). The Rooted badge and
@@ -135,6 +139,7 @@ export default function AuthorLine({
   showRootedOnNewLine = false,
   timeFormat = 'long',
   layout = 'inline',
+  badge,
   onPress,
   testID,
 }: AuthorLineProps): React.ReactElement | null {
@@ -223,22 +228,25 @@ export default function AuthorLine({
         )}
 
         <View style={styles.stackedDetails}>
-          {name === '' ? null : onPress === undefined ? (
-            <Text style={[typeScale.label, styles.name]} numberOfLines={1}>
-              {name}
-            </Text>
-          ) : (
-            <Pressable
-              style={styles.nameTarget}
-              onPress={onPress}
-              accessibilityRole="button"
-              accessibilityLabel={openProfileLabel}
-            >
+          <View style={styles.stackedNameRow}>
+            {name === '' ? null : onPress === undefined ? (
               <Text style={[typeScale.label, styles.name]} numberOfLines={1}>
                 {name}
               </Text>
-            </Pressable>
-          )}
+            ) : (
+              <Pressable
+                style={styles.nameTarget}
+                onPress={onPress}
+                accessibilityRole="button"
+                accessibilityLabel={openProfileLabel}
+              >
+                <Text style={[typeScale.label, styles.name]} numberOfLines={1}>
+                  {name}
+                </Text>
+              </Pressable>
+            )}
+            {badge === undefined ? null : badge}
+          </View>
 
           {hasRooted ? (
             <RootedBadge
@@ -290,6 +298,7 @@ export default function AuthorLine({
                 {nameNode}
               </Pressable>
             )}
+            {badge === undefined ? null : badge}
             {timeText}
           </View>
 
@@ -328,6 +337,7 @@ export default function AuthorLine({
   return (
     <View style={styles.row} testID={testID}>
       {identityTarget}
+      {badge === undefined ? null : badge}
 
       {hasRooted ? (
         <RootedBadge
@@ -381,6 +391,14 @@ const styles = StyleSheet.create({
   // separated facts rather than one unit (KNOT-023c).
   stackedDetails: {
     flexShrink: 1,
+  },
+  // The name and an optional status marker share one line, so the marker sits
+  // beside the name rather than under it (KNOT-029).
+  stackedNameRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexShrink: 1,
+    gap: spacing.xs,
   },
   stackedRow: {
     alignItems: 'center',

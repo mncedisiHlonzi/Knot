@@ -2530,3 +2530,31 @@ interaction of each kind, an entry with two very recent comments and one older r
 shows the newest comment and the reaction, not the two comments — a deliberate reading of
 "one of each". The wording lives in the mobile app (`socialProof.ts`), so changing a
 verb is a client change, not a server one; the server sends structured data only.
+
+## KNOT-ADR-074 — Social proof is universal, and an adaptation is always badged
+
+**Context.** KNOT-028 put the social-proof header on version cards only, phrased it as
+"… rings true this", and let the interaction state replace the only signal that a card was
+an adaptation. On-device review found all three wrong: stories can be engaged with too, the
+copy reads like a template, and a busy adaptation no longer looks adapted.
+
+**Decision.**
+
+- **Every feed card renders `SocialProofHeader`.** Interactions come first; a version then
+  falls back to its hereditary attribution and lineage; a story has neither, so it draws
+  nothing when no one has interacted.
+- **The copy is natural English with no trailing "this".** Each reaction carries its own
+  verb in singular and plural forms: "finds this true / find this true", "knows this
+  differently / know this differently", "adds something new / add something new", "needs a
+  source / need a source"; a comment reads "commented on this". Two actors are joined with
+  "&" when they share the signal and with "and" when they do not.
+- **A version card always carries an adaptation badge.** A 16pt `ShareNetwork` glyph in
+  brand ink sits beside the adapter's name via a new optional `AuthorLine.badge` slot. It
+  is independent of the header, so replacing the attribution sentence with interactions
+  never hides the fact that this is an adaptation.
+
+**Consequences.** The header is now the card's first social signal on both kinds, and the
+two credit systems (live engagement and heredity) can coexist: the badge carries the
+permanent "adapted" fact while the header carries whichever credit is current. The wording
+remains client-side, so grammar changes stay mobile-only. The badge is a glyph, not a
+control, and adds no tap target; its accessibility label is "Adapted story".

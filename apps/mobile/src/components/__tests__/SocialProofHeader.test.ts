@@ -126,7 +126,7 @@ describe('SocialProofHeader', () => {
 
     expect(findByTestId(element, 'social-proof-header')).toBeDefined();
     expect(collectText(element).join('')).toContain(
-      'Tycoon rings true and Yantuntu commented on this',
+      'Tycoon finds this true and Yantuntu commented on this.',
     );
 
     const avatars = elementsByType(element, Avatar);
@@ -147,7 +147,19 @@ describe('SocialProofHeader', () => {
       interactions: [interaction({ actor_display_name: 'Tycoon' })],
     });
 
-    expect(collectText(element).join('')).toContain('Tycoon rings true this');
+    expect(collectText(element).join('')).toContain('Tycoon finds this true.');
+    expect(elementsByType(element, Avatar)).toHaveLength(1);
+  });
+
+  it('renders for a story card when interactions exist and there is no attribution', () => {
+    // A story has no hereditary sentence and no lineage avatars; the header must
+    // still draw its interactions (KNOT-029).
+    const element = SocialProofHeader({
+      interactions: [interaction({ actor_display_name: 'Tycoon', detail: 'know_it_differently' })],
+    });
+
+    expect(element).not.toBeNull();
+    expect(collectText(element).join('')).toContain('Tycoon knows this differently.');
     expect(elementsByType(element, Avatar)).toHaveLength(1);
   });
 

@@ -23,24 +23,37 @@ export type SocialProofRun = {
 };
 
 /**
- * How each reaction reads inside the sentence.
+ * How one reaction reads inside the sentence, in both grammatical numbers.
  *
- * These are deliberately not the ReactionBar's labels: the header is a sentence
- * ("Tycoon rings true this"), so the signal is a verb phrase. An unknown future
- * signal degrades to the generic phrase rather than rendering an empty gap.
+ * The header is a sentence, not a label list, so the signal is a verb phrase and
+ * it carries the object itself ("finds this true", "knows this differently") —
+ * there is no trailing "this" bolted onto the end. Two actors sharing a signal
+ * take the plural form ("know this differently"); an unknown future signal
+ * degrades to the generic phrase rather than rendering an empty gap (KNOT-029).
  */
-const REACTION_PHRASES: Readonly<Record<string, string>> = {
-  rings_true: 'rings true',
-  know_it_differently: 'know it differently',
-  adds_something_new: 'adds something new',
-  needs_a_source: 'needs a source',
+type ReactionPhrase = {
+  readonly singular: string;
+  readonly plural: string;
+};
+
+const REACTION_PHRASES: Readonly<Record<string, ReactionPhrase>> = {
+  rings_true: { singular: 'finds this true', plural: 'find this true' },
+  know_it_differently: { singular: 'knows this differently', plural: 'know this differently' },
+  adds_something_new: { singular: 'adds something new', plural: 'add something new' },
+  needs_a_source: { singular: 'needs a source', plural: 'need a source' },
 };
 
 /** The phrase an unknown reaction type falls back to. */
-const FALLBACK_REACTION_PHRASE = 'reacted to';
+const FALLBACK_REACTION_PHRASE: ReactionPhrase = {
+  singular: 'reacted to this',
+  plural: 'reacted to this',
+};
 
-/** What a comment actor did; the trailing "this" completes it. */
-const COMMENT_PHRASE = 'commented on';
+/** What a comment actor did. Past tense, so both numbers read the same. */
+const COMMENT_PHRASE: ReactionPhrase = {
+  singular: 'commented on this',
+  plural: 'commented on this',
+};
 
 /**
  * The interactions worth drawing: at most the first two, and only the two kinds
@@ -67,14 +80,28 @@ export function socialProofActors(
     .slice(0, SOCIAL_PROOF_MAX_ACTORS);
 }
 
-/** The verb phrase for one interaction, without the shared trailing "this". */
-function actionPhrase(interaction: RecentInteraction): string {
+/** The verb phrase for one interaction, in both grammatical numbers. */
+function actionPhrase(interaction: RecentInteraction): ReactionPhrase {
   if (interaction.type === 'comment') {
     return COMMENT_PHRASE;
   }
 
   const detail = typeof interaction.detail === 'string' ? interaction.detail.trim() : '';
   return REACTION_PHRASES[detail] ?? FALLBACK_REACTION_PHRASE;
+}
+
+/**
+ * The key two interactions must share to be grouped under one verb. A comment is
+ * its own key; a reaction is keyed by its signal, so two DIFFERENT signals read
+ * as two clauses rather than being merged into one inaccurate verb.
+ */
+function actionKey(interaction: RecentInteraction): string {
+  if (interaction.type === 'comment') {
+    return 'comment';
+  }
+
+  const detail = typeof interaction.detail === 'string' ? interaction.detail.trim() : '';
+  return `reaction:${detail}`;
 }
 
 /** The name to draw for an actor; a nameless account still reads grammatically. */
@@ -87,16 +114,20 @@ function actorName(interaction: RecentInteraction): string {
 /**
  * Formats the interaction header's sentence as styled runs.
  *
- * The four shapes the brief fixes (KNOT-028):
+ * The four shapes the brief fixes (KNOT-029):
  *
- *   One reaction:        {Name} {reaction} this
- *   One comment:         {Name} commented on this
- *   Two, same action:    {A} & {B} {action} this
- *   Two, mixed actions:  {A} {actionA} and {B} {actionB} this
+ *   One reaction:        {Name} finds this true.
+ *                        {Name} knows this differently.
+ *                        {Name} adds something new.
+ *                        {Name} needs a source.
+ *   One comment:         {Name} commented on this.
+ *   Two, same action:    {A} & {B} know this differently.
+ *   Two, mixed actions:  {A} finds this true and {B} commented on this.
  *
  * "Same action" means both are comments, or both are reactions of the SAME
  * signal — two different signals read as two clauses rather than being merged
- * into one inaccurate verb.
+ * into one inaccurate verb. The verb carries its own object, so no phrase ends
+ * with a dangling "this".
  *
  * Names are bold runs; every other run is plain, so the caller can give the
  * sentence its two inks without parsing it again.
@@ -115,31 +146,28 @@ export function socialProofRuns(
   if (actors.length === 1) {
     return [
       { text: firstName, bold: true },
-      { text: ` ${actionPhrase(first)} this`, bold: false },
+      { text: ` ${actionPhrase(first).singular}.`, bold: false },
     ];
   }
 
   const second = actors[1];
   const secondName = actorName(second);
-  const sameAction =
-    first.type === 'comment'
-      ? second.type === 'comment'
-      : second.type === 'reaction' && actionPhrase(first) === actionPhrase(second);
+  const sameAction = actionKey(first) === actionKey(second);
 
   if (sameAction) {
     return [
       { text: firstName, bold: true },
       { text: ' & ', bold: false },
       { text: secondName, bold: true },
-      { text: ` ${actionPhrase(first)} this`, bold: false },
+      { text: ` ${actionPhrase(first).plural}.`, bold: false },
     ];
   }
 
   return [
     { text: firstName, bold: true },
-    { text: ` ${actionPhrase(first)} and `, bold: false },
+    { text: ` ${actionPhrase(first).singular} and `, bold: false },
     { text: secondName, bold: true },
-    { text: ` ${actionPhrase(second)} this`, bold: false },
+    { text: ` ${actionPhrase(second).singular}.`, bold: false },
   ];
 }
 

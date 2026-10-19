@@ -8,7 +8,7 @@ import {
   type ImageLoadEventData,
   type NativeSyntheticEvent,
 } from 'react-native';
-import { Images } from 'phosphor-react-native';
+import { Images, ShareNetwork } from 'phosphor-react-native';
 
 import type { RecentInteraction } from '../api/stories';
 import { API_BASE_URL } from '../config/api';
@@ -113,12 +113,13 @@ type FeedEntryProps = {
   readonly versionNumber?: number;
   /**
    * The server-rendered sentence tracing this version back to the original, for
-   * the `version` variant. The card renders it verbatim in the attribution row,
-   * drawing every name it mentions in a heavier voice -- the server owns the
-   * wording (KNOT-021, KNOT-022-fix1). Empty when the lineage could not be
-   * resolved, in which case the row falls back to the structured root author and,
-   * failing that, to the quiet version label alone. The server sends the field as
-   * `attribution_line`; the feed maps it onto this prop.
+   * the `version` variant. The card hands it to `SocialProofHeader`, which shows
+   * it verbatim when the version has no interactions, drawing every name in a
+   * heavier voice -- the server owns the wording (KNOT-021, KNOT-022-fix1,
+   * KNOT-028). Empty when the lineage could not be resolved, in which case the
+   * header falls back to the structured root author and, failing that, draws
+   * nothing. The server sends the field as `attribution_line`; the feed maps it
+   * onto this prop.
    */
   readonly attributionLine?: string;
   /**
@@ -151,6 +152,9 @@ const PREVIEW_LINES = 3;
 
 /** The media-count badge's glyph size. */
 const COUNT_ICON_SIZE = 14;
+
+/** The adaptation marker's glyph size: small enough to ride beside the name. */
+const ADAPT_BADGE_SIZE = 16;
 
 /** A no-op for the mute control when a caller renders an entry without wiring one. */
 const NOOP = (): void => undefined;
@@ -192,11 +196,14 @@ function lineageAvatarLabel(name: string): string {
  * identity inside it is a nested target that opens the profile (KNOT-ADR-043).
  *
  * The author block is a vertical stack (KNOT-023b): the avatar on the left and,
- * on the right, the name, the quiet Rooted line, then the compact time. A version
- * card additionally opens with a `SocialProofHeader`: the newest interactions if
- * there are any, otherwise the lineage avatars and the server's attribution
- * sentence (KNOT-028). The poster is the AuthorLine below, not a face in that
- * header (KNOT-022-fix1, KNOT-022-fix2). The version number is deliberately
+ * on the right, the name, the quiet Rooted line, then the compact time. Every card
+ * opens with a `SocialProofHeader` (KNOT-029): the newest interactions if there
+ * are any; a version falls back to the lineage avatars and the server's
+ * attribution sentence when there are none, while a story (which has no
+ * attribution) draws nothing. A version card also carries a permanent adapt badge
+ * beside the adapter's name, so the adaptation stays legible when interactions
+ * replace the sentence (KNOT-029). The poster is the AuthorLine below, not a face
+ * in that header (KNOT-022-fix1, KNOT-022-fix2). The version number is deliberately
  * absent from the feed: the credit ends after the language (KNOT-025-fix4).
  *
  * The text column keeps the feed's horizontal inset, but the **media is
@@ -313,6 +320,21 @@ export default function FeedEntry({
 
   const attributionText = typeof attributionLine === 'string' ? attributionLine.trim() : '';
 
+  // A version's telling is always marked, even when its attribution sentence has
+  // been replaced by interactions. The badge is a status marker beside the
+  // adapter's name, not a tap target, so it stays out of the profile Pressable
+  // (KNOT-029).
+  const adaptBadge = isVersion ? (
+    <View
+      style={styles.adaptBadge}
+      testID="adapt-badge"
+      accessibilityRole="image"
+      accessibilityLabel="Adapted story"
+    >
+      <ShareNetwork color={colors.brand.primary} size={ADAPT_BADGE_SIZE} weight="bold" />
+    </View>
+  ) : null;
+
   return (
     <Pressable
       style={[styles.entry, showBottomHairline ? null : styles.entryCard]}
@@ -324,18 +346,17 @@ export default function FeedEntry({
       testID={testID}
     >
       <View style={styles.padded}>
-        {/* The social-proof header: the newest interactions, or the hereditary
-            attribution when there are none (KNOT-028). Story entries have
-            neither today, so they draw no header. */}
-        {isVersion ? (
-          <SocialProofHeader
-            interactions={story.recent_interactions}
-            attributionLine={attributionText}
-            adapterName={adapterName}
-            originalAuthorName={rootAuthorName}
-            lineageAvatars={lineageAvatars}
-          />
-        ) : null}
+        {/* The social-proof header is universal: every card shows its newest
+            interactions. A version falls back to its hereditary attribution when
+            there are none; a story has no attribution, so it simply draws no
+            header (KNOT-028, KNOT-029). */}
+        <SocialProofHeader
+          interactions={story.recent_interactions}
+          attributionLine={isVersion ? attributionText : ''}
+          adapterName={isVersion ? adapterName : ''}
+          originalAuthorName={isVersion ? rootAuthorName : ''}
+          lineageAvatars={isVersion ? lineageAvatars : []}
+        />
 
         <AuthorLine
           displayName={story.author_display_name}
@@ -347,6 +368,7 @@ export default function FeedEntry({
           // left avatar. The compact time is the feed's alone (KNOT-023b).
           layout="stacked"
           timeFormat="short"
+          badge={adaptBadge}
           onPress={onOpenAuthor}
         />
 
@@ -448,6 +470,13 @@ const styles = StyleSheet.create({
   },
   entry: {
     paddingTop: spacing.lg,
+  },
+  // The adaptation marker rides beside the adapter's name, so it needs no ink of
+  // its own beyond the glyph's tint. Its box exists to carry the accessibility
+  // label (KNOT-029).
+  adaptBadge: {
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   // The Feed's card form: without its bottom hairline, the entry needs its own
   // bottom inset so the next card's grey gap does not touch the meta line
