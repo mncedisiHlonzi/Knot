@@ -31,6 +31,7 @@ type VersionsHandler struct {
 	authors   AuthorLookup
 	rooted    RootedLookup
 	reactions ReactionsLookup
+	recorder  InteractionRecorder
 	logger    *slog.Logger
 }
 
@@ -38,7 +39,17 @@ type VersionsHandler struct {
 // and pictures each version's author (one batched read per response), the rooted
 // lookup attaches that author's inline Rooted summary, and the reactions lookup
 // attaches the perspective-reaction counts and the reader's own signals.
+//
+// Without a recorder the handler writes no interaction log;
+// NewVersionsHandlerWithRecorder is the composition root's entry point
+// (KNOT-026).
 func NewVersionsHandler(service VersionsService, authors AuthorLookup, rooted RootedLookup, reactions ReactionsLookup, logger *slog.Logger) (*VersionsHandler, error) {
+	return NewVersionsHandlerWithRecorder(service, authors, rooted, reactions, logger, nil)
+}
+
+// NewVersionsHandlerWithRecorder is NewVersionsHandler plus the engagement
+// recorder. A nil recorder disables the log.
+func NewVersionsHandlerWithRecorder(service VersionsService, authors AuthorLookup, rooted RootedLookup, reactions ReactionsLookup, logger *slog.Logger, recorder InteractionRecorder) (*VersionsHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: versions handler requires a service")
 	}
@@ -54,7 +65,7 @@ func NewVersionsHandler(service VersionsService, authors AuthorLookup, rooted Ro
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: versions handler requires a logger")
 	}
-	return &VersionsHandler{service: service, authors: authors, rooted: rooted, reactions: reactions, logger: logger}, nil
+	return &VersionsHandler{service: service, authors: authors, rooted: rooted, reactions: reactions, recorder: recorder, logger: logger}, nil
 }
 
 // createAdaptationRequest is the POST /stories/{id}/adapt body.
@@ -163,6 +174,10 @@ func (h *VersionsHandler) Adapt(w http.ResponseWriter, r *http.Request) {
 	// The new version's depth is its parent's plus one, which walking its own
 	// chain produces without a separate count.
 	response.AttributionLine, response.VersionDepth = h.attribution(r.Context(), created.ID)
+
+	// The adaptation is credited to the telling it was written from: that is the
+	// content whose pillar the reader engaged with (KNOT-026).
+	recordInteraction(r.Context(), h.logger, h.recorder, authorID, interactionEntityVersion, body.ParentVersionID, interactionAdapt)
 
 	writeJSON(w, http.StatusCreated, versionEnvelope{Version: response})
 }

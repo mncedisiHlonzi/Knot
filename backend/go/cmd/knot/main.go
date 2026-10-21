@@ -239,6 +239,14 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
+	// The engagement log is the relevance engine's data pipeline: one weighted row
+	// per view, read, reaction, comment and adaptation, written off the request
+	// path through the same store and pool (KNOT-026).
+	interactionService, err := interactions.NewService(interactionsStore)
+	if err != nil {
+		return err
+	}
+
 	// The identity service doubles as the batched author lookup every content
 	// handler enriches with, so a response names and pictures its authors without
 	// a query per row (KNOT-ADR-041).
@@ -276,7 +284,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	versionsHandler, err := httpapi.NewVersionsHandler(versionsService, service, rootedService, reactionsService, logger)
+	versionsHandler, err := httpapi.NewVersionsHandlerWithRecorder(versionsService, service, rootedService, reactionsService, logger, interactionService)
 	if err != nil {
 		return err
 	}
@@ -285,7 +293,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	// adaptations in one stream, so it is built after the versions service and
 	// takes it as its chain lookup: attributing a page of adaptations is a batched
 	// read of the version domain, not a query per entry (KNOT-022).
-	storiesHandler, err := httpapi.NewStoriesHandler(storiesService, service, rootedService, storyMediaService, reactionsService, storyStatsStore, versionsService, interactionsStore, logger)
+	storiesHandler, err := httpapi.NewStoriesHandlerWithRecorder(storiesService, service, rootedService, storyMediaService, reactionsService, storyStatsStore, versionsService, interactionsStore, logger, interactionService)
 	if err != nil {
 		return err
 	}
@@ -302,7 +310,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	conversationsHandler, err := httpapi.NewConversationsHandler(conversationsService, service, rootedService, reactionsService, logger)
+	conversationsHandler, err := httpapi.NewConversationsHandlerWithRecorder(conversationsService, service, rootedService, reactionsService, logger, interactionService)
 	if err != nil {
 		return err
 	}
@@ -329,7 +337,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	// The reactions handler owns the eight per-entity reaction routes. It uses the
 	// three content services only to resolve an entity's author and confirm it
 	// exists, and the notifications service to fire reaction.created (KNOT-ADR-050).
-	reactionsHandler, err := httpapi.NewReactionsHandler(reactionsService, storiesService, versionsService, conversationsService, inquiriesService, notificationsService, logger)
+	reactionsHandler, err := httpapi.NewReactionsHandlerWithRecorder(reactionsService, storiesService, versionsService, conversationsService, inquiriesService, notificationsService, logger, interactionService)
 	if err != nil {
 		return err
 	}

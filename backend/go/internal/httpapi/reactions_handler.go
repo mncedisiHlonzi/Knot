@@ -53,13 +53,26 @@ type ReactionsHandler struct {
 	conversations ConversationsService
 	inquiries     InquiriesService
 	notifier      ReactionsNotifier
+	recorder      InteractionRecorder
 	logger        *slog.Logger
 }
 
 // NewReactionsHandler returns a handler. Each content service is used only to
 // resolve an entity's author and confirm it exists; the notifier fires the
 // reaction.created event.
+//
+// Without a recorder the handler writes no interaction log;
+// NewReactionsHandlerWithRecorder is the composition root's entry point
+// (KNOT-026).
 func NewReactionsHandler(reactionsService ReactionsService, storiesService StoriesService, versionsService VersionsService, conversationsService ConversationsService, inquiriesService InquiriesService, notifier ReactionsNotifier, logger *slog.Logger) (*ReactionsHandler, error) {
+	return NewReactionsHandlerWithRecorder(
+		reactionsService, storiesService, versionsService, conversationsService, inquiriesService, notifier, logger, nil,
+	)
+}
+
+// NewReactionsHandlerWithRecorder is NewReactionsHandler plus the engagement
+// recorder. A nil recorder disables the log.
+func NewReactionsHandlerWithRecorder(reactionsService ReactionsService, storiesService StoriesService, versionsService VersionsService, conversationsService ConversationsService, inquiriesService InquiriesService, notifier ReactionsNotifier, logger *slog.Logger, recorder InteractionRecorder) (*ReactionsHandler, error) {
 	if reactionsService == nil {
 		return nil, fmt.Errorf("httpapi: reactions handler requires a reactions service")
 	}
@@ -88,6 +101,7 @@ func NewReactionsHandler(reactionsService ReactionsService, storiesService Stori
 		conversations: conversationsService,
 		inquiries:     inquiriesService,
 		notifier:      notifier,
+		recorder:      recorder,
 		logger:        logger,
 	}, nil
 }
@@ -226,6 +240,12 @@ func (h *ReactionsHandler) toggle(w http.ResponseWriter, r *http.Request, entity
 	if err != nil {
 		h.writeServiceError(w, r, err)
 		return
+	}
+
+	// Adding a signal is engagement; removing one is not. Inquiries are outside
+	// the relevance engine's story/version log (KNOT-026).
+	if active && (string(entityType) == interactionEntityStory || string(entityType) == interactionEntityVersion) {
+		recordInteraction(r.Context(), h.logger, h.recorder, actorID, string(entityType), entityID, interactionReaction)
 	}
 
 	// Only creating a reaction notifies anyone: toggling off is silent, and

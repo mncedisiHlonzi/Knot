@@ -827,3 +827,112 @@ func TestPostgresStoreCreateStoryRollsBackWhenVersionInsertFails(t *testing.T) {
 		t.Errorf("stories for the author = %d, want %d — the story must roll back when its version fails", after, before)
 	}
 }
+
+// assertEntityFeature reads one read-model row and asserts all four projected
+// columns.
+func assertEntityFeature(t *testing.T, env integrationStore, entityID, wantType, wantLanguage, wantPillar, wantPlace string) {
+	t.Helper()
+
+	var (
+		entityType              string
+		language, pillar, place *string
+	)
+	if err := env.pool.QueryRow(
+		context.Background(),
+		`SELECT entity_type, language, pillar, place_lower
+		 FROM entity_features
+		 WHERE entity_id = $1`,
+		entityID,
+	).Scan(&entityType, &language, &pillar, &place); err != nil {
+		t.Fatalf("entity_features row %s: %v", entityID, err)
+	}
+
+	got := func(value *string) string {
+		if value == nil {
+			return "<nil>"
+		}
+		return *value
+	}
+
+	if entityType != wantType {
+		t.Errorf("entity_features[%s].entity_type = %q, want %q", entityID, entityType, wantType)
+	}
+	if got(language) != wantLanguage {
+		t.Errorf("entity_features[%s].language = %q, want %q", entityID, got(language), wantLanguage)
+	}
+	if got(pillar) != wantPillar {
+		t.Errorf("entity_features[%s].pillar = %q, want %q", entityID, got(pillar), wantPillar)
+	}
+	if got(place) != wantPlace {
+		t.Errorf("entity_features[%s].place_lower = %q, want %q", entityID, got(place), wantPlace)
+	}
+}
+
+// TestPostgresStoreBackfillEntityFeaturesPopulatesEveryEntity proves the
+// read-model projection for a story, its root version, and a child adaptation,
+// and that a second run repairs rather than duplicates (KNOT-026).
+func TestPostgresStoreBackfillEntityFeaturesPopulatesEveryEntity(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	story, err := env.store.CreateStory(ctx, newIntegrationStory(env.author, "features"))
+	if err != nil {
+		t.Fatalf("CreateStory() error = %v, want nil", err)
+	}
+
+	childID := insertIntegrationVersion(t, env, story.ID, story.RootVersionID, env.author, "zul", time.Now().UTC())
+
+	// entity_features has no foreign key to stories, so the read model must be
+	// cleaned up explicitly: deleting the author's stories will not reach it.
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := env.pool.Exec(
+			cleanupCtx,
+			"DELETE FROM entity_features WHERE entity_id = ANY($1::uuid[])",
+			[]string{story.ID, story.RootVersionID, childID},
+		); err != nil {
+			t.Logf("cleanup: could not delete test entity features: %v", err)
+		}
+	})
+
+	// Seed a stale row so the assertion also proves ON CONFLICT repairs it.
+	if _, err := env.pool.Exec(
+		ctx,
+		`INSERT INTO entity_features (entity_id, entity_type, language, pillar, place_lower)
+		 VALUES ($1, 'story', 'stale', 'stale', 'stale')
+		 ON CONFLICT (entity_id) DO UPDATE SET language = 'stale'`,
+		story.ID,
+	); err != nil {
+		t.Fatalf("could not seed the stale feature row: %v", err)
+	}
+
+	if _, err := env.store.BackfillEntityFeatures(ctx); err != nil {
+		t.Fatalf("BackfillEntityFeatures() error = %v, want nil", err)
+	}
+
+	// A story takes its root version's language and its own pillar and place.
+	assertEntityFeature(t, env, story.ID, "story", "eng", "heritage", "cape town")
+	// The root version is a version entity: its own language (eng) and its
+	// story's pillar and place.
+	assertEntityFeature(t, env, story.RootVersionID, "version", "eng", "heritage", "cape town")
+	// A child adaptation carries its own language.
+	assertEntityFeature(t, env, childID, "version", "zul", "heritage", "cape town")
+
+	// Idempotent: a second run rewrites the same three rows and inserts none.
+	if _, err := env.store.BackfillEntityFeatures(ctx); err != nil {
+		t.Fatalf("second BackfillEntityFeatures() error = %v, want nil", err)
+	}
+
+	var rows int
+	if err := env.pool.QueryRow(
+		ctx,
+		"SELECT count(*) FROM entity_features WHERE entity_id = ANY($1::uuid[])",
+		[]string{story.ID, story.RootVersionID, childID},
+	).Scan(&rows); err != nil {
+		t.Fatalf("could not count entity features: %v", err)
+	}
+	if rows != 3 {
+		t.Errorf("entity_features rows = %d, want 3 (one per story and version)", rows)
+	}
+}

@@ -1,4 +1,9 @@
-// Package interactions is a read model of the latest social-proof interactions
+// Package interactions records and reads user engagement.
+//
+// It has two halves. The write half (`log.go`) appends one weighted row per
+// significant action — view, read_full, reaction, comment, adapt — to
+// `user_interactions`, the data foundation of the relevance engine (KNOT-026).
+// The read half below is a read model of the latest social-proof interactions
 // on a page of feed items.
 //
 // A feed card heads an entry with the newest things people have done to it: a

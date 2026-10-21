@@ -19,6 +19,9 @@ type PostgresStore struct {
 // Compile-time proof that the store satisfies the read contract.
 var _ Store = (*PostgresStore)(nil)
 
+// Compile-time proof that the store satisfies the write contract.
+var _ LogStore = (*PostgresStore)(nil)
+
 // NewPostgresStore returns a store backed by pool. The pool is injected rather
 // than reached for globally so that callers own its lifecycle.
 func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
@@ -196,4 +199,73 @@ func (s *PostgresStore) Latest(ctx context.Context, targets []Target) (map[strin
 	}
 
 	return result, nil
+}
+
+// Insert appends one interaction row.
+//
+// The weight is written explicitly (cast to the column's REAL) rather than
+// recomputed in SQL, so the row records the ladder that was in force when the
+// action happened. The caller has already resolved it through Service.Log.
+func (s *PostgresStore) Insert(ctx context.Context, record Record) error {
+	const query = `
+		INSERT INTO user_interactions
+			(user_id, entity_type, entity_id, interaction_type, interaction_weight)
+		VALUES ($1, $2, $3, $4, $5::real)`
+
+	if _, err := s.pool.Exec(
+		ctx,
+		query,
+		record.UserID,
+		record.EntityType,
+		record.EntityID,
+		string(record.Type),
+		record.Weight,
+	); err != nil {
+		return fmt.Errorf("interactions: insert: %w", err)
+	}
+
+	return nil
+}
+
+// PillarEngagement returns the total interaction weight one user has spent on
+// content in each pillar, keyed by pillar.
+//
+// The log records the entity, not its pillar, so the sum joins `entity_features`
+// — the read model that denormalises pillar for stories and versions. Matching
+// on both id and type keeps the join honest if a story and a version ever share
+// an id. A user with no logged engagement gets an empty map, which the relevance
+// package reads as "no affinity yet" rather than as an error (KNOT-026).
+func (s *PostgresStore) PillarEngagement(ctx context.Context, userID string) (map[string]float64, error) {
+	const query = `
+		SELECT ef.pillar, SUM(ui.interaction_weight)::float8
+		FROM user_interactions ui
+		JOIN entity_features ef
+		  ON ef.entity_id = ui.entity_id
+		 AND ef.entity_type = ui.entity_type
+		WHERE ui.user_id = $1
+		  AND ef.pillar IS NOT NULL
+		GROUP BY ef.pillar`
+
+	rows, err := s.pool.Query(ctx, query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("interactions: pillar engagement: %w", err)
+	}
+	defer rows.Close()
+
+	weights := make(map[string]float64)
+	for rows.Next() {
+		var (
+			pillar string
+			weight float64
+		)
+		if err := rows.Scan(&pillar, &weight); err != nil {
+			return nil, fmt.Errorf("interactions: scan pillar engagement: %w", err)
+		}
+		weights[pillar] = weight
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("interactions: pillar engagement: %w", err)
+	}
+
+	return weights, nil
 }

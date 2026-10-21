@@ -29,6 +29,7 @@ type ConversationsHandler struct {
 	authors   AuthorLookup
 	rooted    RootedLookup
 	reactions ReactionsLookup
+	recorder  InteractionRecorder
 	logger    *slog.Logger
 }
 
@@ -37,7 +38,17 @@ type ConversationsHandler struct {
 // response), the rooted lookup attaches each author's inline Rooted summary, and
 // the reactions lookup attaches perspective-reaction counts and the reader's own
 // signals.
+//
+// Without a recorder the handler writes no interaction log;
+// NewConversationsHandlerWithRecorder is the composition root's entry point
+// (KNOT-026).
 func NewConversationsHandler(service ConversationsService, authors AuthorLookup, rooted RootedLookup, reactions ReactionsLookup, logger *slog.Logger) (*ConversationsHandler, error) {
+	return NewConversationsHandlerWithRecorder(service, authors, rooted, reactions, logger, nil)
+}
+
+// NewConversationsHandlerWithRecorder is NewConversationsHandler plus the
+// engagement recorder. A nil recorder disables the log.
+func NewConversationsHandlerWithRecorder(service ConversationsService, authors AuthorLookup, rooted RootedLookup, reactions ReactionsLookup, logger *slog.Logger, recorder InteractionRecorder) (*ConversationsHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: conversations handler requires a service")
 	}
@@ -53,7 +64,7 @@ func NewConversationsHandler(service ConversationsService, authors AuthorLookup,
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: conversations handler requires a logger")
 	}
-	return &ConversationsHandler{service: service, authors: authors, rooted: rooted, reactions: reactions, logger: logger}, nil
+	return &ConversationsHandler{service: service, authors: authors, rooted: rooted, reactions: reactions, recorder: recorder, logger: logger}, nil
 }
 
 // createCommentRequest is the POST /versions/{id}/comments body.
@@ -182,6 +193,10 @@ func (h *ConversationsHandler) CreateComment(w http.ResponseWriter, r *http.Requ
 	response := newCommentResponse(created)
 	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{created.AuthorID})[created.AuthorID]
 	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, created.AuthorID)
+
+	// The comment is recorded against the version whose conversation it joins,
+	// which is the content that engaged the reader (KNOT-026).
+	recordInteraction(r.Context(), h.logger, h.recorder, authorID, interactionEntityVersion, created.VersionID, interactionComment)
 
 	writeJSON(w, http.StatusCreated, commentEnvelope{Comment: response})
 }

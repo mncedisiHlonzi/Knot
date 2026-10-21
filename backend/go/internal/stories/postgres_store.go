@@ -414,6 +414,66 @@ func nullIfEmpty(value string) *string {
 	return &value
 }
 
+// BackfillEntityFeatures rebuilds the entity_features read model for every story
+// and version, and answers how many rows were written.
+//
+// The read model denormalises the three features a ranking join needs: language,
+// pillar and place. A story's language comes from its root version and its
+// pillar/place from the story row; a version's language is its own while its
+// pillar/place come from its story — the same projection the 0020_entity_features
+// migration performs for pre-existing rows (KNOT-026).
+//
+// The SELECT is wrapped in a derived table because `INSERT ... SELECT ... UNION
+// ALL ... ON CONFLICT` is ambiguous to PostgreSQL's parser. `ON CONFLICT DO
+// UPDATE` makes the call idempotent and repairs a row that has drifted, which is
+// what lets a future write path call it safely.
+func (s *PostgresStore) BackfillEntityFeatures(ctx context.Context) (int64, error) {
+	const query = `
+		INSERT INTO entity_features
+			(entity_id, entity_type, language, pillar, place_lower, updated_at)
+		SELECT
+			features.entity_id,
+			features.entity_type,
+			features.language,
+			features.pillar,
+			features.place_lower,
+			now()
+		FROM (
+			SELECT
+				s.id AS entity_id,
+				'story'::text AS entity_type,
+				v.language AS language,
+				s.pillar::text AS pillar,
+				lower(s.approximate_location) AS place_lower
+			FROM stories s
+			JOIN story_versions v ON v.id = s.root_version_id
+
+			UNION ALL
+
+			SELECT
+				v.id AS entity_id,
+				'version'::text AS entity_type,
+				v.language AS language,
+				s.pillar::text AS pillar,
+				lower(s.approximate_location) AS place_lower
+			FROM story_versions v
+			JOIN stories s ON s.id = v.story_id
+		) AS features
+		ON CONFLICT (entity_id) DO UPDATE SET
+			entity_type = EXCLUDED.entity_type,
+			language = EXCLUDED.language,
+			pillar = EXCLUDED.pillar,
+			place_lower = EXCLUDED.place_lower,
+			updated_at = now()`
+
+	tag, err := s.pool.Exec(ctx, query)
+	if err != nil {
+		return 0, fmt.Errorf("stories: backfill entity features: %w", err)
+	}
+
+	return tag.RowsAffected(), nil
+}
+
 // nonNilURLs guarantees a non-nil slice so a TEXT[] NOT NULL column never
 // receives NULL, and so a JSON response never contains null where a list belongs.
 func nonNilURLs(urls []string) []string {

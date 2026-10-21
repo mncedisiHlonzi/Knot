@@ -48,6 +48,7 @@ type StoriesHandler struct {
 	stats        StoryStatsLookup
 	chains       VersionChainLookup
 	interactions InteractionLookup
+	recorder     InteractionRecorder
 	logger       *slog.Logger
 }
 
@@ -60,7 +61,20 @@ type StoriesHandler struct {
 // languages, comments, media) in one batched read per response, the chain lookup
 // attributes the adaptations a feed page carries (KNOT-022), and the interaction
 // lookup attaches the social proof at the top of each feed entry (KNOT-028).
+//
+// Without a recorder the handler serves every endpoint unchanged; it simply
+// writes no interaction log. The composition root uses
+// NewStoriesHandlerWithRecorder (KNOT-026).
 func NewStoriesHandler(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, stats StoryStatsLookup, chains VersionChainLookup, interactions InteractionLookup, logger *slog.Logger) (*StoriesHandler, error) {
+	return NewStoriesHandlerWithRecorder(
+		service, authors, rooted, media, reactions, stats, chains, interactions, logger, nil,
+	)
+}
+
+// NewStoriesHandlerWithRecorder is NewStoriesHandler plus the engagement recorder
+// that feeds the relevance engine's data pipeline. A nil recorder disables the
+// log without changing any response.
+func NewStoriesHandlerWithRecorder(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, stats StoryStatsLookup, chains VersionChainLookup, interactions InteractionLookup, logger *slog.Logger, recorder InteractionRecorder) (*StoriesHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a service")
 	}
@@ -88,7 +102,7 @@ func NewStoriesHandler(service StoriesService, authors AuthorLookup, rooted Root
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a logger")
 	}
-	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, stats: stats, chains: chains, interactions: interactions, logger: logger}, nil
+	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, stats: stats, chains: chains, interactions: interactions, recorder: recorder, logger: logger}, nil
 }
 
 // createStoryRequest is the POST /stories body.
@@ -441,6 +455,11 @@ func (h *StoriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}}
 	response.AttributionLine = optionalString(versions.FormatAttribution(rootChain))
 	response.VersionDepth = optionalInt(0)
+
+	// Opening the detail is a view for the signed-in reader. It is telemetry for
+	// the relevance engine, so it is fire-and-forget and never affects the
+	// response (KNOT-026).
+	recordInteraction(r.Context(), h.logger, h.recorder, userID, interactionEntityStory, story.ID, interactionView)
 
 	writeJSON(w, http.StatusOK, storyEnvelope{Story: response})
 }

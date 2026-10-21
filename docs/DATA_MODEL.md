@@ -954,3 +954,55 @@ without a second extension, a second index, or a second query path.
 `information_schema` guard and each index uses `CREATE INDEX IF NOT EXISTS`. Applying
 `0016_search.up.sql` twice is therefore a no-op, and the `down` file drops the indexes and columns
 behind matching guards. Verified in both directions against the local database.
+
+## `user_interactions` (migration `0019`)
+
+The engagement log behind the relevance engine: one row per significant action a user
+takes on a story or a version.
+
+| Column               | Type        | Notes |
+| -------------------- | ----------- | ----- |
+| `id`                 | `UUID`      | Primary key, `gen_random_uuid()`. |
+| `user_id`            | `UUID`      | `REFERENCES users(id) ON DELETE CASCADE`. |
+| `entity_type`        | `TEXT`      | Closed set: `story`, `version`. |
+| `entity_id`          | `UUID`      | No foreign key: one column cannot reference two tables. |
+| `interaction_type`   | `TEXT`      | Closed set: `view`, `read_full`, `reaction`, `comment`, `adapt`. |
+| `interaction_weight` | `REAL`      | The weight applied at write time (1 / 3 / 5 / 7 / 10). |
+| `created_at`         | `TIMESTAMPTZ` | Defaults to `now()`. |
+
+**Indexes and constraints.** `user_interactions_user_created_idx` on
+`(user_id, created_at DESC)` serves "this reader's engagement, newest first";
+`user_interactions_entity_idx` on `(entity_type, entity_id)` serves the future
+entity-side reads. Both closed sets and `interaction_weight > 0` are CHECK constraints, so
+an unknown value cannot be written even by a mistake in Go.
+
+**The weight is data, not a formula.** It is resolved in `internal/interactions` from
+exported constants and stored on the row, so re-tuning the ladder later does not rewrite
+history. A comment's or an adaptation's engagement is recorded against the version it was
+acted on, which is the content that engaged the reader.
+
+## `entity_features` (migration `0020`)
+
+The ML-ready read model: one denormalised row per entity, so a ranking pass can join a
+candidate's language, pillar and place without touching the content tables.
+
+| Column        | Type          | Notes |
+| ------------- | ------------- | ----- |
+| `entity_id`   | `UUID`        | Primary key; a story or a version id. |
+| `entity_type` | `TEXT`        | Closed set: `story`, `version`. |
+| `language`    | `TEXT NULL`   | A story's root-version language, or the version's own. |
+| `pillar`      | `TEXT NULL`   | The story's pillar. |
+| `place_lower` | `TEXT NULL`   | `lower(stories.approximate_location)`. |
+| `updated_at`  | `TIMESTAMPTZ` | Defaults to `now()`; refreshed by a rebuild. |
+
+**Derived, never authoritative.** The migration backfills every existing story and version
+(39 rows on the founder's local database: 15 stories and 24 versions), and
+`stories.PostgresStore.BackfillEntityFeatures` rebuilds the table with an
+`ON CONFLICT (entity_id) DO UPDATE`. A future task will maintain it on write; until then a
+newly created story gets its row on the next rebuild.
+
+**Why the columns are copied.** A story's language lives on its root version while its
+pillar and place live on the story; a version's language is its own while its pillar and
+place belong to the story. The read model collapses that join once instead of on every
+ranking read (KNOT-026, KNOT-ADR-075).
+

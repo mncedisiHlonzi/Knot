@@ -2558,3 +2558,33 @@ two credit systems (live engagement and heredity) can coexist: the badge carries
 permanent "adapted" fact while the header carries whichever credit is current. The wording
 remains client-side, so grammar changes stay mobile-only. The badge is a glyph, not a
 control, and adds no tap target; its accessibility label is "Adapted story".
+
+## KNOT-ADR-075 — The feed is powered by a pluggable Relevance Engine, not a social graph
+
+**Context.** Knot is for knowledge discovery, not for following people. A chronological
+feed of everyone's stories ignores the platform's reason to exist — matching a reader with
+the stories of their language, culture and interests — and a social graph would import a
+model the product deliberately does not have. The task brief calls this ADR 071; that
+number was already taken by the bridge retirement (KNOT-023), so the decision is recorded
+at the next free number.
+
+**Decision.** Personalisation is an explicit engine with two halves and one seam.
+
+- **Interaction logging is a first-class data pipeline.** `user_interactions` records
+  views, full reads, reactions, comments and adaptations with the weight applied at write
+  time. Logging is fire-and-forget and can never fail or delay the user's action.
+- **Ranking is a pluggable interface.** `relevance.Ranker` takes a reader and a page of
+  candidates; `SimpleRanker` is the deterministic, explainable first implementation. Its
+  dependencies (the reader's profile, their engagement summary) are injected by the
+  caller, so the ranker stays a pure function and a future ML model can replace it without
+  touching a handler.
+- **Features are prefetched into a read model.** `entity_features` denormalises language,
+  pillar and place per story and version, so ranking joins one cheap row per candidate
+  rather than reaching across the content tables.
+
+**Consequences.** The engine begins as a data foundation: this task does not change
+`GET /stories`. The mobile feed keeps its chronological order until a later task wires the
+ranker in, so ranking quality can be measured against a stable baseline. Until an ML
+model exists, every score is a sum of named, inspectable rules — no hidden state, no
+learned parameters, and no social-graph dependency.
+

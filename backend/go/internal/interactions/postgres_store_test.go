@@ -301,3 +301,81 @@ func TestPostgresStoreLatestEmptyInput(t *testing.T) {
 		t.Errorf("Latest(nil) = %v, want an empty map", latest)
 	}
 }
+
+// TestPostgresStoreInsertAndPillarEngagement proves the write half end to end:
+// the service's resolved weight lands in the row, and the engagement summary
+// joins the log to entity_features by entity id and type.
+func TestPostgresStoreInsertAndPillarEngagement(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	userID := createUser(t, env, "engager")
+	storyID, versionID := createStoryWithRootVersion(t, env, userID, "eng")
+
+	// entity_features has no foreign key to the content tables, so a fixture that
+	// seeds it must remove its rows explicitly.
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := env.pool.Exec(
+			cleanupCtx,
+			"DELETE FROM entity_features WHERE entity_id = ANY($1::uuid[])",
+			[]string{storyID, versionID},
+		); err != nil {
+			t.Logf("cleanup: could not delete test entity features: %v", err)
+		}
+	})
+
+	// The read model is maintained by the migration/backfill; the fixture seeds
+	// the two rows this join needs.
+	if _, err := env.pool.Exec(
+		ctx,
+		`INSERT INTO entity_features (entity_id, entity_type, language, pillar)
+		 VALUES ($1, 'story', 'eng', 'wonder'), ($2, 'version', 'eng', 'wonder')
+		 ON CONFLICT (entity_id) DO NOTHING`,
+		storyID,
+		versionID,
+	); err != nil {
+		t.Fatalf("could not seed the entity features: %v", err)
+	}
+
+	service, err := NewService(env.store)
+	if err != nil {
+		t.Fatalf("NewService() error = %v, want nil", err)
+	}
+
+	if err := service.Log(ctx, userID, EntityStory, storyID, string(InteractionView)); err != nil {
+		t.Fatalf("Log(view) error = %v, want nil", err)
+	}
+	if err := service.Log(ctx, userID, EntityVersion, versionID, string(InteractionReaction)); err != nil {
+		t.Fatalf("Log(reaction) error = %v, want nil", err)
+	}
+
+	var (
+		rows  int
+		total float64
+	)
+	if err := env.pool.QueryRow(
+		ctx,
+		`SELECT count(*), COALESCE(SUM(interaction_weight), 0)::float8
+		 FROM user_interactions
+		 WHERE user_id = $1`,
+		userID,
+	).Scan(&rows, &total); err != nil {
+		t.Fatalf("could not read the interaction log: %v", err)
+	}
+	if rows != 2 {
+		t.Errorf("user_interactions rows = %d, want 2", rows)
+	}
+	if total != WeightView+WeightReaction {
+		t.Errorf("interaction weight total = %v, want %v", total, WeightView+WeightReaction)
+	}
+
+	weights, err := env.store.PillarEngagement(ctx, userID)
+	if err != nil {
+		t.Fatalf("PillarEngagement() error = %v, want nil", err)
+	}
+	if got := weights["wonder"]; got != WeightView+WeightReaction {
+		t.Errorf("PillarEngagement()[wonder] = %v, want %v", got, WeightView+WeightReaction)
+	}
+}
