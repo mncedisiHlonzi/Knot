@@ -22,7 +22,7 @@ import { KNOT_MAPBOX_TOKEN as LOCAL_MAPBOX_TOKEN } from './secrets.local';
  *
  * To read the Mac's current Wi-Fi address:  ipconfig getifaddr en0
  */
-export const DEV_API_URL = 'http://10.205.222.173:8080';
+export const DEV_API_URL = 'http://10.173.40.173:8080';
 
 /**
  * The Mapbox public access token (starts with `pk.`), used by the Discovery Map.

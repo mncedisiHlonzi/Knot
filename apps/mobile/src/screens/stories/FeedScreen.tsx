@@ -15,6 +15,7 @@ import { Bell, EyeSlash, Flag, MagnifyingGlass, type Icon } from 'phosphor-react
 import { describeError } from '../../api/client';
 import { notificationsApi } from '../../api/notifications';
 import { FEED_PAGE_SIZE, type FeedItem, storiesApi } from '../../api/stories';
+import ConfirmSheet from '../../components/ConfirmSheet';
 import EmptyState from '../../components/EmptyState';
 import FeedEntry from '../../components/FeedEntry';
 import Header from '../../components/Header';
@@ -77,12 +78,12 @@ type FeedScreenProps = {
 };
 
 /**
- * The public story feed, newest first, as white cards on a grey canvas.
+ * The public story feed, newest first, as full-width white cards on a grey canvas.
  *
- * Each entry is a white card, inset from the screen edges and separated from the
- * next by a band of the grey canvas — the LinkedIn pattern. The separation is the
- * gap itself, not a rule drawn on white, so the cards read as distinct blocks
- * (KNOT-023b, KNOT-032).
+ * Each entry is a white card spanning the whole feed width, held apart from the
+ * next by a compact band of the grey separator surface. The band, not a rule drawn
+ * on white and not an inset card, is what separates two stories — the pattern a
+ * mature social feed uses (KNOT-023b, KNOT-032, KNOT-032-fix1).
  *
  * The layout pins everything but the list: the header and the four text tabs are
  * fixed siblings ABOVE the FlatList, so only the feed entries scroll beneath them
@@ -127,6 +128,10 @@ export default function FeedScreen({
   // The entry being reported. The report modal owns its own form state, so this
   // only says which entry the form is about.
   const [reportItem, setReportItem] = useState<FeedItem | undefined>(undefined);
+  // The entry awaiting a hide confirmation, if any (KNOT-032-fix1). The card's `✕`
+  // and the sheet's "Hide this post" row both arm this; nothing leaves the feed
+  // until the person answers.
+  const [pendingHideId, setPendingHideId] = useState<string | undefined>(undefined);
   // The Thread spans the list while a pull-to-refresh is in flight (KNOT-020h).
   const { width: pageWidth } = useWindowDimensions();
 
@@ -250,22 +255,51 @@ export default function FeedScreen({
   }, []);
 
   /**
-   * Hides one entry from this feed.
+   * Asks before hiding.
    *
-   * Hiding is local to the session. There is no hide endpoint, so the entry leaves
-   * the list but returns on the next refresh or page load — it is a "not now",
-   * not a mute, and the app does not pretend otherwise (KNOT-031).
+   * Both entry points — the card's `✕` and the options sheet's "Hide this post" —
+   * only arm the confirmation here. Nothing is removed until the person chooses
+   * "Hide story", because a one-tap removal from a scrolling feed is too easy to
+   * hit by accident (KNOT-032-fix1).
    */
-  const hidePost = useCallback((): void => {
-    const hidden = menuItem;
+  const requestHide = useCallback((id: string | undefined): void => {
+    // The options sheet, when that is where the request came from, closes as the
+    // confirmation opens: two stacked sheets would hide the question behind the
+    // choices (KNOT-031).
     setMenuItem(undefined);
 
-    if (hidden === undefined) {
+    if (id === undefined) {
       return;
     }
 
-    hideEntry(hidden.id);
-  }, [hideEntry, menuItem]);
+    setPendingHideId(id);
+  }, []);
+
+  /** Dismisses the confirmation: the story stays exactly where it was. */
+  const keepStory = useCallback((): void => {
+    setPendingHideId(undefined);
+  }, []);
+
+  /**
+   * Applies the confirmation.
+   *
+   * Hiding is local to the session. There is no hide endpoint, so the entry leaves
+   * the list but returns on the next refresh or page load — it is a "not now",
+   * not a mute, and the app does not pretend otherwise (KNOT-031). This is the
+   * only path that removes an entry; `hideEntry` does the removing.
+   */
+  const confirmHide = useCallback((): void => {
+    const target = pendingHideId;
+    // Clearing first closes the sheet, and makes a second confirm a no-op even if
+    // one somehow arrives (KNOT-032-fix1).
+    setPendingHideId(undefined);
+
+    if (target === undefined) {
+      return;
+    }
+
+    hideEntry(target);
+  }, [hideEntry, pendingHideId]);
 
   /** Hands the entry from the options sheet to the report modal. */
   const reportPost = useCallback((): void => {
@@ -387,9 +421,8 @@ export default function FeedScreen({
         }}
         onEndReachedThreshold={0.5}
         renderItem={({ item }) => (
-          // The LinkedIn-style card: a white block inset on the grey feed canvas,
-          // held apart from its neighbours by that grey band rather than by a rule
-          // drawn on the card (KNOT-023b, KNOT-032).
+          // The card: full width, white, set off by the grey band below it rather
+          // than by a rule or a horizontal inset (KNOT-023b, KNOT-032-fix1).
           <View style={styles.card}>
             <FeedEntry
               story={{
@@ -444,9 +477,9 @@ export default function FeedScreen({
               }
               onOpenAuthor={() => onOpenUserProfile(item.author_id)}
               onOpenOptions={() => setMenuItem(item)}
-              // The one-tap hide, straight from the card: the same session-local
-              // rule the options sheet applies, without the extra sheet (KNOT-032).
-              onHide={() => hideEntry(item.id)}
+              // The one-tap hide asks first: it arms the confirmation rather than
+              // removing the entry (KNOT-032-fix1).
+              onHide={() => requestHide(item.id)}
             />
           </View>
         )}
@@ -474,7 +507,9 @@ export default function FeedScreen({
 
       <PostOptionsSheet
         item={menuItem}
-        onHide={hidePost}
+        // The sheet's hide row asks exactly like the card's `✕` does: one shared
+        // confirmation, one shared removal (KNOT-032-fix1).
+        onHide={() => requestHide(menuItem?.id)}
         onReport={reportPost}
         onClose={closePostOptions}
       />
@@ -489,6 +524,21 @@ export default function FeedScreen({
         onClose={closeReport}
         onSubmitted={closeReport}
       />
+
+      {/* The hide confirmation. The copy says "for now" because hiding is
+          session-local: the entry returns on the next refresh, and the app must
+          not imply a mute it cannot deliver (KNOT-032-fix1). */}
+      <ConfirmSheet
+        visible={pendingHideId !== undefined}
+        title="Hide this story?"
+        message="This story will be removed from your feed for now. It will be back the next time the feed refreshes."
+        confirmLabel="Hide story"
+        cancelLabel="Keep story"
+        destructive
+        onConfirm={confirmHide}
+        onCancel={keepStory}
+        testID="hide-confirm"
+      />
     </View>
   );
 }
@@ -496,6 +546,9 @@ export default function FeedScreen({
 /**
  * The post options sheet: the actions a reader can take on one feed entry — hide
  * it from this feed, or report it to the moderators.
+ *
+ * Its hide row does not hide anything itself: it arms the feed's confirmation and
+ * closes, so both entry points ask the same question (KNOT-032-fix1).
  *
  * It is local to this file rather than a shared component, because the feed is the
  * only place it is drawn (the same choice the profile's options sheet makes,
@@ -598,19 +651,21 @@ const styles = StyleSheet.create({
   badgeText: {
     color: colors.text.onBrand,
   },
-  // One feed card: a white block inset from the screen edges and held apart from
-  // the next by a band of the grey canvas. The band — not a rule drawn on the
-  // card — is what makes two adjacent entries read as separate things, which is
-  // the LinkedIn pattern (KNOT-023b, KNOT-032). There is deliberately no corner
-  // radius: the media inside is full-bleed, so rounding the card would need
-  // `overflow: hidden` and would clip the media's own edges.
+  // One feed card: a full-width white block held apart from the next by a band of
+  // the feed's separator surface. The band — not a rule drawn on the card, and not
+  // an inset that would turn the feed into floating cards — is what makes two
+  // adjacent entries read as separate things, the way a mature social feed does
+  // (KNOT-023b, KNOT-032, KNOT-032-fix1). It is deliberately 8pt and square-edged:
+  // enough grey to separate, not enough to open a gutter.
   card: {
     backgroundColor: colors.bg.canvas,
-    marginBottom: spacing.md,
-    marginHorizontal: spacing.sm,
+    marginBottom: spacing.sm,
   },
+  // The page behind the cards. It is the same surface the inter-card band shows,
+  // so the band and the page never differ; `bg.sunken` was too close to white to
+  // read as a separator at 8pt (KNOT-032-fix1).
   container: {
-    backgroundColor: colors.bg.sunken,
+    backgroundColor: colors.bg.separator,
     flex: 1,
   },
   error: {

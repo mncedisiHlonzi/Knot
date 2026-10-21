@@ -33,6 +33,18 @@ export const colors = {
     canvas: active.canvas,
     paper: active.paper,
     sunken: active.sunken,
+    /**
+     * The band of page that shows between two full-width blocks — the feed's
+     * story-to-story separator (KNOT-032-fix1).
+     *
+     * It is a SURFACE, not a rule, so it is not `border.hairline`'s role even
+     * though it paints that neutral's value: the separator has to be a visible
+     * band (about 8pt) rather than a 1px line, and `sunken` is too close to the
+     * white canvas to read at that size. The value therefore comes from the same
+     * palette swatch the hairline uses, so the two never drift apart, and dark
+     * parity comes for free when the palette flips (KNOT-020i).
+     */
+    separator: active.line,
     /** @deprecated use `bg.canvas`. */
     primary: active.canvas,
     /** @deprecated use `bg.sunken`. */
