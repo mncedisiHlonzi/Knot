@@ -995,11 +995,17 @@ candidate's language, pillar and place without touching the content tables.
 | `place_lower` | `TEXT NULL`   | `lower(stories.approximate_location)`. |
 | `updated_at`  | `TIMESTAMPTZ` | Defaults to `now()`; refreshed by a rebuild. |
 
-**Derived, never authoritative.** The migration backfills every existing story and version
-(39 rows on the founder's local database: 15 stories and 24 versions), and
-`stories.PostgresStore.BackfillEntityFeatures` rebuilds the table with an
-`ON CONFLICT (entity_id) DO UPDATE`. A future task will maintain it on write; until then a
-newly created story gets its row on the next rebuild.
+**Derived, and maintained on write.** The migration backfilled every existing story and
+version (39 rows on the founder's local database: 15 stories and 24 versions), and
+`stories.PostgresStore.BackfillEntityFeatures` can rebuild the whole table with an
+`ON CONFLICT (entity_id) DO UPDATE`. Since KNOT-027a the write paths maintain it too:
+`stories.CreateStory` writes the story and root-version rows, and
+`versions.CreateVersion` writes the new version's row, each **inside the content write's
+transaction** — a failed feature write rolls the story or version back, so a committed
+entity always has its row. The row is projected in SQL from the source tables (the same
+projection the migration uses), so the read model cannot drift from its definition. The
+table has no foreign key, so deleting content does not remove its row; no delete path
+exists today.
 
 **Why the columns are copied.** A story's language lives on its root version while its
 pillar and place live on the story; a version's language is its own while its pillar and

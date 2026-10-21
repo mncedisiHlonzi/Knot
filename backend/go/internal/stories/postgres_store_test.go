@@ -87,6 +87,24 @@ func integrationSetup(t *testing.T) integrationStore {
 		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancelCleanup()
 
+		// entity_features has no foreign key, so the read model must be removed
+		// explicitly; otherwise every create in this suite would leave rows behind.
+		// Keying on the fixture email prefix covers the extra authors a test may
+		// create, not only the setup author.
+		if _, err := pool.Exec(cleanupCtx, `
+			DELETE FROM entity_features
+			WHERE entity_id IN (
+				SELECT s.id FROM stories s
+				JOIN users u ON u.id = s.author_id
+				WHERE u.email LIKE $1
+				UNION ALL
+				SELECT v.id FROM story_versions v
+				JOIN users u ON u.id = v.author_id
+				WHERE u.email LIKE $1
+			)`, prefix+"%"); err != nil {
+			t.Logf("cleanup: could not delete test entity features: %v", err)
+		}
+
 		// Stories reference the author, so they go first even though the foreign
 		// key cascades.
 		if _, err := pool.Exec(cleanupCtx, "DELETE FROM stories WHERE author_id = $1", author); err != nil {
@@ -249,6 +267,11 @@ func TestPostgresStoreCreateStoryRoundTrip(t *testing.T) {
 		t.Errorf("root version content = (%q, %q, %q), want the submitted content", language, title, body)
 	}
 
+	// The read model is written with the story (KNOT-027a): one row for the story
+	// and one for its root version, both projecting the same features.
+	assertEntityFeature(t, env, created.ID, "story", "eng", "heritage", "cape town")
+	assertEntityFeature(t, env, created.RootVersionID, "version", "eng", "heritage", "cape town")
+
 	fetched, err := env.store.GetStory(ctx, created.ID)
 	if err != nil {
 		t.Fatalf("GetStory() error = %v, want nil", err)
@@ -258,6 +281,48 @@ func TestPostgresStoreCreateStoryRoundTrip(t *testing.T) {
 	}
 	if !fetched.CreatedAt.Equal(created.CreatedAt) {
 		t.Errorf("created at = %v, want %v", fetched.CreatedAt, created.CreatedAt)
+	}
+}
+
+// TestPostgresStoreCreateStoryRollsBackWhenTheFeatureUpsertFails proves the read
+// model shares the story's transaction: a failed feature write leaves no story,
+// no root version, and no feature row (KNOT-027a).
+func TestPostgresStoreCreateStoryRollsBackWhenTheFeatureUpsertFails(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	before := countAuthorStories(t, env)
+	env.store.featureUpsert = func(context.Context, featureExecer, string, string) error {
+		return errors.New("simulated feature failure")
+	}
+
+	_, err := env.store.CreateStory(ctx, newIntegrationStory(env.author, "feature-failure"))
+	if err == nil {
+		t.Fatal("CreateStory() error = nil, want the simulated feature failure")
+	}
+
+	if after := countAuthorStories(t, env); after != before {
+		t.Errorf("stories for the author = %d, want %d — the story must roll back with the feature row", after, before)
+	}
+
+	var features int
+	if err := env.pool.QueryRow(
+		ctx,
+		`SELECT count(*)
+		 FROM entity_features
+		 WHERE entity_id IN (
+			SELECT id FROM stories WHERE author_id = $1
+			UNION ALL
+			SELECT v.id FROM story_versions v
+			JOIN stories s ON s.id = v.story_id
+			WHERE s.author_id = $1
+		 )`,
+		env.author,
+	).Scan(&features); err != nil {
+		t.Fatalf("could not count entity features: %v", err)
+	}
+	if features != 0 {
+		t.Errorf("entity_features rows for the author = %d, want 0", features)
 	}
 }
 

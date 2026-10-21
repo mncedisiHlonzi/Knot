@@ -29,6 +29,9 @@ const storyFrom = ` FROM stories s JOIN story_versions v ON v.id = s.root_versio
 // It holds an injected pool and no other state, so it is safe for concurrent use.
 type PostgresStore struct {
 	pool *pgxpool.Pool
+	// featureUpsert writes an entity_features row. It is a field so a test can
+	// simulate a write failure; NewPostgresStore installs the real writer.
+	featureUpsert featureWriter
 }
 
 // Compile-time proof that the store satisfies the domain contract.
@@ -40,7 +43,7 @@ func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("stories: postgres store requires a non-nil pool")
 	}
-	return &PostgresStore{pool: pool}, nil
+	return &PostgresStore{pool: pool, featureUpsert: upsertEntityFeature}, nil
 }
 
 // CreateStory inserts a story together with its root version and returns the
@@ -52,6 +55,11 @@ func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 // with two data-modifying CTEs. PostgreSQL checks the constraint after the whole
 // statement, by which point both rows exist, so the write is atomic without a
 // deferrable constraint.
+//
+// The statement runs in an explicit transaction together with the two
+// entity_features rows — the story and its root version — because the read model
+// is part of the write, not enrichment: if either feature upsert fails the story
+// rolls back with it, and a committed story always has both rows (KNOT-027a).
 func (s *PostgresStore) CreateStory(ctx context.Context, story Story) (Story, error) {
 	// approximate_location_lower is a normalised copy of approximate_location,
 	// maintained here so discovery can group by place without treating casing or
@@ -78,7 +86,15 @@ func (s *PostgresStore) CreateStory(ctx context.Context, story Story) (Story, er
 			s.media_urls, s.created_at, s.updated_at
 		FROM new_story s, new_version v`
 
-	row := s.pool.QueryRow(
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Story{}, fmt.Errorf("stories: begin create story: %w", err)
+	}
+	// A rollback after a successful commit is a no-op, so this covers every early
+	// return.
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	created, err := scanStory(tx.QueryRow(
 		ctx,
 		query,
 		story.AuthorID,
@@ -91,11 +107,28 @@ func (s *PostgresStore) CreateStory(ctx context.Context, story Story) (Story, er
 		story.Latitude,
 		story.Longitude,
 		story.PlaceCountry,
-	)
-
-	created, err := scanStory(row)
+	))
 	if err != nil {
 		return Story{}, fmt.Errorf("stories: create story: %w", err)
+	}
+
+	// Both entities are projected: the feed ranks story entries by the story id
+	// and adaptations by the version id, so one without the other would leave the
+	// read model partial (KNOT-027a).
+	for _, entity := range []struct {
+		id   string
+		kind string
+	}{
+		{id: created.ID, kind: EntityTypeStory},
+		{id: created.RootVersionID, kind: EntityTypeVersion},
+	} {
+		if err := s.featureUpsert(ctx, tx, entity.id, entity.kind); err != nil {
+			return Story{}, fmt.Errorf("stories: create story: %w", err)
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Story{}, fmt.Errorf("stories: commit create story: %w", err)
 	}
 
 	return created, nil

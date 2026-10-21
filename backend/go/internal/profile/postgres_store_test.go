@@ -118,6 +118,22 @@ func integrationSetup(t *testing.T) integrationEnv {
 		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancelCleanup()
 
+		// entity_features has no foreign key, so the read model the content
+		// writes now create must be removed explicitly (KNOT-027a).
+		if _, err := pool.Exec(cleanupCtx, `
+			DELETE FROM entity_features
+			WHERE entity_id IN (
+				SELECT s.id FROM stories s
+				JOIN users u ON u.id = s.author_id
+				WHERE u.email LIKE $1
+				UNION ALL
+				SELECT v.id FROM story_versions v
+				JOIN users u ON u.id = v.author_id
+				WHERE u.email LIKE $1
+			)`, prefix+"%"); err != nil {
+			t.Logf("cleanup: could not delete test entity features: %v", err)
+		}
+
 		// Deleting the users cascades to their stories, versions, and comments.
 		if _, err := pool.Exec(cleanupCtx, "DELETE FROM stories WHERE author_id IN ($1, $2)", env.userA, env.userB); err != nil {
 			t.Logf("cleanup: could not delete test stories: %v", err)

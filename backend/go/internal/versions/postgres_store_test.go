@@ -95,6 +95,24 @@ func integrationSetup(t *testing.T) integrationEnv {
 		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancelCleanup()
 
+		// entity_features has no foreign key, so the read model must be removed
+		// explicitly; otherwise every create in this suite would leave rows behind.
+		// Keying on the fixture email prefix covers the extra authors a test may
+		// create, not only the setup author.
+		if _, err := pool.Exec(cleanupCtx, `
+			DELETE FROM entity_features
+			WHERE entity_id IN (
+				SELECT s.id FROM stories s
+				JOIN users u ON u.id = s.author_id
+				WHERE u.email LIKE $1
+				UNION ALL
+				SELECT v.id FROM story_versions v
+				JOIN users u ON u.id = v.author_id
+				WHERE u.email LIKE $1
+			)`, prefix+"%"); err != nil {
+			t.Logf("cleanup: could not delete test entity features: %v", err)
+		}
+
 		// Deleting the author's stories cascades to their versions; the users
 		// delete then removes the author. Stories go first so the
 		// root_version_id RESTRICT constraint never blocks the user delete.
@@ -183,6 +201,37 @@ func TestPostgresStoreCreateVersionAsChildRoundTrip(t *testing.T) {
 		t.Error("timestamps are zero, want database-generated values")
 	}
 
+	// The read model row is written with the version (KNOT-027a): the version's
+	// own language and its story's pillar and place. The fixture story has no
+	// place, so the projection writes NULL there.
+	var (
+		entityType    string
+		featureLang   *string
+		featurePillar *string
+		featurePlace  *string
+	)
+	if err := env.pool.QueryRow(
+		ctx,
+		`SELECT entity_type, language, pillar, place_lower
+		 FROM entity_features
+		 WHERE entity_id = $1`,
+		created.ID,
+	).Scan(&entityType, &featureLang, &featurePillar, &featurePlace); err != nil {
+		t.Fatalf("could not read the version's feature row: %v", err)
+	}
+	if entityType != "version" {
+		t.Errorf("feature entity_type = %q, want version", entityType)
+	}
+	if featureLang == nil || *featureLang != "fra" {
+		t.Errorf("feature language = %v, want fra", featureLang)
+	}
+	if featurePillar == nil || *featurePillar != "heritage" {
+		t.Errorf("feature pillar = %v, want heritage", featurePillar)
+	}
+	if featurePlace != nil {
+		t.Errorf("feature place_lower = %q, want NULL for a story without a place", *featurePlace)
+	}
+
 	fetched, err := env.store.GetVersion(ctx, created.ID)
 	if err != nil {
 		t.Fatalf("GetVersion() error = %v, want nil", err)
@@ -192,6 +241,37 @@ func TestPostgresStoreCreateVersionAsChildRoundTrip(t *testing.T) {
 	}
 	if !fetched.IsRoot() && fetched.ParentVersionID != created.ParentVersionID {
 		t.Errorf("parent version id = %q, want %q", fetched.ParentVersionID, created.ParentVersionID)
+	}
+}
+
+// TestPostgresStoreCreateVersionRollsBackWhenTheFeatureUpsertFails proves the
+// read model shares the version's transaction: a failed feature write leaves no
+// version behind (KNOT-027a).
+func TestPostgresStoreCreateVersionRollsBackWhenTheFeatureUpsertFails(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	story := newIntegrationStory(t, env, "feature-failure")
+	before := countVersions(t, env, story.ID)
+
+	env.store.featureUpsert = func(context.Context, featureExecer, string) error {
+		return errors.New("simulated feature failure")
+	}
+
+	_, err := env.store.CreateVersion(ctx, StoryVersion{
+		StoryID:         story.ID,
+		ParentVersionID: story.RootVersionID,
+		AuthorID:        env.author,
+		Language:        "zul",
+		Title:           "A retelling that must not persist",
+		Body:            "Body",
+	})
+	if err == nil {
+		t.Fatal("CreateVersion() error = nil, want the simulated feature failure")
+	}
+
+	if after := countVersions(t, env, story.ID); after != before {
+		t.Errorf("versions for the story = %d, want %d — the version must roll back with the feature row", after, before)
 	}
 }
 

@@ -2335,3 +2335,19 @@ dependencies (`Profiles`, `Engagement`, `Features`); without them `for_you` answ
 instead of quietly serving an unranked feed. The mobile `FeedScreen` derives the ordering
 from the selected tab (`For you` → `for_you`, `Latest` → `recent`); Wonder/Heritage/Nearby
 stay visual-only, marked with a TODO.
+
+## KNOT-027a — entity_features is maintained on write
+
+The read model is no longer migration-only. `stories.PostgresStore.CreateStory` now runs
+in an explicit transaction: the existing two-CTE insert, then an `entity_features` upsert
+for **both** the story and its root version (the feed looks stories up by story id and
+adaptations by version id, so one without the other leaves the model partial).
+`versions.PostgresStore.CreateVersion` does the same for the new version only. The upsert
+is a single `INSERT … SELECT … ON CONFLICT (entity_id) DO UPDATE` that derives language,
+pillar and `lower(approximate_location)` **from the source tables**, so the row always
+matches the projection migration 0020 and `BackfillEntityFeatures` use. A failed upsert
+returns the create's error and the transaction rolls back — the stores expose the writer
+as a field (`featureUpsert`) so a test can simulate that failure and prove no story or
+version survives it. `UpsertEntityFeature` is also available on the stories store for a
+standalone rebuild of one entity. No schema change: `entity_features` still has no foreign
+key, so content deletion (no such path today) would leave a derived row behind.

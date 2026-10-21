@@ -7,8 +7,50 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// entityTypeVersion is the entity_features discriminator this write path uses.
+const entityTypeVersion = "version"
+
+// featureExecer is the subset of pgx shared by the pool and a transaction, so the
+// feature upsert can run inside CreateVersion's transaction.
+type featureExecer interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
+
+// featureWriter is the feature upsert CreateVersion calls. It is a function type
+// (and a field on the store) so a test can simulate a write failure and prove the
+// version rolls back with it; production installs the real writer.
+type featureWriter func(ctx context.Context, exec featureExecer, entityID string) error
+
+// upsertVersionFeatureSQL rebuilds one version's entity_features row from the
+// source tables: the version's own language, and its story's pillar and place.
+//
+// Writing the projection in SQL keeps it identical to migration 0020 and
+// BackfillEntityFeatures, so the read model cannot drift from its definition.
+const upsertVersionFeatureSQL = `
+	INSERT INTO entity_features (entity_id, entity_type, language, pillar, place_lower, updated_at)
+	SELECT v.id, 'version', v.language, s.pillar::text, lower(s.approximate_location), now()
+	FROM story_versions v
+	JOIN stories s ON s.id = v.story_id
+	WHERE v.id = $1
+	ON CONFLICT (entity_id) DO UPDATE SET
+		entity_type = EXCLUDED.entity_type,
+		language = EXCLUDED.language,
+		pillar = EXCLUDED.pillar,
+		place_lower = EXCLUDED.place_lower,
+		updated_at = now()`
+
+// upsertVersionFeature runs the projection for one version on exec.
+func upsertVersionFeature(ctx context.Context, exec featureExecer, versionID string) error {
+	if _, err := exec.Exec(ctx, upsertVersionFeatureSQL, versionID); err != nil {
+		return fmt.Errorf("versions: upsert feature: %w", err)
+	}
+
+	return nil
+}
 
 // versionColumns is the canonical SELECT/RETURNING column list. It is a constant
 // so every query in this file stays consistent with scanVersion, and its order
@@ -33,6 +75,10 @@ func versionColumnsFor(alias string) string {
 // It holds an injected pool and no other state, so it is safe for concurrent use.
 type PostgresStore struct {
 	pool *pgxpool.Pool
+	// featureUpsert writes the version's entity_features row. It is a field so a
+	// test can simulate a write failure; NewPostgresStore installs the real
+	// writer.
+	featureUpsert featureWriter
 }
 
 // Compile-time proof that the store satisfies the domain contract.
@@ -44,7 +90,7 @@ func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("versions: postgres store requires a non-nil pool")
 	}
-	return &PostgresStore{pool: pool}, nil
+	return &PostgresStore{pool: pool, featureUpsert: upsertVersionFeature}, nil
 }
 
 // CreateVersion inserts a version and returns the stored row, including the id
@@ -53,6 +99,10 @@ func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 // A root version is inserted by passing an empty ParentVersionID, which is
 // mapped onto SQL NULL; every other version names its parent. The
 // story_versions_story_id_root_unique index rejects a second root for a story.
+//
+// The insert and the version's entity_features row share one transaction: if the
+// feature upsert fails, the version rolls back with it, so a committed version
+// always has its feature row (KNOT-027a).
 func (s *PostgresStore) CreateVersion(ctx context.Context, version StoryVersion) (StoryVersion, error) {
 	const query = `
 		INSERT INTO story_versions (
@@ -61,7 +111,13 @@ func (s *PostgresStore) CreateVersion(ctx context.Context, version StoryVersion)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING ` + versionColumns
 
-	row := s.pool.QueryRow(
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return StoryVersion{}, fmt.Errorf("versions: begin create version: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	created, err := scanVersion(tx.QueryRow(
 		ctx,
 		query,
 		version.StoryID,
@@ -71,11 +127,17 @@ func (s *PostgresStore) CreateVersion(ctx context.Context, version StoryVersion)
 		version.Title,
 		version.Body,
 		nullIfEmpty(version.AdaptationNote),
-	)
-
-	created, err := scanVersion(row)
+	))
 	if err != nil {
 		return StoryVersion{}, fmt.Errorf("versions: create version: %w", err)
+	}
+
+	if err := s.featureUpsert(ctx, tx, created.ID); err != nil {
+		return StoryVersion{}, fmt.Errorf("versions: create version: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return StoryVersion{}, fmt.Errorf("versions: commit create version: %w", err)
 	}
 
 	return created, nil
