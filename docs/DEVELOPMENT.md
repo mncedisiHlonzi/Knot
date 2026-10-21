@@ -380,8 +380,8 @@ is `Chip`'s fill, because `backgroundColor` cannot be animated natively.
   pull-to-refresh is in flight (the `RefreshControl` keeps the gesture and its own
   spinner is made transparent, because that prop cannot host a custom indicator);
   inside the adapt form's primary button via `Button`'s new optional
-  `loadingIndicator`; and **vertically** down the language tree while it loads,
-  replacing its `ActivityIndicator` (`testID` `tree-thread`).
+  `loadingIndicator`; and **horizontally** above the language tree while it
+  loads, replacing its `ActivityIndicator` (`testID` `tree-thread`).
 - **Overlay transitions, in `App.tsx`:** one `Animated.View` around the rendered
   screen carries a `translateX`. A **push** is detected by the stack getting
   deeper (every push already goes through `pushOverlay`, so no call site changed):

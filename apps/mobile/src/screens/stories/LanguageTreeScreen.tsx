@@ -13,7 +13,10 @@ import { languageName } from '../../data/languages';
 import { colors, layout, radius, spacing, typeScale } from '../../theme';
 import { adaptCountLabel, treeRows, treeSummary } from './versionTree';
 
-/** The Thread's length while the tree loads, matching a two-row preview. */
+/**
+ * The horizontal Thread's width while the tree loads: a short drawn line above the
+ * rows, wide enough to read as pending rather than as a rule (KNOT-033).
+ */
 const TREE_THREAD_LENGTH = 112;
 
 type LanguageTreeScreenProps = {
@@ -122,11 +125,13 @@ export default function LanguageTreeScreen({
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
-        {/* The Thread runs down the tree's own spine while the versions load, so
-            the wait already shows the shape it is about to fill (KNOT-020h). */}
+        {/* The Thread runs across the top of the list while the versions load, so
+            the wait sits where the rows are about to appear. It is horizontal
+            (KNOT-033): drawn down the column it competed with the tree's own
+            spines and read as another one. */}
         {loading ? (
-          <View style={styles.spinner} testID="tree-thread">
-            <TheThread orientation="vertical" length={TREE_THREAD_LENGTH} />
+          <View style={styles.spinner}>
+            <TheThread length={TREE_THREAD_LENGTH} testID="tree-thread" />
           </View>
         ) : null}
         {error !== undefined ? <Text style={[typeScale.bodyS, styles.error]}>{error}</Text> : null}
