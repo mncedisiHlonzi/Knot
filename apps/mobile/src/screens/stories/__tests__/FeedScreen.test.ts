@@ -195,3 +195,58 @@ describe('FeedScreen hide confirmation', () => {
     expect(writes.every(([value]) => typeof value !== 'function')).toBe(true);
   });
 });
+
+/** Finds the first element whose props satisfy the predicate. */
+function findElement(
+  node: unknown,
+  predicate: (props: Record<string, unknown>) => boolean,
+): ElementLike | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findElement(child, predicate);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+  if (node === null || node === undefined || typeof node !== 'object') {
+    return undefined;
+  }
+
+  const element = node as ElementLike;
+  if (element.props !== undefined && predicate(element.props)) {
+    return element;
+  }
+  return findElement(element.props?.children, predicate);
+}
+
+describe('FeedScreen ordering tabs', () => {
+  it('offers For you and Latest beside the visual-only filters', () => {
+    const tree = renderScreen();
+
+    for (const label of ['For you', 'Latest', 'Wonder', 'Heritage', 'Nearby']) {
+      const tab = findElement(
+        tree,
+        (props) => props.accessibilityLabel === label && typeof props.onPress === 'function',
+      );
+      expect(tab).toBeDefined();
+    }
+  });
+
+  it('records the ordering tab a person taps, so the feed can re-fetch', () => {
+    // The re-fetch itself lives in `loadFirstPage`, which depends on the derived
+    // feed type; this suite stubs `useEffect`, so the tab's state write is the
+    // observable half (KNOT-027).
+    const tree = renderScreen();
+    const latest = findElement(
+      tree,
+      (props) => props.accessibilityLabel === 'Latest' && typeof props.onPress === 'function',
+    );
+
+    (latest?.props?.onPress as () => void)();
+
+    const writes = mockStateSetters.flatMap((setter) => setter.mock.calls as unknown[][]);
+    expect(writes.some(([value]) => value === 'Latest')).toBe(true);
+  });
+});

@@ -293,7 +293,26 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	// adaptations in one stream, so it is built after the versions service and
 	// takes it as its chain lookup: attributing a page of adaptations is a batched
 	// read of the version domain, not a query per entry (KNOT-022).
-	storiesHandler, err := httpapi.NewStoriesHandlerWithRecorder(storiesService, service, rootedService, storyMediaService, reactionsService, storyStatsStore, versionsService, interactionsStore, logger, interactionService)
+	storiesHandler, err := httpapi.NewStoriesHandlerWithRanking(
+		storiesService,
+		service,
+		rootedService,
+		storyMediaService,
+		reactionsService,
+		storyStatsStore,
+		versionsService,
+		interactionsStore,
+		logger,
+		interactionService,
+		// The `for_you` feed reads the reader's profile, their weighted
+		// engagement per pillar, and the entity_features read model that gives
+		// each candidate its language, pillar and place (KNOT-027).
+		httpapi.FeedRanking{
+			Profiles:   service,
+			Engagement: interactionsStore,
+			Features:   storiesStore,
+		},
+	)
 	if err != nil {
 		return err
 	}

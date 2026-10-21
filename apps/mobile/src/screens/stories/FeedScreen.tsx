@@ -56,8 +56,28 @@ const LOGOMARK_INSET = spacing.sm;
 /** The header icon size. */
 const ICON_SIZE = 24;
 
-/** The text tabs above the feed. They are a local selection until the API grows a filter. */
-const FEED_TABS = ['For you', 'Wonder', 'Heritage', 'Nearby'] as const;
+/**
+ * The ordering the server is asked for. `for_you` runs the relevance engine for
+ * the signed-in reader; `recent` is the chronological merged feed (KNOT-027).
+ */
+type FeedType = 'recent' | 'for_you';
+
+/**
+ * The text tabs above the feed.
+ *
+ * `For you` and `Latest` choose the ordering the server applies. The pillar and
+ * place tabs are still a local selection: the feed endpoint has no pillar or
+ * place filter yet, so tapping them changes the highlight but not the request.
+ *
+ * TODO: Connect pillar and place filters.
+ */
+const FEED_TABS = ['For you', 'Latest', 'Wonder', 'Heritage', 'Nearby'] as const;
+
+/** The tabs that change the request. A pillar tab leaves the ordering alone. */
+const FEED_TYPE_BY_TAB: Readonly<Record<string, FeedType>> = {
+  'For you': 'for_you',
+  Latest: 'recent',
+};
 
 type FeedScreenProps = {
   /** The signed-in user's access token, needed to read the unread count and the feed. */
@@ -85,13 +105,13 @@ type FeedScreenProps = {
  * on white and not an inset card, is what separates two stories — the pattern a
  * mature social feed uses (KNOT-023b, KNOT-032, KNOT-032-fix1).
  *
- * The layout pins everything but the list: the header and the four text tabs are
+ * The layout pins everything but the list: the header and the five text tabs are
  * fixed siblings ABOVE the FlatList, so only the feed entries scroll beneath them
  * (the header is opaque and static — nothing about it is scroll-linked). The tab
- * row is a plain flex row of four equal-width tabs rather than a horizontal
+ * row is a plain flex row of five equal-width tabs rather than a horizontal
  * scroller, so the labels are centred, never clipped, and never slide sideways.
- * The tabs are a local selection only — the feed endpoint has no pillar filter
- * yet, so they do not change the query (KNOT-020c disclosure).
+ * `For you` and `Latest` change the request's `feed_type`; the pillar and place
+ * tabs stay a local selection until the API grows those filters (KNOT-027).
  *
  * Paging is keyset-based: each page returns an opaque `next_cursor` that is sent
  * back verbatim to fetch the following page; an empty cursor ends the list.
@@ -117,6 +137,9 @@ export default function FeedScreen({
   const [error, setError] = useState<string | undefined>(undefined);
   const [unreadCount, setUnreadCount] = useState(0);
   const [activeTab, setActiveTab] = useState<string>(FEED_TABS[0]);
+  // The ordering the list is showing. A pillar tab is visual-only, so it keeps
+  // whatever ordering was last chosen rather than forcing a re-fetch.
+  const feedType: FeedType = FEED_TYPE_BY_TAB[activeTab] ?? 'for_you';
   // The one entry the feed judges to be on screen. Its video plays; every other
   // entry's pauses (KNOT-020c-fix3).
   const [activeItemId, setActiveItemId] = useState<string | undefined>(undefined);
@@ -153,7 +176,7 @@ export default function FeedScreen({
     setError(undefined);
 
     try {
-      const page = await storiesApi.listStories({ limit: FEED_PAGE_SIZE }, token);
+      const page = await storiesApi.listStories({ feedType, limit: FEED_PAGE_SIZE }, token);
       setItems(page.items);
       setNextCursor(page.next_cursor);
     } catch (caught) {
@@ -161,7 +184,7 @@ export default function FeedScreen({
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [feedType, token]);
 
   useEffect(() => {
     void loadFirstPage();
@@ -195,7 +218,7 @@ export default function FeedScreen({
     setError(undefined);
 
     try {
-      const page = await storiesApi.listStories({ limit: FEED_PAGE_SIZE }, token);
+      const page = await storiesApi.listStories({ feedType, limit: FEED_PAGE_SIZE }, token);
       setItems(page.items);
       setNextCursor(page.next_cursor);
     } catch (caught) {
@@ -203,7 +226,7 @@ export default function FeedScreen({
     } finally {
       setRefreshing(false);
     }
-  }, [token]);
+  }, [feedType, token]);
 
   const loadMore = useCallback(async (): Promise<void> => {
     if (nextCursor === '' || loadingMore) {
@@ -215,7 +238,7 @@ export default function FeedScreen({
 
     try {
       const page = await storiesApi.listStories(
-        { cursor: nextCursor, limit: FEED_PAGE_SIZE },
+        { cursor: nextCursor, feedType, limit: FEED_PAGE_SIZE },
         token,
       );
       // Append rather than replace: the cursor is exclusive, so a page never
@@ -227,7 +250,7 @@ export default function FeedScreen({
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, nextCursor, token]);
+  }, [feedType, loadingMore, nextCursor, token]);
 
   /** Opens the inbox and re-reads the badge, so a tap always shows the current count. */
   const handleOpenNotifications = useCallback((): void => {
@@ -358,11 +381,11 @@ export default function FeedScreen({
           }
         />
 
-        {/* Four equal-width tabs. Every label takes `typeScale.button` (15 pt
-            semibold), which is the weight the design reference draws all four
-            tabs at; the active tab is distinguished by ink and the indigo
+        {/* Five equal-width tabs. Every label takes `typeScale.button` (15 pt
+            semibold); the active tab is distinguished by ink and the indigo
             underline rather than by weight, so the row stays confident and even
-            (KNOT-020c-fix2). */}
+            (KNOT-020c-fix2). `For you` and `Latest` change the request; the
+            pillar and place tabs are visual only (KNOT-027). */}
         <View style={styles.tabs}>
           {FEED_TABS.map((label) => {
             const active = label === activeTab;

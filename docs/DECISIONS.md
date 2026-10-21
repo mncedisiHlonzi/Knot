@@ -2588,3 +2588,42 @@ ranker in, so ranking quality can be measured against a stable baseline. Until a
 model exists, every score is a sum of named, inspectable rules — no hidden state, no
 learned parameters, and no social-graph dependency.
 
+
+## KNOT-ADR-076 — The For You feed is powered by the SimpleRanker with a user-specific cursor
+
+**Context.** KNOT-026 built the interaction log and a pure `SimpleRanker` but left the feed
+chronological. A generic feed is the failure mode Knot exists to avoid: readers should meet
+the stories of their language and culture first, not whichever story was written last. The
+engine is deterministic today, so the first wiring can be explained and measured before an
+ML model replaces it.
+
+**Decision.**
+
+- **`GET /stories` takes `feed_type`.** `recent` (the default, and what every existing
+  client gets) is the unchanged chronological merged feed. `for_you` requires authentication
+  and orders the same entries through `relevance.SimpleRanker`: own content +100, preferred
+  language +50, the reader's most-engaged pillar +20, then −1 per hour.
+- **The ranker stays pure and per-request.** The handler loads the reader's profile
+  (`identity.UserByID`) and their weighted engagement per pillar
+  (`interactions.PillarEngagement`), and ranks a bounded window of the newest 200 entries.
+  The three dependencies are injected through `httpapi.FeedRanking`; a handler without them
+  answers 500 for `for_you` rather than silently serving an unranked feed.
+- **The candidates are enriched from `entity_features` in one batch.** The handler reads
+  language, pillar and place for the whole page with a single `FeaturesFor` query and falls
+  back to the entry's own fields when the read model has no row yet, so a story written
+  since the last backfill still ranks.
+- **The ranked cursor is a position in that reader's ranking.** It is base64url JSON
+  carrying the last entry's rank, creation time and id, validated strictly on the way in
+  and never signed (there is no signing key; a forged cursor can only move the reader's own
+  position in their own feed). It is meaningful only for that reader and that
+  `feed_type`, and it is stable while the window, the profile and the engagement do not
+  change.
+- **The app's For You and Latest tabs choose the ordering.** `For you` sends
+  `feed_type=for_you`, `Latest` sends `feed_type=recent`, and the pillar/place tabs remain
+  visual-only until the API grows those filters.
+
+**Consequences.** The feed is personalised without a social graph and without an ML model,
+and every score is reproducible from named rules. The ranked feed describes a bounded
+window rather than the whole corpus, and its cursor is stable but not a snapshot: a change
+in engagement or content between pages can reorder entries around the cursor. Moving the
+ranking into SQL (and therefore removing the window) is the next scaling step.

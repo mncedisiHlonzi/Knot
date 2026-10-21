@@ -331,6 +331,12 @@ export type ListStoriesOptions = {
    * entry is one story or one adaptation of a story (KNOT-022).
    */
   readonly limit?: number;
+  /**
+   * Which ordering to ask for: `for_you` runs the relevance engine for the
+   * signed-in reader, while `recent` is the chronological merged feed and what
+   * the server does when the parameter is omitted (KNOT-027).
+   */
+  readonly feedType?: 'recent' | 'for_you';
 };
 
 /** The page size the feed asks for. */
@@ -339,8 +345,11 @@ export const FEED_PAGE_SIZE = 20;
 /**
  * Builds the query string for a feed request, omitting empty values so the
  * server applies its own defaults.
+ *
+ * Exported (like discovery's `placeQuery`) so the parameter order and encoding
+ * are testable without a network call.
  */
-function feedQuery(options: ListStoriesOptions): string {
+export function feedQuery(options: ListStoriesOptions): string {
   const parts: string[] = [];
 
   if (options.limit !== undefined) {
@@ -348,6 +357,9 @@ function feedQuery(options: ListStoriesOptions): string {
   }
   if (options.cursor !== undefined && options.cursor !== '') {
     parts.push(`cursor=${encodeURIComponent(options.cursor)}`);
+  }
+  if (options.feedType !== undefined) {
+    parts.push(`feed_type=${encodeURIComponent(options.feedType)}`);
   }
 
   return parts.length === 0 ? '' : `?${parts.join('&')}`;

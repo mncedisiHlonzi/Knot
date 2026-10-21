@@ -464,9 +464,10 @@ id index instead of casting the column to text.
 
 ### GET /stories
 
-Returns **200** with one page of the feed, newest first. The page is a **merged stream of
+Returns **200** with one page of the feed. The page is a **merged stream of
 two entry kinds** — a story and somebody's adaptation of one — and every entry carries the
-`kind` that says which it is (KNOT-022):
+`kind` that says which it is (KNOT-022). Its order is chosen by `feed_type`: `recent`
+(the default) is newest first; `for_you` is the reader's ranked order (KNOT-027).
 
 ```json
 {
@@ -503,19 +504,39 @@ two entry kinds** — a story and somebody's adaptation of one — and every ent
 }
 ```
 
-| Query    | Required | Rules                                              |
-| -------- | -------- | -------------------------------------------------- |
-| `cursor` | no       | A `next_cursor` from a previous page. Omit for the first page |
-| `limit`  | no       | 1-50. Defaults to 20; a larger value is clamped to 50 |
+| Query       | Required | Rules                                              |
+| ----------- | -------- | -------------------------------------------------- |
+| `cursor`    | no       | A `next_cursor` from a previous page. Omit for the first page |
+| `limit`     | no       | 1-50. Defaults to 20; a larger value is clamped to 50 |
+| `feed_type` | no       | `recent` (default) or `for_you`. `for_you` requires authentication |
 
 `next_cursor` is **always present**. An empty string means the feed has no further pages;
 any other value is an opaque token to send back as `cursor` to fetch the next page.
-Treat it as opaque: it encodes the sort position, and its format may change.
+Treat it as opaque: it encodes the sort position, and its format may change. The
+`for_you` cursor is **specific to the reader and to the ordering** — it is a position in
+that reader's ranked list, so it must never be reused across `feed_type` values or users.
 
 `items` is always an array, never `null`, so an empty feed is `"items": []`. The key is
 `items` rather than `stories` because a page is no longer only stories (KNOT-ADR-070).
 The place page ([`GET /discovery/places/{place}`](#get-discoveryplacesplace)) still answers
 with `stories`, because it lists stories only.
+
+#### The ranked feed (`feed_type=for_you`)
+
+`for_you` orders the same merged entries with the deterministic relevance engine
+(KNOT-026, KNOT-ADR-076): base score 1, +100 when the reader wrote the entry, +50 when its
+language is one of the reader's preferred languages, +20 when it shares the pillar the
+reader has engaged with most, and −1 per hour since it was written. Ties break by recency
+and then id, so the order is reproducible.
+
+The ranking runs over a bounded window of the newest 200 entries, so the ranked feed
+describes that window rather than the whole table; the window is a deliberate limit until
+the ranker moves into the store. A page is sliced from the ranked window, and the cursor
+records the last entry's rank, creation time and id. While the window, the reader's
+profile and their engagement are unchanged, paging never repeats or skips an entry. A
+change in between (new content, new engagement, or time moving the recency term) can
+reorder entries around the cursor, because the cursor is a position in a recomputed
+ranking, not a snapshot of it.
 
 #### The two entry kinds
 

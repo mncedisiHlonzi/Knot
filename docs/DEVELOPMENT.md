@@ -2319,3 +2319,19 @@ token. A public route that must still personalise its response — such as the t
 Discovery endpoints and Search — is wrapped in `authMiddleware.Optional`, which
 resolves the block set for a signed-in caller and serves the anonymous view
 otherwise (KNOT-017a-fix3, KNOT-018).
+
+## KNOT-027 — the For You feed
+
+`GET /stories` now takes `feed_type=recent|for_you`. `recent` is the merged chronological
+feed unchanged (and the default, so older clients are untouched). `for_you` requires auth,
+loads the reader's profile and `PillarEngagement`, fetches a bounded window of the newest
+200 entries, enriches the candidates from `entity_features` in **one** batched `FeaturesFor`
+read, and calls `relevance.NewSimpleRanker(...).Rank`. The handler slices a page out of the
+ranked window and returns a ranked cursor (base64url JSON: rank, created_at, id). The
+window is independent of the cursor, so page two re-ranks the same window and resumes by
+**entry id** rather than by score: the recency term moves with the clock, and matching on
+the score would fail on every page turn. `httpapi.FeedRanking` carries the three optional
+dependencies (`Profiles`, `Engagement`, `Features`); without them `for_you` answers 500
+instead of quietly serving an unranked feed. The mobile `FeedScreen` derives the ordering
+from the selected tab (`For you` → `for_you`, `Latest` → `recent`); Wonder/Heritage/Nearby
+stay visual-only, marked with a TODO.

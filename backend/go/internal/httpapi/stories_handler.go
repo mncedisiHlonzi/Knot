@@ -49,6 +49,7 @@ type StoriesHandler struct {
 	chains       VersionChainLookup
 	interactions InteractionLookup
 	recorder     InteractionRecorder
+	ranking      FeedRanking
 	logger       *slog.Logger
 }
 
@@ -75,6 +76,16 @@ func NewStoriesHandler(service StoriesService, authors AuthorLookup, rooted Root
 // that feeds the relevance engine's data pipeline. A nil recorder disables the
 // log without changing any response.
 func NewStoriesHandlerWithRecorder(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, stats StoryStatsLookup, chains VersionChainLookup, interactions InteractionLookup, logger *slog.Logger, recorder InteractionRecorder) (*StoriesHandler, error) {
+	return NewStoriesHandlerWithRanking(
+		service, authors, rooted, media, reactions, stats, chains, interactions, logger, recorder, FeedRanking{},
+	)
+}
+
+// NewStoriesHandlerWithRanking is NewStoriesHandlerWithRecorder plus the
+// dependencies the `feed_type=for_you` ordering needs. The zero FeedRanking
+// keeps the chronological feed working and answers 500 for `for_you`, so a
+// wiring mistake can never be mistaken for a correct ranking.
+func NewStoriesHandlerWithRanking(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, stats StoryStatsLookup, chains VersionChainLookup, interactions InteractionLookup, logger *slog.Logger, recorder InteractionRecorder, ranking FeedRanking) (*StoriesHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a service")
 	}
@@ -102,7 +113,7 @@ func NewStoriesHandlerWithRecorder(service StoriesService, authors AuthorLookup,
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a logger")
 	}
-	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, stats: stats, chains: chains, interactions: interactions, recorder: recorder, logger: logger}, nil
+	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, stats: stats, chains: chains, interactions: interactions, recorder: recorder, ranking: ranking, logger: logger}, nil
 }
 
 // createStoryRequest is the POST /stories body.
@@ -487,7 +498,26 @@ func (h *StoriesHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page, next, err := h.service.ListFeed(r.Context(), query.Get("cursor"), limit)
+	feedType, err := parseFeedType(query.Get("feed_type"))
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+
+	var (
+		page []stories.FeedItem
+		next string
+	)
+	if feedType == feedTypeForYou {
+		userID, ok := UserIDFromContext(r.Context())
+		if !ok {
+			writeError(w, http.StatusUnauthorized, codeUnauthorized, "authentication required")
+			return
+		}
+		page, next, err = h.rankedFeedPage(r.Context(), userID, query.Get("cursor"), limit)
+	} else {
+		page, next, err = h.service.ListFeed(r.Context(), query.Get("cursor"), limit)
+	}
 	if err != nil {
 		h.writeServiceError(w, r, err)
 		return

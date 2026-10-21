@@ -919,6 +919,18 @@ func TestPostgresStoreBackfillEntityFeaturesPopulatesEveryEntity(t *testing.T) {
 	// A child adaptation carries its own language.
 	assertEntityFeature(t, env, childID, "version", "zul", "heritage", "cape town")
 
+	// The batched read the ranked feed uses returns all three rows in one query.
+	features, err := env.store.FeaturesFor(ctx, []string{story.ID, story.RootVersionID, childID})
+	if err != nil {
+		t.Fatalf("FeaturesFor() error = %v, want nil", err)
+	}
+	if len(features) != 3 {
+		t.Fatalf("FeaturesFor() returned %d rows, want 3", len(features))
+	}
+	if got := features[childID]; got.Language != "zul" || got.Pillar != "heritage" || got.PlaceLower != "cape town" {
+		t.Errorf("FeaturesFor()[child] = %+v, want zul/heritage/cape town", got)
+	}
+
 	// Idempotent: a second run rewrites the same three rows and inserts none.
 	if _, err := env.store.BackfillEntityFeatures(ctx); err != nil {
 		t.Fatalf("second BackfillEntityFeatures() error = %v, want nil", err)
