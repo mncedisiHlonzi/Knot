@@ -109,9 +109,10 @@ via the one token — never set a raw shadow on a screen.
 
 The motion pass (KNOT-020h) consumes them: **The Thread** — the 1.5pt indigo line
 that draws itself (`components/TheThread.tsx`, on the splash, under the feed's
-pull-to-refresh, inside the adapt form's primary button and down the language
-tree while it loads), the overlay push/pop slide in `App.tsx` (`enter`/`exit` at
-`durations.screen`), and the micro-interactions — a `micro` press scale on
+pull-to-refresh, inside the adapt form's primary button and across the top of the
+language tree while it loads, horizontal since KNOT-033), the overlay push/pop
+slide in `App.tsx` (`enter`/`exit` at `durations.screen`), and the
+micro-interactions — a `micro` press scale on
 `Button`, an animated fill plus a spring on `Chip`'s leading icon, a `micro` pulse
 on a tapped `ReactionBar` pill, and a two-step `micro` bounce on the active
 `TabBar` glyph. All of them run on the native driver except the chip's fill, which
