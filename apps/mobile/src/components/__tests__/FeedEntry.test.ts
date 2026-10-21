@@ -1,6 +1,7 @@
 import type { ImageLoadEventData, NativeSyntheticEvent } from 'react-native';
 
 import { MAX_PORTRAIT_ASPECT_RATIO } from '../../utils/mediaFrame';
+import { spacing } from '../../theme';
 import { ShareNetwork } from 'phosphor-react-native';
 
 import AuthorLine from '../AuthorLine';
@@ -959,5 +960,42 @@ describe('FeedEntry hide control', () => {
 
     expect(style?.height).toBe(44);
     expect(style?.width).toBe(44);
+  });
+
+  it('draws neither quick action when the screen supplies no handlers', () => {
+    // Place Stories renders this card with nothing to hide and no post menu, so it
+    // must gain no dead targets (KNOT-032, KNOT-032-fix1).
+    const element = FeedEntry({ story, onPress: () => undefined, onOpenAuthor: () => undefined });
+
+    expect(postOptions(element)).toBeUndefined();
+    expect(hideControl(element)).toBeUndefined();
+  });
+
+  it('opens a social-proof card at the compact band inset, and other cards at rest', () => {
+    // A card with a header opens with `spacing.sm`: the band supplies the rest of
+    // the top breathing room itself (KNOT-032-fix2).
+    const withHeader = FeedEntry({
+      story: {
+        ...story,
+        recent_interactions: [
+          {
+            type: 'reaction',
+            actor_display_name: 'Tycoon',
+            actor_avatar_url: null,
+            detail: 'rings_true',
+          },
+        ],
+      },
+      onPress: () => undefined,
+      showBottomHairline: false,
+    });
+    const withHeaderStyle = withHeader.props.style as readonly Record<string, unknown>[];
+    expect(withHeaderStyle[0].paddingTop).toBe(spacing.lg);
+    expect(withHeaderStyle[1].paddingTop).toBe(spacing.sm);
+
+    // A card with nothing for the header to say keeps the resting inset.
+    const bare = FeedEntry({ story, onPress: () => undefined, showBottomHairline: false });
+    const bareStyle = bare.props.style as readonly Record<string, unknown>[];
+    expect(bareStyle[1]).toBeNull();
   });
 });

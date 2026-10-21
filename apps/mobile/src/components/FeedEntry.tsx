@@ -19,6 +19,7 @@ import AuthorLine from './AuthorLine';
 import { feedMetaLine, isPreviewTruncated } from './feedEntryMeta';
 import FeedVideo, { VIDEO_MUTE_BUTTON_SIZE } from './FeedVideo';
 import PillarTag from './PillarTag';
+import { hasSocialProof } from './socialProof';
 import SocialProofHeader, { type SocialProofAvatar } from './SocialProofHeader';
 
 /**
@@ -342,6 +343,16 @@ export default function FeedEntry({
 
   const attributionText = typeof attributionLine === 'string' ? attributionLine.trim() : '';
 
+  // The header is drawn only when it has something to say, so the card's top inset
+  // follows it: a card WITH a header opens with the compact `spacing.sm` the band is
+  // built around, while a card without one keeps the taller resting inset that the
+  // author block needs (KNOT-032-fix2).
+  const showSocialProof = hasSocialProof(
+    story.recent_interactions,
+    isVersion ? attributionText : '',
+    isVersion ? rootAuthorName : '',
+  );
+
   // A version's telling is always marked, even when its attribution sentence has
   // been replaced by interactions. The badge is a status marker beside the
   // adapter's name, not a tap target, so it stays out of the profile Pressable
@@ -359,7 +370,11 @@ export default function FeedEntry({
 
   return (
     <Pressable
-      style={[styles.entry, showBottomHairline ? null : styles.entryCard]}
+      style={[
+        styles.entry,
+        showSocialProof ? styles.entryWithSocialProof : null,
+        showBottomHairline ? null : styles.entryCard,
+      ]}
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={
@@ -551,6 +566,13 @@ const styles = StyleSheet.create({
   },
   entry: {
     paddingTop: spacing.lg,
+  },
+  // A card whose first child is the social-proof band opens at the compact step: the
+  // band already separates the credit from the card's top edge, so the taller
+  // resting inset would double it (KNOT-032-fix2). The inner `padded` wrapper keeps
+  // the horizontal inset either way.
+  entryWithSocialProof: {
+    paddingTop: spacing.sm,
   },
   // The adaptation marker rides beside the adapter's name, so it needs no ink of
   // its own beyond the glyph's tint. Its box exists to carry the accessibility

@@ -1588,31 +1588,47 @@ tightened to match the reference.
 - **The stats row** moved from a 12pt caption in `text.tertiary` to `typeScale.label` (13/16
   bold) in `text.secondary`, because it carries real counts rather than metadata about them.
 
-### KNOT-032 — the card structure, at a glance
+### KNOT-032 — the card structure, and its correction
 
-Three on-device findings, all structural: the quick actions, the header's breathing room, and
-the separation between cards.
+The feed's cards gained two quick actions. On-device review then found the layout and the
+hide interaction wrong, and KNOT-032-fix1 corrected them; the notes below describe the
+shipped behaviour.
 
-- **Two quick actions, side by side.** `FeedEntry` gained a second optional handler,
-  `onHide`, drawn as a 20pt `X` in `text.tertiary` beside `onOpenOptions` in one
-  `cardActions` row at the top-right of the author block. Each is its own 44pt `Pressable`
-  nested inside the card's, so a quick hide never opens the story and never opens the menu.
-  Either control disappears when its handler is omitted, which is what keeps Place Stories —
-  the card's other caller — free of dead targets. Both hide paths share one rule:
-  `FeedScreen.hideEntry(id)` filters the entry out of the list, and the sheet's "Hide this
-  post" row calls the same function.
-- **The header sits in the middle of its band.** `SocialProofHeader`'s container pads
-  `spacing.sm` top and bottom, so the faces and the sentence are centred between the card's
-  top edge and the hairline below, instead of being squashed onto that rule.
-- **The separation is a band of canvas, not a rule.** `styles.card` dropped
-  `borderBottomWidth` entirely and now reads: `backgroundColor: colors.bg.canvas`,
-  `marginHorizontal: spacing.sm`, `marginBottom: spacing.md`. The screen's root was already
-  `colors.bg.sunken`, so the result is what the reference draws — white blocks with grey
-  showing between them and down both sides. There is deliberately **no corner radius**: the
-  media inside a card is full-bleed, so rounding the card would need `overflow: 'hidden'` and
-  would clip the media's own edges. The horizontal inset is on the card rather than on the
-  list's `contentContainerStyle`, because the refresh indicator (`TheThread`) is sized to the
-  full page width and would overflow an inset content container.
+- **Two quick actions, side by side.** `FeedEntry`'s optional `onOpenOptions` and `onHide`
+  draw a 22pt `DotsThree` and a 20pt `X` in `text.tertiary`, in one `cardActions` row at the
+  top-right of the author block. Each is its own 44pt `Pressable` nested inside the card's,
+  so a quick action never opens the story and never opens the other action. Either control
+  disappears when its handler is omitted, which is what keeps Place Stories — the card's
+  other caller — free of dead targets.
+- **Hiding asks first.** Neither quick action removes anything. The card's `✕` and the
+  options sheet's "Hide this post" row both call `FeedScreen.requestHide`, which arms
+  `ConfirmSheet` — "Hide this story?", then `Keep story` or `Hide story`. `hideEntry(id)` is
+  still the only function that removes an entry, and it runs only on confirmation. The copy
+  says the entry is gone "for now", because hiding is session-local: it returns on the next
+  refresh, and the app must not imply a mute it cannot deliver.
+- **`ConfirmSheet` is the app's first reusable confirmation.** A question, one sentence
+  saying what confirming will do, and two `Button`s — the safe choice outlined, the
+  destructive one in the danger ink. The backdrop and Android's back button both mean
+  "keep", and the confirming action runs at most once per showing, so a double tap cannot
+  apply the effect twice.
+- **The separation is a band of surface, not a rule and not a gutter.** `styles.card` reads
+  `backgroundColor: colors.bg.canvas` and `marginBottom: spacing.sm` — full width, no
+  horizontal inset, no border. The page behind it is `colors.bg.separator`, a new surface
+  role that paints the same neutral as `border.hairline`: `bg.sunken` (#F5F5F7) was too
+  close to white to read as a separator at 8pt, and a *line* token could not be used as a
+  large fill without pretending it is a surface. 8pt is the compact step inside the 6–8pt
+  target. There is deliberately **no corner radius**: the media inside a card is
+  full-bleed, so rounding the card would need `overflow: 'hidden'` and would clip the
+  media's own edges.
+- **The header band is compact and centred.** `SocialProofHeader`'s container is the
+  band's box and the rule is its last child, so padding the container did not work: the
+  inset landed **below** the rule, which left the sentence sitting on the rule and the rule
+  floating above the author block. The band's step now sits between the row and the rule
+  (`divider.marginTop: spacing.sm`), and `FeedEntry` opens a card that has a header at
+  `spacing.sm` instead of `spacing.lg` — a card with nothing for the header to say keeps the
+  taller resting inset. The container keeps `spacing.sm` under the rule, its clearance from
+  the author block, so the three gaps are all 8pt and the band stays content-driven: 45pt for
+  a one-line credit, 57pt for two.
 
 ### KNOT-025 — the Story Detail redesign
 

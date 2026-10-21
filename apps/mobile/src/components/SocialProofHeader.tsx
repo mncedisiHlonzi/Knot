@@ -68,9 +68,10 @@ function avatarLabel(name: string): string {
  * the credit reads as distinct from the poster's author block below it.
  *
  * The header is a caption, not a paragraph: it is a step down in type from the
- * author block it introduces, its faces are the smallest avatar, and its band has
- * balanced vertical padding so the credit sits in the middle of it rather than
- * squashed against the rule below (KNOT-031, KNOT-032).
+ * author block it introduces, its faces are the smallest avatar, and its band pads
+ * one compact step below the credit and against the card above it, so the credit
+ * sits in the middle of the band rather than squashed against the rule below
+ * (KNOT-031, KNOT-032, KNOT-032-fix1, KNOT-032-fix2).
  */
 export default function SocialProofHeader({
   interactions,
@@ -158,22 +159,25 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
   },
-  // The header sits flush at the top of the card with balanced breathing room
-  // above and below: one spacing step each way, so the faces and the sentence are
-  // centred in the band rather than squashed against the rule below them
-  // (KNOT-031, KNOT-032). The rule below it stays the design system's hairline —
-  // it separates two blocks inside one card, unlike the gap BETWEEN cards.
+  // The band is bounded by the card's own `spacing.sm` top inset above and by the
+  // rule below. Padding this container is NOT the way to centre the row: the rule
+  // is the container's last child, so the inset lands BELOW the rule and leaves the
+  // credit sitting on it while the rule floats above the author block. The row is
+  // centred by `divider.marginTop` instead; all that is left under the rule is its
+  // clearance from the author block (KNOT-031, KNOT-032-fix1, KNOT-032-fix2).
   container: {
-    paddingVertical: spacing.sm,
+    paddingBottom: spacing.sm,
   },
-  // The rule between the credit and the poster's author block (KNOT-023c). It is
-  // the design system's hairline, not the heavier divider, and it hugs the author
-  // block below it (KNOT-031).
+  // The rule between the credit and the poster's author block (KNOT-023c). One
+  // compact step below the credit — the same step the card pads above it — sits it
+  // in the middle of the band instead of crowded against the sentence, and with the
+  // container's `spacing.sm` it stays equally clear of the author block below
+  // (KNOT-031, KNOT-032-fix1, KNOT-032-fix2). It is the design system's hairline:
+  // it separates two blocks inside one card, unlike the gap BETWEEN cards.
   divider: {
     backgroundColor: colors.border.hairline,
     height: 1,
-    marginBottom: spacing.xs,
-    marginTop: 0,
+    marginTop: spacing.sm,
   },
   name: {
     color: colors.text.primary,

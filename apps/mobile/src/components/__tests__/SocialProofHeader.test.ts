@@ -1,5 +1,5 @@
 import type { RecentInteraction } from '../../api/stories';
-import { typeScale } from '../../theme';
+import { spacing, typeScale } from '../../theme';
 import Avatar from '../Avatar';
 import SocialProofHeader, { type SocialProofAvatar } from '../SocialProofHeader';
 
@@ -218,5 +218,34 @@ describe('SocialProofHeader', () => {
 
   it('renders nothing for an absent interactions array with no attribution', () => {
     expect(SocialProofHeader({})).toBeNull();
+  });
+
+  it('centres the credit in its band and keeps the rule clear of the sentence', () => {
+    const element = SocialProofHeader({
+      interactions: [interaction({ actor_display_name: 'Tycoon' })],
+    });
+
+    // The faces and the sentence are centred on each other inside one row.
+    const band = findByTestId(element, 'social-proof-header');
+    const row = (band?.props?.children as ElementLike[] | undefined)?.[0];
+    const rowStyle = row?.props?.style as Record<string, unknown> | undefined;
+    expect(rowStyle?.alignItems).toBe('center');
+    expect(rowStyle?.flexDirection).toBe('row');
+
+    // The card pads `spacing.sm` above its first child. The band repeats exactly
+    // that step BELOW the row — between the sentence and the rule — so the credit
+    // is centred between the card's top edge and the rule instead of sitting on it
+    // and the band stays compact (KNOT-032-fix1, KNOT-032-fix2).
+    const divider = findByTestId(element, 'attribution-divider');
+    const dividerStyle = divider?.props?.style as Record<string, unknown> | undefined;
+    expect(dividerStyle?.marginTop).toBe(spacing.sm);
+    expect(dividerStyle?.marginBottom).toBeUndefined();
+
+    // The rule keeps an equal clearance to the author block under it, so it closes
+    // the band at the same tight rhythm and the header's total height is unchanged
+    // (KNOT-032-fix2).
+    const bandStyle = band?.props?.style as Record<string, unknown> | undefined;
+    expect(bandStyle?.paddingBottom).toBe(spacing.sm);
+    expect(bandStyle?.paddingTop).toBeUndefined();
   });
 });
