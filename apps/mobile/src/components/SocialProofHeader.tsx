@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import type { RecentInteraction } from '../api/stories';
 import { API_BASE_URL } from '../config/api';
-import { colors, radius, spacing, typeScale } from '../theme';
+import { radius, spacing, typeScale, useThemedStyles, type ThemeColors } from '../theme';
 import Avatar from './Avatar';
 import { attributionRuns, socialProofActors, socialProofRuns } from './socialProof';
 
@@ -79,6 +79,7 @@ export default function SocialProofHeader({
   originalAuthorName = '',
   lineageAvatars = [],
 }: SocialProofHeaderProps): React.ReactElement | null {
+  const styles = useThemedStyles(createStyles);
   const actors = socialProofActors(interactions);
   const runs =
     actors.length > 0
@@ -143,54 +144,55 @@ export default function SocialProofHeader({
   );
 }
 
-const styles = StyleSheet.create({
-  // Each later face sits over the one before it, ringed in the canvas so the
-  // faces stay legible where they meet (KNOT-022-fix2). The overlap is one
-  // spacing step, which is what an xs face can carry without hiding the one
-  // beneath (KNOT-031).
-  avatarStacked: {
-    backgroundColor: colors.bg.canvas,
-    borderColor: colors.bg.canvas,
-    borderRadius: radius.pill,
-    borderWidth: 2,
-    marginLeft: -spacing.xs,
-  },
-  avatars: {
-    alignItems: 'center',
-    flexDirection: 'row',
-  },
-  // The band is bounded by the card's own `spacing.sm` top inset above and by the
-  // rule below. Padding this container is NOT the way to centre the row: the rule
-  // is the container's last child, so the inset lands BELOW the rule and leaves the
-  // credit sitting on it while the rule floats above the author block. The row is
-  // centred by `divider.marginTop` instead; all that is left under the rule is its
-  // clearance from the author block (KNOT-031, KNOT-032-fix1, KNOT-032-fix2).
-  container: {
-    paddingBottom: spacing.sm,
-  },
-  // The rule between the credit and the poster's author block (KNOT-023c). One
-  // compact step below the credit — the same step the card pads above it — sits it
-  // in the middle of the band instead of crowded against the sentence, and with the
-  // container's `spacing.sm` it stays equally clear of the author block below
-  // (KNOT-031, KNOT-032-fix1, KNOT-032-fix2). It is the design system's hairline:
-  // it separates two blocks inside one card, unlike the gap BETWEEN cards.
-  divider: {
-    backgroundColor: colors.border.hairline,
-    height: 1,
-    marginTop: spacing.sm,
-  },
-  name: {
-    color: colors.text.primary,
-  },
-  // Stacked avatars on the left, the credit on the right: the LinkedIn header's
-  // weight (KNOT-028).
-  row: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  text: {
-    color: colors.text.secondary,
-    flexShrink: 1,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    // Each later face sits over the one before it, ringed in the canvas so the
+    // faces stay legible where they meet (KNOT-022-fix2). The overlap is one
+    // spacing step, which is what an xs face can carry without hiding the one
+    // beneath (KNOT-031).
+    avatarStacked: {
+      backgroundColor: colors.bg.canvas,
+      borderColor: colors.bg.canvas,
+      borderRadius: radius.pill,
+      borderWidth: 2,
+      marginLeft: -spacing.xs,
+    },
+    avatars: {
+      alignItems: 'center',
+      flexDirection: 'row',
+    },
+    // The band is bounded by the card's own `spacing.sm` top inset above and by the
+    // rule below. Padding this container is NOT the way to centre the row: the rule
+    // is the container's last child, so the inset lands BELOW the rule and leaves the
+    // credit sitting on it while the rule floats above the author block. The row is
+    // centred by `divider.marginTop` instead; all that is left under the rule is its
+    // clearance from the author block (KNOT-031, KNOT-032-fix1, KNOT-032-fix2).
+    container: {
+      paddingBottom: spacing.sm,
+    },
+    // The rule between the credit and the poster's author block (KNOT-023c). One
+    // compact step below the credit — the same step the card pads above it — sits it
+    // in the middle of the band instead of crowded against the sentence, and with the
+    // container's `spacing.sm` it stays equally clear of the author block below
+    // (KNOT-031, KNOT-032-fix1, KNOT-032-fix2). It is the design system's hairline:
+    // it separates two blocks inside one card, unlike the gap BETWEEN cards.
+    divider: {
+      backgroundColor: colors.border.hairline,
+      height: 1,
+      marginTop: spacing.sm,
+    },
+    name: {
+      color: colors.text.primary,
+    },
+    // Stacked avatars on the left, the credit on the right: the LinkedIn header's
+    // weight (KNOT-028).
+    row: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    text: {
+      color: colors.text.secondary,
+      flexShrink: 1,
+    },
+  });

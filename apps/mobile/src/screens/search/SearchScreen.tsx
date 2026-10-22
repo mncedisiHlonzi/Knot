@@ -27,7 +27,8 @@ import Input from '../../components/Input';
 import LanguagePicker from '../../components/LanguagePicker';
 import PillarTag from '../../components/PillarTag';
 import { languageName } from '../../data/languages';
-import { colors, layout, radius, spacing, typeScale } from '../../theme';
+import { layout, radius, spacing, typeScale, useTheme, useThemedStyles } from '../../theme';
+import type { ThemeColors } from '../../theme';
 
 /** How long to wait after the last keystroke before searching. */
 const DEBOUNCE_MS = 300;
@@ -104,6 +105,7 @@ function ChipRow({
   readonly selected: string;
   readonly onSelect: (value: string) => void;
 }): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.chipRow}>
       {options.map((option) => {
@@ -142,6 +144,8 @@ export default function SearchScreen({
   onOpenUserProfile,
   onBack,
 }: SearchScreenProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   // The text field's contents, and the debounced phrase actually searched for.
   const [draft, setDraft] = useState('');
   const [phrase, setPhrase] = useState('');
@@ -497,118 +501,119 @@ export default function SearchScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  // A text action in the brand ink, inside a 44-point tap target even though it
-  // is only as tall as its label.
-  action: {
-    justifyContent: 'center',
-    minHeight: 44,
-  },
-  actionLabel: {
-    color: colors.brand.primary,
-  },
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  content: {
-    paddingBottom: spacing.xxxl,
-    paddingHorizontal: layout.screenPaddingFeed,
-  },
-  error: {
-    color: colors.state.danger,
-  },
-  errorBlock: {
-    gap: spacing.sm,
-    marginTop: spacing.md,
-  },
-  filters: {
-    gap: spacing.sm,
-    marginTop: spacing.md,
-  },
-  // The filter group's label: the funnel glyph with the overline caption beside
-  // it, both in the tertiary ink so the chips below stay the loudest thing here.
-  filterHeading: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.xs,
-  },
-  filterHeadingLabel: {
-    color: colors.text.tertiary,
-  },
-  // A 44-point tap target for the header's leading icon button.
-  iconButton: {
-    alignItems: 'center',
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
-  },
-  modalBackdrop: {
-    backgroundColor: colors.scrim.overlay,
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  modalCard: {
-    backgroundColor: colors.bg.canvas,
-    borderTopLeftRadius: radius.xxl,
-    borderTopRightRadius: radius.xxl,
-    padding: spacing.lg,
-  },
-  modalTitle: {
-    color: colors.text.primary,
-    marginBottom: spacing.md,
-  },
-  more: {
-    alignItems: 'center',
-    paddingVertical: spacing.lg,
-  },
-  recentRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-    marginTop: spacing.md,
-  },
-  // One result: the overline kind, the title, up to two lines of preview, the
-  // author line, and the pillar-and-place line, closed by a full-bleed hairline.
-  // Flat rather than a card, because the design system keeps a canvas free of
-  // cards; the negative inset lets the hairline run edge to edge while the text
-  // stays on the screen's padding.
-  result: {
-    borderBottomColor: colors.border.hairline,
-    borderBottomWidth: 1,
-    gap: spacing.xs,
-    marginHorizontal: -layout.screenPaddingFeed,
-    paddingHorizontal: layout.screenPaddingFeed,
-    paddingVertical: spacing.md,
-  },
-  resultAuthor: {
-    marginTop: spacing.xs,
-  },
-  resultKind: {
-    color: colors.brand.primary,
-  },
-  resultPlace: {
-    color: colors.text.tertiary,
-    marginTop: spacing.xs,
-  },
-  resultPreview: {
-    color: colors.text.secondary,
-  },
-  resultTag: {
-    marginTop: spacing.xs,
-  },
-  resultTitle: {
-    color: colors.text.primary,
-  },
-  screen: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-  searchField: {
-    marginTop: spacing.md,
-  },
-  spinner: {
-    marginVertical: spacing.lg,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    // A text action in the brand ink, inside a 44-point tap target even though it
+    // is only as tall as its label.
+    action: {
+      justifyContent: 'center',
+      minHeight: 44,
+    },
+    actionLabel: {
+      color: colors.brand.primary,
+    },
+    chipRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+    },
+    content: {
+      paddingBottom: spacing.xxxl,
+      paddingHorizontal: layout.screenPaddingFeed,
+    },
+    error: {
+      color: colors.state.danger,
+    },
+    errorBlock: {
+      gap: spacing.sm,
+      marginTop: spacing.md,
+    },
+    filters: {
+      gap: spacing.sm,
+      marginTop: spacing.md,
+    },
+    // The filter group's label: the funnel glyph with the overline caption beside
+    // it, both in the tertiary ink so the chips below stay the loudest thing here.
+    filterHeading: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.xs,
+    },
+    filterHeadingLabel: {
+      color: colors.text.tertiary,
+    },
+    // A 44-point tap target for the header's leading icon button.
+    iconButton: {
+      alignItems: 'center',
+      height: 44,
+      justifyContent: 'center',
+      width: 44,
+    },
+    modalBackdrop: {
+      backgroundColor: colors.scrim.overlay,
+      flex: 1,
+      justifyContent: 'flex-end',
+    },
+    modalCard: {
+      backgroundColor: colors.bg.canvas,
+      borderTopLeftRadius: radius.xxl,
+      borderTopRightRadius: radius.xxl,
+      padding: spacing.lg,
+    },
+    modalTitle: {
+      color: colors.text.primary,
+      marginBottom: spacing.md,
+    },
+    more: {
+      alignItems: 'center',
+      paddingVertical: spacing.lg,
+    },
+    recentRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+      marginTop: spacing.md,
+    },
+    // One result: the overline kind, the title, up to two lines of preview, the
+    // author line, and the pillar-and-place line, closed by a full-bleed hairline.
+    // Flat rather than a card, because the design system keeps a canvas free of
+    // cards; the negative inset lets the hairline run edge to edge while the text
+    // stays on the screen's padding.
+    result: {
+      borderBottomColor: colors.border.hairline,
+      borderBottomWidth: 1,
+      gap: spacing.xs,
+      marginHorizontal: -layout.screenPaddingFeed,
+      paddingHorizontal: layout.screenPaddingFeed,
+      paddingVertical: spacing.md,
+    },
+    resultAuthor: {
+      marginTop: spacing.xs,
+    },
+    resultKind: {
+      color: colors.brand.primary,
+    },
+    resultPlace: {
+      color: colors.text.tertiary,
+      marginTop: spacing.xs,
+    },
+    resultPreview: {
+      color: colors.text.secondary,
+    },
+    resultTag: {
+      marginTop: spacing.xs,
+    },
+    resultTitle: {
+      color: colors.text.primary,
+    },
+    screen: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    searchField: {
+      marginTop: spacing.md,
+    },
+    spinner: {
+      marginVertical: spacing.lg,
+    },
+  });

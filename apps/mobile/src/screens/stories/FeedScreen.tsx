@@ -23,7 +23,6 @@ import Logomark from '../../components/Logomark';
 import ReportModal from '../../components/ReportModal';
 import TheThread from '../../components/TheThread';
 import {
-  colors,
   elevation,
   fontWeights,
   layout,
@@ -31,7 +30,10 @@ import {
   spacing,
   tabularNums,
   typeScale,
+  useTheme,
+  useThemedStyles,
 } from '../../theme';
+import type { ThemeColors } from '../../theme';
 import {
   VIEWABILITY_CONFIG,
   type ViewableItemsInfo,
@@ -129,6 +131,8 @@ export default function FeedScreen({
   onOpenNotifications,
   onOpenSearch,
 }: FeedScreenProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [items, setItems] = useState<readonly FeedItem[]>([]);
   const [nextCursor, setNextCursor] = useState('');
   const [loading, setLoading] = useState(true);
@@ -590,6 +594,7 @@ function PostOptionsSheet({
   readonly onReport: () => void;
   readonly onClose: () => void;
 }): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   return (
     <Modal visible={item !== undefined} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable
@@ -639,6 +644,8 @@ function PostOptionRow({
   readonly danger?: boolean;
   readonly onPress: () => void;
 }): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const IconComponent = icon;
   return (
     <Pressable
@@ -659,159 +666,160 @@ function PostOptionRow({
   );
 }
 
-const styles = StyleSheet.create({
-  badge: {
-    alignItems: 'center',
-    backgroundColor: colors.brand.primary,
-    borderRadius: radius.pill,
-    justifyContent: 'center',
-    minWidth: 18,
-    paddingHorizontal: spacing.xs,
-    position: 'absolute',
-    right: 6,
-    top: 6,
-  },
-  badgeText: {
-    color: colors.text.onBrand,
-  },
-  // One feed card: a full-width white block held apart from the next by a band of
-  // the feed's separator surface. The band — not a rule drawn on the card, and not
-  // an inset that would turn the feed into floating cards — is what makes two
-  // adjacent entries read as separate things, the way a mature social feed does
-  // (KNOT-023b, KNOT-032, KNOT-032-fix1). It is deliberately 8pt and square-edged:
-  // enough grey to separate, not enough to open a gutter.
-  card: {
-    backgroundColor: colors.bg.canvas,
-    marginBottom: spacing.sm,
-  },
-  // The page behind the cards. It is the same surface the inter-card band shows,
-  // so the band and the page never differ; `bg.sunken` was too close to white to
-  // read as a separator at 8pt (KNOT-032-fix1).
-  container: {
-    backgroundColor: colors.bg.separator,
-    flex: 1,
-  },
-  error: {
-    color: colors.state.danger,
-    paddingHorizontal: layout.screenPaddingFeed,
-    paddingVertical: spacing.md,
-    textAlign: 'center',
-  },
-  footerSpinner: {
-    marginVertical: spacing.xl,
-  },
-  headerActions: {
-    alignItems: 'center',
-    flexDirection: 'row',
-  },
-  iconButton: {
-    alignItems: 'center',
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
-  },
-  listContent: {
-    paddingBottom: spacing.xxxl,
-  },
-  // The Thread sits flush under the tab row: the list content starts there, so
-  // the line reads as the refresh indicator rather than as part of a card.
-  refreshingThread: {
-    marginBottom: spacing.xs,
-  },
-  // The mark's own inset, on top of the header's 8pt gutter, so it lines up with
-  // the feed's 16pt content column (KNOT-020g-fix13).
-  logomark: {
-    marginLeft: LOGOMARK_INSET,
-  },
-  // One row of the post options sheet: a leading icon and the label, at the 44pt
-  // minimum touch size. Rows are separated by spacing alone — no drawn dividers.
-  option: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.md,
-    minHeight: 44,
-    paddingVertical: spacing.md,
-  },
-  optionLabel: {
-    color: colors.text.primary,
-    flex: 1,
-    fontWeight: fontWeights.bold,
-  },
-  optionLabelDanger: {
-    color: colors.state.danger,
-  },
-  // The options sheet: rounded top corners, the canvas fill, and the floating-bar
-  // shadow (elevation 3, whose offset points up) — the profile sheet's treatment.
-  sheet: {
-    ...elevation[3],
-    backgroundColor: colors.bg.canvas,
-    borderTopLeftRadius: radius.xxl,
-    borderTopRightRadius: radius.xxl,
-    paddingBottom: spacing.xl,
-  },
-  sheetBackdrop: {
-    backgroundColor: colors.scrim.overlay,
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  sheetBody: {
-    paddingHorizontal: spacing.lg,
-  },
-  // Cancel is a plain full-width row rather than a third option: it acts on the
-  // sheet, not on the post.
-  sheetCancel: {
-    alignItems: 'center',
-    borderTopColor: colors.border.hairline,
-    borderTopWidth: 1,
-    justifyContent: 'center',
-    marginTop: spacing.sm,
-    minHeight: 48,
-    paddingTop: spacing.md,
-  },
-  sheetCancelText: {
-    color: colors.text.secondary,
-  },
-  sheetHandle: {
-    backgroundColor: colors.border.hairline,
-    borderRadius: radius.pill,
-    height: 4,
-    width: 32,
-  },
-  sheetHandleArea: {
-    alignItems: 'center',
-    paddingBottom: spacing.sm,
-    paddingTop: spacing.sm,
-  },
-  spinner: {
-    marginTop: spacing.xl,
-  },
-  // One tab, one quarter of the row: the label is centred and single-lined, so it
-  // cannot clip. The 2px underline sits below the label, over the row's hairline.
-  tab: {
-    alignItems: 'center',
-    borderBottomColor: colors.border.hairline,
-    borderBottomWidth: 1,
-    flex: 1,
-    paddingBottom: spacing.sm,
-    paddingTop: spacing.md,
-  },
-  tabActive: {
-    borderBottomColor: colors.brand.primary,
-    borderBottomWidth: 2,
-  },
-  tabLabel: {
-    color: colors.text.tertiary,
-    textAlign: 'center',
-  },
-  tabLabelActive: {
-    color: colors.text.primary,
-  },
-  tabs: {
-    flexDirection: 'row',
-    paddingHorizontal: spacing.lg,
-  },
-  topBar: {
-    backgroundColor: colors.bg.canvas,
-    zIndex: 1,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    badge: {
+      alignItems: 'center',
+      backgroundColor: colors.brand.primary,
+      borderRadius: radius.pill,
+      justifyContent: 'center',
+      minWidth: 18,
+      paddingHorizontal: spacing.xs,
+      position: 'absolute',
+      right: 6,
+      top: 6,
+    },
+    badgeText: {
+      color: colors.text.onBrand,
+    },
+    // One feed card: a full-width white block held apart from the next by a band of
+    // the feed's separator surface. The band — not a rule drawn on the card, and not
+    // an inset that would turn the feed into floating cards — is what makes two
+    // adjacent entries read as separate things, the way a mature social feed does
+    // (KNOT-023b, KNOT-032, KNOT-032-fix1). It is deliberately 8pt and square-edged:
+    // enough grey to separate, not enough to open a gutter.
+    card: {
+      backgroundColor: colors.bg.canvas,
+      marginBottom: spacing.sm,
+    },
+    // The page behind the cards. It is the same surface the inter-card band shows,
+    // so the band and the page never differ; `bg.sunken` was too close to white to
+    // read as a separator at 8pt (KNOT-032-fix1).
+    container: {
+      backgroundColor: colors.bg.separator,
+      flex: 1,
+    },
+    error: {
+      color: colors.state.danger,
+      paddingHorizontal: layout.screenPaddingFeed,
+      paddingVertical: spacing.md,
+      textAlign: 'center',
+    },
+    footerSpinner: {
+      marginVertical: spacing.xl,
+    },
+    headerActions: {
+      alignItems: 'center',
+      flexDirection: 'row',
+    },
+    iconButton: {
+      alignItems: 'center',
+      height: 44,
+      justifyContent: 'center',
+      width: 44,
+    },
+    listContent: {
+      paddingBottom: spacing.xxxl,
+    },
+    // The Thread sits flush under the tab row: the list content starts there, so
+    // the line reads as the refresh indicator rather than as part of a card.
+    refreshingThread: {
+      marginBottom: spacing.xs,
+    },
+    // The mark's own inset, on top of the header's 8pt gutter, so it lines up with
+    // the feed's 16pt content column (KNOT-020g-fix13).
+    logomark: {
+      marginLeft: LOGOMARK_INSET,
+    },
+    // One row of the post options sheet: a leading icon and the label, at the 44pt
+    // minimum touch size. Rows are separated by spacing alone — no drawn dividers.
+    option: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.md,
+      minHeight: 44,
+      paddingVertical: spacing.md,
+    },
+    optionLabel: {
+      color: colors.text.primary,
+      flex: 1,
+      fontWeight: fontWeights.bold,
+    },
+    optionLabelDanger: {
+      color: colors.state.danger,
+    },
+    // The options sheet: rounded top corners, the canvas fill, and the floating-bar
+    // shadow (elevation 3, whose offset points up) — the profile sheet's treatment.
+    sheet: {
+      ...elevation[3],
+      backgroundColor: colors.bg.sheet,
+      borderTopLeftRadius: radius.xxl,
+      borderTopRightRadius: radius.xxl,
+      paddingBottom: spacing.xl,
+    },
+    sheetBackdrop: {
+      backgroundColor: colors.scrim.overlay,
+      flex: 1,
+      justifyContent: 'flex-end',
+    },
+    sheetBody: {
+      paddingHorizontal: spacing.lg,
+    },
+    // Cancel is a plain full-width row rather than a third option: it acts on the
+    // sheet, not on the post.
+    sheetCancel: {
+      alignItems: 'center',
+      borderTopColor: colors.border.hairline,
+      borderTopWidth: 1,
+      justifyContent: 'center',
+      marginTop: spacing.sm,
+      minHeight: 48,
+      paddingTop: spacing.md,
+    },
+    sheetCancelText: {
+      color: colors.text.secondary,
+    },
+    sheetHandle: {
+      backgroundColor: colors.border.hairline,
+      borderRadius: radius.pill,
+      height: 4,
+      width: 32,
+    },
+    sheetHandleArea: {
+      alignItems: 'center',
+      paddingBottom: spacing.sm,
+      paddingTop: spacing.sm,
+    },
+    spinner: {
+      marginTop: spacing.xl,
+    },
+    // One tab, one quarter of the row: the label is centred and single-lined, so it
+    // cannot clip. The 2px underline sits below the label, over the row's hairline.
+    tab: {
+      alignItems: 'center',
+      borderBottomColor: colors.border.hairline,
+      borderBottomWidth: 1,
+      flex: 1,
+      paddingBottom: spacing.sm,
+      paddingTop: spacing.md,
+    },
+    tabActive: {
+      borderBottomColor: colors.brand.primary,
+      borderBottomWidth: 2,
+    },
+    tabLabel: {
+      color: colors.text.tertiary,
+      textAlign: 'center',
+    },
+    tabLabelActive: {
+      color: colors.text.primary,
+    },
+    tabs: {
+      flexDirection: 'row',
+      paddingHorizontal: spacing.lg,
+    },
+    topBar: {
+      backgroundColor: colors.bg.canvas,
+      zIndex: 1,
+    },
+  });

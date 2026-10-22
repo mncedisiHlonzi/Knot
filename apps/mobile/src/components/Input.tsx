@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { colors, spacing, typeScale } from '../theme';
+import { spacing, typeScale, useTheme, useThemedStyles } from '../theme';
+import type { ThemeColors } from '../theme';
 
 type InputProps = {
   /** A label drawn above the field, upper-cased by the overline style. */
@@ -91,6 +92,8 @@ export default function Input({
   helper,
   testID,
 }: InputProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [focused, setFocused] = useState(false);
 
   const message = typeof error === 'string' && error !== '' ? error : undefined;
@@ -160,42 +163,43 @@ export default function Input({
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    alignSelf: 'stretch',
-  },
-  error: {
-    color: colors.state.danger,
-    marginTop: spacing.xs,
-  },
-  field: {
-    color: colors.text.primary,
-    paddingVertical: spacing.sm,
-  },
-  // The text takes the row's width once a leading icon has taken its own.
-  fieldInline: {
-    flex: 1,
-  },
-  // The row that holds a leading icon and the field, sharing one underline.
-  fieldRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  helper: {
-    color: colors.text.tertiary,
-    marginTop: spacing.xs,
-  },
-  label: {
-    color: colors.text.secondary,
-    marginBottom: spacing.xs,
-  },
-  leadingIcon: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  multiline: {
-    minHeight: 96,
-    textAlignVertical: 'top',
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    container: {
+      alignSelf: 'stretch',
+    },
+    error: {
+      color: colors.state.danger,
+      marginTop: spacing.xs,
+    },
+    field: {
+      color: colors.text.primary,
+      paddingVertical: spacing.sm,
+    },
+    // The text takes the row's width once a leading icon has taken its own.
+    fieldInline: {
+      flex: 1,
+    },
+    // The row that holds a leading icon and the field, sharing one underline.
+    fieldRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    helper: {
+      color: colors.text.tertiary,
+      marginTop: spacing.xs,
+    },
+    label: {
+      color: colors.text.secondary,
+      marginBottom: spacing.xs,
+    },
+    leadingIcon: {
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    multiline: {
+      minHeight: 96,
+      textAlignVertical: 'top',
+    },
+  });

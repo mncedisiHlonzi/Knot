@@ -2,7 +2,16 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { House, MagnifyingGlass, MapTrifold, Plus, User, type Icon } from 'phosphor-react-native';
 
-import { colors, fontWeights, motion, radius, spacing, typeScale } from '../theme';
+import {
+  fontWeights,
+  motion,
+  radius,
+  spacing,
+  typeScale,
+  useTheme,
+  useThemedStyles,
+} from '../theme';
+import type { ThemeColors } from '../theme';
 
 /** The five primary destinations of the app. */
 export type TabName = 'feed' | 'discoveryMap' | 'createStory' | 'inquiries' | 'profile';
@@ -123,6 +132,8 @@ function TabGlyph({
  * here: the bar already sits inside the app root's `SafeAreaView` (KNOT-020b).
  */
 export default function TabBar({ activeTab, onSelect }: TabBarProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.bar} accessibilityRole="tablist">
       {TABS.map((tab) => {
@@ -177,36 +188,37 @@ export default function TabBar({ activeTab, onSelect }: TabBarProps): React.Reac
   );
 }
 
-const styles = StyleSheet.create({
-  bar: {
-    alignItems: 'center',
-    backgroundColor: colors.bg.canvas,
-    borderTopColor: colors.border.hairline,
-    borderTopWidth: 1,
-    flexDirection: 'row',
-    height: BAR_HEIGHT,
-  },
-  createButton: {
-    alignItems: 'center',
-    backgroundColor: colors.brand.primary,
-    borderRadius: radius.pill,
-    height: CREATE_BUTTON_SIZE,
-    justifyContent: 'center',
-    width: CREATE_BUTTON_SIZE,
-  },
-  label: {
-    color: colors.text.tertiary,
-    textAlign: 'center',
-  },
-  labelActive: {
-    color: colors.brand.primary,
-    fontWeight: fontWeights.semibold,
-  },
-  tab: {
-    alignItems: 'center',
-    flex: 1,
-    gap: spacing.xs,
-    justifyContent: 'center',
-    minHeight: 44,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    bar: {
+      alignItems: 'center',
+      backgroundColor: colors.bg.canvas,
+      borderTopColor: colors.border.hairline,
+      borderTopWidth: 1,
+      flexDirection: 'row',
+      height: BAR_HEIGHT,
+    },
+    createButton: {
+      alignItems: 'center',
+      backgroundColor: colors.brand.primary,
+      borderRadius: radius.pill,
+      height: CREATE_BUTTON_SIZE,
+      justifyContent: 'center',
+      width: CREATE_BUTTON_SIZE,
+    },
+    label: {
+      color: colors.text.tertiary,
+      textAlign: 'center',
+    },
+    labelActive: {
+      color: colors.brand.primary,
+      fontWeight: fontWeights.semibold,
+    },
+    tab: {
+      alignItems: 'center',
+      flex: 1,
+      gap: spacing.xs,
+      justifyContent: 'center',
+      minHeight: 44,
+    },
+  });

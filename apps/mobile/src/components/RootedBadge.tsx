@@ -2,7 +2,7 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import RootedMark from '../assets/brand/rooted-mark.svg';
-import { colors, radius, spacing, typeScale } from '../theme';
+import { radius, spacing, typeScale, useThemedStyles, type ThemeColors } from '../theme';
 import SvgImage from './SvgImage';
 
 /** The Rooted mark's drawn size, per the design (KNOT-020b-fix). */
@@ -66,6 +66,7 @@ export default function RootedBadge({
   variant = 'badge',
   testID,
 }: RootedBadgeProps): React.ReactElement | null {
+  const styles = useThemedStyles(createStyles);
   // Guarded with typeof: the API response types describe an optimistic wire
   // format, so a value may be absent or a non-string at runtime (KNOT-015b-fix).
   const trimmedPlace = typeof place === 'string' ? place.trim() : '';
@@ -131,38 +132,39 @@ export default function RootedBadge({
   );
 }
 
-const styles = StyleSheet.create({
-  badge: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    backgroundColor: colors.brand.surface,
-    borderRadius: radius.sm,
-    flexDirection: 'row',
-    gap: spacing.xs,
-    maxWidth: '100%',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  compact: {
-    paddingHorizontal: spacing.sm,
-  },
-  place: {
-    flexShrink: 1,
-  },
-  quiet: {
-    alignSelf: 'flex-start',
-    maxWidth: '100%',
-  },
-  quietText: {
-    color: colors.text.tertiary,
-    flexShrink: 1,
-  },
-  text: {
-    color: colors.brand.primary,
-  },
-  textRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexShrink: 1,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    badge: {
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      backgroundColor: colors.brand.surface,
+      borderRadius: radius.sm,
+      flexDirection: 'row',
+      gap: spacing.xs,
+      maxWidth: '100%',
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+    },
+    compact: {
+      paddingHorizontal: spacing.sm,
+    },
+    place: {
+      flexShrink: 1,
+    },
+    quiet: {
+      alignSelf: 'flex-start',
+      maxWidth: '100%',
+    },
+    quietText: {
+      color: colors.text.tertiary,
+      flexShrink: 1,
+    },
+    text: {
+      color: colors.brand.primary,
+    },
+    textRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexShrink: 1,
+    },
+  });

@@ -16,7 +16,8 @@ import Button from '../../components/Button';
 import EmptyState from '../../components/EmptyState';
 import Header from '../../components/Header';
 import { API_BASE_URL } from '../../config/api';
-import { colors, layout, spacing, typeScale } from '../../theme';
+import { layout, spacing, typeScale, useTheme, useThemedStyles } from '../../theme';
+import type { ThemeColors } from '../../theme';
 
 /** How many blocked users one page asks for. */
 const BLOCKED_PAGE_SIZE = 50;
@@ -51,6 +52,8 @@ export default function BlockedUsersScreen({
   token,
   onBack,
 }: BlockedUsersScreenProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [users, setUsers] = useState<readonly BlockedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -167,46 +170,47 @@ export default function BlockedUsersScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-  content: {
-    paddingBottom: spacing.xxxl,
-    paddingHorizontal: layout.screenPaddingFeed,
-  },
-  error: {
-    color: colors.state.danger,
-    marginTop: spacing.md,
-    textAlign: 'center',
-  },
-  // A 44-point tap target for the header's back button.
-  iconButton: {
-    alignItems: 'center',
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
-  },
-  name: {
-    color: colors.text.primary,
-    flex: 1,
-  },
-  // One blocked person, as the design system's list row: their avatar, their
-  // name, and the way to unblock them, closed by a full-bleed hairline. There is
-  // no carded box — the whole list is one continuous column, exactly as the
-  // feed's entries are.
-  row: {
-    alignItems: 'center',
-    borderBottomColor: colors.border.hairline,
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.md,
-    marginHorizontal: -layout.screenPaddingFeed,
-    paddingHorizontal: layout.screenPaddingFeed,
-    paddingVertical: spacing.lg,
-  },
-  spinner: {
-    marginVertical: spacing.xl,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    container: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    content: {
+      paddingBottom: spacing.xxxl,
+      paddingHorizontal: layout.screenPaddingFeed,
+    },
+    error: {
+      color: colors.state.danger,
+      marginTop: spacing.md,
+      textAlign: 'center',
+    },
+    // A 44-point tap target for the header's back button.
+    iconButton: {
+      alignItems: 'center',
+      height: 44,
+      justifyContent: 'center',
+      width: 44,
+    },
+    name: {
+      color: colors.text.primary,
+      flex: 1,
+    },
+    // One blocked person, as the design system's list row: their avatar, their
+    // name, and the way to unblock them, closed by a full-bleed hairline. There is
+    // no carded box — the whole list is one continuous column, exactly as the
+    // feed's entries are.
+    row: {
+      alignItems: 'center',
+      borderBottomColor: colors.border.hairline,
+      borderBottomWidth: 1,
+      flexDirection: 'row',
+      gap: spacing.md,
+      marginHorizontal: -layout.screenPaddingFeed,
+      paddingHorizontal: layout.screenPaddingFeed,
+      paddingVertical: spacing.lg,
+    },
+    spinner: {
+      marginVertical: spacing.xl,
+    },
+  });

@@ -11,6 +11,7 @@ import {
   RefreshControl,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   View,
   type ImageLoadEventData,
@@ -21,6 +22,7 @@ import {
   Camera,
   CaretRight,
   DotsThree,
+  Moon,
   Plant,
   Prohibit,
   SignOut,
@@ -47,7 +49,6 @@ import PillarTag from '../../components/PillarTag';
 import RootedBadge from '../../components/RootedBadge';
 import { API_BASE_URL } from '../../config/api';
 import {
-  colors,
   elevation,
   fontWeights,
   layout,
@@ -55,7 +56,10 @@ import {
   spacing,
   tabularNums,
   typeScale,
+  useTheme,
+  useThemedStyles,
 } from '../../theme';
+import type { ThemeColors } from '../../theme';
 import { PLACEHOLDER_MEDIA_ASPECT_RATIO } from '../../utils/mediaFrame';
 import { useMediaAspectRatio } from '../../utils/useMediaAspectRatio';
 import { formatRelativeTime } from '../../utils/time';
@@ -164,6 +168,7 @@ function CardMedia({
   readonly isMuted: boolean;
   readonly onToggleMute: () => void;
 }): React.ReactElement | null {
+  const styles = useThemedStyles(createStyles);
   // The hook is called before the early return, so the component always calls it
   // however the card changes between renders.
   const { aspectRatio, onLoadSize } = useMediaAspectRatio(card.mediaWidth, card.mediaHeight);
@@ -226,6 +231,8 @@ function OptionRow({
   readonly busy?: boolean;
   readonly onPress: () => void;
 }): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const IconComponent = icon;
   return (
     <Pressable
@@ -253,6 +260,46 @@ function OptionRow({
         <CaretRight color={colors.text.tertiary} size={20} weight="bold" />
       )}
     </Pressable>
+  );
+}
+
+/**
+ * The theme row of the options sheet: an icon, a label, the theme's name, and a
+ * switch.
+ *
+ * It is a row of its own rather than an `OptionRow`, because a switch states the
+ * current value where a chevron only promises another screen — and a switch is
+ * what a two-state preference should look like. The switch is the control (and
+ * carries the accessible name and state); the row is not separately pressable,
+ * so a tap on the label does nothing rather than doing something ambiguous.
+ *
+ * The choice is a device preference stored in AsyncStorage, not an account
+ * setting, so it applies immediately and survives a restart (KNOT-ADR-077).
+ */
+function ThemeRow(): React.ReactElement {
+  const { colors, theme, setTheme } = useTheme();
+  const styles = useThemedStyles(createStyles);
+  const isDark = theme === 'dark';
+  const valueLabel = isDark ? 'Dark' : 'Light';
+
+  return (
+    <View style={styles.option}>
+      <Moon color={colors.text.tertiary} size={20} weight="bold" />
+      <Text style={[typeScale.body, styles.optionLabel]} numberOfLines={1}>
+        Theme
+      </Text>
+      <Text style={[typeScale.caption, styles.optionValue]}>{valueLabel}</Text>
+      <Switch
+        value={isDark}
+        onValueChange={(next) => setTheme(next ? 'dark' : 'light')}
+        trackColor={{ false: colors.bg.sunken, true: colors.brand.primary }}
+        thumbColor={colors.bg.canvas}
+        ios_backgroundColor={colors.bg.sunken}
+        accessibilityRole="switch"
+        accessibilityLabel="Theme"
+        accessibilityValue={{ text: valueLabel }}
+      />
+    </View>
   );
 }
 
@@ -299,6 +346,8 @@ export default function UserProfileScreen({
   onBack,
   showBackButton = true,
 }: UserProfileScreenProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [profile, setProfile] = useState<ProfileUser | undefined>(undefined);
   const [activities, setActivities] = useState<readonly Activity[]>([]);
   const [nextCursor, setNextCursor] = useState('');
@@ -796,6 +845,9 @@ export default function UserProfileScreen({
                   onPress={handleBlock}
                 />
               )}
+              {/* The theme is a device preference, so it is offered whoever's
+                  profile this is — it changes nothing about the person shown. */}
+              <ThemeRow />
             </Pressable>
           </Animated.View>
         </Pressable>
@@ -804,190 +856,195 @@ export default function UserProfileScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  avatarWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // One activity card: the pillar tag or overline with the title and the body
-  // excerpt, then the media, then the meta line, closed by a full-bleed hairline
-  // (the design reference's tab content). The card has **no horizontal padding of
-  // its own** — the text blocks inside carry the gutter (`cardPadded`), which
-  // leaves the media frame a plain full-width child. The negative margin still
-  // cancels the list's gutter so the hairline spans the screen (KNOT-020g-fix8).
-  card: {
-    borderBottomColor: colors.border.hairline,
-    borderBottomWidth: 1,
-    marginHorizontal: -layout.screenPaddingFeed,
-    paddingVertical: spacing.lg,
-  },
-  cardMeta: {
-    color: colors.text.tertiary,
-    marginTop: spacing.xs,
-  },
-  // The card's media preview: full-bleed, full-width, and never a player — a
-  // still image, or a video's first frame (KNOT-020g-fix3, KNOT-020g-fix5). Its
-  // width is simply the card's, because the card no longer pads; the ratio is set
-  // per card from the media's own shape, so it is not fixed here
-  // (KNOT-020g-fix7, KNOT-020g-fix8).
-  cardMedia: {
-    marginTop: spacing.sm,
-    overflow: 'hidden',
-    width: '100%',
-  },
-  // The card's text column: it carries the gutter the card gave up, so the media
-  // between the two text blocks can run edge to edge.
-  cardPadded: {
-    paddingHorizontal: layout.screenPaddingFeed,
-  },
-  cardOverline: {
-    color: colors.brand.primary,
-  },
-  cardPillar: {
-    alignSelf: 'flex-start',
-  },
-  // The card's body excerpt, under the title — the feed's reading order.
-  cardPreview: {
-    color: colors.text.secondary,
-    marginTop: spacing.xs,
-  },
-  // The "read more" affordance under a truncated excerpt: a text link in the brand
-  // ink, with hit slop taking the small label to a comfortable touch target.
-  cardReadMore: {
-    alignSelf: 'flex-start',
-    marginTop: spacing.xs,
-  },
-  cardReadMoreText: {
-    color: colors.brand.primary,
-  },
-  cardTitle: {
-    color: colors.text.primary,
-    marginTop: spacing.xs,
-  },
-  container: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-  content: {
-    paddingBottom: spacing.xxxl,
-    paddingHorizontal: layout.screenPaddingFeed,
-  },
-  editProfile: {
-    alignSelf: 'stretch',
-    marginTop: spacing.xl,
-  },
-  error: {
-    color: colors.state.danger,
-    marginTop: spacing.lg,
-    textAlign: 'center',
-  },
-  iconButton: {
-    alignItems: 'center',
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
-  },
-  joined: {
-    color: colors.text.tertiary,
-    marginTop: spacing.md,
-  },
-  name: {
-    color: colors.text.primary,
-    marginTop: spacing.lg,
-    textAlign: 'center',
-  },
-  // One row of the options sheet: a leading icon, the label, and a trailing
-  // chevron. Rows are separated by spacing alone — no drawn dividers
-  // (KNOT-020g-fix3).
-  option: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.md,
-    minHeight: 44,
-    paddingVertical: spacing.md,
-  },
-  optionLabel: {
-    color: colors.text.primary,
-    flex: 1,
-    // The brief asks for a heavier label than the body composite's 400; 700 is the
-    // weight every other label in the app carries (KNOT-020g-fix2).
-    fontWeight: fontWeights.bold,
-  },
-  optionLabelDanger: {
-    color: colors.state.danger,
-  },
-  profileBlock: {
-    alignItems: 'center',
-    paddingTop: spacing.md,
-  },
-  rootedRow: {
-    marginTop: spacing.sm,
-  },
-  // The options bottom sheet: rounded top corners, the canvas fill, and the
-  // floating-bar shadow (elevation 3, whose offset points up).
-  sheet: {
-    ...elevation[3],
-    backgroundColor: colors.bg.canvas,
-    borderTopLeftRadius: radius.xxl,
-    borderTopRightRadius: radius.xxl,
-    paddingBottom: spacing.xl,
-  },
-  sheetBackdrop: {
-    backgroundColor: colors.scrim.overlay,
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  sheetBody: {
-    paddingHorizontal: spacing.lg,
-  },
-  sheetHandle: {
-    backgroundColor: colors.border.hairline,
-    borderRadius: radius.pill,
-    height: 4,
-    width: 32,
-  },
-  sheetHandleArea: {
-    alignItems: 'center',
-    paddingBottom: spacing.sm,
-    paddingTop: spacing.sm,
-  },
-  spinner: {
-    marginVertical: spacing.xl,
-  },
-  stats: {
-    color: colors.text.secondary,
-    marginTop: spacing.sm,
-  },
-  tab: {
-    borderBottomColor: 'transparent',
-    borderBottomWidth: 2,
-    paddingBottom: spacing.sm,
-    paddingTop: spacing.md,
-  },
-  tabActive: {
-    borderBottomColor: colors.brand.primary,
-  },
-  tabLabel: {
-    color: colors.text.tertiary,
-  },
-  tabLabelActive: {
-    color: colors.text.primary,
-  },
-  tabs: {
-    borderBottomColor: colors.border.hairline,
-    borderBottomWidth: 1,
-    flexGrow: 0,
-    marginHorizontal: -layout.screenPaddingFeed,
-    marginTop: spacing.xl,
-  },
-  tabsContent: {
-    // Three natural-width tabs, centred as a group: `flexGrow: 1` lets the content
-    // container fill the viewport so `justifyContent` has the space to centre
-    // within, while a row wider than the screen still scrolls (KNOT-020g-fix4). The
-    // row itself stays full-bleed, so its hairline spans the screen.
-    flexGrow: 1,
-    gap: spacing.xl,
-    justifyContent: 'center',
-    paddingHorizontal: layout.screenPaddingFeed,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    avatarWrap: {
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    // One activity card: the pillar tag or overline with the title and the body
+    // excerpt, then the media, then the meta line, closed by a full-bleed hairline
+    // (the design reference's tab content). The card has **no horizontal padding of
+    // its own** — the text blocks inside carry the gutter (`cardPadded`), which
+    // leaves the media frame a plain full-width child. The negative margin still
+    // cancels the list's gutter so the hairline spans the screen (KNOT-020g-fix8).
+    card: {
+      borderBottomColor: colors.border.hairline,
+      borderBottomWidth: 1,
+      marginHorizontal: -layout.screenPaddingFeed,
+      paddingVertical: spacing.lg,
+    },
+    cardMeta: {
+      color: colors.text.tertiary,
+      marginTop: spacing.xs,
+    },
+    // The card's media preview: full-bleed, full-width, and never a player — a
+    // still image, or a video's first frame (KNOT-020g-fix3, KNOT-020g-fix5). Its
+    // width is simply the card's, because the card no longer pads; the ratio is set
+    // per card from the media's own shape, so it is not fixed here
+    // (KNOT-020g-fix7, KNOT-020g-fix8).
+    cardMedia: {
+      marginTop: spacing.sm,
+      overflow: 'hidden',
+      width: '100%',
+    },
+    // The card's text column: it carries the gutter the card gave up, so the media
+    // between the two text blocks can run edge to edge.
+    cardPadded: {
+      paddingHorizontal: layout.screenPaddingFeed,
+    },
+    cardOverline: {
+      color: colors.brand.primary,
+    },
+    cardPillar: {
+      alignSelf: 'flex-start',
+    },
+    // The card's body excerpt, under the title — the feed's reading order.
+    cardPreview: {
+      color: colors.text.secondary,
+      marginTop: spacing.xs,
+    },
+    // The "read more" affordance under a truncated excerpt: a text link in the brand
+    // ink, with hit slop taking the small label to a comfortable touch target.
+    cardReadMore: {
+      alignSelf: 'flex-start',
+      marginTop: spacing.xs,
+    },
+    cardReadMoreText: {
+      color: colors.brand.primary,
+    },
+    cardTitle: {
+      color: colors.text.primary,
+      marginTop: spacing.xs,
+    },
+    container: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    content: {
+      paddingBottom: spacing.xxxl,
+      paddingHorizontal: layout.screenPaddingFeed,
+    },
+    editProfile: {
+      alignSelf: 'stretch',
+      marginTop: spacing.xl,
+    },
+    error: {
+      color: colors.state.danger,
+      marginTop: spacing.lg,
+      textAlign: 'center',
+    },
+    iconButton: {
+      alignItems: 'center',
+      height: 44,
+      justifyContent: 'center',
+      width: 44,
+    },
+    joined: {
+      color: colors.text.tertiary,
+      marginTop: spacing.md,
+    },
+    name: {
+      color: colors.text.primary,
+      marginTop: spacing.lg,
+      textAlign: 'center',
+    },
+    // One row of the options sheet: a leading icon, the label, and a trailing
+    // chevron. Rows are separated by spacing alone — no drawn dividers
+    // (KNOT-020g-fix3).
+    option: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.md,
+      minHeight: 44,
+      paddingVertical: spacing.md,
+    },
+    // The theme row's current value, read before its switch (KNOT-020i).
+    optionValue: {
+      color: colors.text.tertiary,
+    },
+    optionLabel: {
+      color: colors.text.primary,
+      flex: 1,
+      // The brief asks for a heavier label than the body composite's 400; 700 is the
+      // weight every other label in the app carries (KNOT-020g-fix2).
+      fontWeight: fontWeights.bold,
+    },
+    optionLabelDanger: {
+      color: colors.state.danger,
+    },
+    profileBlock: {
+      alignItems: 'center',
+      paddingTop: spacing.md,
+    },
+    rootedRow: {
+      marginTop: spacing.sm,
+    },
+    // The options bottom sheet: rounded top corners, the canvas fill, and the
+    // floating-bar shadow (elevation 3, whose offset points up).
+    sheet: {
+      ...elevation[3],
+      backgroundColor: colors.bg.sheet,
+      borderTopLeftRadius: radius.xxl,
+      borderTopRightRadius: radius.xxl,
+      paddingBottom: spacing.xl,
+    },
+    sheetBackdrop: {
+      backgroundColor: colors.scrim.overlay,
+      flex: 1,
+      justifyContent: 'flex-end',
+    },
+    sheetBody: {
+      paddingHorizontal: spacing.lg,
+    },
+    sheetHandle: {
+      backgroundColor: colors.border.hairline,
+      borderRadius: radius.pill,
+      height: 4,
+      width: 32,
+    },
+    sheetHandleArea: {
+      alignItems: 'center',
+      paddingBottom: spacing.sm,
+      paddingTop: spacing.sm,
+    },
+    spinner: {
+      marginVertical: spacing.xl,
+    },
+    stats: {
+      color: colors.text.secondary,
+      marginTop: spacing.sm,
+    },
+    tab: {
+      borderBottomColor: 'transparent',
+      borderBottomWidth: 2,
+      paddingBottom: spacing.sm,
+      paddingTop: spacing.md,
+    },
+    tabActive: {
+      borderBottomColor: colors.brand.primary,
+    },
+    tabLabel: {
+      color: colors.text.tertiary,
+    },
+    tabLabelActive: {
+      color: colors.text.primary,
+    },
+    tabs: {
+      borderBottomColor: colors.border.hairline,
+      borderBottomWidth: 1,
+      flexGrow: 0,
+      marginHorizontal: -layout.screenPaddingFeed,
+      marginTop: spacing.xl,
+    },
+    tabsContent: {
+      // Three natural-width tabs, centred as a group: `flexGrow: 1` lets the content
+      // container fill the viewport so `justifyContent` has the space to centre
+      // within, while a row wider than the screen still scrolls (KNOT-020g-fix4). The
+      // row itself stays full-bleed, so its hairline spans the screen.
+      flexGrow: 1,
+      gap: spacing.xl,
+      justifyContent: 'center',
+      paddingHorizontal: layout.screenPaddingFeed,
+    },
+  });

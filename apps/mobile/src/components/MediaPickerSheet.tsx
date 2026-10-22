@@ -5,7 +5,16 @@ import { Camera, FilmStrip, Images, VideoCamera, type Icon } from 'phosphor-reac
 
 import type { MediaSource } from '../api/stories';
 import { MEDIA_LIMIT_MESSAGE } from '../utils/mediaLimit';
-import { colors, elevation, fontWeights, radius, spacing, typeScale } from '../theme';
+import {
+  elevation,
+  fontWeights,
+  radius,
+  spacing,
+  typeScale,
+  useTheme,
+  useThemedStyles,
+} from '../theme';
+import type { ThemeColors } from '../theme';
 
 /** The kind of file a picker produced. */
 export type PickedMediaType = 'image' | 'video';
@@ -68,6 +77,7 @@ export default function MediaPickerSheet({
   allowVideo = true,
   maxSelection = 1,
 }: MediaPickerSheetProps): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   /**
    * Turns a picker response into the picked media, or reports why it could not.
    *
@@ -254,6 +264,8 @@ function SheetRow({
   readonly label: string;
   readonly onPress: () => void;
 }): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const IconComponent = icon;
   return (
     <Pressable
@@ -270,59 +282,60 @@ function SheetRow({
   );
 }
 
-const styles = StyleSheet.create({
-  backdrop: {
-    backgroundColor: colors.scrim.overlay,
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  body: {
-    paddingHorizontal: spacing.lg,
-  },
-  // A text-only Cancel below the choices, in the same 44-point rows. Rows are
-  // separated by spacing alone — no drawn dividers (KNOT-020g-fix3).
-  cancel: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 44,
-    paddingVertical: spacing.md,
-  },
-  cancelText: {
-    color: colors.state.danger,
-    fontWeight: fontWeights.bold,
-  },
-  handle: {
-    backgroundColor: colors.border.hairline,
-    borderRadius: radius.pill,
-    height: 4,
-    width: 32,
-  },
-  handleArea: {
-    alignItems: 'center',
-    paddingBottom: spacing.sm,
-    paddingTop: spacing.sm,
-  },
-  // One choice: a leading icon and its label, separated from its neighbour by
-  // spacing alone (the same row the profile's options sheet draws).
-  row: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.md,
-    minHeight: 44,
-    paddingVertical: spacing.md,
-  },
-  rowLabel: {
-    color: colors.text.primary,
-    flex: 1,
-    fontWeight: fontWeights.bold,
-  },
-  // The sheet: rounded top corners, the canvas fill, and the floating-bar shadow
-  // (elevation 3, whose offset points up).
-  sheet: {
-    ...elevation[3],
-    backgroundColor: colors.bg.canvas,
-    borderTopLeftRadius: radius.xxl,
-    borderTopRightRadius: radius.xxl,
-    paddingBottom: spacing.xl,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    backdrop: {
+      backgroundColor: colors.scrim.overlay,
+      flex: 1,
+      justifyContent: 'flex-end',
+    },
+    body: {
+      paddingHorizontal: spacing.lg,
+    },
+    // A text-only Cancel below the choices, in the same 44-point rows. Rows are
+    // separated by spacing alone — no drawn dividers (KNOT-020g-fix3).
+    cancel: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 44,
+      paddingVertical: spacing.md,
+    },
+    cancelText: {
+      color: colors.state.danger,
+      fontWeight: fontWeights.bold,
+    },
+    handle: {
+      backgroundColor: colors.border.hairline,
+      borderRadius: radius.pill,
+      height: 4,
+      width: 32,
+    },
+    handleArea: {
+      alignItems: 'center',
+      paddingBottom: spacing.sm,
+      paddingTop: spacing.sm,
+    },
+    // One choice: a leading icon and its label, separated from its neighbour by
+    // spacing alone (the same row the profile's options sheet draws).
+    row: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.md,
+      minHeight: 44,
+      paddingVertical: spacing.md,
+    },
+    rowLabel: {
+      color: colors.text.primary,
+      flex: 1,
+      fontWeight: fontWeights.bold,
+    },
+    // The sheet: rounded top corners, the canvas fill, and the floating-bar shadow
+    // (elevation 3, whose offset points up).
+    sheet: {
+      ...elevation[3],
+      backgroundColor: colors.bg.sheet,
+      borderTopLeftRadius: radius.xxl,
+      borderTopRightRadius: radius.xxl,
+      paddingBottom: spacing.xl,
+    },
+  });

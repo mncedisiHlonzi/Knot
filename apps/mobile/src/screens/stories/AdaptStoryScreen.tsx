@@ -11,7 +11,8 @@ import Input from '../../components/Input';
 import LanguagePicker from '../../components/LanguagePicker';
 import TheThread from '../../components/TheThread';
 import { isLanguageCode, languageName } from '../../data/languages';
-import { colors, layout, radius, spacing, typeScale } from '../../theme';
+import { layout, radius, spacing, typeScale, useTheme, useThemedStyles } from '../../theme';
+import type { ThemeColors } from '../../theme';
 
 type AdaptStoryScreenProps = {
   /** The story the new version belongs to. */
@@ -82,6 +83,8 @@ export default function AdaptStoryScreen({
   onAdapted,
   onCancel,
 }: AdaptStoryScreenProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [parent, setParent] = useState<StoryVersion | undefined>(undefined);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | undefined>(undefined);
@@ -268,97 +271,98 @@ export default function AdaptStoryScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-  content: {
-    paddingBottom: spacing.xxxl,
-    paddingHorizontal: layout.screenPaddingReading,
-  },
-  error: {
-    color: colors.state.danger,
-    marginTop: spacing.lg,
-  },
-  field: {
-    marginTop: spacing.lg,
-  },
-  fieldLabel: {
-    color: colors.text.tertiary,
-    marginBottom: spacing.sm,
-  },
-  // The form sits under the source's text column, matching the reference's indent.
-  form: {
-    marginLeft: spacing.xxl,
-  },
-  iconButton: {
-    alignItems: 'center',
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
-  },
-  marker: {
-    borderRadius: radius.pill,
-    borderWidth: 2,
-    height: 12,
-    left: 0,
-    position: 'absolute',
-    top: 4,
-    width: 12,
-  },
-  markerFilled: {
-    backgroundColor: colors.brand.primary,
-    borderColor: colors.brand.primary,
-  },
-  markerHollow: {
-    backgroundColor: colors.bg.canvas,
-    borderColor: colors.brand.primary,
-  },
-  noteBlock: {
-    borderTopColor: colors.border.hairline,
-    borderTopWidth: 1,
-    marginTop: spacing.lg,
-    paddingTop: spacing.lg,
-  },
-  sectionHeading: {
-    color: colors.brand.primary,
-    marginBottom: spacing.sm,
-    marginTop: spacing.md,
-  },
-  sourceMeta: {
-    color: colors.text.tertiary,
-    marginTop: spacing.xs,
-  },
-  sourceTitle: {
-    color: colors.text.primary,
-  },
-  // A row of the tree: a marker on a spine, then the text column.
-  spineBody: {
-    flexShrink: 1,
-    paddingBottom: spacing.xl,
-  },
-  spineGutter: {
-    marginRight: spacing.md,
-    width: 12,
-  },
-  spineRow: {
-    flexDirection: 'row',
-    paddingTop: spacing.lg,
-  },
-  // The spine drops from the marker down through the block.
-  spine: {
-    borderLeftColor: colors.brand.tint,
-    borderLeftWidth: 1.5,
-    bottom: 0,
-    left: 5,
-    position: 'absolute',
-    top: 16,
-  },
-  spinner: {
-    marginTop: spacing.xl,
-  },
-  submit: {
-    marginTop: spacing.xl,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    container: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    content: {
+      paddingBottom: spacing.xxxl,
+      paddingHorizontal: layout.screenPaddingReading,
+    },
+    error: {
+      color: colors.state.danger,
+      marginTop: spacing.lg,
+    },
+    field: {
+      marginTop: spacing.lg,
+    },
+    fieldLabel: {
+      color: colors.text.tertiary,
+      marginBottom: spacing.sm,
+    },
+    // The form sits under the source's text column, matching the reference's indent.
+    form: {
+      marginLeft: spacing.xxl,
+    },
+    iconButton: {
+      alignItems: 'center',
+      height: 44,
+      justifyContent: 'center',
+      width: 44,
+    },
+    marker: {
+      borderRadius: radius.pill,
+      borderWidth: 2,
+      height: 12,
+      left: 0,
+      position: 'absolute',
+      top: 4,
+      width: 12,
+    },
+    markerFilled: {
+      backgroundColor: colors.brand.primary,
+      borderColor: colors.brand.primary,
+    },
+    markerHollow: {
+      backgroundColor: colors.bg.canvas,
+      borderColor: colors.brand.primary,
+    },
+    noteBlock: {
+      borderTopColor: colors.border.hairline,
+      borderTopWidth: 1,
+      marginTop: spacing.lg,
+      paddingTop: spacing.lg,
+    },
+    sectionHeading: {
+      color: colors.brand.primary,
+      marginBottom: spacing.sm,
+      marginTop: spacing.md,
+    },
+    sourceMeta: {
+      color: colors.text.tertiary,
+      marginTop: spacing.xs,
+    },
+    sourceTitle: {
+      color: colors.text.primary,
+    },
+    // A row of the tree: a marker on a spine, then the text column.
+    spineBody: {
+      flexShrink: 1,
+      paddingBottom: spacing.xl,
+    },
+    spineGutter: {
+      marginRight: spacing.md,
+      width: 12,
+    },
+    spineRow: {
+      flexDirection: 'row',
+      paddingTop: spacing.lg,
+    },
+    // The spine drops from the marker down through the block.
+    spine: {
+      borderLeftColor: colors.brand.tint,
+      borderLeftWidth: 1.5,
+      bottom: 0,
+      left: 5,
+      position: 'absolute',
+      top: 16,
+    },
+    spinner: {
+      marginTop: spacing.xl,
+    },
+    submit: {
+      marginTop: spacing.xl,
+    },
+  });

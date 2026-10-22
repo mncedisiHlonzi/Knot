@@ -10,7 +10,8 @@ import EmptyState from '../../components/EmptyState';
 import Header from '../../components/Header';
 import TheThread from '../../components/TheThread';
 import { languageName } from '../../data/languages';
-import { colors, layout, radius, spacing, typeScale } from '../../theme';
+import { layout, radius, spacing, typeScale, useTheme, useThemedStyles } from '../../theme';
+import type { ThemeColors } from '../../theme';
 import { adaptCountLabel, treeRows, treeSummary } from './versionTree';
 
 /**
@@ -71,6 +72,8 @@ export default function LanguageTreeScreen({
   onTellStory,
   onBack,
 }: LanguageTreeScreenProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [versions, setVersions] = useState<readonly StoryVersion[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -222,137 +225,138 @@ export default function LanguageTreeScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  adaptCount: {
-    color: colors.text.tertiary,
-  },
-  container: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-  content: {
-    paddingBottom: spacing.xxxl,
-    paddingHorizontal: layout.screenPaddingReading,
-  },
-  // The marker, hollow for a child and filled for the story's root.
-  dot: {
-    borderRadius: radius.pill,
-    borderWidth: 2,
-    height: DOT_SIZE,
-    marginTop: -DOT_SIZE / 2,
-    position: 'absolute',
-    top: '50%',
-    width: DOT_SIZE,
-  },
-  dotChild: {
-    backgroundColor: colors.bg.canvas,
-    borderColor: colors.brand.primary,
-  },
-  dotRoot: {
-    backgroundColor: colors.brand.primary,
-    borderColor: colors.brand.primary,
-  },
-  // The curved corner that joins a child to its parent's spine.
-  elbow: {
-    borderBottomColor: colors.brand.tint,
-    borderBottomLeftRadius: radius.lg,
-    borderBottomWidth: TREE_LINE,
-    borderLeftColor: colors.brand.tint,
-    borderLeftWidth: TREE_LINE,
-    height: ELBOW,
-    marginTop: -ELBOW,
-    position: 'absolute',
-    top: '50%',
-    width: ELBOW,
-  },
-  error: {
-    color: colors.state.danger,
-    marginTop: spacing.lg,
-  },
-  footer: {
-    backgroundColor: colors.bg.canvas,
-    borderTopColor: colors.border.hairline,
-    borderTopWidth: 1,
-    paddingBottom: spacing.xl,
-    paddingHorizontal: layout.screenPaddingReading,
-    paddingTop: spacing.md,
-  },
-  gutter: {
-    flexShrink: 0,
-  },
-  iconButton: {
-    alignItems: 'center',
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
-  },
-  languageCode: {
-    color: colors.text.tertiary,
-  },
-  languageName: {
-    color: colors.text.primary,
-    flexShrink: 1,
-  },
-  languageRow: {
-    alignItems: 'baseline',
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  metaRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-    marginTop: spacing.xs,
-  },
-  note: {
-    color: colors.text.secondary,
-    fontStyle: 'italic',
-    marginTop: spacing.sm,
-  },
-  retry: {
-    marginTop: spacing.lg,
-  },
-  row: {
-    flexDirection: 'row',
-    paddingTop: spacing.lg,
-  },
-  rowBody: {
-    flexShrink: 1,
-    paddingBottom: spacing.lg,
-  },
-  // The spine that drops from above into a child's elbow.
-  spineAbove: {
-    borderLeftColor: colors.brand.tint,
-    borderLeftWidth: TREE_LINE,
-    height: '50%',
-    position: 'absolute',
-    top: 0,
-  },
-  // The spine that continues below a version that drew adaptations.
-  spineBelow: {
-    borderLeftColor: colors.brand.tint,
-    borderLeftWidth: TREE_LINE,
-    bottom: 0,
-    position: 'absolute',
-    top: '50%',
-  },
-  spinner: {
-    alignItems: 'center',
-    marginTop: spacing.xl,
-  },
-  summaryBlock: {
-    borderBottomColor: colors.border.hairline,
-    borderBottomWidth: 1,
-    paddingBottom: spacing.lg,
-    paddingHorizontal: layout.screenPaddingReading,
-    paddingTop: spacing.sm,
-  },
-  summaryMeta: {
-    color: colors.text.tertiary,
-    marginTop: spacing.xs,
-  },
-  summaryTitle: {
-    color: colors.text.primary,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    adaptCount: {
+      color: colors.text.tertiary,
+    },
+    container: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    content: {
+      paddingBottom: spacing.xxxl,
+      paddingHorizontal: layout.screenPaddingReading,
+    },
+    // The marker, hollow for a child and filled for the story's root.
+    dot: {
+      borderRadius: radius.pill,
+      borderWidth: 2,
+      height: DOT_SIZE,
+      marginTop: -DOT_SIZE / 2,
+      position: 'absolute',
+      top: '50%',
+      width: DOT_SIZE,
+    },
+    dotChild: {
+      backgroundColor: colors.bg.canvas,
+      borderColor: colors.brand.primary,
+    },
+    dotRoot: {
+      backgroundColor: colors.brand.primary,
+      borderColor: colors.brand.primary,
+    },
+    // The curved corner that joins a child to its parent's spine.
+    elbow: {
+      borderBottomColor: colors.brand.tint,
+      borderBottomLeftRadius: radius.lg,
+      borderBottomWidth: TREE_LINE,
+      borderLeftColor: colors.brand.tint,
+      borderLeftWidth: TREE_LINE,
+      height: ELBOW,
+      marginTop: -ELBOW,
+      position: 'absolute',
+      top: '50%',
+      width: ELBOW,
+    },
+    error: {
+      color: colors.state.danger,
+      marginTop: spacing.lg,
+    },
+    footer: {
+      backgroundColor: colors.bg.canvas,
+      borderTopColor: colors.border.hairline,
+      borderTopWidth: 1,
+      paddingBottom: spacing.xl,
+      paddingHorizontal: layout.screenPaddingReading,
+      paddingTop: spacing.md,
+    },
+    gutter: {
+      flexShrink: 0,
+    },
+    iconButton: {
+      alignItems: 'center',
+      height: 44,
+      justifyContent: 'center',
+      width: 44,
+    },
+    languageCode: {
+      color: colors.text.tertiary,
+    },
+    languageName: {
+      color: colors.text.primary,
+      flexShrink: 1,
+    },
+    languageRow: {
+      alignItems: 'baseline',
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    metaRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+      marginTop: spacing.xs,
+    },
+    note: {
+      color: colors.text.secondary,
+      fontStyle: 'italic',
+      marginTop: spacing.sm,
+    },
+    retry: {
+      marginTop: spacing.lg,
+    },
+    row: {
+      flexDirection: 'row',
+      paddingTop: spacing.lg,
+    },
+    rowBody: {
+      flexShrink: 1,
+      paddingBottom: spacing.lg,
+    },
+    // The spine that drops from above into a child's elbow.
+    spineAbove: {
+      borderLeftColor: colors.brand.tint,
+      borderLeftWidth: TREE_LINE,
+      height: '50%',
+      position: 'absolute',
+      top: 0,
+    },
+    // The spine that continues below a version that drew adaptations.
+    spineBelow: {
+      borderLeftColor: colors.brand.tint,
+      borderLeftWidth: TREE_LINE,
+      bottom: 0,
+      position: 'absolute',
+      top: '50%',
+    },
+    spinner: {
+      alignItems: 'center',
+      marginTop: spacing.xl,
+    },
+    summaryBlock: {
+      borderBottomColor: colors.border.hairline,
+      borderBottomWidth: 1,
+      paddingBottom: spacing.lg,
+      paddingHorizontal: layout.screenPaddingReading,
+      paddingTop: spacing.sm,
+    },
+    summaryMeta: {
+      color: colors.text.tertiary,
+      marginTop: spacing.xs,
+    },
+    summaryTitle: {
+      color: colors.text.primary,
+    },
+  });

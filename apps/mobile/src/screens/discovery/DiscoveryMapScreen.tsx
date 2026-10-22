@@ -21,7 +21,17 @@ import EmptyState from '../../components/EmptyState';
 import Input from '../../components/Input';
 import { KNOT_MAPBOX_TOKEN } from '../../config/dev';
 import { PlaceCoordinate, coordinatesForPlace } from '../../data/placeCoordinates';
-import { colors, elevation, layout, radius, spacing, tabularNums, typeScale } from '../../theme';
+import {
+  elevation,
+  layout,
+  radius,
+  spacing,
+  tabularNums,
+  typeScale,
+  useTheme,
+  useThemedStyles,
+} from '../../theme';
+import type { ThemeColors } from '../../theme';
 import { filterPlacesByQuery, placeTotalsLabel, storyCountLabel } from './discoveryFormat';
 
 type DiscoveryMapScreenProps = {
@@ -176,6 +186,8 @@ export default function DiscoveryMapScreen({
   onOpenPlace,
   token,
 }: DiscoveryMapScreenProps): React.ReactElement {
+  const { colors, theme } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [clusters, setClusters] = useState<readonly PlaceCluster[]>([]);
   const [filter, setFilter] = useState<PillarFilter>('all');
   const [query, setQuery] = useState('');
@@ -265,7 +277,11 @@ export default function DiscoveryMapScreen({
           has to clear the bar: there is no header or tab row above the map, and
           the sheet is pinned to the bottom. The app-wide bar takes over again on
           unmount. */}
-      <StatusBar backgroundColor="transparent" barStyle="dark-content" translucent />
+      <StatusBar
+        backgroundColor="transparent"
+        barStyle={theme === 'dark' ? 'light-content' : 'dark-content'}
+        translucent
+      />
 
       {/*
        * The map is drawn natively with Mapbox (`@rnmapbox/maps`), superseding
@@ -288,7 +304,7 @@ export default function DiscoveryMapScreen({
        */}
       <MapView
         style={styles.map}
-        styleURL={Mapbox.StyleURL.Light}
+        styleURL={theme === 'dark' ? Mapbox.StyleURL.Dark : Mapbox.StyleURL.Light}
         scaleBarEnabled={false}
         attributionEnabled
         attributionPosition={{ bottom: sheetHeight + spacing.sm, right: spacing.sm }}
@@ -464,159 +480,160 @@ export default function DiscoveryMapScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  // The pillar filter as a row of chips, under the headline. It wraps rather than
-  // scrolls: three short labels fit one line on any phone, and a row that could
-  // not wrap would clip a fourth pillar if the server ever grows one
-  // (KNOT-020g-fix10).
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-    marginTop: spacing.lg,
-  },
-  container: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-  error: {
-    color: colors.state.danger,
-    paddingHorizontal: layout.screenPaddingFeed,
-    paddingVertical: spacing.md,
-    textAlign: 'center',
-  },
-  // The decorative drag handle: a 32x4 pill in the hairline colour. No gesture is
-  // attached — drag-to-expand is out of scope for the MVP (KNOT-020e-fix).
-  handle: {
-    alignSelf: 'center',
-    backgroundColor: colors.border.hairline,
-    borderRadius: radius.pill,
-    height: 4,
-    marginBottom: spacing.lg,
-    marginTop: spacing.md,
-    width: 32,
-  },
-  // The sheet's headline: the screen's only large type now that the title bar is
-  // gone, so it takes the display face at h1 (KNOT-020g-fix10).
-  headline: {
-    color: colors.text.primary,
-  },
-  list: {
-    flex: 1,
-  },
-  listContent: {
-    paddingBottom: spacing.xxxl,
-  },
-  // The map is the screen, not a band in it: it spans from the top edge — behind
-  // the status bar — to the bottom, and everything else floats over it
-  // (KNOT-020g-fix9).
-  map: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  // The map marker's touch target: a transparent 44-point box with one filled pin
-  // centred in it. The box carries no fill or ring, so the marker reads as a pin on
-  // the map rather than as a badge (KNOT-020g-fix12).
-  marker: {
-    alignItems: 'center',
-    height: MARKER_TOUCH_SIZE,
-    justifyContent: 'center',
-    width: MARKER_TOUCH_SIZE,
-  },
-  // The line drawn under a search that matched nothing, in the list's own inset.
-  noMatches: {
-    color: colors.text.tertiary,
-    paddingHorizontal: layout.screenPaddingFeed,
-    paddingVertical: spacing.lg,
-    textAlign: 'center',
-  },
-  placeCount: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.xs,
-  },
-  // The count is the quieter half of the row: the place's name is what a reader is
-  // scanning for, so the number recedes to the tertiary ink (KNOT-020g-fix11).
-  placeCountText: {
-    color: colors.text.tertiary,
-  },
-  // The leading location pin sits straight on the row's canvas: there is no disc
-  // behind it, so the row is a plain icon-text-count line (KNOT-020g-fix12).
-  placeMeta: {
-    color: colors.text.tertiary,
-    marginTop: spacing.xs,
-  },
-  placeName: {
-    color: colors.text.primary,
-  },
-  // One place. **No separator**: the rows are told apart by their own height and
-  // padding, which is the sheet's pattern — a rule between them is the one thing
-  // the reference does not draw (KNOT-020g-fix11).
-  placeRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.md,
-    paddingHorizontal: layout.screenPaddingFeed,
-    paddingVertical: spacing.md,
-  },
-  // The name and country take every point between the pin and the count, so they
-  // are **left-aligned** beside the pin and the count sits at the far right. Before
-  // this the column hugged its text, which pushed it into the middle of the row and
-  // made a row look centred (KNOT-020g-fix12).
-  placeText: {
-    flex: 1,
-    flexShrink: 1,
-  },
-  // The place search, above the list it narrows. The clear control is absolutely
-  // positioned over the field's right edge, so it cannot shift the field's width
-  // when it appears (KNOT-020g-fix12).
-  searchClear: {
-    alignItems: 'center',
-    bottom: 0,
-    justifyContent: 'center',
-    position: 'absolute',
-    right: spacing.sm,
-    top: 0,
-    width: 24,
-  },
-  searchRow: {
-    marginTop: spacing.lg,
-  },
-  // The sheet: rounded top corners, the canvas surface, and the design's upward
-  // shadow (elevation Level 3, whose offset-Y is negative — exactly this use
-  // case). Pinned to the bottom so it overlaps the map's lower edge. No
-  // `overflow: hidden`, so the shadow is not clipped; the corners are above the
-  // list, which never reaches them (KNOT-020e-fix). `zIndex` keeps it above the
-  // map, which now has nothing else over it in this screen's stack
-  // (KNOT-020g-fix9, KNOT-020g-fix10).
-  sheet: {
-    backgroundColor: colors.bg.canvas,
-    borderTopLeftRadius: radius.xxl,
-    borderTopRightRadius: radius.xxl,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-    right: 0,
-    zIndex: 1,
-    ...elevation[3],
-  },
-  // The sheet's fixed head: everything above the list, which never scrolls away
-  // with it.
-  sheetHeader: {
-    paddingBottom: spacing.sm,
-    paddingHorizontal: layout.screenPaddingFeed,
-  },
-  subtitle: {
-    color: colors.text.secondary,
-    marginTop: spacing.xs,
-  },
-  spinner: {
-    marginTop: spacing.lg,
-  },
-  // What the list below holds. Indented to the screen's gutter like the rows it
-  // describes, so the two read as one block (KNOT-020g-fix10).
-  totals: {
-    color: colors.text.tertiary,
-    paddingBottom: spacing.sm,
-    paddingHorizontal: layout.screenPaddingFeed,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    // The pillar filter as a row of chips, under the headline. It wraps rather than
+    // scrolls: three short labels fit one line on any phone, and a row that could
+    // not wrap would clip a fourth pillar if the server ever grows one
+    // (KNOT-020g-fix10).
+    chipRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+      marginTop: spacing.lg,
+    },
+    container: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    error: {
+      color: colors.state.danger,
+      paddingHorizontal: layout.screenPaddingFeed,
+      paddingVertical: spacing.md,
+      textAlign: 'center',
+    },
+    // The decorative drag handle: a 32x4 pill in the hairline colour. No gesture is
+    // attached — drag-to-expand is out of scope for the MVP (KNOT-020e-fix).
+    handle: {
+      alignSelf: 'center',
+      backgroundColor: colors.border.hairline,
+      borderRadius: radius.pill,
+      height: 4,
+      marginBottom: spacing.lg,
+      marginTop: spacing.md,
+      width: 32,
+    },
+    // The sheet's headline: the screen's only large type now that the title bar is
+    // gone, so it takes the display face at h1 (KNOT-020g-fix10).
+    headline: {
+      color: colors.text.primary,
+    },
+    list: {
+      flex: 1,
+    },
+    listContent: {
+      paddingBottom: spacing.xxxl,
+    },
+    // The map is the screen, not a band in it: it spans from the top edge — behind
+    // the status bar — to the bottom, and everything else floats over it
+    // (KNOT-020g-fix9).
+    map: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    // The map marker's touch target: a transparent 44-point box with one filled pin
+    // centred in it. The box carries no fill or ring, so the marker reads as a pin on
+    // the map rather than as a badge (KNOT-020g-fix12).
+    marker: {
+      alignItems: 'center',
+      height: MARKER_TOUCH_SIZE,
+      justifyContent: 'center',
+      width: MARKER_TOUCH_SIZE,
+    },
+    // The line drawn under a search that matched nothing, in the list's own inset.
+    noMatches: {
+      color: colors.text.tertiary,
+      paddingHorizontal: layout.screenPaddingFeed,
+      paddingVertical: spacing.lg,
+      textAlign: 'center',
+    },
+    placeCount: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.xs,
+    },
+    // The count is the quieter half of the row: the place's name is what a reader is
+    // scanning for, so the number recedes to the tertiary ink (KNOT-020g-fix11).
+    placeCountText: {
+      color: colors.text.tertiary,
+    },
+    // The leading location pin sits straight on the row's canvas: there is no disc
+    // behind it, so the row is a plain icon-text-count line (KNOT-020g-fix12).
+    placeMeta: {
+      color: colors.text.tertiary,
+      marginTop: spacing.xs,
+    },
+    placeName: {
+      color: colors.text.primary,
+    },
+    // One place. **No separator**: the rows are told apart by their own height and
+    // padding, which is the sheet's pattern — a rule between them is the one thing
+    // the reference does not draw (KNOT-020g-fix11).
+    placeRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.md,
+      paddingHorizontal: layout.screenPaddingFeed,
+      paddingVertical: spacing.md,
+    },
+    // The name and country take every point between the pin and the count, so they
+    // are **left-aligned** beside the pin and the count sits at the far right. Before
+    // this the column hugged its text, which pushed it into the middle of the row and
+    // made a row look centred (KNOT-020g-fix12).
+    placeText: {
+      flex: 1,
+      flexShrink: 1,
+    },
+    // The place search, above the list it narrows. The clear control is absolutely
+    // positioned over the field's right edge, so it cannot shift the field's width
+    // when it appears (KNOT-020g-fix12).
+    searchClear: {
+      alignItems: 'center',
+      bottom: 0,
+      justifyContent: 'center',
+      position: 'absolute',
+      right: spacing.sm,
+      top: 0,
+      width: 24,
+    },
+    searchRow: {
+      marginTop: spacing.lg,
+    },
+    // The sheet: rounded top corners, the canvas surface, and the design's upward
+    // shadow (elevation Level 3, whose offset-Y is negative — exactly this use
+    // case). Pinned to the bottom so it overlaps the map's lower edge. No
+    // `overflow: hidden`, so the shadow is not clipped; the corners are above the
+    // list, which never reaches them (KNOT-020e-fix). `zIndex` keeps it above the
+    // map, which now has nothing else over it in this screen's stack
+    // (KNOT-020g-fix9, KNOT-020g-fix10).
+    sheet: {
+      backgroundColor: colors.bg.sheet,
+      borderTopLeftRadius: radius.xxl,
+      borderTopRightRadius: radius.xxl,
+      bottom: 0,
+      left: 0,
+      position: 'absolute',
+      right: 0,
+      zIndex: 1,
+      ...elevation[3],
+    },
+    // The sheet's fixed head: everything above the list, which never scrolls away
+    // with it.
+    sheetHeader: {
+      paddingBottom: spacing.sm,
+      paddingHorizontal: layout.screenPaddingFeed,
+    },
+    subtitle: {
+      color: colors.text.secondary,
+      marginTop: spacing.xs,
+    },
+    spinner: {
+      marginTop: spacing.lg,
+    },
+    // What the list below holds. Indented to the screen's gutter like the rows it
+    // describes, so the two read as one block (KNOT-020g-fix10).
+    totals: {
+      color: colors.text.tertiary,
+      paddingBottom: spacing.sm,
+      paddingHorizontal: layout.screenPaddingFeed,
+    },
+  });

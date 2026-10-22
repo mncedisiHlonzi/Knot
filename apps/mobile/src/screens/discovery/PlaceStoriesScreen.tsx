@@ -21,7 +21,16 @@ import EmptyState from '../../components/EmptyState';
 import FeedEntry from '../../components/FeedEntry';
 import Header from '../../components/Header';
 import { KNOT_MAPBOX_TOKEN } from '../../config/dev';
-import { colors, elevation, layout, radius, spacing, typeScale } from '../../theme';
+import {
+  elevation,
+  layout,
+  radius,
+  spacing,
+  typeScale,
+  useTheme,
+  useThemedStyles,
+} from '../../theme';
+import type { ThemeColors } from '../../theme';
 import {
   VIEWABILITY_CONFIG,
   type ViewableItemsInfo,
@@ -144,6 +153,8 @@ export default function PlaceStoriesScreen({
   onOpenStory,
   onBack,
 }: PlaceStoriesScreenProps): React.ReactElement {
+  const { colors, theme } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [stories, setStories] = useState<readonly Story[]>([]);
   const [nextCursor, setNextCursor] = useState('');
   const [loading, setLoading] = useState(true);
@@ -267,7 +278,11 @@ export default function PlaceStoriesScreen({
           up to the top edge (KNOT-020g-fix11). It is the same treatment the
           Discovery Map uses. Before this, the bar was painted in the canvas
           colour, which is what put a white band above the map. */}
-      <StatusBar backgroundColor="transparent" barStyle="dark-content" translucent />
+      <StatusBar
+        backgroundColor="transparent"
+        barStyle={theme === 'dark' ? 'light-content' : 'dark-content'}
+        translucent
+      />
 
       {mapPoint === undefined ? null : (
         <View style={[styles.strip, { height: stripHeight }]}>
@@ -288,7 +303,7 @@ export default function PlaceStoriesScreen({
               coordinate the camera is centred on (KNOT-020g-fix14). */}
           <MapView
             style={styles.stripMap}
-            styleURL={Mapbox.StyleURL.Light}
+            styleURL={theme === 'dark' ? Mapbox.StyleURL.Dark : Mapbox.StyleURL.Light}
             surfaceView={false}
             scrollEnabled={false}
             zoomEnabled={false}
@@ -428,115 +443,116 @@ export default function PlaceStoriesScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  // The pillar chip row, the same control the Discovery Map's sheet draws: a
-  // wrapping row of `Chip`s. It is stacked above the list and opaque, so a
-  // scrolled story passes beneath it rather than through it (KNOT-020g-fix14).
-  chipRow: {
-    backgroundColor: colors.bg.canvas,
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-    paddingBottom: spacing.md,
-    paddingHorizontal: layout.screenPaddingFeed,
-    zIndex: 1,
-  },
-  container: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-  // The entries are edge-to-edge and carry their own horizontal inset
-  // (`FeedEntry` uses `layout.screenPaddingFeed`), so the list adds none.
-  content: {
-    paddingBottom: spacing.xxxl,
-  },
-  error: {
-    color: colors.state.danger,
-    paddingHorizontal: layout.screenPaddingFeed,
-    paddingVertical: spacing.md,
-    textAlign: 'center',
-  },
-  footerSpinner: {
-    marginVertical: spacing.xl,
-  },
-  heading: {
-    paddingBottom: spacing.md,
-    paddingHorizontal: layout.screenPaddingFeed,
-    paddingTop: spacing.xs,
-  },
-  // The back control: a 44-point round canvas button. It carries a solid fill and
-  // the design's raised shadow rather than a hairline, because a ring drawn on a
-  // map reads as a map artefact — and the fill is what keeps a dark arrow legible
-  // over an unknown tile (KNOT-020g-fix11).
-  iconButton: {
-    alignItems: 'center',
-    backgroundColor: colors.bg.canvas,
-    borderRadius: radius.pill,
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
-    ...elevation[2],
-  },
-  // The list takes whatever the header, the place block, the map strip, and the
-  // chip row leave, so nothing pushes it off screen and it scrolls in the
-  // remainder. The explicit background and z-index keep a scrolled story beneath
-  // the bands above it rather than drawn across them (KNOT-020e-fix5,
-  // KNOT-020e-fix6).
-  list: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-    zIndex: 0,
-  },
-  place: {
-    color: colors.text.primary,
-  },
-  spinner: {
-    marginTop: spacing.xl,
-  },
-  // The compact map strip: the topmost band of the screen, out of flow so it can
-  // start at the physical top edge and run behind the status bar. Its height is
-  // set at render time to the strip's own height plus the status bar's, so the map
-  // grows upward on a device with an inset and is unchanged where there is none
-  // (KNOT-020g-fix9). `overflow: 'hidden'` is load-bearing rather than cosmetic —
-  // the MapView is a native view and React Native does not clip by default, so
-  // without it the map lays out and draws beyond these bounds and paints over the
-  // first stories. The canvas fill makes the box opaque even before the map has
-  // drawn, so nothing behind it shows through (KNOT-020e-fix5).
-  strip: {
-    backgroundColor: colors.bg.canvas,
-    left: 0,
-    overflow: 'hidden',
-    position: 'absolute',
-    right: 0,
-    top: 0,
-    width: '100%',
-    // The strip is the topmost band, so a story scrolled under it is hidden rather
-    // than drawn across it. The stacking is 3 (floating header) > 2 (strip) > 1
-    // (chip row) > 0 (list) (KNOT-020e-fix6, KNOT-020g-fix9).
-    zIndex: 2,
-  },
-  // The back control's overlay: a bare positioning box in the strip's top-left
-  // corner, starting below the status bar. It paints **nothing** — the button it
-  // holds is the only thing drawn there, so the map stays visible up to the top
-  // edge. Before this the box carried a canvas fill across the whole width, which
-  // is what put a white band over the top of the map (KNOT-020g-fix9,
-  // KNOT-020g-fix11).
-  floatingHeader: {
-    left: 0,
-    paddingHorizontal: layout.screenPaddingFeed,
-    position: 'absolute',
-    right: 0,
-    zIndex: 3,
-  },
-  // The map gets explicit dimensions rather than `flex: 1`: a native map view is
-  // not a plain Yoga-measured View, and sizing it by flex alone is what let it lay
-  // out larger than the strip it sits in (KNOT-020e-fix5).
-  stripMap: {
-    height: '100%',
-    width: '100%',
-  },
-  summary: {
-    color: colors.text.tertiary,
-    marginTop: spacing.xs,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    // The pillar chip row, the same control the Discovery Map's sheet draws: a
+    // wrapping row of `Chip`s. It is stacked above the list and opaque, so a
+    // scrolled story passes beneath it rather than through it (KNOT-020g-fix14).
+    chipRow: {
+      backgroundColor: colors.bg.canvas,
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+      paddingBottom: spacing.md,
+      paddingHorizontal: layout.screenPaddingFeed,
+      zIndex: 1,
+    },
+    container: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    // The entries are edge-to-edge and carry their own horizontal inset
+    // (`FeedEntry` uses `layout.screenPaddingFeed`), so the list adds none.
+    content: {
+      paddingBottom: spacing.xxxl,
+    },
+    error: {
+      color: colors.state.danger,
+      paddingHorizontal: layout.screenPaddingFeed,
+      paddingVertical: spacing.md,
+      textAlign: 'center',
+    },
+    footerSpinner: {
+      marginVertical: spacing.xl,
+    },
+    heading: {
+      paddingBottom: spacing.md,
+      paddingHorizontal: layout.screenPaddingFeed,
+      paddingTop: spacing.xs,
+    },
+    // The back control: a 44-point round canvas button. It carries a solid fill and
+    // the design's raised shadow rather than a hairline, because a ring drawn on a
+    // map reads as a map artefact — and the fill is what keeps a dark arrow legible
+    // over an unknown tile (KNOT-020g-fix11).
+    iconButton: {
+      alignItems: 'center',
+      backgroundColor: colors.bg.canvas,
+      borderRadius: radius.pill,
+      height: 44,
+      justifyContent: 'center',
+      width: 44,
+      ...elevation[2],
+    },
+    // The list takes whatever the header, the place block, the map strip, and the
+    // chip row leave, so nothing pushes it off screen and it scrolls in the
+    // remainder. The explicit background and z-index keep a scrolled story beneath
+    // the bands above it rather than drawn across them (KNOT-020e-fix5,
+    // KNOT-020e-fix6).
+    list: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+      zIndex: 0,
+    },
+    place: {
+      color: colors.text.primary,
+    },
+    spinner: {
+      marginTop: spacing.xl,
+    },
+    // The compact map strip: the topmost band of the screen, out of flow so it can
+    // start at the physical top edge and run behind the status bar. Its height is
+    // set at render time to the strip's own height plus the status bar's, so the map
+    // grows upward on a device with an inset and is unchanged where there is none
+    // (KNOT-020g-fix9). `overflow: 'hidden'` is load-bearing rather than cosmetic —
+    // the MapView is a native view and React Native does not clip by default, so
+    // without it the map lays out and draws beyond these bounds and paints over the
+    // first stories. The canvas fill makes the box opaque even before the map has
+    // drawn, so nothing behind it shows through (KNOT-020e-fix5).
+    strip: {
+      backgroundColor: colors.bg.canvas,
+      left: 0,
+      overflow: 'hidden',
+      position: 'absolute',
+      right: 0,
+      top: 0,
+      width: '100%',
+      // The strip is the topmost band, so a story scrolled under it is hidden rather
+      // than drawn across it. The stacking is 3 (floating header) > 2 (strip) > 1
+      // (chip row) > 0 (list) (KNOT-020e-fix6, KNOT-020g-fix9).
+      zIndex: 2,
+    },
+    // The back control's overlay: a bare positioning box in the strip's top-left
+    // corner, starting below the status bar. It paints **nothing** — the button it
+    // holds is the only thing drawn there, so the map stays visible up to the top
+    // edge. Before this the box carried a canvas fill across the whole width, which
+    // is what put a white band over the top of the map (KNOT-020g-fix9,
+    // KNOT-020g-fix11).
+    floatingHeader: {
+      left: 0,
+      paddingHorizontal: layout.screenPaddingFeed,
+      position: 'absolute',
+      right: 0,
+      zIndex: 3,
+    },
+    // The map gets explicit dimensions rather than `flex: 1`: a native map view is
+    // not a plain Yoga-measured View, and sizing it by flex alone is what let it lay
+    // out larger than the strip it sits in (KNOT-020e-fix5).
+    stripMap: {
+      height: '100%',
+      width: '100%',
+    },
+    summary: {
+      color: colors.text.tertiary,
+      marginTop: spacing.xs,
+    },
+  });

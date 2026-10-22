@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { colors, spacing, typeScale } from '../theme';
+import { spacing, typeScale, useThemedStyles, type ThemeColors } from '../theme';
 
 type HeaderProps = {
   /** The title, always centred on the bar. When omitted, the middle stays empty. */
@@ -56,6 +56,7 @@ export default function Header({
   pinned = false,
   testID,
 }: HeaderProps): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.container} testID={testID}>
       {/* A constant opaque fill: the bar never fades, so no scroll offset is
@@ -82,41 +83,42 @@ export default function Header({
   );
 }
 
-const styles = StyleSheet.create({
-  background: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: colors.bg.canvas,
-  },
-  container: {
-    height: HEIGHT,
-    justifyContent: 'center',
-  },
-  row: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    height: HEIGHT,
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.sm,
-  },
-  side: {
-    alignItems: 'center',
-    flexDirection: 'row',
-  },
-  title: {
-    color: colors.text.primary,
-    flex: 1,
-    textAlign: 'center',
-  },
-  // Pinned to the bar's own middle, so an unequal pair of side slots cannot pull
-  // the title off centre (KNOT-020g-fix4, KNOT-020g-fix13). The inset keeps a long
-  // title clear of the side slots; a short one is genuinely centred.
-  titleCentered: {
-    left: 0,
-    paddingHorizontal: TITLE_INSET,
-    position: 'absolute',
-    right: 0,
-  },
-  titleSpacer: {
-    flex: 1,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    background: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: colors.bg.canvas,
+    },
+    container: {
+      height: HEIGHT,
+      justifyContent: 'center',
+    },
+    row: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      height: HEIGHT,
+      justifyContent: 'space-between',
+      paddingHorizontal: spacing.sm,
+    },
+    side: {
+      alignItems: 'center',
+      flexDirection: 'row',
+    },
+    title: {
+      color: colors.text.primary,
+      flex: 1,
+      textAlign: 'center',
+    },
+    // Pinned to the bar's own middle, so an unequal pair of side slots cannot pull
+    // the title off centre (KNOT-020g-fix4, KNOT-020g-fix13). The inset keeps a long
+    // title clear of the side slots; a short one is genuinely centred.
+    titleCentered: {
+      left: 0,
+      paddingHorizontal: TITLE_INSET,
+      position: 'absolute',
+      right: 0,
+    },
+    titleSpacer: {
+      flex: 1,
+    },
+  });

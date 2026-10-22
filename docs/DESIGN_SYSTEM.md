@@ -26,10 +26,16 @@ components/        usage               background: colors.bg.canvas
 
 - **`src/theme/palette.ts`** — the literal hex values from `tokens.json`, for both
   themes. This is the only file hex colours are allowed to live in.
-- **`src/theme/colors.ts`** — maps a role onto a palette value. It reads
-  `palette.light` today; KNOT-020i switches it to `palette.dark`, at which point
-  every screen follows automatically.
-- **Screens** ask for roles (`colors.text.secondary`), never raw values.
+- **`src/theme/colors.ts`** — resolves a role set per theme via `getColors(theme)`,
+  which caches one object per theme so stylesheet memoisation and context
+  identity both hold. The dark palette names its accent roles differently
+  (`indigoText` / `indigoFill` / `indigoOnTint` instead of `indigo600/700/500`),
+  so `activePalette` flattens both palettes into one set of names.
+- **`src/theme/ThemeContext.tsx`** — `ThemeProvider` owns the active theme and
+  hands it to every screen; `useTheme()` returns `{ theme, colors, setTheme,
+  toggleTheme }`.
+- **Screens** ask for roles (`colors.text.secondary`), never raw values, and build
+  their stylesheet per theme (see *Dark mode* below).
 
 Other token files: `typography.ts`, `spacing.ts` (also exports `layout`),
 `radius.ts`, `elevation.ts`, `motion.ts`. Everything is re-exported from
@@ -37,6 +43,51 @@ Other token files: `typography.ts`, `spacing.ts` (also exports `layout`),
 
 A parity test (`src/theme/__tests__/tokens.test.ts`) reads `tokens.json` from
 disk and fails if any token drifts from the spec.
+
+### Dark mode
+
+Both themes are live (KNOT-020i). A screen does not read a static `colors`
+object — a stylesheet created at module scope would freeze whichever palette was
+loaded first — so it reads the active theme:
+
+```ts
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({ container: { backgroundColor: colors.bg.canvas } });
+
+export default function Screen() {
+  const { colors } = useTheme();                 // only if a colour is used inline
+  const styles = useThemedStyles(createStyles); // built once per theme, cached
+  …
+}
+```
+
+`useThemedStyles` caches one stylesheet per theme, keyed by the factory, so the
+returned object keeps its identity across renders. `useTheme()` also returns
+`setTheme`/`toggleTheme`, which apply **and persist** the choice.
+
+- **Default.** On first launch the app follows the system appearance
+  (`Appearance.getColorScheme()`), falling back to light when it cannot be read.
+  An explicit choice is stored under `knot.theme.v1` and wins from then on.
+- **Toggle.** Profile → overflow → **Theme** (a `Switch` row at the bottom of the
+  options sheet). It is a device preference, not an account setting.
+- **What changes with the theme.** Surfaces (`bg.canvas`, `bg.paper`,
+  `bg.sunken`, `bg.sheet`), all three text inks, hairlines, the accent, the pillar
+  tints, the danger ink, the status-bar icons, and the Mapbox style (Light/Dark) on
+  the two discovery screens.
+- **`bg.sheet`** is the one surface that differs structurally: it equals the
+  canvas in light (a sheet already reads as lifted against the scrim) and is one
+  step lighter than the canvas in dark, so it does not vanish into the dimmed
+  backdrop. Every bottom sheet uses it.
+- **The accent is one role, not two.** `brand.primary` is the accent as ink *and*
+  as a fill: light uses `indigo600` under white text; dark uses the lighter
+  `indigoText` under the dark canvas ink, which is why `text.onBrand` is the
+  canvas colour in both themes. A pressed brand control **brightens** in dark
+  (`indigoOnTint`) and darkens in light (`indigo700`).
+- **`border.divider`** has no swatch in the reference; the role owns both values
+  (light `#D5D9E0`, dark `#2E3442`) one step off the hairline in each theme.
+- **Not theme-aware in JS:** the Android **navigation bar** is set in the native
+  theme (`res/values/styles.xml`) and stays light in dark mode — RN's `StatusBar`
+  cannot reach it (KNOT-020g-fix8). The status bar itself does follow the theme.
 
 ### Legacy colour aliases (deprecated)
 

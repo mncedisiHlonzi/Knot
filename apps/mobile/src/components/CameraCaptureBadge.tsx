@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
 
-import { colors, radius, spacing, typeScale } from '../theme';
+import { radius, spacing, typeScale, useThemedStyles, type ThemeColors } from '../theme';
 
 type CameraCaptureBadgeProps = {
   /** Optional short label shown next to the icon. */
@@ -22,6 +22,7 @@ export default function CameraCaptureBadge({
   label,
   style,
 }: CameraCaptureBadgeProps): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={[styles.badge, style]} accessibilityLabel="Captured with the camera">
       {/* The camera glyph is an emoji, so its ink is the glyph's own; only the
@@ -32,19 +33,20 @@ export default function CameraCaptureBadge({
   );
 }
 
-const styles = StyleSheet.create({
-  badge: {
-    alignItems: 'center',
-    backgroundColor: colors.bg.sunken,
-    borderColor: colors.border.hairline,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    flexDirection: 'row',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-  },
-  label: {
-    color: colors.text.primary,
-    marginLeft: spacing.xs,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    badge: {
+      alignItems: 'center',
+      backgroundColor: colors.bg.sunken,
+      borderColor: colors.border.hairline,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      flexDirection: 'row',
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 2,
+    },
+    label: {
+      color: colors.text.primary,
+      marginLeft: spacing.xs,
+    },
+  });

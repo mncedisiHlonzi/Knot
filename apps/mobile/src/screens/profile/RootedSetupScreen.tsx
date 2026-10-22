@@ -6,7 +6,8 @@ import { DURATION_BUCKETS, DurationBucket, rootedApi } from '../../api/rooted';
 import Button from '../../components/Button';
 import Chip from '../../components/Chip';
 import LocationPicker, { PickedPlace } from '../../components/LocationPicker';
-import { colors, spacing, typeScale } from '../../theme';
+import { spacing, typeScale, useTheme, useThemedStyles } from '../../theme';
+import type { ThemeColors } from '../../theme';
 
 type RootedSetupScreenProps = {
   /** The signed-in user's access token. The server derives the owner from it. */
@@ -67,6 +68,8 @@ export default function RootedSetupScreen({
   onSaved,
   onCancel,
 }: RootedSetupScreenProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [placeText, setPlaceText] = useState('');
   const [selectedPlace, setSelectedPlace] = useState<PickedPlace | null>(null);
   const [bucket, setBucket] = useState<DurationBucket | null>(null);
@@ -186,44 +189,45 @@ export default function RootedSetupScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  buckets: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  content: {
-    backgroundColor: colors.bg.canvas,
-    gap: spacing.lg,
-    padding: spacing.xl,
-    paddingBottom: spacing.xxxl,
-  },
-  error: {
-    color: colors.state.danger,
-  },
-  hint: {
-    color: colors.text.secondary,
-  },
-  label: {
-    color: colors.text.secondary,
-  },
-  // The back link keeps a 44-point tap target even though it is only as tall as
-  // its label.
-  link: {
-    justifyContent: 'center',
-    minHeight: 44,
-  },
-  linkText: {
-    color: colors.brand.primary,
-  },
-  // The row is left exactly as it was — the label then the switch — so this task
-  // changes the screen's tokens and its controls, not its layout
-  // (KNOT-020g-fix14).
-  switchRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-  },
-  title: {
-    color: colors.text.primary,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    buckets: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+    },
+    content: {
+      backgroundColor: colors.bg.canvas,
+      gap: spacing.lg,
+      padding: spacing.xl,
+      paddingBottom: spacing.xxxl,
+    },
+    error: {
+      color: colors.state.danger,
+    },
+    hint: {
+      color: colors.text.secondary,
+    },
+    label: {
+      color: colors.text.secondary,
+    },
+    // The back link keeps a 44-point tap target even though it is only as tall as
+    // its label.
+    link: {
+      justifyContent: 'center',
+      minHeight: 44,
+    },
+    linkText: {
+      color: colors.brand.primary,
+    },
+    // The row is left exactly as it was — the label then the switch — so this task
+    // changes the screen's tokens and its controls, not its layout
+    // (KNOT-020g-fix14).
+    switchRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+    },
+    title: {
+      color: colors.text.primary,
+    },
+  });

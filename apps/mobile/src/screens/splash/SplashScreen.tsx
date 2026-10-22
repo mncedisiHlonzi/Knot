@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import Logo from '../../components/Logo';
 import TheThread from '../../components/TheThread';
-import { colors, spacing, typeScale } from '../../theme';
+import { spacing, typeScale, useThemedStyles, type ThemeColors } from '../../theme';
 
 /** The logo's height on the splash, per the design brief (KNOT-020c). */
 const LOGO_HEIGHT = 44;
@@ -24,6 +24,7 @@ const THREAD_LENGTH = 120;
  * (KNOT-020h); there is no spinner, and no other motion on the screen.
  */
 export default function SplashScreen(): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.container}>
       <Logo height={LOGO_HEIGHT} />
@@ -35,22 +36,23 @@ export default function SplashScreen(): React.ReactElement {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    alignItems: 'center',
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.xxxl,
-  },
-  tagline: {
-    color: colors.text.secondary,
-    marginTop: spacing.lg,
-    textAlign: 'center',
-  },
-  // The line sits between the mark and the tagline, close enough to read as
-  // drawing the logo's underline.
-  thread: {
-    marginTop: spacing.lg,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    container: {
+      alignItems: 'center',
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.xxxl,
+    },
+    tagline: {
+      color: colors.text.secondary,
+      marginTop: spacing.lg,
+      textAlign: 'center',
+    },
+    // The line sits between the mark and the tagline, close enough to read as
+    // drawing the logo's underline.
+    thread: {
+      marginTop: spacing.lg,
+    },
+  });

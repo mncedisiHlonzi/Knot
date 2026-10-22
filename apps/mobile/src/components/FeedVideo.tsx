@@ -3,7 +3,8 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SpeakerHigh, SpeakerSlash } from 'phosphor-react-native';
 import Video, { type OnLoadData } from 'react-native-video';
 
-import { colors, radius, spacing, tabularNums, typeScale } from '../theme';
+import { radius, spacing, tabularNums, typeScale, useTheme, useThemedStyles } from '../theme';
+import type { ThemeColors } from '../theme';
 import { formatDuration } from './feedVideoMeta';
 
 /**
@@ -103,6 +104,8 @@ export default function FeedVideo({
   durationPosition = 'top-right',
   testID,
 }: FeedVideoProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   // The payload's duration, when it has one, is the first thing the badge can
   // show; the player replaces it with the authoritative value on load.
   const [durationSeconds, setDurationSeconds] = useState(() =>
@@ -190,53 +193,54 @@ export default function FeedVideo({
   );
 }
 
-const styles = StyleSheet.create({
-  badgeText: {
-    color: colors.text.onBrand,
-  },
-  container: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  durationBadge: {
-    backgroundColor: colors.scrim.overlay,
-    borderRadius: radius.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    position: 'absolute',
-  },
-  durationBottomLeft: {
-    bottom: spacing.sm,
-    left: spacing.sm,
-  },
-  durationTopRight: {
-    right: spacing.sm,
-    top: spacing.sm,
-  },
-  fallback: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: colors.bg.sunken,
-  },
-  mediaTag: {
-    backgroundColor: colors.scrim.overlay,
-    borderRadius: radius.sm,
-    left: spacing.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    position: 'absolute',
-    top: spacing.sm,
-  },
-  muteButton: {
-    alignItems: 'center',
-    backgroundColor: colors.scrim.overlay,
-    borderRadius: radius.pill,
-    bottom: spacing.sm,
-    height: VIDEO_MUTE_BUTTON_SIZE,
-    justifyContent: 'center',
-    position: 'absolute',
-    right: spacing.sm,
-    width: VIDEO_MUTE_BUTTON_SIZE,
-  },
-  video: {
-    ...StyleSheet.absoluteFillObject,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    badgeText: {
+      color: colors.text.onBrand,
+    },
+    container: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    durationBadge: {
+      backgroundColor: colors.scrim.overlay,
+      borderRadius: radius.sm,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 2,
+      position: 'absolute',
+    },
+    durationBottomLeft: {
+      bottom: spacing.sm,
+      left: spacing.sm,
+    },
+    durationTopRight: {
+      right: spacing.sm,
+      top: spacing.sm,
+    },
+    fallback: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: colors.bg.sunken,
+    },
+    mediaTag: {
+      backgroundColor: colors.scrim.overlay,
+      borderRadius: radius.sm,
+      left: spacing.sm,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 2,
+      position: 'absolute',
+      top: spacing.sm,
+    },
+    muteButton: {
+      alignItems: 'center',
+      backgroundColor: colors.scrim.overlay,
+      borderRadius: radius.pill,
+      bottom: spacing.sm,
+      height: VIDEO_MUTE_BUTTON_SIZE,
+      justifyContent: 'center',
+      position: 'absolute',
+      right: spacing.sm,
+      width: VIDEO_MUTE_BUTTON_SIZE,
+    },
+    video: {
+      ...StyleSheet.absoluteFillObject,
+    },
+  });

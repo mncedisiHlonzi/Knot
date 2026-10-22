@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, View } from 'react-native';
 
-import { colors, motion } from '../theme';
+import { motion, useThemedStyles, type ThemeColors } from '../theme';
 
 /** The line's thickness, per the design direction. */
 const THICKNESS = 1.5;
@@ -50,6 +50,7 @@ export default function TheThread({
   length = DEFAULT_LENGTH,
   testID,
 }: TheThreadProps): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   const progress = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -101,14 +102,15 @@ export default function TheThread({
   );
 }
 
-const styles = StyleSheet.create({
-  frame: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  line: {
-    backgroundColor: colors.brand.primary,
-    height: '100%',
-    width: '100%',
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    frame: {
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    line: {
+      backgroundColor: colors.brand.primary,
+      height: '100%',
+      width: '100%',
+    },
+  });

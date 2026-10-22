@@ -2,7 +2,8 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text } from 'react-native';
 import { X } from 'phosphor-react-native';
 
-import { colors, motion, radius, spacing, typeScale } from '../theme';
+import { motion, radius, spacing, typeScale, useTheme, useThemedStyles } from '../theme';
+import type { ThemeColors } from '../theme';
 
 type ChipProps = {
   /** The chip's text. */
@@ -46,6 +47,8 @@ export default function Chip({
   icon,
   testID,
 }: ChipProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const textColor = selected
     ? colors.brand.primary
     : variant === 'outline'
@@ -135,26 +138,27 @@ export default function Chip({
   );
 }
 
-const styles = StyleSheet.create({
-  chip: {
-    alignItems: 'center',
-    alignSelf: 'flex-start',
-    borderRadius: radius.pill,
-    flexDirection: 'row',
-    gap: spacing.xs,
-    height: HEIGHT,
-    paddingHorizontal: spacing.md,
-  },
-  leadingIcon: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  outline: {
-    borderColor: colors.border.hairline,
-    borderWidth: 1,
-  },
-  remove: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    chip: {
+      alignItems: 'center',
+      alignSelf: 'flex-start',
+      borderRadius: radius.pill,
+      flexDirection: 'row',
+      gap: spacing.xs,
+      height: HEIGHT,
+      paddingHorizontal: spacing.md,
+    },
+    leadingIcon: {
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    outline: {
+      borderColor: colors.border.hairline,
+      borderWidth: 1,
+    },
+    remove: {
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+  });

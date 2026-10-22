@@ -27,7 +27,8 @@ import Header from '../../components/Header';
 import LanguagePicker from '../../components/LanguagePicker';
 import ReportAction from '../../components/ReportAction';
 import { isLanguageCode } from '../../data/languages';
-import { colors, layout, radius, spacing, typeScale } from '../../theme';
+import { layout, radius, spacing, typeScale, useTheme, useThemedStyles } from '../../theme';
+import type { ThemeColors } from '../../theme';
 import {
   DEFAULT_COMPOSE_LANGUAGE,
   REPLIES_PREVIEW_COUNT,
@@ -101,6 +102,8 @@ export default function CommentThreadScreen({
   onOpenUserProfile,
   onBack,
 }: CommentThreadScreenProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [comments, setComments] = useState<readonly Comment[]>([]);
   const [nextCursor, setNextCursor] = useState('');
   const [loading, setLoading] = useState(true);
@@ -541,175 +544,176 @@ export default function CommentThreadScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  action: {
-    marginRight: spacing.lg,
-  },
-  actionText: {
-    color: colors.text.secondary,
-  },
-  actions: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: spacing.sm,
-  },
-  // A comment is a flat block on the canvas with a hairline between entries, the
-  // same reading as the feed — no card (KNOT-020d).
-  comment: {
-    paddingHorizontal: layout.screenPaddingReading,
-    paddingTop: spacing.lg,
-  },
-  commentBody: {
-    color: colors.text.secondary,
-    marginTop: spacing.sm,
-  },
-  commentHead: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  composer: {
-    borderTopColor: colors.border.hairline,
-    borderTopWidth: 1,
-    paddingBottom: spacing.xl,
-    paddingHorizontal: layout.screenPaddingReading,
-    paddingTop: spacing.md,
-  },
-  composerInput: {
-    borderColor: colors.border.hairline,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    color: colors.text.primary,
-    minHeight: 44,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  composerRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.md,
-    marginTop: spacing.md,
-  },
-  container: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-  error: {
-    color: colors.state.danger,
-    marginTop: spacing.sm,
-  },
-  // The modal's supporting line, under its title.
-  hint: {
-    color: colors.text.tertiary,
-    marginTop: spacing.sm,
-  },
-  iconButton: {
-    alignItems: 'center',
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
-  },
-  // The comment's ISO 639-3 code, shown beside the author.
-  languageCode: {
-    color: colors.text.tertiary,
-  },
-  languageChip: {
-    alignItems: 'center',
-    backgroundColor: colors.brand.tint,
-    borderRadius: radius.md,
-    flexDirection: 'row',
-    gap: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
-  },
-  languageChipChevron: {
-    color: colors.brand.primary,
-  },
-  languageChipText: {
-    color: colors.brand.primary,
-    maxWidth: 140,
-  },
-  linkText: {
-    color: colors.brand.primary,
-  },
-  list: {
-    paddingBottom: spacing.xl,
-  },
-  listError: {
-    color: colors.state.danger,
-    paddingHorizontal: layout.screenPaddingReading,
-    paddingTop: spacing.md,
-  },
-  loadMore: {
-    marginTop: spacing.lg,
-    paddingHorizontal: layout.screenPaddingReading,
-  },
-  modalBackdrop: {
-    backgroundColor: colors.scrim.overlay,
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  modalDone: {
-    marginLeft: spacing.md,
-  },
-  modalHeader: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  modalSheet: {
-    backgroundColor: colors.bg.canvas,
-    borderTopLeftRadius: radius.xxl,
-    borderTopRightRadius: radius.xxl,
-    maxHeight: '80%',
-    padding: spacing.xl,
-  },
-  modalTitle: {
-    color: colors.text.primary,
-  },
-  // The Post action takes the rest of the composer row.
-  postAction: {
-    flex: 1,
-  },
-  // A reply hangs off its parent with a hairline spine, indented so the thread
-  // reads as one unit (KNOT-ADR-049).
-  reply: {
-    borderLeftColor: colors.brand.tint,
-    borderLeftWidth: 1.5,
-    marginLeft: spacing.sm,
-    marginTop: spacing.md,
-    paddingLeft: spacing.lg,
-  },
-  replyBanner: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginBottom: spacing.sm,
-  },
-  replyBannerCancel: {
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  replyBannerCancelText: {
-    color: colors.text.tertiary,
-  },
-  replyBannerText: {
-    color: colors.text.tertiary,
-    flexShrink: 1,
-  },
-  replyBody: {
-    color: colors.text.secondary,
-    marginTop: spacing.xs,
-  },
-  // The hairline that separates one comment from the next.
-  separator: {
-    backgroundColor: colors.border.hairline,
-    height: 1,
-    marginTop: spacing.lg,
-  },
-  spinner: {
-    marginTop: spacing.xl,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    action: {
+      marginRight: spacing.lg,
+    },
+    actionText: {
+      color: colors.text.secondary,
+    },
+    actions: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      marginTop: spacing.sm,
+    },
+    // A comment is a flat block on the canvas with a hairline between entries, the
+    // same reading as the feed — no card (KNOT-020d).
+    comment: {
+      paddingHorizontal: layout.screenPaddingReading,
+      paddingTop: spacing.lg,
+    },
+    commentBody: {
+      color: colors.text.secondary,
+      marginTop: spacing.sm,
+    },
+    commentHead: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+    },
+    composer: {
+      borderTopColor: colors.border.hairline,
+      borderTopWidth: 1,
+      paddingBottom: spacing.xl,
+      paddingHorizontal: layout.screenPaddingReading,
+      paddingTop: spacing.md,
+    },
+    composerInput: {
+      borderColor: colors.border.hairline,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      color: colors.text.primary,
+      minHeight: 44,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    composerRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.md,
+      marginTop: spacing.md,
+    },
+    container: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    error: {
+      color: colors.state.danger,
+      marginTop: spacing.sm,
+    },
+    // The modal's supporting line, under its title.
+    hint: {
+      color: colors.text.tertiary,
+      marginTop: spacing.sm,
+    },
+    iconButton: {
+      alignItems: 'center',
+      height: 44,
+      justifyContent: 'center',
+      width: 44,
+    },
+    // The comment's ISO 639-3 code, shown beside the author.
+    languageCode: {
+      color: colors.text.tertiary,
+    },
+    languageChip: {
+      alignItems: 'center',
+      backgroundColor: colors.brand.tint,
+      borderRadius: radius.md,
+      flexDirection: 'row',
+      gap: spacing.xs,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.sm,
+    },
+    languageChipChevron: {
+      color: colors.brand.primary,
+    },
+    languageChipText: {
+      color: colors.brand.primary,
+      maxWidth: 140,
+    },
+    linkText: {
+      color: colors.brand.primary,
+    },
+    list: {
+      paddingBottom: spacing.xl,
+    },
+    listError: {
+      color: colors.state.danger,
+      paddingHorizontal: layout.screenPaddingReading,
+      paddingTop: spacing.md,
+    },
+    loadMore: {
+      marginTop: spacing.lg,
+      paddingHorizontal: layout.screenPaddingReading,
+    },
+    modalBackdrop: {
+      backgroundColor: colors.scrim.overlay,
+      flex: 1,
+      justifyContent: 'flex-end',
+    },
+    modalDone: {
+      marginLeft: spacing.md,
+    },
+    modalHeader: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+    },
+    modalSheet: {
+      backgroundColor: colors.bg.canvas,
+      borderTopLeftRadius: radius.xxl,
+      borderTopRightRadius: radius.xxl,
+      maxHeight: '80%',
+      padding: spacing.xl,
+    },
+    modalTitle: {
+      color: colors.text.primary,
+    },
+    // The Post action takes the rest of the composer row.
+    postAction: {
+      flex: 1,
+    },
+    // A reply hangs off its parent with a hairline spine, indented so the thread
+    // reads as one unit (KNOT-ADR-049).
+    reply: {
+      borderLeftColor: colors.brand.tint,
+      borderLeftWidth: 1.5,
+      marginLeft: spacing.sm,
+      marginTop: spacing.md,
+      paddingLeft: spacing.lg,
+    },
+    replyBanner: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginBottom: spacing.sm,
+    },
+    replyBannerCancel: {
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+    },
+    replyBannerCancelText: {
+      color: colors.text.tertiary,
+    },
+    replyBannerText: {
+      color: colors.text.tertiary,
+      flexShrink: 1,
+    },
+    replyBody: {
+      color: colors.text.secondary,
+      marginTop: spacing.xs,
+    },
+    // The hairline that separates one comment from the next.
+    separator: {
+      backgroundColor: colors.border.hairline,
+      height: 1,
+      marginTop: spacing.lg,
+    },
+    spinner: {
+      marginTop: spacing.xl,
+    },
+  });

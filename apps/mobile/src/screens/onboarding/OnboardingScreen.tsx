@@ -7,7 +7,7 @@ import EmptyNoStories from '../../assets/brand/empty-no-stories.svg';
 import OnboardingHero from '../../assets/brand/onboarding-hero.svg';
 import Button from '../../components/Button';
 import SvgImage from '../../components/SvgImage';
-import { colors, radius, spacing, typeScale } from '../../theme';
+import { radius, spacing, typeScale, useThemedStyles, type ThemeColors } from '../../theme';
 import {
   ONBOARDING_SLIDES,
   type OnboardingIllustration,
@@ -50,6 +50,7 @@ type OnboardingScreenProps = {
  * presentation and the local slide index.
  */
 export default function OnboardingScreen({ onDone }: OnboardingScreenProps): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   const [index, setIndex] = useState(0);
   const slide = ONBOARDING_SLIDES[index];
   const size = ILLUSTRATION_SIZE[slide.illustration];
@@ -96,54 +97,55 @@ export default function OnboardingScreen({ onDone }: OnboardingScreenProps): Rea
   );
 }
 
-const styles = StyleSheet.create({
-  body: {
-    color: colors.text.secondary,
-    marginTop: spacing.md,
-    textAlign: 'center',
-  },
-  container: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-  content: {
-    alignItems: 'center',
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.xl,
-  },
-  dot: {
-    backgroundColor: colors.bg.sunken,
-    borderRadius: radius.pill,
-    height: 8,
-    width: 8,
-  },
-  dotActive: {
-    backgroundColor: colors.brand.primary,
-  },
-  dots: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    justifyContent: 'center',
-    marginTop: spacing.xl,
-  },
-  footer: {
-    alignItems: 'center',
-    borderTopColor: colors.border.hairline,
-    borderTopWidth: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingBottom: spacing.lg,
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.md,
-  },
-  headline: {
-    color: colors.text.primary,
-    marginTop: spacing.xl,
-    textAlign: 'center',
-  },
-  illustration: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    body: {
+      color: colors.text.secondary,
+      marginTop: spacing.md,
+      textAlign: 'center',
+    },
+    container: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    content: {
+      alignItems: 'center',
+      flex: 1,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.xl,
+    },
+    dot: {
+      backgroundColor: colors.bg.sunken,
+      borderRadius: radius.pill,
+      height: 8,
+      width: 8,
+    },
+    dotActive: {
+      backgroundColor: colors.brand.primary,
+    },
+    dots: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+      justifyContent: 'center',
+      marginTop: spacing.xl,
+    },
+    footer: {
+      alignItems: 'center',
+      borderTopColor: colors.border.hairline,
+      borderTopWidth: 1,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingBottom: spacing.lg,
+      paddingHorizontal: spacing.xl,
+      paddingTop: spacing.md,
+    },
+    headline: {
+      color: colors.text.primary,
+      marginTop: spacing.xl,
+      textAlign: 'center',
+    },
+    illustration: {
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+  });

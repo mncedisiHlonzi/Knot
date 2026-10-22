@@ -19,7 +19,8 @@ import {
   reportReasonError,
   reportsApi,
 } from '../api/moderation';
-import { colors, radius, spacing, typeScale } from '../theme';
+import { radius, spacing, typeScale, useTheme, useThemedStyles } from '../theme';
+import type { ThemeColors } from '../theme';
 
 type ReportModalProps = {
   /** Whether the modal is shown. */
@@ -54,6 +55,8 @@ export default function ReportModal({
   onClose,
   onSubmitted,
 }: ReportModalProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [category, setCategory] = useState<ReportCategory>('harassment');
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -170,115 +173,116 @@ export default function ReportModal({
   );
 }
 
-const styles = StyleSheet.create({
-  actions: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginTop: spacing.lg,
-  },
-  // The modal scrim: the one documented overlay colour, so it is a token rather
-  // than a literal (KNOT-020g-fix15).
-  backdrop: {
-    alignItems: 'center',
-    backgroundColor: colors.scrim.overlay,
-    flex: 1,
-    justifyContent: 'center',
-    padding: spacing.lg,
-  },
-  button: {
-    alignItems: 'center',
-    borderRadius: radius.md,
-    justifyContent: 'center',
-    minWidth: 96,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-  },
-  cancel: {
-    borderColor: colors.border.hairline,
-    borderWidth: 1,
-    marginRight: spacing.sm,
-  },
-  cancelText: {
-    color: colors.text.primary,
-  },
-  card: {
-    backgroundColor: colors.bg.paper,
-    borderColor: colors.border.hairline,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    maxHeight: '85%',
-    padding: spacing.lg,
-    width: '100%',
-  },
-  categories: {
-    marginTop: spacing.md,
-    maxHeight: 220,
-  },
-  categoryLabel: {
-    color: colors.text.primary,
-    marginLeft: spacing.sm,
-  },
-  categoryRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    paddingVertical: spacing.sm,
-  },
-  disabled: {
-    opacity: 0.6,
-  },
-  error: {
-    color: colors.state.danger,
-    marginTop: spacing.md,
-  },
-  input: {
-    backgroundColor: colors.bg.sunken,
-    borderColor: colors.border.hairline,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    color: colors.text.primary,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  label: {
-    color: colors.text.secondary,
-    marginBottom: spacing.xs,
-    marginTop: spacing.lg,
-  },
-  multiline: {
-    minHeight: 80,
-    textAlignVertical: 'top',
-  },
-  radio: {
-    alignItems: 'center',
-    borderColor: colors.border.hairline,
-    borderRadius: 10,
-    borderWidth: 2,
-    height: 20,
-    justifyContent: 'center',
-    width: 20,
-  },
-  radioDot: {
-    backgroundColor: colors.brand.primary,
-    borderRadius: 5,
-    height: 10,
-    width: 10,
-  },
-  radioOn: {
-    borderColor: colors.brand.primary,
-  },
-  submit: {
-    backgroundColor: colors.brand.primary,
-  },
-  // A primary fill takes the on-brand ink, which is the design system's fix for
-  // the dark-on-indigo label this used to draw (KNOT-020b).
-  submitText: {
-    color: colors.text.onBrand,
-  },
-  subtitle: {
-    color: colors.text.secondary,
-    marginTop: spacing.xs,
-  },
-  title: {
-    color: colors.text.primary,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    actions: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      marginTop: spacing.lg,
+    },
+    // The modal scrim: the one documented overlay colour, so it is a token rather
+    // than a literal (KNOT-020g-fix15).
+    backdrop: {
+      alignItems: 'center',
+      backgroundColor: colors.scrim.overlay,
+      flex: 1,
+      justifyContent: 'center',
+      padding: spacing.lg,
+    },
+    button: {
+      alignItems: 'center',
+      borderRadius: radius.md,
+      justifyContent: 'center',
+      minWidth: 96,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.sm,
+    },
+    cancel: {
+      borderColor: colors.border.hairline,
+      borderWidth: 1,
+      marginRight: spacing.sm,
+    },
+    cancelText: {
+      color: colors.text.primary,
+    },
+    card: {
+      backgroundColor: colors.bg.paper,
+      borderColor: colors.border.hairline,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      maxHeight: '85%',
+      padding: spacing.lg,
+      width: '100%',
+    },
+    categories: {
+      marginTop: spacing.md,
+      maxHeight: 220,
+    },
+    categoryLabel: {
+      color: colors.text.primary,
+      marginLeft: spacing.sm,
+    },
+    categoryRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      paddingVertical: spacing.sm,
+    },
+    disabled: {
+      opacity: 0.6,
+    },
+    error: {
+      color: colors.state.danger,
+      marginTop: spacing.md,
+    },
+    input: {
+      backgroundColor: colors.bg.sunken,
+      borderColor: colors.border.hairline,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      color: colors.text.primary,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    label: {
+      color: colors.text.secondary,
+      marginBottom: spacing.xs,
+      marginTop: spacing.lg,
+    },
+    multiline: {
+      minHeight: 80,
+      textAlignVertical: 'top',
+    },
+    radio: {
+      alignItems: 'center',
+      borderColor: colors.border.hairline,
+      borderRadius: 10,
+      borderWidth: 2,
+      height: 20,
+      justifyContent: 'center',
+      width: 20,
+    },
+    radioDot: {
+      backgroundColor: colors.brand.primary,
+      borderRadius: 5,
+      height: 10,
+      width: 10,
+    },
+    radioOn: {
+      borderColor: colors.brand.primary,
+    },
+    submit: {
+      backgroundColor: colors.brand.primary,
+    },
+    // A primary fill takes the on-brand ink, which is the design system's fix for
+    // the dark-on-indigo label this used to draw (KNOT-020b).
+    submitText: {
+      color: colors.text.onBrand,
+    },
+    subtitle: {
+      color: colors.text.secondary,
+      marginTop: spacing.xs,
+    },
+    title: {
+      color: colors.text.primary,
+    },
+  });

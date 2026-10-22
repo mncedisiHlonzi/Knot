@@ -17,7 +17,8 @@ import Video from 'react-native-video';
 
 import type { StoryMedia } from '../api/stories';
 import { API_BASE_URL } from '../config/api';
-import { colors, radius, spacing, typeScale } from '../theme';
+import { radius, spacing, typeScale, useTheme, useThemedStyles } from '../theme';
+import type { ThemeColors } from '../theme';
 import CameraCaptureBadge from './CameraCaptureBadge';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -59,6 +60,8 @@ type ZoomableImageProps = {
  * zoomed. A double tap resets the zoom.
  */
 function ZoomableImage({ uri }: ZoomableImageProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [loading, setLoading] = useState(true);
 
   const scale = useRef(new Animated.Value(1)).current;
@@ -185,6 +188,8 @@ type VideoPlayerProps = {
  * consistently under the browser-style top bar.
  */
 function VideoPlayer({ uri }: VideoPlayerProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const videoRef = useRef<React.ComponentRef<typeof Video>>(null);
   const [paused, setPaused] = useState(false);
   const [current, setCurrent] = useState(0);
@@ -271,6 +276,7 @@ export default function MediaGalleryModal({
   initialIndex,
   onClose,
 }: MediaGalleryModalProps): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   const [index, setIndex] = useState(initialIndex);
   const translateY = useRef(new Animated.Value(0)).current;
 
@@ -373,85 +379,86 @@ export default function MediaGalleryModal({
   );
 }
 
-const styles = StyleSheet.create({
-  backdrop: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-  badge: {
-    left: spacing.xl,
-    position: 'absolute',
-    top: spacing.xxxl,
-  },
-  close: {
-    borderColor: colors.border.hairline,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.sm,
-    position: 'absolute',
-    right: spacing.xl,
-    top: spacing.xxxl,
-  },
-  closeText: {
-    color: colors.text.primary,
-  },
-  controls: {
-    alignItems: 'center',
-    bottom: spacing.xxxl,
-    flexDirection: 'row',
-    left: spacing.xl,
-    position: 'absolute',
-    right: spacing.xl,
-  },
-  counter: {
-    alignSelf: 'center',
-    bottom: spacing.lg,
-    color: colors.text.secondary,
-    position: 'absolute',
-  },
-  fullMedia: {
-    height: SCREEN_HEIGHT,
-    width: SCREEN_WIDTH,
-  },
-  loader: {
-    position: 'absolute',
-  },
-  page: {
-    alignItems: 'center',
-    height: SCREEN_HEIGHT,
-    justifyContent: 'center',
-    width: SCREEN_WIDTH,
-  },
-  playButton: {
-    alignItems: 'center',
-    backgroundColor: colors.bg.paper,
-    borderColor: colors.border.hairline,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    height: 40,
-    justifyContent: 'center',
-    width: 40,
-  },
-  playButtonText: {
-    color: colors.text.primary,
-  },
-  time: {
-    color: colors.text.primary,
-    marginLeft: spacing.md,
-    minWidth: 84,
-    textAlign: 'right',
-  },
-  track: {
-    backgroundColor: colors.bg.paper,
-    borderRadius: radius.pill,
-    flex: 1,
-    height: 6,
-    marginLeft: spacing.md,
-    overflow: 'hidden',
-  },
-  trackFill: {
-    backgroundColor: colors.brand.primary,
-    height: 6,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    backdrop: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    badge: {
+      left: spacing.xl,
+      position: 'absolute',
+      top: spacing.xxxl,
+    },
+    close: {
+      borderColor: colors.border.hairline,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.sm,
+      position: 'absolute',
+      right: spacing.xl,
+      top: spacing.xxxl,
+    },
+    closeText: {
+      color: colors.text.primary,
+    },
+    controls: {
+      alignItems: 'center',
+      bottom: spacing.xxxl,
+      flexDirection: 'row',
+      left: spacing.xl,
+      position: 'absolute',
+      right: spacing.xl,
+    },
+    counter: {
+      alignSelf: 'center',
+      bottom: spacing.lg,
+      color: colors.text.secondary,
+      position: 'absolute',
+    },
+    fullMedia: {
+      height: SCREEN_HEIGHT,
+      width: SCREEN_WIDTH,
+    },
+    loader: {
+      position: 'absolute',
+    },
+    page: {
+      alignItems: 'center',
+      height: SCREEN_HEIGHT,
+      justifyContent: 'center',
+      width: SCREEN_WIDTH,
+    },
+    playButton: {
+      alignItems: 'center',
+      backgroundColor: colors.bg.paper,
+      borderColor: colors.border.hairline,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      height: 40,
+      justifyContent: 'center',
+      width: 40,
+    },
+    playButtonText: {
+      color: colors.text.primary,
+    },
+    time: {
+      color: colors.text.primary,
+      marginLeft: spacing.md,
+      minWidth: 84,
+      textAlign: 'right',
+    },
+    track: {
+      backgroundColor: colors.bg.paper,
+      borderRadius: radius.pill,
+      flex: 1,
+      height: 6,
+      marginLeft: spacing.md,
+      overflow: 'hidden',
+    },
+    trackFill: {
+      backgroundColor: colors.brand.primary,
+      height: 6,
+    },
+  });

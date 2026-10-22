@@ -27,7 +27,8 @@ import {
   mediaCountLabel,
   remainingMediaSlots,
 } from '../../utils/mediaLimit';
-import { colors, layout, radius, spacing, typeScale } from '../../theme';
+import { layout, radius, spacing, typeScale, useTheme, useThemedStyles } from '../../theme';
+import type { ThemeColors } from '../../theme';
 
 type CreateStoryScreenProps = {
   /** The signed-in user's access token. The server derives the author from it. */
@@ -106,6 +107,8 @@ export default function CreateStoryScreen({
   onCreated,
   onCancel,
 }: CreateStoryScreenProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [pillar, setPillar] = useState<Pillar>('wonder');
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
@@ -383,121 +386,122 @@ export default function CreateStoryScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  // The "add media" tile: a dashed outline in the hairline ink, so it reads as an
-  // empty slot rather than as a button, with the indigo plus as its one strong mark.
-  addMedia: {
-    alignItems: 'center',
-    borderColor: colors.border.hairline,
-    borderRadius: radius.md,
-    borderStyle: 'dashed',
-    borderWidth: 1,
-    gap: spacing.xs,
-    height: THUMBNAIL_SIZE,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.sm,
-    width: THUMBNAIL_SIZE,
-  },
-  addMediaText: {
-    color: colors.brand.primary,
-    textAlign: 'center',
-  },
-  badge: {
-    position: 'absolute',
-    left: spacing.xs,
-    top: spacing.xs,
-  },
-  buttonDisabled: {
-    opacity: 0.5,
-  },
-  // The header's Cancel: a text control rather than a glyph, because leaving a tab
-  // is not a "close".
-  cancel: {
-    paddingRight: spacing.sm,
-  },
-  cancelText: {
-    color: colors.brand.primary,
-  },
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  container: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-  content: {
-    paddingBottom: spacing.xxxl,
-    paddingHorizontal: layout.screenPaddingReading,
-    paddingTop: spacing.sm,
-  },
-  error: {
-    color: colors.state.danger,
-    marginTop: spacing.md,
-  },
-  // One labelled field, with the inquiry form's vertical rhythm.
-  field: {
-    marginTop: spacing.lg,
-  },
-  headline: {
-    color: colors.text.primary,
-  },
-  label: {
-    color: colors.text.secondary,
-    marginBottom: spacing.sm,
-    marginTop: spacing.xl,
-  },
-  // The "N / 10" counter under the strip, and the notice when a pick was cut
-  // down to the free slots (KNOT-ADR-054).
-  mediaCount: {
-    color: colors.text.tertiary,
-    marginTop: spacing.sm,
-  },
-  mediaNotice: {
-    color: colors.state.danger,
-    marginTop: spacing.xs,
-  },
-  // The thumbnail's remove control: a filled indigo dot on the tile's corner, with
-  // hit slop taking it past the 44-point target the 22-point dot cannot reach on
-  // its own.
-  removeButton: {
-    alignItems: 'center',
-    backgroundColor: colors.brand.primary,
-    borderRadius: radius.pill,
-    height: 22,
-    justifyContent: 'center',
-    position: 'absolute',
-    right: -6,
-    top: -6,
-    width: 22,
-  },
-  submit: {
-    marginTop: spacing.xl,
-  },
-  subtitle: {
-    color: colors.text.secondary,
-    marginTop: spacing.xs,
-  },
-  thumbnail: {
-    height: THUMBNAIL_SIZE,
-    marginLeft: spacing.md,
-    width: THUMBNAIL_SIZE,
-  },
-  thumbnailImage: {
-    backgroundColor: colors.bg.sunken,
-    borderRadius: radius.md,
-    height: THUMBNAIL_SIZE,
-    width: THUMBNAIL_SIZE,
-  },
-  thumbnails: {
-    marginTop: spacing.sm,
-  },
-  thumbnailsContent: {
-    paddingRight: spacing.sm,
-  },
-  videoPlaceholder: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    // The "add media" tile: a dashed outline in the hairline ink, so it reads as an
+    // empty slot rather than as a button, with the indigo plus as its one strong mark.
+    addMedia: {
+      alignItems: 'center',
+      borderColor: colors.border.hairline,
+      borderRadius: radius.md,
+      borderStyle: 'dashed',
+      borderWidth: 1,
+      gap: spacing.xs,
+      height: THUMBNAIL_SIZE,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.sm,
+      width: THUMBNAIL_SIZE,
+    },
+    addMediaText: {
+      color: colors.brand.primary,
+      textAlign: 'center',
+    },
+    badge: {
+      position: 'absolute',
+      left: spacing.xs,
+      top: spacing.xs,
+    },
+    buttonDisabled: {
+      opacity: 0.5,
+    },
+    // The header's Cancel: a text control rather than a glyph, because leaving a tab
+    // is not a "close".
+    cancel: {
+      paddingRight: spacing.sm,
+    },
+    cancelText: {
+      color: colors.brand.primary,
+    },
+    chipRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+    },
+    container: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    content: {
+      paddingBottom: spacing.xxxl,
+      paddingHorizontal: layout.screenPaddingReading,
+      paddingTop: spacing.sm,
+    },
+    error: {
+      color: colors.state.danger,
+      marginTop: spacing.md,
+    },
+    // One labelled field, with the inquiry form's vertical rhythm.
+    field: {
+      marginTop: spacing.lg,
+    },
+    headline: {
+      color: colors.text.primary,
+    },
+    label: {
+      color: colors.text.secondary,
+      marginBottom: spacing.sm,
+      marginTop: spacing.xl,
+    },
+    // The "N / 10" counter under the strip, and the notice when a pick was cut
+    // down to the free slots (KNOT-ADR-054).
+    mediaCount: {
+      color: colors.text.tertiary,
+      marginTop: spacing.sm,
+    },
+    mediaNotice: {
+      color: colors.state.danger,
+      marginTop: spacing.xs,
+    },
+    // The thumbnail's remove control: a filled indigo dot on the tile's corner, with
+    // hit slop taking it past the 44-point target the 22-point dot cannot reach on
+    // its own.
+    removeButton: {
+      alignItems: 'center',
+      backgroundColor: colors.brand.primary,
+      borderRadius: radius.pill,
+      height: 22,
+      justifyContent: 'center',
+      position: 'absolute',
+      right: -6,
+      top: -6,
+      width: 22,
+    },
+    submit: {
+      marginTop: spacing.xl,
+    },
+    subtitle: {
+      color: colors.text.secondary,
+      marginTop: spacing.xs,
+    },
+    thumbnail: {
+      height: THUMBNAIL_SIZE,
+      marginLeft: spacing.md,
+      width: THUMBNAIL_SIZE,
+    },
+    thumbnailImage: {
+      backgroundColor: colors.bg.sunken,
+      borderRadius: radius.md,
+      height: THUMBNAIL_SIZE,
+      width: THUMBNAIL_SIZE,
+    },
+    thumbnails: {
+      marginTop: spacing.sm,
+    },
+    thumbnailsContent: {
+      paddingRight: spacing.sm,
+    },
+    videoPlaceholder: {
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+  });

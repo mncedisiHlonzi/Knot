@@ -15,7 +15,16 @@ import { NOTIFICATIONS_PAGE_SIZE, Notification, notificationsApi } from '../../a
 import Avatar from '../../components/Avatar';
 import EmptyState from '../../components/EmptyState';
 import Header from '../../components/Header';
-import { colors, fontWeights, layout, radius, spacing, typeScale } from '../../theme';
+import {
+  fontWeights,
+  layout,
+  radius,
+  spacing,
+  typeScale,
+  useTheme,
+  useThemedStyles,
+} from '../../theme';
+import type { ThemeColors } from '../../theme';
 import { formatRelativeTime } from '../../utils/time';
 import { avatarUri, notificationParts } from './notificationFormat';
 
@@ -49,6 +58,8 @@ export default function NotificationsScreen({
   onOpenEntity,
   onBack,
 }: NotificationsScreenProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [notifications, setNotifications] = useState<readonly Notification[]>([]);
   const [nextCursor, setNextCursor] = useState('');
   const [loading, setLoading] = useState(true);
@@ -278,87 +289,88 @@ export default function NotificationsScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  // Inline emphasis inside the sentence: the actor's name takes the primary ink
-  // and the heavier weight, while the clause stays in the body ink. Only colour
-  // and weight are overridden — never the size or the line height — so the
-  // paragraph keeps one rhythm; there is no bold variant of `typeScale.body`
-  // (KNOT-020f).
-  actor: {
-    color: colors.text.primary,
-    fontWeight: fontWeights.bold,
-  },
-  content: {
-    paddingBottom: spacing.xxxl,
-  },
-  error: {
-    color: colors.state.danger,
-    marginVertical: spacing.lg,
-    paddingHorizontal: layout.screenPaddingFeed,
-    textAlign: 'center',
-  },
-  // A 44-point tap target for the header's leading icon button.
-  iconButton: {
-    alignItems: 'center',
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
-  },
-  // The header's trailing action: body text in the brand ink, inside a 44-point
-  // tap target even though it is only as tall as its label.
-  markAllButton: {
-    alignItems: 'center',
-    height: 44,
-    justifyContent: 'flex-end',
-    paddingHorizontal: spacing.xs,
-  },
-  markAllLabel: {
-    color: colors.brand.primary,
-  },
-  more: {
-    alignItems: 'center',
-    paddingVertical: spacing.lg,
-  },
-  moreLabel: {
-    color: colors.brand.primary,
-  },
-  // One inbox row: the actor's avatar, the sentence, and when it happened, on a
-  // hairline. An unread row carries the paper tint and an indigo dot; a read row
-  // is the bare canvas with neither.
-  row: {
-    alignItems: 'flex-start',
-    borderBottomColor: colors.border.hairline,
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.md,
-    paddingHorizontal: layout.screenPaddingFeed,
-    paddingVertical: spacing.md,
-  },
-  rowBody: {
-    flex: 1,
-    gap: spacing.xs,
-  },
-  rowUnread: {
-    backgroundColor: colors.bg.paper,
-  },
-  screen: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-  sentence: {
-    color: colors.text.secondary,
-  },
-  spinner: {
-    marginTop: spacing.xl,
-  },
-  unreadDot: {
-    backgroundColor: colors.brand.primary,
-    borderRadius: radius.pill,
-    height: 8,
-    marginTop: spacing.sm,
-    width: 8,
-  },
-  when: {
-    color: colors.text.tertiary,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    // Inline emphasis inside the sentence: the actor's name takes the primary ink
+    // and the heavier weight, while the clause stays in the body ink. Only colour
+    // and weight are overridden — never the size or the line height — so the
+    // paragraph keeps one rhythm; there is no bold variant of `typeScale.body`
+    // (KNOT-020f).
+    actor: {
+      color: colors.text.primary,
+      fontWeight: fontWeights.bold,
+    },
+    content: {
+      paddingBottom: spacing.xxxl,
+    },
+    error: {
+      color: colors.state.danger,
+      marginVertical: spacing.lg,
+      paddingHorizontal: layout.screenPaddingFeed,
+      textAlign: 'center',
+    },
+    // A 44-point tap target for the header's leading icon button.
+    iconButton: {
+      alignItems: 'center',
+      height: 44,
+      justifyContent: 'center',
+      width: 44,
+    },
+    // The header's trailing action: body text in the brand ink, inside a 44-point
+    // tap target even though it is only as tall as its label.
+    markAllButton: {
+      alignItems: 'center',
+      height: 44,
+      justifyContent: 'flex-end',
+      paddingHorizontal: spacing.xs,
+    },
+    markAllLabel: {
+      color: colors.brand.primary,
+    },
+    more: {
+      alignItems: 'center',
+      paddingVertical: spacing.lg,
+    },
+    moreLabel: {
+      color: colors.brand.primary,
+    },
+    // One inbox row: the actor's avatar, the sentence, and when it happened, on a
+    // hairline. An unread row carries the paper tint and an indigo dot; a read row
+    // is the bare canvas with neither.
+    row: {
+      alignItems: 'flex-start',
+      borderBottomColor: colors.border.hairline,
+      borderBottomWidth: 1,
+      flexDirection: 'row',
+      gap: spacing.md,
+      paddingHorizontal: layout.screenPaddingFeed,
+      paddingVertical: spacing.md,
+    },
+    rowBody: {
+      flex: 1,
+      gap: spacing.xs,
+    },
+    rowUnread: {
+      backgroundColor: colors.bg.paper,
+    },
+    screen: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    sentence: {
+      color: colors.text.secondary,
+    },
+    spinner: {
+      marginTop: spacing.xl,
+    },
+    unreadDot: {
+      backgroundColor: colors.brand.primary,
+      borderRadius: radius.pill,
+      height: 8,
+      marginTop: spacing.sm,
+      width: 8,
+    },
+    when: {
+      color: colors.text.tertiary,
+    },
+  });

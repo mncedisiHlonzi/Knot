@@ -2,6 +2,11 @@
 module.exports = {
   testEnvironment: 'node',
   testMatch: ['**/__tests__/**/*.test.ts'],
+  // Components read the active theme through `React.useContext`, which throws
+  // outside a render — and these suites call components directly, with no
+  // renderer. The setup file supplies the default (light) theme for every suite
+  // once, instead of each suite repeating the mock (KNOT-020i).
+  setupFiles: ['<rootDir>/jest.setup.js'],
   // Jest resolves modules through Node, which does not read the committed
   // `secrets.local.d.ts` type shim. The gitignored `secrets.local.ts` is
   // therefore absent on a fresh clone (CI), so importing `./secrets.local`

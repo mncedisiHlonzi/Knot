@@ -4,7 +4,7 @@ import { ScrollView, StyleSheet, Text } from 'react-native';
 import { api, AuthResponse, describeError } from '../../api/client';
 import Button from '../../components/Button';
 import Input from '../../components/Input';
-import { colors, spacing, typeScale } from '../../theme';
+import { spacing, typeScale, useThemedStyles, type ThemeColors } from '../../theme';
 
 type LoginScreenProps = {
   /** Called with the issued tokens and user once login succeeds. */
@@ -39,6 +39,7 @@ export default function LoginScreen({
   onAuthenticated,
   onSwitchToRegister,
 }: LoginScreenProps): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | undefined>(undefined);
@@ -116,16 +117,17 @@ export default function LoginScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  content: {
-    backgroundColor: colors.bg.canvas,
-    gap: spacing.lg,
-    padding: spacing.xl,
-  },
-  error: {
-    color: colors.state.danger,
-  },
-  title: {
-    color: colors.text.primary,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    content: {
+      backgroundColor: colors.bg.canvas,
+      gap: spacing.lg,
+      padding: spacing.xl,
+    },
+    error: {
+      color: colors.state.danger,
+    },
+    title: {
+      color: colors.text.primary,
+    },
+  });

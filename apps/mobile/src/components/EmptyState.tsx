@@ -6,7 +6,7 @@ import NoInquiries from '../assets/brand/empty-no-inquiries.svg';
 import NoNotifications from '../assets/brand/empty-no-notifications.svg';
 import NoResults from '../assets/brand/empty-no-results.svg';
 import NoStories from '../assets/brand/empty-no-stories.svg';
-import { colors, radius, spacing, typeScale } from '../theme';
+import { radius, spacing, typeScale, useThemedStyles, type ThemeColors } from '../theme';
 import Button from './Button';
 import SvgImage from './SvgImage';
 
@@ -59,6 +59,7 @@ export default function EmptyState({
   action,
   testID,
 }: EmptyStateProps): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   const artwork =
     illustration ??
     (illustrationName !== undefined ? (
@@ -83,34 +84,35 @@ export default function EmptyState({
   );
 }
 
-const styles = StyleSheet.create({
-  action: {
-    marginTop: spacing.xl,
-  },
-  body: {
-    color: colors.text.secondary,
-    marginTop: spacing.sm,
-    textAlign: 'center',
-  },
-  container: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.xl,
-    paddingVertical: spacing.xxl,
-  },
-  headline: {
-    color: colors.text.primary,
-    textAlign: 'center',
-  },
-  illustration: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.lg,
-  },
-  placeholder: {
-    backgroundColor: colors.bg.sunken,
-    borderRadius: radius.pill,
-    height: 72,
-    width: 72,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    action: {
+      marginTop: spacing.xl,
+    },
+    body: {
+      color: colors.text.secondary,
+      marginTop: spacing.sm,
+      textAlign: 'center',
+    },
+    container: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: spacing.xl,
+      paddingVertical: spacing.xxl,
+    },
+    headline: {
+      color: colors.text.primary,
+      textAlign: 'center',
+    },
+    illustration: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginBottom: spacing.lg,
+    },
+    placeholder: {
+      backgroundColor: colors.bg.sunken,
+      borderRadius: radius.pill,
+      height: 72,
+      width: 72,
+    },
+  });

@@ -10,6 +10,7 @@ import ConfirmSheet from '../ConfirmSheet';
  */
 jest.mock('react', () => ({
   ...jest.requireActual('react'),
+  useContext: () => jest.requireActual('../../theme/ThemeContext').lightTheme,
   useCallback: (callback: unknown) => callback,
   useEffect: () => undefined,
   useRef: (value: unknown) => ({ current: value }),

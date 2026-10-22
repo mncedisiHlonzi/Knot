@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { colors, elevation, radius, spacing, typeScale } from '../theme';
+import { elevation, radius, spacing, typeScale, useThemedStyles } from '../theme';
+import type { ThemeColors } from '../theme';
 import Button from './Button';
 
 type ConfirmSheetProps = {
@@ -62,6 +63,7 @@ export default function ConfirmSheet({
   destructive = false,
   testID,
 }: ConfirmSheetProps): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   // The confirming action runs at most once per showing. A double tap, or a tap
   // that lands as the sheet slides away, is ignored, so the caller's effect can
   // never be applied twice. The guard resets when the sheet is hidden again, so
@@ -127,46 +129,47 @@ export default function ConfirmSheet({
   );
 }
 
-const styles = StyleSheet.create({
-  actions: {
-    gap: spacing.sm,
-    marginTop: spacing.lg,
-  },
-  backdrop: {
-    backgroundColor: colors.scrim.overlay,
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  body: {
-    paddingHorizontal: spacing.lg,
-  },
-  handle: {
-    backgroundColor: colors.border.hairline,
-    borderRadius: radius.pill,
-    height: 4,
-    width: 32,
-  },
-  handleArea: {
-    alignItems: 'center',
-    paddingBottom: spacing.sm,
-    paddingTop: spacing.sm,
-  },
-  // The explanation takes the secondary ink and the smaller body size, so the
-  // question stays the loudest thing in the sheet.
-  message: {
-    color: colors.text.secondary,
-    marginTop: spacing.sm,
-  },
-  // The sheet: rounded top corners, the canvas fill, and the floating-bar shadow
-  // (elevation 3, whose offset points up) — the profile options sheet's treatment.
-  sheet: {
-    ...elevation[3],
-    backgroundColor: colors.bg.canvas,
-    borderTopLeftRadius: radius.xxl,
-    borderTopRightRadius: radius.xxl,
-    paddingBottom: spacing.xl,
-  },
-  title: {
-    color: colors.text.primary,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    actions: {
+      gap: spacing.sm,
+      marginTop: spacing.lg,
+    },
+    backdrop: {
+      backgroundColor: colors.scrim.overlay,
+      flex: 1,
+      justifyContent: 'flex-end',
+    },
+    body: {
+      paddingHorizontal: spacing.lg,
+    },
+    handle: {
+      backgroundColor: colors.border.hairline,
+      borderRadius: radius.pill,
+      height: 4,
+      width: 32,
+    },
+    handleArea: {
+      alignItems: 'center',
+      paddingBottom: spacing.sm,
+      paddingTop: spacing.sm,
+    },
+    // The explanation takes the secondary ink and the smaller body size, so the
+    // question stays the loudest thing in the sheet.
+    message: {
+      color: colors.text.secondary,
+      marginTop: spacing.sm,
+    },
+    // The sheet: rounded top corners, the canvas fill, and the floating-bar shadow
+    // (elevation 3, whose offset points up) — the profile options sheet's treatment.
+    sheet: {
+      ...elevation[3],
+      backgroundColor: colors.bg.sheet,
+      borderTopLeftRadius: radius.xxl,
+      borderTopRightRadius: radius.xxl,
+      paddingBottom: spacing.xl,
+    },
+    title: {
+      color: colors.text.primary,
+    },
+  });

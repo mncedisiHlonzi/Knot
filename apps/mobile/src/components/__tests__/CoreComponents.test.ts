@@ -35,6 +35,10 @@ jest.mock('react', () => ({
   useCallback: (callback: unknown) => callback,
   useEffect: () => undefined,
   useRef: (initial: unknown) => ({ current: initial }),
+  // Components read the active theme through the context, and there is no React
+  // dispatcher outside a render. Supply the provider's own fallback value: the
+  // light theme with no-op controls (KNOT-020i).
+  useContext: () => jest.requireActual('../../theme/ThemeContext').lightTheme,
 }));
 
 jest.mock('react-native', () => ({

@@ -19,7 +19,8 @@ import {
   REACTION_TYPES,
   reactionsApi,
 } from '../api/reactions';
-import { colors, motion, radius, spacing, tabularNums, typeScale } from '../theme';
+import { motion, radius, spacing, tabularNums, typeScale, useThemedStyles } from '../theme';
+import type { ThemeColors } from '../theme';
 import { applyReactionToggle, asReactionTypes, holdsReaction } from './reactionToggle';
 
 /** How far a pill swells when it is tapped (KNOT-020h). */
@@ -143,6 +144,7 @@ export default function ReactionBar({
   onChange,
   layout = 'row',
 }: ReactionBarProps): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   const inGrid = layout === 'grid';
   const [localCounts, setLocalCounts] = useState<ReactionCounts>(counts);
   const [localMine, setLocalMine] = useState<readonly ReactionType[]>(() =>
@@ -241,69 +243,70 @@ export default function ReactionBar({
   );
 }
 
-const styles = StyleSheet.create({
-  activeText: {
-    color: colors.brand.primary,
-  },
-  bar: {
-    flexDirection: 'row',
-    marginTop: spacing.md,
-  },
-  count: {
-    color: colors.text.tertiary,
-  },
-  // Two columns, each just under half the width so the space-between gutter keeps
-  // adjacent pills apart. The label gets the whole pill and stays on one line.
-  grid: {
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    rowGap: spacing.xs,
-  },
-  gridLabel: {
-    flexShrink: 1,
-    textAlign: 'left',
-  },
-  gridPill: {
-    height: 36,
-    minHeight: 36,
-    paddingHorizontal: spacing.sm,
-    width: '49%',
-  },
-  idleLabel: {
-    color: colors.text.secondary,
-  },
-  // The shared pill: a bordered paper surface at rest, the brand tint when held.
-  // The grid holds it to 36pt for a consistent rhythm; `hitSlop` keeps the touch
-  // target at the design system's 44pt minimum.
-  pill: {
-    alignItems: 'center',
-    borderColor: colors.border.hairline,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.xs,
-    justifyContent: 'space-between',
-    minHeight: 44,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  pillActive: {
-    backgroundColor: colors.brand.tint,
-  },
-  pillIdle: {
-    backgroundColor: colors.bg.paper,
-  },
-  // The four-column bar the Feed, version, and inquiry surfaces use. The count
-  // sits under the label so a narrow column still reads as one unit.
-  rowLabel: {
-    textAlign: 'center',
-  },
-  rowPill: {
-    flex: 1,
-    flexDirection: 'column',
-    gap: spacing.xs,
-    justifyContent: 'center',
-    marginHorizontal: spacing.xs,
-    paddingHorizontal: spacing.xs,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    activeText: {
+      color: colors.brand.primary,
+    },
+    bar: {
+      flexDirection: 'row',
+      marginTop: spacing.md,
+    },
+    count: {
+      color: colors.text.tertiary,
+    },
+    // Two columns, each just under half the width so the space-between gutter keeps
+    // adjacent pills apart. The label gets the whole pill and stays on one line.
+    grid: {
+      flexWrap: 'wrap',
+      justifyContent: 'space-between',
+      rowGap: spacing.xs,
+    },
+    gridLabel: {
+      flexShrink: 1,
+      textAlign: 'left',
+    },
+    gridPill: {
+      height: 36,
+      minHeight: 36,
+      paddingHorizontal: spacing.sm,
+      width: '49%',
+    },
+    idleLabel: {
+      color: colors.text.secondary,
+    },
+    // The shared pill: a bordered paper surface at rest, the brand tint when held.
+    // The grid holds it to 36pt for a consistent rhythm; `hitSlop` keeps the touch
+    // target at the design system's 44pt minimum.
+    pill: {
+      alignItems: 'center',
+      borderColor: colors.border.hairline,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      flexDirection: 'row',
+      gap: spacing.xs,
+      justifyContent: 'space-between',
+      minHeight: 44,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    pillActive: {
+      backgroundColor: colors.brand.tint,
+    },
+    pillIdle: {
+      backgroundColor: colors.bg.paper,
+    },
+    // The four-column bar the Feed, version, and inquiry surfaces use. The count
+    // sits under the label so a narrow column still reads as one unit.
+    rowLabel: {
+      textAlign: 'center',
+    },
+    rowPill: {
+      flex: 1,
+      flexDirection: 'column',
+      gap: spacing.xs,
+      justifyContent: 'center',
+      marginHorizontal: spacing.xs,
+      paddingHorizontal: spacing.xs,
+    },
+  });

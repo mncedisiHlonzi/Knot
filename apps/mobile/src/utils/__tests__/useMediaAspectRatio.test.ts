@@ -13,6 +13,9 @@ jest.mock('react', () => ({
   ...jest.requireActual('react'),
   useCallback: (callback: unknown) => callback,
   useState: (initial: unknown) => [initial, (value: unknown) => mockStateCalls.push(value)],
+  // See jest.setup.js: there is no dispatcher outside a render, so the context
+  // read supplies the provider's own fallback value (KNOT-020i).
+  useContext: () => jest.requireActual('../../theme/ThemeContext').lightTheme,
 }));
 
 describe('useMediaAspectRatio', () => {

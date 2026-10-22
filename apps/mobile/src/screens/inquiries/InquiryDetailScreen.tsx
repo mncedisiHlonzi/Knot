@@ -25,7 +25,8 @@ import ReactionBar from '../../components/ReactionBar';
 import ReportAction from '../../components/ReportAction';
 import ReportModal from '../../components/ReportModal';
 import { isLanguageCode, languageName } from '../../data/languages';
-import { colors, layout, spacing, typeScale } from '../../theme';
+import { layout, spacing, typeScale, useTheme, useThemedStyles } from '../../theme';
+import type { ThemeColors } from '../../theme';
 import { answerCountLabel, answerDraftError } from '../../utils/inquiry';
 
 /**
@@ -73,6 +74,8 @@ export default function InquiryDetailScreen({
   onBack,
   onOpenUserProfile,
 }: InquiryDetailScreenProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [inquiry, setInquiry] = useState<Inquiry | undefined>(undefined);
   const [answers, setAnswers] = useState<readonly InquiryAnswer[]>([]);
   const [nextCursor, setNextCursor] = useState('');
@@ -353,100 +356,101 @@ export default function InquiryDetailScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  answer: {
-    borderBottomColor: colors.border.hairline,
-    borderBottomWidth: 1,
-    marginHorizontal: -layout.screenPaddingReading,
-    paddingHorizontal: layout.screenPaddingReading,
-    paddingVertical: spacing.lg,
-  },
-  answerBody: {
-    color: colors.text.secondary,
-    marginTop: spacing.sm,
-  },
-  answerHead: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  answerIdentity: {
-    flexShrink: 1,
-  },
-  answerLanguage: {
-    color: colors.text.tertiary,
-  },
-  // The count bar between the question and its answers: hairlines above and
-  // below, full-bleed across the reading column.
-  answersBar: {
-    borderBottomColor: colors.border.hairline,
-    borderBottomWidth: 1,
-    borderTopColor: colors.border.hairline,
-    borderTopWidth: 1,
-    marginHorizontal: -layout.screenPaddingReading,
-    marginTop: spacing.lg,
-    paddingHorizontal: layout.screenPaddingReading,
-    paddingVertical: spacing.md,
-  },
-  answersBarLabel: {
-    color: colors.text.primary,
-  },
-  composerHint: {
-    color: colors.text.tertiary,
-    marginTop: spacing.xs,
-  },
-  composerLabel: {
-    color: colors.text.secondary,
-    marginTop: spacing.xl,
-  },
-  composerLang: {
-    marginBottom: spacing.md,
-    marginTop: spacing.md,
-  },
-  composerSubmit: {
-    marginTop: spacing.md,
-  },
-  container: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-  content: {
-    paddingBottom: spacing.xxxl,
-    paddingHorizontal: layout.screenPaddingReading,
-    paddingTop: spacing.xs,
-  },
-  error: {
-    color: colors.state.danger,
-    marginTop: spacing.sm,
-  },
-  // A 44-point tap target for each header icon button.
-  iconButton: {
-    alignItems: 'center',
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
-  },
-  more: {
-    paddingVertical: spacing.lg,
-  },
-  question: {
-    paddingTop: spacing.xs,
-  },
-  questionAuthor: {
-    marginTop: spacing.md,
-  },
-  questionBody: {
-    color: colors.text.secondary,
-    marginTop: spacing.md,
-  },
-  questionOverline: {
-    color: colors.brand.primary,
-  },
-  questionTitle: {
-    color: colors.text.primary,
-    marginTop: spacing.xs,
-  },
-  spinner: {
-    marginVertical: spacing.lg,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    answer: {
+      borderBottomColor: colors.border.hairline,
+      borderBottomWidth: 1,
+      marginHorizontal: -layout.screenPaddingReading,
+      paddingHorizontal: layout.screenPaddingReading,
+      paddingVertical: spacing.lg,
+    },
+    answerBody: {
+      color: colors.text.secondary,
+      marginTop: spacing.sm,
+    },
+    answerHead: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    answerIdentity: {
+      flexShrink: 1,
+    },
+    answerLanguage: {
+      color: colors.text.tertiary,
+    },
+    // The count bar between the question and its answers: hairlines above and
+    // below, full-bleed across the reading column.
+    answersBar: {
+      borderBottomColor: colors.border.hairline,
+      borderBottomWidth: 1,
+      borderTopColor: colors.border.hairline,
+      borderTopWidth: 1,
+      marginHorizontal: -layout.screenPaddingReading,
+      marginTop: spacing.lg,
+      paddingHorizontal: layout.screenPaddingReading,
+      paddingVertical: spacing.md,
+    },
+    answersBarLabel: {
+      color: colors.text.primary,
+    },
+    composerHint: {
+      color: colors.text.tertiary,
+      marginTop: spacing.xs,
+    },
+    composerLabel: {
+      color: colors.text.secondary,
+      marginTop: spacing.xl,
+    },
+    composerLang: {
+      marginBottom: spacing.md,
+      marginTop: spacing.md,
+    },
+    composerSubmit: {
+      marginTop: spacing.md,
+    },
+    container: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    content: {
+      paddingBottom: spacing.xxxl,
+      paddingHorizontal: layout.screenPaddingReading,
+      paddingTop: spacing.xs,
+    },
+    error: {
+      color: colors.state.danger,
+      marginTop: spacing.sm,
+    },
+    // A 44-point tap target for each header icon button.
+    iconButton: {
+      alignItems: 'center',
+      height: 44,
+      justifyContent: 'center',
+      width: 44,
+    },
+    more: {
+      paddingVertical: spacing.lg,
+    },
+    question: {
+      paddingTop: spacing.xs,
+    },
+    questionAuthor: {
+      marginTop: spacing.md,
+    },
+    questionBody: {
+      color: colors.text.secondary,
+      marginTop: spacing.md,
+    },
+    questionOverline: {
+      color: colors.brand.primary,
+    },
+    questionTitle: {
+      color: colors.text.primary,
+      marginTop: spacing.xs,
+    },
+    spinner: {
+      marginVertical: spacing.lg,
+    },
+  });

@@ -12,7 +12,16 @@ import { DotsThree, Images, ShareNetwork, X } from 'phosphor-react-native';
 
 import type { RecentInteraction } from '../api/stories';
 import { API_BASE_URL } from '../config/api';
-import { colors, layout, radius, spacing, tabularNums, typeScale } from '../theme';
+import {
+  layout,
+  radius,
+  spacing,
+  tabularNums,
+  typeScale,
+  useTheme,
+  useThemedStyles,
+} from '../theme';
+import type { ThemeColors } from '../theme';
 import { PLACEHOLDER_MEDIA_ASPECT_RATIO } from '../utils/mediaFrame';
 import { useMediaAspectRatio } from '../utils/useMediaAspectRatio';
 import AuthorLine from './AuthorLine';
@@ -263,6 +272,8 @@ export default function FeedEntry({
   onToggleMute = NOOP,
   testID,
 }: FeedEntryProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const mediaUrl = resolveMediaUrl(story.first_media_url);
   const isVideo = story.first_media_type === 'video';
   const mediaCount = story.media_count ?? 0;
@@ -521,120 +532,121 @@ export default function FeedEntry({
   );
 }
 
-const styles = StyleSheet.create({
-  // The author block keeps the row's width; the quick actions sit at its end. They
-  // are level with the avatar, not centred on the block, because the block grows as
-  // the Rooted line is added (KNOT-031).
-  authorLine: {
-    flex: 1,
-  },
-  authorRow: {
-    alignItems: 'flex-start',
-    flexDirection: 'row',
-  },
-  // The quick actions share one row so the two 44pt targets sit side by side and
-  // never stack, which would push the `✕` down into the pillar tag (KNOT-032).
-  cardActions: {
-    flexDirection: 'row',
-  },
-  // One quick action's box: the 44pt minimum touch target around a small glyph.
-  cardAction: {
-    alignItems: 'center',
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
-  },
-  countBadge: {
-    alignItems: 'center',
-    backgroundColor: colors.scrim.overlay,
-    borderRadius: radius.sm,
-    bottom: spacing.sm,
-    flexDirection: 'row',
-    gap: spacing.xs,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 2,
-    position: 'absolute',
-    right: spacing.sm,
-  },
-  // A video owns the bottom-right corner with its mute control, so the count
-  // badge sits directly above it instead of underneath it.
-  countBadgeOverVideo: {
-    bottom: spacing.sm + VIDEO_MUTE_BUTTON_SIZE + spacing.xs,
-  },
-  countBadgeText: {
-    color: colors.text.onBrand,
-  },
-  entry: {
-    paddingTop: spacing.lg,
-  },
-  // A card whose first child is the social-proof band opens at the compact step: the
-  // band already separates the credit from the card's top edge, so the taller
-  // resting inset would double it (KNOT-032-fix2). The inner `padded` wrapper keeps
-  // the horizontal inset either way.
-  entryWithSocialProof: {
-    paddingTop: spacing.sm,
-  },
-  // The adaptation marker rides beside the adapter's name, so it needs no ink of
-  // its own beyond the glyph's tint. Its box exists to carry the accessibility
-  // label (KNOT-029).
-  adaptBadge: {
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // The Feed's card form: without its bottom hairline, the entry needs its own
-  // bottom inset so the next card's grey gap does not touch the meta line
-  // (KNOT-023b).
-  entryCard: {
-    paddingBottom: spacing.lg,
-  },
-  // One step darker than the hairline, so a rule between entries is clearly
-  // visible rather than dissolving into the canvas (KNOT-031).
-  hairline: {
-    backgroundColor: colors.border.divider,
-    height: 1,
-    marginTop: spacing.lg,
-  },
-  media: {
-    height: '100%',
-    width: '100%',
-  }, // Full-bleed: no horizontal inset and no rounding, so the media runs edge to
-  // edge (KNOT-020c-fix2). The ratio is set per entry from the media's own shape,
-  // so it is not fixed here (KNOT-020g-fix5); the fill is `cover`, so the frame is
-  // always filled and never barred (KNOT-020g-fix6).
-  mediaFrame: {
-    backgroundColor: colors.bg.sunken,
-    marginTop: spacing.md,
-    overflow: 'hidden',
-    width: '100%',
-  },
-  // The stats row carries real counts, so it reads in the secondary ink and the
-  // bolder label voice rather than as a caption (KNOT-031).
-  metaText: {
-    color: colors.text.secondary,
-    marginTop: spacing.md,
-  },
-  // The text column keeps the feed inset; only the media leaves it.
-  padded: {
-    paddingHorizontal: layout.screenPaddingFeed,
-  },
-  preview: {
-    color: colors.text.secondary,
-    marginTop: spacing.xs,
-  },
-  // The "read more" affordance under a truncated preview: a text link in the brand
-  // ink, with hit slop taking the small label up to a comfortable touch target.
-  readMore: {
-    alignSelf: 'flex-start',
-    marginTop: spacing.xs,
-  },
-  readMoreText: {
-    color: colors.brand.primary,
-  },
-  tagRow: {
-    marginTop: spacing.md,
-  },
-  title: {
-    color: colors.text.primary,
-    marginTop: spacing.sm,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    // The author block keeps the row's width; the quick actions sit at its end. They
+    // are level with the avatar, not centred on the block, because the block grows as
+    // the Rooted line is added (KNOT-031).
+    authorLine: {
+      flex: 1,
+    },
+    authorRow: {
+      alignItems: 'flex-start',
+      flexDirection: 'row',
+    },
+    // The quick actions share one row so the two 44pt targets sit side by side and
+    // never stack, which would push the `✕` down into the pillar tag (KNOT-032).
+    cardActions: {
+      flexDirection: 'row',
+    },
+    // One quick action's box: the 44pt minimum touch target around a small glyph.
+    cardAction: {
+      alignItems: 'center',
+      height: 44,
+      justifyContent: 'center',
+      width: 44,
+    },
+    countBadge: {
+      alignItems: 'center',
+      backgroundColor: colors.scrim.overlay,
+      borderRadius: radius.sm,
+      bottom: spacing.sm,
+      flexDirection: 'row',
+      gap: spacing.xs,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: 2,
+      position: 'absolute',
+      right: spacing.sm,
+    },
+    // A video owns the bottom-right corner with its mute control, so the count
+    // badge sits directly above it instead of underneath it.
+    countBadgeOverVideo: {
+      bottom: spacing.sm + VIDEO_MUTE_BUTTON_SIZE + spacing.xs,
+    },
+    countBadgeText: {
+      color: colors.text.onBrand,
+    },
+    entry: {
+      paddingTop: spacing.lg,
+    },
+    // A card whose first child is the social-proof band opens at the compact step: the
+    // band already separates the credit from the card's top edge, so the taller
+    // resting inset would double it (KNOT-032-fix2). The inner `padded` wrapper keeps
+    // the horizontal inset either way.
+    entryWithSocialProof: {
+      paddingTop: spacing.sm,
+    },
+    // The adaptation marker rides beside the adapter's name, so it needs no ink of
+    // its own beyond the glyph's tint. Its box exists to carry the accessibility
+    // label (KNOT-029).
+    adaptBadge: {
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    // The Feed's card form: without its bottom hairline, the entry needs its own
+    // bottom inset so the next card's grey gap does not touch the meta line
+    // (KNOT-023b).
+    entryCard: {
+      paddingBottom: spacing.lg,
+    },
+    // One step darker than the hairline, so a rule between entries is clearly
+    // visible rather than dissolving into the canvas (KNOT-031).
+    hairline: {
+      backgroundColor: colors.border.divider,
+      height: 1,
+      marginTop: spacing.lg,
+    },
+    media: {
+      height: '100%',
+      width: '100%',
+    }, // Full-bleed: no horizontal inset and no rounding, so the media runs edge to
+    // edge (KNOT-020c-fix2). The ratio is set per entry from the media's own shape,
+    // so it is not fixed here (KNOT-020g-fix5); the fill is `cover`, so the frame is
+    // always filled and never barred (KNOT-020g-fix6).
+    mediaFrame: {
+      backgroundColor: colors.bg.sunken,
+      marginTop: spacing.md,
+      overflow: 'hidden',
+      width: '100%',
+    },
+    // The stats row carries real counts, so it reads in the secondary ink and the
+    // bolder label voice rather than as a caption (KNOT-031).
+    metaText: {
+      color: colors.text.secondary,
+      marginTop: spacing.md,
+    },
+    // The text column keeps the feed inset; only the media leaves it.
+    padded: {
+      paddingHorizontal: layout.screenPaddingFeed,
+    },
+    preview: {
+      color: colors.text.secondary,
+      marginTop: spacing.xs,
+    },
+    // The "read more" affordance under a truncated preview: a text link in the brand
+    // ink, with hit slop taking the small label up to a comfortable touch target.
+    readMore: {
+      alignSelf: 'flex-start',
+      marginTop: spacing.xs,
+    },
+    readMoreText: {
+      color: colors.brand.primary,
+    },
+    tagRow: {
+      marginTop: spacing.md,
+    },
+    title: {
+      color: colors.text.primary,
+      marginTop: spacing.sm,
+    },
+  });

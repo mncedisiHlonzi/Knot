@@ -1,7 +1,7 @@
 import React from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { colors, fontWeights, radius, spacing } from '../theme';
+import { fontWeights, radius, spacing, useThemedStyles, type ThemeColors } from '../theme';
 import { getInitials } from '../utils/initials';
 
 /** The five avatar diameters the design system offers. */
@@ -63,6 +63,7 @@ export default function Avatar({
   accessibilityLabel,
   testID,
 }: AvatarProps): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   const diameter = DIAMETER[size];
   const path = typeof uri === 'string' ? uri.trim() : '';
   const hasImage = path !== '';
@@ -106,22 +107,23 @@ export default function Avatar({
   );
 }
 
-const styles = StyleSheet.create({
-  fallback: {
-    alignItems: 'center',
-    backgroundColor: colors.bg.sunken,
-    borderRadius: radius.pill,
-    justifyContent: 'center',
-  },
-  image: {
-    backgroundColor: colors.bg.sunken,
-    borderRadius: radius.pill,
-  },
-  initials: {
-    color: colors.text.secondary,
-    fontWeight: fontWeights.semibold,
-  },
-  wrapper: {
-    alignSelf: 'flex-start',
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    fallback: {
+      alignItems: 'center',
+      backgroundColor: colors.bg.sunken,
+      borderRadius: radius.pill,
+      justifyContent: 'center',
+    },
+    image: {
+      backgroundColor: colors.bg.sunken,
+      borderRadius: radius.pill,
+    },
+    initials: {
+      color: colors.text.secondary,
+      fontWeight: fontWeights.semibold,
+    },
+    wrapper: {
+      alignSelf: 'flex-start',
+    },
+  });

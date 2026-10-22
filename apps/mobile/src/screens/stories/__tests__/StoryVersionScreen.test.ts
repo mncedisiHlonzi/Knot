@@ -23,6 +23,7 @@ let mockStateCursor = 0;
 
 jest.mock('react', () => ({
   ...jest.requireActual('react'),
+  useContext: () => jest.requireActual('../../../theme/ThemeContext').lightTheme,
   useCallback: (callback: unknown) => callback,
   useEffect: () => undefined,
   useRef: (initial: unknown) => ({ current: initial }),

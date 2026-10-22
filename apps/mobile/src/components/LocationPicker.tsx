@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import { KNOT_MAPBOX_TOKEN } from '../config/dev';
-import { colors, radius, spacing, typeScale } from '../theme';
+import { radius, spacing, typeScale, useTheme, useThemedStyles } from '../theme';
+import type { ThemeColors } from '../theme';
 
 /** A place the user chose from the geocoding suggestions. */
 export type PickedPlace = {
@@ -144,6 +145,8 @@ export default function LocationPicker({
   onClear,
   placeholder,
 }: LocationPickerProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [results, setResults] = useState<readonly GeocodeResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -254,59 +257,60 @@ export default function LocationPicker({
   );
 }
 
-const styles = StyleSheet.create({
-  clear: {
-    marginLeft: spacing.sm,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  clearText: {
-    color: colors.brand.primary,
-  },
-  error: {
-    color: colors.state.danger,
-    marginTop: spacing.xs,
-  },
-  input: {
-    backgroundColor: colors.bg.paper,
-    borderColor: colors.border.hairline,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    color: colors.text.primary,
-    flex: 1,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  inputRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-  },
-  result: {
-    borderTopColor: colors.border.hairline,
-    borderTopWidth: 1,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  resultContext: {
-    color: colors.text.secondary,
-    marginTop: 2,
-  },
-  resultName: {
-    color: colors.text.primary,
-  },
-  results: {
-    backgroundColor: colors.bg.paper,
-    borderColor: colors.border.hairline,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginTop: spacing.xs,
-    overflow: 'hidden',
-  },
-  selected: {
-    color: colors.text.secondary,
-    marginTop: spacing.xs,
-  },
-  spinner: {
-    marginTop: spacing.sm,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    clear: {
+      marginLeft: spacing.sm,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md,
+    },
+    clearText: {
+      color: colors.brand.primary,
+    },
+    error: {
+      color: colors.state.danger,
+      marginTop: spacing.xs,
+    },
+    input: {
+      backgroundColor: colors.bg.paper,
+      borderColor: colors.border.hairline,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      color: colors.text.primary,
+      flex: 1,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md,
+    },
+    inputRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+    },
+    result: {
+      borderTopColor: colors.border.hairline,
+      borderTopWidth: 1,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md,
+    },
+    resultContext: {
+      color: colors.text.secondary,
+      marginTop: 2,
+    },
+    resultName: {
+      color: colors.text.primary,
+    },
+    results: {
+      backgroundColor: colors.bg.paper,
+      borderColor: colors.border.hairline,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      marginTop: spacing.xs,
+      overflow: 'hidden',
+    },
+    selected: {
+      color: colors.text.secondary,
+      marginTop: spacing.xs,
+    },
+    spinner: {
+      marginTop: spacing.sm,
+    },
+  });

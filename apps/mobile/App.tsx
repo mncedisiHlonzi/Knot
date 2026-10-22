@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   Animated,
+  Appearance,
   BackHandler,
   Easing,
   SafeAreaView,
@@ -18,7 +19,8 @@ import type { Story } from './src/api/stories';
 import { versionsApi } from './src/api/versions';
 import { DEFAULT_LANGUAGE_CODE } from './src/config/language';
 import { isLanguageCode } from './src/data/languages';
-import { colors, motion, spacing } from './src/theme';
+import { motion, spacing, ThemeProvider, useTheme, useThemedStyles } from './src/theme';
+import type { ThemeColors } from './src/theme';
 import TabBar from './src/components/TabBar';
 import type { TabName } from './src/components/TabBar';
 import {
@@ -64,22 +66,27 @@ import StoryVersionScreen from './src/screens/stories/StoryVersionScreen';
  * `{ name, props }` shape would not give.
  */
 /**
- * The system status bar, in the app's canvas colour with dark icons.
+ * The system status bar, in the app's canvas colour with icons that contrast it.
  *
  * It is rendered by every root below rather than once, because the roots are
  * mutually exclusive phases — and React Native keeps a single status bar, so
  * whichever one is mounted is the one that applies. `translucent` is false so the
  * bar is a solid colour above the content rather than an overlay, which is what
- * the opaque canvas and the dark icons depend on. On iOS `backgroundColor` is
+ * the opaque canvas and the icons depend on. On iOS `backgroundColor` is
  * ignored — the platform has no bar to colour — and `barStyle` carries it, so the
  * same declaration is correct on both platforms. `StatusBar` cannot reach the
- * Android navigation bar; that is set in the native theme (KNOT-020g-fix8).
+ * Android navigation bar; that is set in the native theme (KNOT-020g-fix8), so it
+ * stays light in dark mode — a disclosed limitation (KNOT-020i).
  */
-const STATUS_BAR: StatusBarProps = {
-  backgroundColor: colors.bg.canvas,
-  barStyle: 'dark-content',
-  translucent: false,
-};
+function statusBarProps(colors: ThemeColors, theme: string): StatusBarProps {
+  return {
+    backgroundColor: colors.bg.canvas,
+    // Dark ink on the light canvas, light ink on the dark one. In dark mode the
+    // native theme's light-status-bar flag is overridden at runtime by this.
+    barStyle: theme === 'dark' ? 'light-content' : 'dark-content',
+    translucent: false,
+  };
+}
 
 /** The push transition's curve: fast out, settling onto the screen. */
 const EASING_ENTER = Easing.bezier(...motion.easing.enter);
@@ -158,6 +165,24 @@ function preferredLanguage(user: User): string {
  * or register, so it survives a restart; signing out clears it (KNOT-ADR-024).
  */
 export default function App(): React.ReactElement {
+  return (
+    <ThemeProvider systemTheme={Appearance.getColorScheme()}>
+      <ThemedApp />
+    </ThemeProvider>
+  );
+}
+
+/**
+ * The app itself, under the theme provider.
+ *
+ * It sits inside the provider so its own stylesheet follows the active theme and
+ * a theme change re-renders the whole tree — every screen reads its colours on
+ * render, so nothing is left holding a stale palette (KNOT-020i).
+ */
+function ThemedApp(): React.ReactElement {
+  const { colors, theme } = useTheme();
+  const styles = useThemedStyles(createStyles);
+  const STATUS_BAR = statusBarProps(colors, theme);
   const [session, setSession] = useState<Session | null>(null);
   const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [tab, setTab] = useState<TabName>('feed');
@@ -778,28 +803,29 @@ export default function App(): React.ReactElement {
   );
 }
 
-const styles = StyleSheet.create({
-  authContainer: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.xl,
-  },
-  body: {
-    flex: 1,
-    // The transition slides a screen past the window's edge; without this the
-    // moving screen would paint outside the body while it leaves (KNOT-020h).
-    overflow: 'hidden',
-  },
-  bootContainer: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-  screen: {
-    flex: 1,
-  },
-  storyContainer: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    authContainer: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.xl,
+    },
+    body: {
+      flex: 1,
+      // The transition slides a screen past the window's edge; without this the
+      // moving screen would paint outside the body while it leaves (KNOT-020h).
+      overflow: 'hidden',
+    },
+    bootContainer: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    screen: {
+      flex: 1,
+    },
+    storyContainer: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+  });

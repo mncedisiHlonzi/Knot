@@ -6,6 +6,7 @@ import { colors, typeScale } from '../../theme';
 // server copy the caller passes, which is what a static call can honestly assert.
 jest.mock('react', () => ({
   ...jest.requireActual('react'),
+  useContext: () => jest.requireActual('../../theme/ThemeContext').lightTheme,
   useCallback: (callback: unknown) => callback,
   useEffect: () => undefined,
   useRef: (initial: unknown) => ({ current: initial }),

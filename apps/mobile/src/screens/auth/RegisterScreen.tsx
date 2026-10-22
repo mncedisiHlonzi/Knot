@@ -5,7 +5,7 @@ import { api, AuthResponse, describeError } from '../../api/client';
 import Button from '../../components/Button';
 import Input from '../../components/Input';
 import LanguagePicker from '../../components/LanguagePicker';
-import { colors, spacing, typeScale } from '../../theme';
+import { spacing, typeScale, useThemedStyles, type ThemeColors } from '../../theme';
 
 type RegisterScreenProps = {
   /** Called with the issued tokens and user once registration succeeds. */
@@ -50,6 +50,7 @@ export default function RegisterScreen({
   onAuthenticated,
   onSwitchToLogin,
 }: RegisterScreenProps): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
@@ -174,22 +175,23 @@ export default function RegisterScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  content: {
-    backgroundColor: colors.bg.canvas,
-    gap: spacing.lg,
-    padding: spacing.xl,
-  },
-  error: {
-    color: colors.state.danger,
-  },
-  fieldLabel: {
-    color: colors.text.secondary,
-  },
-  spacer: {
-    height: spacing.xxl,
-  },
-  title: {
-    color: colors.text.primary,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    content: {
+      backgroundColor: colors.bg.canvas,
+      gap: spacing.lg,
+      padding: spacing.xl,
+    },
+    error: {
+      color: colors.state.danger,
+    },
+    fieldLabel: {
+      color: colors.text.secondary,
+    },
+    spacer: {
+      height: spacing.xxl,
+    },
+    title: {
+      color: colors.text.primary,
+    },
+  });

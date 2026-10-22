@@ -31,7 +31,16 @@ import ReportModal from '../../components/ReportModal';
 import VideoThumbnail from '../../components/VideoThumbnail';
 import { API_BASE_URL } from '../../config/api';
 import { languageName } from '../../data/languages';
-import { colors, layout, radius, spacing, tabularNums, typeScale } from '../../theme';
+import {
+  layout,
+  radius,
+  spacing,
+  tabularNums,
+  typeScale,
+  useTheme,
+  useThemedStyles,
+} from '../../theme';
+import type { ThemeColors, ThemeName } from '../../theme';
 import { PLACEHOLDER_MEDIA_ASPECT_RATIO, resolveMediaAspectRatio } from '../../utils/mediaFrame';
 import { useMediaAspectRatio } from '../../utils/useMediaAspectRatio';
 import { carouselCounter, carouselIndex, carouselPositionLabel } from './detailCarousel';
@@ -78,8 +87,12 @@ const HEADER_BAND = HEADER_TOP + HEADER_HEIGHT;
  * system's own status icons a shadow, so the white icons take their contrast
  * from the media itself.
  */
-function statusBarStyle(hasMedia: boolean): 'light-content' | 'dark-content' {
-  return Platform.OS === 'android' && hasMedia ? 'light-content' : 'dark-content';
+function statusBarStyle(hasMedia: boolean, theme: ThemeName): 'light-content' | 'dark-content' {
+  // Light ink over media on Android (the band is the photo), and over the dark
+  // canvas in dark mode; dark ink on the light canvas (KNOT-020i).
+  return theme === 'dark' || (Platform.OS === 'android' && hasMedia)
+    ? 'light-content'
+    : 'dark-content';
 }
 
 /**
@@ -109,6 +122,7 @@ function CarouselPage({
   readonly onToggleMute: () => void;
   readonly onAspectRatio: (mediaId: string, ratio: number | null) => void;
 }): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   const { aspectRatio, onLoadSize } = useMediaAspectRatio(media.width, media.height);
   const uri = resolveMediaUrl(media.url);
 
@@ -215,6 +229,8 @@ export default function StoryDetailScreen({
   onConversation,
   onOpenUserProfile,
 }: StoryDetailScreenProps): React.ReactElement {
+  const { colors, theme } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [story, setStory] = useState<Story | undefined>(undefined);
   const [versionCount, setVersionCount] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -340,7 +356,7 @@ export default function StoryDetailScreen({
       <StatusBar
         translucent
         backgroundColor="transparent"
-        barStyle={statusBarStyle(media.length > 0)}
+        barStyle={statusBarStyle(media.length > 0, theme)}
       />
 
       <ScrollView
@@ -581,167 +597,168 @@ export default function StoryDetailScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  actionButtons: {
-    gap: spacing.xl,
-    marginTop: spacing.xl,
-  },
-  // The whole bottom action area shares one hairline above it; the reaction grid
-  // and the two buttons then flow with generous vertical air.
-  actionsSection: {
-    borderTopColor: colors.border.hairline,
-    borderTopWidth: 1,
-    marginTop: spacing.xl,
-    paddingTop: spacing.lg,
-  },
-  body: {
-    paddingHorizontal: layout.screenPaddingReading,
-    paddingTop: spacing.lg,
-  },
-  // The carousel runs edge to edge under the header; its height is set per active
-  // page. The sunken fill is what shows while a page's media is loading.
-  carousel: {
-    backgroundColor: colors.bg.sunken,
-  },
-  container: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-  content: {
-    paddingBottom: spacing.xxxl,
-  },
-  counterText: {
-    color: colors.text.onBrand,
-  },
-  counterPill: {
-    backgroundColor: colors.scrim.overlay,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    position: 'absolute',
-    right: spacing.md,
-  },
-  error: {
-    color: colors.state.danger,
-    marginTop: spacing.sm,
-  },
-  // The band behind the status bar and header was removed: the media runs to the
-  // top edge at full brightness (KNOT-025-fix5).
-  headerOverlay: {
-    left: 0,
-    position: 'absolute',
-    right: 0,
-    zIndex: 2,
-  },
-  // A dark disc keeps the white control glyph legible on any media.
-  iconButton: {
-    alignItems: 'center',
-    backgroundColor: colors.scrim.overlay,
-    borderRadius: radius.pill,
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
-  },
-  languageLeft: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexShrink: 1,
-    gap: spacing.sm,
-  },
-  languageName: {
-    color: colors.text.primary,
-    flexShrink: 1,
-  },
-  // The language-tree row: a bordered, intrinsic-width button whose left side
-  // names the language and whose right side counts the versions (KNOT-025).
-  languageRow: {
-    alignItems: 'center',
-    backgroundColor: colors.bg.paper,
-    borderColor: colors.border.hairline,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    flexDirection: 'row',
-    height: 48,
-    justifyContent: 'space-between',
-    marginBottom: spacing.lg,
-    marginTop: spacing.lg,
-    paddingHorizontal: spacing.md,
-  },
-  page: {
-    backgroundColor: colors.bg.sunken,
-    overflow: 'hidden',
-  },
-  pageMedia: {
-    height: '100%',
-    width: '100%',
-  },
-  retry: {
-    marginTop: spacing.lg,
-  },
-  scroll: {
-    flex: 1,
-  },
-  status: {
-    paddingHorizontal: layout.screenPaddingReading,
-  },
-  storyBody: {
-    color: colors.text.secondary,
-  },
-  // The thumbnail strip lives outside the reading column, so it keeps the feed's
-  // 16-point gutter while the text keeps the 24-point reading inset.
-  // The tile is the media's own 64pt square: the state ring is drawn as an
-  // overlay, so a border never eats into the frame (KNOT-025-fix5).
-  thumbnail: {
-    borderRadius: radius.md,
-    height: THUMBNAIL_SIZE,
-    overflow: 'hidden',
-    width: THUMBNAIL_SIZE,
-  },
-  thumbnailContent: {
-    gap: THUMBNAIL_GAP,
-    paddingHorizontal: layout.screenPaddingFeed,
-    paddingVertical: spacing.md,
-  },
-  thumbnailInactive: {
-    opacity: 0.8,
-  },
-  thumbnailMedia: {
-    height: '100%',
-    width: '100%',
-  },
-  // The 2pt ring sits on the tile's edge in every state; only its ink changes.
-  thumbnailRing: {
-    borderColor: colors.border.hairline,
-    borderRadius: radius.md,
-    borderWidth: 2,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-  },
-  thumbnailRingActive: {
-    borderColor: colors.brand.primary,
-  },
-  // A fixed, clipped band: a horizontal ScrollView is content-sized on its
-  // cross axis, so without an explicit height a native video surface that
-  // measured itself would grow the strip and push the body down (KNOT-025-fix8).
-  // `scrollEnabled` stays true because the strip must still scroll sideways.
-  thumbnailStrip: {
-    flexGrow: 0,
-    height: THUMBNAIL_STRIP_HEIGHT,
-    overflow: 'hidden',
-  },
-  // The editorial rhythm: 8pt above the title, 12pt below it into the author
-  // block, then 16pt from the author block to the language-tree row (KNOT-025-fix1).
-  title: {
-    color: colors.text.primary,
-    marginBottom: spacing.md,
-    marginTop: spacing.sm,
-  },
-  versionCount: {
-    color: colors.text.tertiary,
-    flexShrink: 0,
-    marginLeft: spacing.sm,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    actionButtons: {
+      gap: spacing.xl,
+      marginTop: spacing.xl,
+    },
+    // The whole bottom action area shares one hairline above it; the reaction grid
+    // and the two buttons then flow with generous vertical air.
+    actionsSection: {
+      borderTopColor: colors.border.hairline,
+      borderTopWidth: 1,
+      marginTop: spacing.xl,
+      paddingTop: spacing.lg,
+    },
+    body: {
+      paddingHorizontal: layout.screenPaddingReading,
+      paddingTop: spacing.lg,
+    },
+    // The carousel runs edge to edge under the header; its height is set per active
+    // page. The sunken fill is what shows while a page's media is loading.
+    carousel: {
+      backgroundColor: colors.bg.sunken,
+    },
+    container: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    content: {
+      paddingBottom: spacing.xxxl,
+    },
+    counterText: {
+      color: colors.text.onBrand,
+    },
+    counterPill: {
+      backgroundColor: colors.scrim.overlay,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+      position: 'absolute',
+      right: spacing.md,
+    },
+    error: {
+      color: colors.state.danger,
+      marginTop: spacing.sm,
+    },
+    // The band behind the status bar and header was removed: the media runs to the
+    // top edge at full brightness (KNOT-025-fix5).
+    headerOverlay: {
+      left: 0,
+      position: 'absolute',
+      right: 0,
+      zIndex: 2,
+    },
+    // A dark disc keeps the white control glyph legible on any media.
+    iconButton: {
+      alignItems: 'center',
+      backgroundColor: colors.scrim.overlay,
+      borderRadius: radius.pill,
+      height: 44,
+      justifyContent: 'center',
+      width: 44,
+    },
+    languageLeft: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexShrink: 1,
+      gap: spacing.sm,
+    },
+    languageName: {
+      color: colors.text.primary,
+      flexShrink: 1,
+    },
+    // The language-tree row: a bordered, intrinsic-width button whose left side
+    // names the language and whose right side counts the versions (KNOT-025).
+    languageRow: {
+      alignItems: 'center',
+      backgroundColor: colors.bg.paper,
+      borderColor: colors.border.hairline,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      flexDirection: 'row',
+      height: 48,
+      justifyContent: 'space-between',
+      marginBottom: spacing.lg,
+      marginTop: spacing.lg,
+      paddingHorizontal: spacing.md,
+    },
+    page: {
+      backgroundColor: colors.bg.sunken,
+      overflow: 'hidden',
+    },
+    pageMedia: {
+      height: '100%',
+      width: '100%',
+    },
+    retry: {
+      marginTop: spacing.lg,
+    },
+    scroll: {
+      flex: 1,
+    },
+    status: {
+      paddingHorizontal: layout.screenPaddingReading,
+    },
+    storyBody: {
+      color: colors.text.secondary,
+    },
+    // The thumbnail strip lives outside the reading column, so it keeps the feed's
+    // 16-point gutter while the text keeps the 24-point reading inset.
+    // The tile is the media's own 64pt square: the state ring is drawn as an
+    // overlay, so a border never eats into the frame (KNOT-025-fix5).
+    thumbnail: {
+      borderRadius: radius.md,
+      height: THUMBNAIL_SIZE,
+      overflow: 'hidden',
+      width: THUMBNAIL_SIZE,
+    },
+    thumbnailContent: {
+      gap: THUMBNAIL_GAP,
+      paddingHorizontal: layout.screenPaddingFeed,
+      paddingVertical: spacing.md,
+    },
+    thumbnailInactive: {
+      opacity: 0.8,
+    },
+    thumbnailMedia: {
+      height: '100%',
+      width: '100%',
+    },
+    // The 2pt ring sits on the tile's edge in every state; only its ink changes.
+    thumbnailRing: {
+      borderColor: colors.border.hairline,
+      borderRadius: radius.md,
+      borderWidth: 2,
+      bottom: 0,
+      left: 0,
+      position: 'absolute',
+      right: 0,
+      top: 0,
+    },
+    thumbnailRingActive: {
+      borderColor: colors.brand.primary,
+    },
+    // A fixed, clipped band: a horizontal ScrollView is content-sized on its
+    // cross axis, so without an explicit height a native video surface that
+    // measured itself would grow the strip and push the body down (KNOT-025-fix8).
+    // `scrollEnabled` stays true because the strip must still scroll sideways.
+    thumbnailStrip: {
+      flexGrow: 0,
+      height: THUMBNAIL_STRIP_HEIGHT,
+      overflow: 'hidden',
+    },
+    // The editorial rhythm: 8pt above the title, 12pt below it into the author
+    // block, then 16pt from the author block to the language-tree row (KNOT-025-fix1).
+    title: {
+      color: colors.text.primary,
+      marginBottom: spacing.md,
+      marginTop: spacing.sm,
+    },
+    versionCount: {
+      color: colors.text.tertiary,
+      flexShrink: 0,
+      marginLeft: spacing.sm,
+    },
+  });

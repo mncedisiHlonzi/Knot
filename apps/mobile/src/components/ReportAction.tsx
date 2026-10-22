@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
 
 import { ReportEntityType } from '../api/moderation';
-import { colors, spacing, typeScale } from '../theme';
+import { spacing, typeScale, useThemedStyles, type ThemeColors } from '../theme';
 import ReportModal from './ReportModal';
 
 type ReportActionProps = {
@@ -31,6 +31,7 @@ export default function ReportAction({
   entityId,
   onReported,
 }: ReportActionProps): React.ReactElement | null {
+  const styles = useThemedStyles(createStyles);
   const [visible, setVisible] = useState(false);
 
   // Reporting is a signed-in action. A public read with no token shows no
@@ -65,14 +66,15 @@ export default function ReportAction({
   );
 }
 
-const styles = StyleSheet.create({
-  trigger: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  triggerText: {
-    color: colors.text.secondary,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    trigger: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+    },
+    triggerText: {
+      color: colors.text.secondary,
+    },
+  });

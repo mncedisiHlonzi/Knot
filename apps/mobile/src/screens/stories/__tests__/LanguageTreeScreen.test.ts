@@ -15,6 +15,7 @@ let mockStateCursor = 0;
 
 jest.mock('react', () => ({
   ...jest.requireActual('react'),
+  useContext: () => jest.requireActual('../../../theme/ThemeContext').lightTheme,
   useCallback: (callback: unknown) => callback,
   useEffect: () => undefined,
   // The helpers are pure, so running them is what the screen would do anyway.

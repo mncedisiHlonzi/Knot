@@ -17,6 +17,14 @@ export default tseslint.config(
       'react-native.config.js',
     ],
   },
+  {
+    // The Jest setup file runs inside the Jest sandbox, so its globals are the
+    // test runner's, not the app's (KNOT-020i).
+    files: ['jest.setup.js'],
+    languageOptions: {
+      globals: { jest: 'readonly' },
+    },
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

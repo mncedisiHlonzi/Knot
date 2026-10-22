@@ -17,7 +17,8 @@ import Header from '../../components/Header';
 import Input from '../../components/Input';
 import LanguagePicker from '../../components/LanguagePicker';
 import LocationPicker, { PickedPlace } from '../../components/LocationPicker';
-import { colors, layout, spacing, typeScale } from '../../theme';
+import { layout, spacing, typeScale, useTheme, useThemedStyles } from '../../theme';
+import type { ThemeColors } from '../../theme';
 import { inquiryAudienceLabel, inquiryDraftError } from '../../utils/inquiry';
 
 type AskInquiryScreenProps = {
@@ -51,6 +52,8 @@ export default function AskInquiryScreen({
   onAsked,
   onCancel,
 }: AskInquiryScreenProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [language, setLanguage] = useState(defaultLanguage);
@@ -194,44 +197,45 @@ export default function AskInquiryScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  // The routing note, in the quiet tertiary ink, beneath the place field.
-  audience: {
-    color: colors.text.tertiary,
-    marginTop: spacing.md,
-  },
-  container: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-  content: {
-    paddingBottom: spacing.xxxl,
-    paddingHorizontal: layout.screenPaddingReading,
-    paddingTop: spacing.sm,
-  },
-  error: {
-    color: colors.state.danger,
-    marginTop: spacing.md,
-  },
-  field: {
-    marginTop: spacing.lg,
-  },
-  // A 44-point tap target for the header's close button.
-  iconButton: {
-    alignItems: 'center',
-    height: 44,
-    justifyContent: 'center',
-    width: 44,
-  },
-  label: {
-    color: colors.text.secondary,
-    marginBottom: spacing.sm,
-    marginTop: spacing.xl,
-  },
-  subtitle: {
-    color: colors.text.secondary,
-  },
-  submit: {
-    marginTop: spacing.xl,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    // The routing note, in the quiet tertiary ink, beneath the place field.
+    audience: {
+      color: colors.text.tertiary,
+      marginTop: spacing.md,
+    },
+    container: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    content: {
+      paddingBottom: spacing.xxxl,
+      paddingHorizontal: layout.screenPaddingReading,
+      paddingTop: spacing.sm,
+    },
+    error: {
+      color: colors.state.danger,
+      marginTop: spacing.md,
+    },
+    field: {
+      marginTop: spacing.lg,
+    },
+    // A 44-point tap target for the header's close button.
+    iconButton: {
+      alignItems: 'center',
+      height: 44,
+      justifyContent: 'center',
+      width: 44,
+    },
+    label: {
+      color: colors.text.secondary,
+      marginBottom: spacing.sm,
+      marginTop: spacing.xl,
+    },
+    subtitle: {
+      color: colors.text.secondary,
+    },
+    submit: {
+      marginTop: spacing.xl,
+    },
+  });

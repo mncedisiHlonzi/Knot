@@ -25,6 +25,7 @@ import SocialProofHeader from '../SocialProofHeader';
  */
 jest.mock('react', () => ({
   ...jest.requireActual('react'),
+  useContext: () => jest.requireActual('../../theme/ThemeContext').lightTheme,
   useCallback: (callback: unknown) => callback,
   useState: (initial: unknown) => [initial, () => undefined],
 }));

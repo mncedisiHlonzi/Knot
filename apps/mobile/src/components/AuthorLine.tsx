@@ -2,7 +2,7 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { API_BASE_URL } from '../config/api';
-import { colors, spacing, typeScale } from '../theme';
+import { spacing, typeScale, useThemedStyles, type ThemeColors } from '../theme';
 import { formatRelativeTime, formatRelativeTimeShort } from '../utils/time';
 import Avatar from './Avatar';
 import RootedBadge from './RootedBadge';
@@ -143,6 +143,7 @@ export default function AuthorLine({
   onPress,
   testID,
 }: AuthorLineProps): React.ReactElement | null {
+  const styles = useThemedStyles(createStyles);
   const name = typeof displayName === 'string' ? displayName.trim() : '';
 
   const path = typeof avatarUrl === 'string' ? avatarUrl.trim() : '';
@@ -352,66 +353,67 @@ export default function AuthorLine({
   );
 }
 
-const styles = StyleSheet.create({
-  // The Feed's author block: avatar beside the text column, both centred against
-  // each other so the avatar's left edge guides the name and the Rooted line.
-  details: {
-    flexShrink: 1,
-    gap: spacing.xs,
-  },
-  feedRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  identity: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexShrink: 1,
-    gap: spacing.sm,
-  },
-  name: {
-    color: colors.text.primary,
-    flexShrink: 1,
-  },
-  // The name and time line inside the Feed's text column.
-  nameRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexShrink: 1,
-    gap: spacing.sm,
-  },
-  // Lets a long name truncate inside its own tap target.
-  nameTarget: {
-    flexShrink: 1,
-  },
-  // The Feed's stacked block: a left avatar and a column of name, Rooted, time.
-  // The column has no gap: the three tokens' own line heights (16/16/16) already
-  // give the block its rhythm, and a gap made the identity read as three
-  // separated facts rather than one unit (KNOT-023c).
-  stackedDetails: {
-    flexShrink: 1,
-  },
-  // The name and an optional status marker share one line, so the marker sits
-  // beside the name rather than under it (KNOT-029).
-  stackedNameRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexShrink: 1,
-    gap: spacing.xs,
-  },
-  stackedRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  row: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  time: {
-    color: colors.text.tertiary,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    // The Feed's author block: avatar beside the text column, both centred against
+    // each other so the avatar's left edge guides the name and the Rooted line.
+    details: {
+      flexShrink: 1,
+      gap: spacing.xs,
+    },
+    feedRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    identity: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexShrink: 1,
+      gap: spacing.sm,
+    },
+    name: {
+      color: colors.text.primary,
+      flexShrink: 1,
+    },
+    // The name and time line inside the Feed's text column.
+    nameRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexShrink: 1,
+      gap: spacing.sm,
+    },
+    // Lets a long name truncate inside its own tap target.
+    nameTarget: {
+      flexShrink: 1,
+    },
+    // The Feed's stacked block: a left avatar and a column of name, Rooted, time.
+    // The column has no gap: the three tokens' own line heights (16/16/16) already
+    // give the block its rhythm, and a gap made the identity read as three
+    // separated facts rather than one unit (KNOT-023c).
+    stackedDetails: {
+      flexShrink: 1,
+    },
+    // The name and an optional status marker share one line, so the marker sits
+    // beside the name rather than under it (KNOT-029).
+    stackedNameRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexShrink: 1,
+      gap: spacing.xs,
+    },
+    stackedRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    row: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+    },
+    time: {
+      color: colors.text.tertiary,
+    },
+  });

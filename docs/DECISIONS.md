@@ -2627,3 +2627,50 @@ and every score is reproducible from named rules. The ranked feed describes a bo
 window rather than the whole corpus, and its cursor is stable but not a snapshot: a change
 in engagement or content between pages can reorder entries around the cursor. Moving the
 ranking into SQL (and therefore removing the window) is the next scaling step.
+
+## KNOT-ADR-077 — Theme is user-selectable (light/dark) and persisted in AsyncStorage
+
+**Context.** The design system was built with both palettes from day one (KNOT-020a), and
+`palette.dark` has sat unused in the token layer ever since: `colors.ts` read
+`palette.light` unconditionally. KNOT-020i activates dark mode. The one thing the palette
+layer cannot decide on its own is *who* chooses the theme, and where that choice lives — an
+account setting, a system-following setting, or a device preference.
+
+**Decision.**
+
+- **The theme is a device preference, not an account setting.** It is stored in
+  AsyncStorage under `knot.theme.v1`, beside the session, and survives sign-out. Two people
+  sharing a phone get the same look; one person on two devices keeps each device's look.
+  The theme says nothing about the person, so it does not belong on the server.
+- **The default follows the system, then light.** On first launch the provider starts from
+  `Appearance.getColorScheme()` and falls back to light when that is unknown. An explicit
+  choice is stored and wins from then on, for launches and for `Appearance` changes — the
+  app never silently overrides a choice the user made.
+- **The active theme is React context, not a global.** `ThemeProvider` owns the state and
+  `useTheme()` reads it, so a change re-renders the tree and nothing keeps a stale palette.
+  `useThemedStyles(factory)` builds and caches one stylesheet per theme; a module-scope
+  `StyleSheet.create` cannot be themed because it is evaluated once, at import.
+- **The accent stays ONE role.** The dark palette names the accent three ways
+  (`indigoText`, `indigoFill`, `indigoOnTint`); `colors.ts` resolves them into the existing
+  `brand.primary`/`brand.pressed`, so no screen learns a second accent name and no call site
+  changed. `brand.primary` is the accent both as ink and as a filled button, `text.onBrand`
+  is the canvas ink in both themes, and a pressed brand control brightens in dark.
+- **`colors.bg.sheet` is a role of its own.** A sheet over a dimmed backdrop needs to be a
+  step off the canvas in dark; in light it is the canvas, so the light appearance is
+  unchanged.
+- **The static `colors` export stays, as the LIGHT set.** It is the fallback for anything
+  rendered outside a provider (a unit test, a preview), which is what keeps the migration
+  safe; screens import the hook instead.
+- **Chrome follows the theme where JavaScript can reach it.** The status-bar icons flip to
+  `light-content` in dark, and the two discovery maps switch Mapbox `StyleURL` Light→Dark.
+  The Android **navigation bar** cannot be reached from JS (native theme only) and stays
+  light in dark mode — an accepted, documented gap rather than a new dependency.
+
+**Consequences.** Dark mode costs no new dependency (React Native's built-in `Appearance`
+and the AsyncStorage already in use), and every screen follows the palette automatically
+because none of them holds a colour of its own. The cost is that colours can no longer be
+read from a module-scope constant: a new screen must use `useThemedStyles` and `useTheme`,
+and a stylesheet that hard-codes a colour will look right in one theme only. The
+navigation-bar mismatch and the absent dark treatment for elevation shadows remain known
+imperfections of a light-first design system continuing into its second theme.
+

@@ -404,6 +404,58 @@ is `Chip`'s fill, because `backgroundColor` cannot be animated natively.
   glyphs themselves are long gone (KNOT-025-fix3); and the active `TabBar` glyph
   runs a two-step `micro` bounce when its tab becomes selected.
 
+#### The theme system (KNOT-020i)
+
+There are two themes and one place that decides which is active:
+`src/theme/ThemeContext.tsx`. `ThemeProvider` sits at the root of `App.tsx` (which
+renders a `ThemedApp` inside it, so App's own stylesheet follows the theme too).
+`useTheme()` returns `{ theme, colors, setTheme, toggleTheme }`.
+
+**Writing a themed screen.** Colours must not be captured at module scope — a
+`StyleSheet.create({ … colors.x … })` evaluated at import time freezes whichever
+palette loaded first — so every screen and component now builds its stylesheet
+from a factory:
+
+```ts
+const createStyles = (colors: ThemeColors) => StyleSheet.create({ … });
+
+export default function Screen() {
+  const { colors } = useTheme();               // only where a colour is used inline
+  const styles = useThemedStyles(createStyles);
+}
+```
+
+`useThemedStyles` caches one stylesheet per theme (keyed by the factory), so the
+object keeps its identity between renders and style arrays do not churn. The
+static `colors` export still exists as the LIGHT set — it is the documented
+fallback for anything rendered without a provider (a unit test, a preview) — but
+no screen imports it any more.
+
+**Rules.**
+
+- Never hard-code a colour: add or reuse a role in `colors.ts` instead. `palette.ts`
+  is the only file with hex values, plus the two `border.divider` values the role
+  owns because the reference has no swatch for them.
+- A new role must be defined for BOTH themes in `activePalette`. Do not spread the
+  light palette over the dark one: the dark palette deliberately renames the accent
+  roles (`indigoText`/`indigoFill`/`indigoOnTint`).
+- A sheet uses `colors.bg.sheet`, not `colors.bg.canvas` — they differ in dark.
+- Chrome that JS owns must follow the theme explicitly: the status-bar `barStyle`
+  (`light-content` in dark) and the Mapbox `styleURL` on the discovery screens.
+  The Android **navigation bar** is native-theme only and stays light in dark
+  mode (a disclosed gap).
+
+**Persistence.** `src/theme/themeStorage.ts` mirrors `session.ts`: best-effort
+AsyncStorage under `knot.theme.v1`, `saveTheme`/`loadTheme`/`clearTheme`, every
+failure logged and swallowed. On launch the stored choice wins; with none, the
+provider follows `Appearance.getColorScheme()`; with neither, light.
+
+**Testing.** Component suites call components directly with no renderer, so
+`jest.setup.js` replaces `React.useContext` for every suite with the light theme
+(the same value the context defaults to outside a provider). A suite that
+provides its own `jest.mock('react', …)` must therefore supply `useContext`
+itself — see the comment in the setup file.
+
 ### Author attribution (`AuthorLine`)
 
 Every screen that shows user-generated content attributes it through one component,

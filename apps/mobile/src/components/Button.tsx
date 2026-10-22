@@ -9,7 +9,8 @@ import {
   View,
 } from 'react-native';
 
-import { colors, motion, radius, spacing, typeScale } from '../theme';
+import { motion, radius, spacing, typeScale, useTheme, useThemedStyles } from '../theme';
+import type { ThemeColors } from '../theme';
 
 /** The four button presentations the design system offers. */
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
@@ -63,6 +64,8 @@ export default function Button({
   accessibilityLabel,
   testID,
 }: ButtonProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const inactive = disabled || loading;
 
   // The press scale is one native-driver timing per press, so it never touches
@@ -151,57 +154,58 @@ export default function Button({
   );
 }
 
-const styles = StyleSheet.create({
-  base: {
-    alignItems: 'center',
-    borderRadius: radius.md,
-    flexDirection: 'row',
-    height: HEIGHT,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
-  },
-  disabledOpacity: {
-    opacity: 0.5,
-  },
-  fullWidth: {
-    alignSelf: 'stretch',
-  },
-  label: {
-    textAlign: 'center',
-  },
-  // The label keeps its place in the layout while loading, so the button's width
-  // does not jump when the spinner appears.
-  labelHidden: {
-    opacity: 0,
-  },
-  plain: {
-    backgroundColor: 'transparent',
-  },
-  pressedOpacity: {
-    opacity: 0.7,
-  },
-  primary: {
-    backgroundColor: colors.brand.primary,
-  },
-  primaryDisabled: {
-    backgroundColor: colors.bg.sunken,
-    opacity: 0.5,
-  },
-  primaryPressed: {
-    backgroundColor: colors.brand.pressed,
-  },
-  secondary: {
-    backgroundColor: 'transparent',
-    borderColor: colors.border.hairline,
-    borderWidth: 1,
-  },
-  spinner: {
-    alignItems: 'center',
-    bottom: 0,
-    justifyContent: 'center',
-    left: 0,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    base: {
+      alignItems: 'center',
+      borderRadius: radius.md,
+      flexDirection: 'row',
+      height: HEIGHT,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.lg,
+    },
+    disabledOpacity: {
+      opacity: 0.5,
+    },
+    fullWidth: {
+      alignSelf: 'stretch',
+    },
+    label: {
+      textAlign: 'center',
+    },
+    // The label keeps its place in the layout while loading, so the button's width
+    // does not jump when the spinner appears.
+    labelHidden: {
+      opacity: 0,
+    },
+    plain: {
+      backgroundColor: 'transparent',
+    },
+    pressedOpacity: {
+      opacity: 0.7,
+    },
+    primary: {
+      backgroundColor: colors.brand.primary,
+    },
+    primaryDisabled: {
+      backgroundColor: colors.bg.sunken,
+      opacity: 0.5,
+    },
+    primaryPressed: {
+      backgroundColor: colors.brand.pressed,
+    },
+    secondary: {
+      backgroundColor: 'transparent',
+      borderColor: colors.border.hairline,
+      borderWidth: 1,
+    },
+    spinner: {
+      alignItems: 'center',
+      bottom: 0,
+      justifyContent: 'center',
+      left: 0,
+      position: 'absolute',
+      right: 0,
+      top: 0,
+    },
+  });

@@ -1,7 +1,8 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { colors, radius, spacing, typeScale } from '../theme';
+import { radius, spacing, typeScale, useTheme, useThemedStyles } from '../theme';
+import type { ThemeColors } from '../theme';
 
 /** The two pillars every story is told under. */
 export type Pillar = 'wonder' | 'heritage';
@@ -52,6 +53,8 @@ export default function PillarTag({
   variant = 'filled',
   testID,
 }: PillarTagProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const pillarColors = colors.pillar[pillar];
   const placeText = typeof place === 'string' ? place.trim() : '';
 
@@ -74,22 +77,23 @@ export default function PillarTag({
   );
 }
 
-const styles = StyleSheet.create({
-  place: {
-    color: colors.text.tertiary,
-  },
-  // No fill, no border, no radius and no horizontal padding: the tag becomes
-  // plain text on the canvas. The horizontal padding must be reset here because
-  // the base style carries the pill's `paddingHorizontal`; without this the tag
-  // starts a step in from the rest of the entry (KNOT-020c-fix6).
-  plain: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 0,
-  },
-  tag: {
-    alignSelf: 'flex-start',
-    borderRadius: radius.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    place: {
+      color: colors.text.tertiary,
+    },
+    // No fill, no border, no radius and no horizontal padding: the tag becomes
+    // plain text on the canvas. The horizontal padding must be reset here because
+    // the base style carries the pill's `paddingHorizontal`; without this the tag
+    // starts a step in from the rest of the entry (KNOT-020c-fix6).
+    plain: {
+      alignSelf: 'flex-start',
+      paddingHorizontal: 0,
+    },
+    tag: {
+      alignSelf: 'flex-start',
+      borderRadius: radius.sm,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.xs,
+    },
+  });

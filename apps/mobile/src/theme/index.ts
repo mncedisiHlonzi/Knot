@@ -1,5 +1,17 @@
 export { palette } from './palette';
-export { colors } from './colors';
+export { colors, getColors } from './colors';
+export type { ThemeColors, ThemeName } from './colors';
+export {
+  ThemeProvider,
+  darkTheme,
+  lightTheme,
+  resolveInitialTheme,
+  themeFor,
+  useTheme,
+  useThemedStyles,
+} from './ThemeContext';
+export type { Theme, ThemeContextValue } from './ThemeContext';
+export { THEME_KEY, clearTheme, loadTheme, saveTheme } from './themeStorage';
 export {
   fonts,
   fontWeights,

@@ -2,7 +2,8 @@ import React from 'react';
 import { Image, StyleSheet, View } from 'react-native';
 import { Play } from 'phosphor-react-native';
 
-import { colors, radius, spacing } from '../theme';
+import { radius, spacing, useTheme, useThemedStyles } from '../theme';
+import type { ThemeColors } from '../theme';
 
 /** The play disc drawn over a video thumbnail, and its glyph. */
 const PLAY_DISC_SIZE = 16;
@@ -43,6 +44,8 @@ export default function VideoThumbnail({
   posterUrl,
   size = DEFAULT_SIZE,
 }: VideoThumbnailProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   return (
     <View style={[styles.frame, { height: size, width: size }]}>
       {/* The clipped, out-of-flow box from fix8: the still media fills it. */}
@@ -74,35 +77,36 @@ export default function VideoThumbnail({
   );
 }
 
-const styles = StyleSheet.create({
-  // The square the frame fills. It clips its own corners so the component stays
-  // correct even where the caller does not clip it.
-  frame: {
-    backgroundColor: colors.bg.sunken,
-    borderRadius: radius.md,
-    overflow: 'hidden',
-  },
-  // The poster fills the anchor exactly (`cover` crops, never distorts).
-  media: {
-    height: '100%',
-    width: '100%',
-  },
-  // No poster stored yet: a calm sunken square marks the video item without a
-  // native surface that could escape the tile.
-  placeholder: {
-    backgroundColor: colors.bg.sunken,
-    height: '100%',
-    width: '100%',
-  },
-  play: {
-    alignItems: 'center',
-    backgroundColor: colors.scrim.overlay,
-    borderRadius: radius.pill,
-    bottom: spacing.xs,
-    height: PLAY_DISC_SIZE,
-    justifyContent: 'center',
-    position: 'absolute',
-    right: spacing.xs,
-    width: PLAY_DISC_SIZE,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    // The square the frame fills. It clips its own corners so the component stays
+    // correct even where the caller does not clip it.
+    frame: {
+      backgroundColor: colors.bg.sunken,
+      borderRadius: radius.md,
+      overflow: 'hidden',
+    },
+    // The poster fills the anchor exactly (`cover` crops, never distorts).
+    media: {
+      height: '100%',
+      width: '100%',
+    },
+    // No poster stored yet: a calm sunken square marks the video item without a
+    // native surface that could escape the tile.
+    placeholder: {
+      backgroundColor: colors.bg.sunken,
+      height: '100%',
+      width: '100%',
+    },
+    play: {
+      alignItems: 'center',
+      backgroundColor: colors.scrim.overlay,
+      borderRadius: radius.pill,
+      bottom: spacing.xs,
+      height: PLAY_DISC_SIZE,
+      justifyContent: 'center',
+      position: 'absolute',
+      right: spacing.xs,
+      width: PLAY_DISC_SIZE,
+    },
+  });

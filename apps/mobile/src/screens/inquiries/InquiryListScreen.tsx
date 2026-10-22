@@ -17,7 +17,7 @@ import Chip from '../../components/Chip';
 import EmptyState from '../../components/EmptyState';
 import Header from '../../components/Header';
 import Input from '../../components/Input';
-import { colors, layout, spacing, typeScale } from '../../theme';
+import { layout, spacing, typeScale, useThemedStyles, type ThemeColors } from '../../theme';
 import { answerCountLabel } from '../../utils/inquiry';
 
 /**
@@ -71,6 +71,7 @@ export default function InquiryListScreen({
   onAsk,
   onOpenUserProfile,
 }: InquiryListScreenProps): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
   const [inquiries, setInquiries] = useState<readonly Inquiry[]>([]);
   const [nextCursor, setNextCursor] = useState('');
   // The place applied to the query, which lags the text field until the person
@@ -277,75 +278,76 @@ export default function InquiryListScreen({
   );
 }
 
-const styles = StyleSheet.create({
-  // The Ask action's band: the screen's gutter, with the list's own spacing below
-  // it, so the button reads as chrome above the content rather than as the first
-  // list row.
-  askBar: {
-    paddingBottom: spacing.md,
-    paddingHorizontal: layout.screenPaddingFeed,
-  },
-  content: {
-    paddingBottom: spacing.xxxl,
-    paddingHorizontal: layout.screenPaddingFeed,
-  },
-  error: {
-    color: colors.state.danger,
-    marginTop: spacing.md,
-  },
-  filter: {
-    gap: spacing.sm,
-    marginTop: spacing.md,
-  },
-  filterChips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  footer: {
-    paddingVertical: spacing.lg,
-  },
-  // One question: the overline, the title, up to two lines of the body, then the
-  // asker's attribution and the answer tally, closed by a full-bleed hairline.
-  // Flat rather than a card, per the design system's canvas rule.
-  row: {
-    borderBottomColor: colors.border.hairline,
-    borderBottomWidth: 1,
-    gap: spacing.sm,
-    marginHorizontal: -layout.screenPaddingFeed,
-    paddingHorizontal: layout.screenPaddingFeed,
-    paddingVertical: spacing.lg,
-  },
-  rowBody: {
-    color: colors.text.secondary,
-  },
-  rowCount: {
-    color: colors.text.secondary,
-  },
-  rowMeta: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: spacing.xs,
-  },
-  rowMetaIdentity: {
-    flexShrink: 1,
-  },
-  rowOverline: {
-    color: colors.brand.primary,
-  },
-  rowTitle: {
-    color: colors.text.primary,
-  },
-  screen: {
-    backgroundColor: colors.bg.canvas,
-    flex: 1,
-  },
-  spinner: {
-    marginVertical: spacing.lg,
-  },
-  subtitle: {
-    color: colors.text.secondary,
-    marginTop: spacing.sm,
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    // The Ask action's band: the screen's gutter, with the list's own spacing below
+    // it, so the button reads as chrome above the content rather than as the first
+    // list row.
+    askBar: {
+      paddingBottom: spacing.md,
+      paddingHorizontal: layout.screenPaddingFeed,
+    },
+    content: {
+      paddingBottom: spacing.xxxl,
+      paddingHorizontal: layout.screenPaddingFeed,
+    },
+    error: {
+      color: colors.state.danger,
+      marginTop: spacing.md,
+    },
+    filter: {
+      gap: spacing.sm,
+      marginTop: spacing.md,
+    },
+    filterChips: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+    },
+    footer: {
+      paddingVertical: spacing.lg,
+    },
+    // One question: the overline, the title, up to two lines of the body, then the
+    // asker's attribution and the answer tally, closed by a full-bleed hairline.
+    // Flat rather than a card, per the design system's canvas rule.
+    row: {
+      borderBottomColor: colors.border.hairline,
+      borderBottomWidth: 1,
+      gap: spacing.sm,
+      marginHorizontal: -layout.screenPaddingFeed,
+      paddingHorizontal: layout.screenPaddingFeed,
+      paddingVertical: spacing.lg,
+    },
+    rowBody: {
+      color: colors.text.secondary,
+    },
+    rowCount: {
+      color: colors.text.secondary,
+    },
+    rowMeta: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginTop: spacing.xs,
+    },
+    rowMetaIdentity: {
+      flexShrink: 1,
+    },
+    rowOverline: {
+      color: colors.brand.primary,
+    },
+    rowTitle: {
+      color: colors.text.primary,
+    },
+    screen: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    spinner: {
+      marginVertical: spacing.lg,
+    },
+    subtitle: {
+      color: colors.text.secondary,
+      marginTop: spacing.sm,
+    },
+  });

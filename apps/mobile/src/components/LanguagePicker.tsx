@@ -8,7 +8,8 @@ import {
   toggleLanguage,
   type Language,
 } from '../data/languages';
-import { colors, radius, spacing, typeScale } from '../theme';
+import { radius, spacing, typeScale, useTheme, useThemedStyles } from '../theme';
+import type { ThemeColors } from '../theme';
 
 /** How many matches to list at once; the user narrows the list by typing. */
 const MAX_RESULTS = 20;
@@ -50,6 +51,8 @@ export type LanguagePickerProps = SingleLanguagePickerProps | MultipleLanguagePi
  * `max`, and tapping a chosen language again removes it.
  */
 export default function LanguagePicker(props: LanguagePickerProps): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [query, setQuery] = useState('');
 
   // Narrow once, into consts, so the handlers below keep the narrowed type.
@@ -176,75 +179,76 @@ export default function LanguagePicker(props: LanguagePickerProps): React.ReactE
   );
 }
 
-const styles = StyleSheet.create({
-  chip: {
-    alignItems: 'center',
-    backgroundColor: colors.bg.paper,
-    borderColor: colors.brand.primary,
-    borderRadius: radius.pill,
-    borderWidth: 1,
-    flexDirection: 'row',
-    marginBottom: spacing.xs,
-    marginRight: spacing.xs,
-    paddingLeft: spacing.md,
-    paddingRight: spacing.sm,
-    paddingVertical: spacing.xs,
-  },
-  chipRemove: {
-    paddingHorizontal: spacing.xs,
-  },
-  chipRemoveText: {
-    color: colors.text.secondary,
-  },
-  chipText: {
-    color: colors.text.primary,
-  },
-  chips: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: spacing.xs,
-  },
-  empty: {
-    color: colors.text.secondary,
-    marginTop: spacing.xs,
-  },
-  hint: {
-    color: colors.text.secondary,
-    marginTop: spacing.xs,
-  },
-  input: {
-    backgroundColor: colors.bg.paper,
-    borderColor: colors.border.hairline,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    color: colors.text.primary,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  result: {
-    alignItems: 'center',
-    borderTopColor: colors.border.hairline,
-    borderTopWidth: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  resultCode: {
-    color: colors.text.secondary,
-  },
-  resultCodeChosen: {
-    color: colors.brand.primary,
-  },
-  resultName: {
-    color: colors.text.primary,
-  },
-  results: {
-    backgroundColor: colors.bg.paper,
-    borderColor: colors.border.hairline,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    marginTop: spacing.xs,
-    overflow: 'hidden',
-  },
-});
+const createStyles = (colors: ThemeColors) =>
+  StyleSheet.create({
+    chip: {
+      alignItems: 'center',
+      backgroundColor: colors.bg.paper,
+      borderColor: colors.brand.primary,
+      borderRadius: radius.pill,
+      borderWidth: 1,
+      flexDirection: 'row',
+      marginBottom: spacing.xs,
+      marginRight: spacing.xs,
+      paddingLeft: spacing.md,
+      paddingRight: spacing.sm,
+      paddingVertical: spacing.xs,
+    },
+    chipRemove: {
+      paddingHorizontal: spacing.xs,
+    },
+    chipRemoveText: {
+      color: colors.text.secondary,
+    },
+    chipText: {
+      color: colors.text.primary,
+    },
+    chips: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      marginBottom: spacing.xs,
+    },
+    empty: {
+      color: colors.text.secondary,
+      marginTop: spacing.xs,
+    },
+    hint: {
+      color: colors.text.secondary,
+      marginTop: spacing.xs,
+    },
+    input: {
+      backgroundColor: colors.bg.paper,
+      borderColor: colors.border.hairline,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      color: colors.text.primary,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md,
+    },
+    result: {
+      alignItems: 'center',
+      borderTopColor: colors.border.hairline,
+      borderTopWidth: 1,
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.md,
+    },
+    resultCode: {
+      color: colors.text.secondary,
+    },
+    resultCodeChosen: {
+      color: colors.brand.primary,
+    },
+    resultName: {
+      color: colors.text.primary,
+    },
+    results: {
+      backgroundColor: colors.bg.paper,
+      borderColor: colors.border.hairline,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      marginTop: spacing.xs,
+      overflow: 'hidden',
+    },
+  });
