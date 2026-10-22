@@ -96,8 +96,11 @@ returned object keeps its identity across renders. `useTheme()` also returns
   (`App.tsx`); the Android **navigation bar**, which RN's `StatusBar` cannot
   reach, is repainted by the app-local `SystemBarsModule` (called through
   `src/native/systemBars.ts`) whenever the active theme changes, with the icon
-  appearance flipped to match (KNOT-020j). The native `navigationBarColor` in
-  `res/values/styles.xml` is only the pre-mount default.
+  appearance flipped to match (KNOT-020j). React Native's modals are Android
+  dialogs with their own windows and their own container theme, so the module
+  repaints those windows too, on a focus change as well as a theme change
+  (KNOT-020j-fix). The native `navigationBarColor` in `res/values/styles.xml` is
+  only the pre-mount default.
 
 ### Legacy colour aliases (deprecated)
 

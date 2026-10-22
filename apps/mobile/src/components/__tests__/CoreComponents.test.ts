@@ -5,6 +5,7 @@ import EmptyState from '../EmptyState';
 import PillarTag from '../PillarTag';
 import RootedBadge from '../RootedBadge';
 import TabBar from '../TabBar';
+import { ChatsCircle } from 'phosphor-react-native';
 import {
   attributionParts,
   attributionSegments,
@@ -72,8 +73,8 @@ jest.mock('react-native', () => ({
 // SVGs now, mapped to a stub by jest.config.js (KNOT-020b-fix).
 jest.mock('phosphor-react-native', () => ({
   Bell: () => null,
+  ChatsCircle: () => null,
   House: () => null,
-  MagnifyingGlass: () => null,
   MapTrifold: () => null,
   Plus: () => null,
   X: () => null,
@@ -278,6 +279,34 @@ describe('TabBar', () => {
 
     expect(badgeFor(0)).toBeNull();
     expect(badgeFor(3)).not.toBeNull();
+  });
+
+  // The visible label is shortened so it cannot truncate on a narrow device; the
+  // spoken label stays the full destination name (KNOT-020j-fix).
+  it('draws "Notice" for the notifications tab but announces "Notifications"', () => {
+    const onSelect = (): void => undefined;
+    const bar = TabBar({ activeTab: 'feed', onSelect });
+    const notificationsTab = bar.props.children[4] as {
+      props: { accessibilityLabel: string; children: readonly { props: { children: unknown } }[] };
+    };
+
+    expect(notificationsTab.props.children[1].props.children).toBe('Notice');
+    expect(notificationsTab.props.accessibilityLabel).toBe('Notifications');
+  });
+
+  // The magnifier is the Feed header's search control, so Inquiries needed its own
+  // mark rather than looking like a second search action (KNOT-020j-fix).
+  it('draws a conversation glyph, not a magnifier, for Inquiries', () => {
+    const onSelect = (): void => undefined;
+    const bar = TabBar({ activeTab: 'feed', onSelect });
+    const inquiriesTab = bar.props.children[3] as {
+      props: {
+        children: readonly { props: { children: readonly { props: { icon: unknown } }[] } }[];
+      };
+    };
+
+    const glyph = inquiriesTab.props.children[0].props.children[0];
+    expect(glyph.props.icon).toBe(ChatsCircle);
   });
 });
 

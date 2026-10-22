@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Bell, House, MagnifyingGlass, MapTrifold, Plus, type Icon } from 'phosphor-react-native';
+import { Bell, ChatsCircle, House, MapTrifold, Plus, type Icon } from 'phosphor-react-native';
 
 import {
   fontWeights,
@@ -32,8 +32,14 @@ const TABS: readonly TabDefinition[] = [
   { name: 'discoveryMap', label: 'Map', icon: MapTrifold },
   // The Create tab is the elevated centre button; its label is never drawn.
   { name: 'createStory', label: 'Create', icon: Plus, accessibilityLabel: 'Create story' },
-  { name: 'inquiries', label: 'Inquiries', icon: MagnifyingGlass },
-  { name: 'notifications', label: 'Notifications', icon: Bell },
+  // Inquiries has its own mark: the magnifier was the same glyph as the Feed
+  // header's search control, which made two different destinations look like one
+  // action. `ChatsCircle` reads as an exchange of questions and answers, and is
+  // clearly a destination rather than a control (KNOT-020j-fix).
+  { name: 'inquiries', label: 'Inquiries', icon: ChatsCircle },
+  // The visible label is shortened to fit five equal tabs on a narrow device;
+  // the spoken label stays the full name (KNOT-020j-fix).
+  { name: 'notifications', label: 'Notice', icon: Bell, accessibilityLabel: 'Notifications' },
 ];
 
 type TabBarProps = {
@@ -130,10 +136,11 @@ function TabGlyph({
  * destination. Using no navigation dependency is deliberate; see KNOT-ADR-019.
  *
  * The five destinations are Home, Map, Create, Inquiries, and Notifications
- * (KNOT-020j). Inquiries is a destination in its own right — finding and asking
- * questions — rather than something reached from Create, which stays a story
- * composer (KNOT-ADR-058). Notifications took the fifth slot, and the bell left
- * the Feed's header, so the inbox has a permanent, always-reachable home; the
+ * (KNOT-020j), whose visible label is "Notice" so it fits an equal fifth of the
+ * bar (KNOT-020j-fix). Inquiries is a destination in its own right — finding and
+ * asking questions — rather than something reached from Create, which stays a
+ * story composer (KNOT-ADR-058). Notifications took the fifth slot, and the bell
+ * left the Feed's header, so the inbox has a permanent, always-reachable home; the
  * profile it displaced is now the Feed header's avatar.
  *
  * Every tab is drawn with a Phosphor icon rather than a text glyph. The active tab
@@ -206,12 +213,6 @@ export default function TabBar({
             <Text
               style={[typeScale.caption, styles.label, active ? styles.labelActive : null]}
               numberOfLines={1}
-              // "Notifications" is the longest label in the bar and the five tabs
-              // split the width evenly, so it is allowed to shrink rather than
-              // ellipsize on a narrow device. The floor keeps it above the
-              // legibility limit; the other four labels never reach it.
-              adjustsFontSizeToFit
-              minimumFontScale={0.8}
             >
               {tab.label}
             </Text>

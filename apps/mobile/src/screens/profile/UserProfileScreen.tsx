@@ -765,8 +765,8 @@ export default function UserProfileScreen({
               />
 
               {card.meta === '' ? null : (
-                <View style={styles.cardPadded}>
-                  <Text style={[typeScale.caption, styles.cardMeta]} numberOfLines={1}>
+                <View style={[styles.cardPadded, styles.cardMetaRow]}>
+                  <Text style={[typeScale.label, tabularNums, styles.cardMeta]} numberOfLines={1}>
                     {card.meta}
                   </Text>
                 </View>
@@ -874,9 +874,19 @@ const createStyles = (colors: ThemeColors) =>
       marginHorizontal: -layout.screenPaddingFeed,
       paddingVertical: spacing.lg,
     },
+    // The card's stats line, in the Feed's voice: the bolder `label` size in the
+    // secondary ink, with the same 12pt gap under the media the Feed uses. The row
+    // it sits in centres it vertically, so it reads as a band under the media
+    // rather than as text hugging the media's bottom edge (KNOT-020j-fix).
     cardMeta: {
-      color: colors.text.tertiary,
-      marginTop: spacing.xs,
+      color: colors.text.secondary,
+      flexShrink: 1,
+    },
+    cardMetaRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      marginTop: spacing.md,
+      minHeight: 20,
     },
     // The card's media preview: full-bleed, full-width, and never a player — a
     // still image, or a video's first frame (KNOT-020g-fix3, KNOT-020g-fix5). Its

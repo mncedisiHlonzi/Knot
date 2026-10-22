@@ -1,40 +1,55 @@
 package com.knot.app
 
+import android.app.Activity
 import android.graphics.Color
 import android.os.Build
 import android.view.View
+import android.view.ViewGroup
+import android.view.Window
 import android.view.WindowInsetsController
 
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
 import com.facebook.react.bridge.UiThreadUtil
+import com.facebook.react.views.modal.ReactModalHostView
 
 /**
  * Paints the Android system navigation bar in the app's active theme colour.
  *
- * The window paints the navigation bar from the native theme (`styles.xml`), and
- * that theme cannot know the user's theme choice: the choice is stored by the
- * JavaScript layer, where it can be either an explicit setting or the system
- * appearance. `StatusBar` in React Native does not reach the navigation bar
- * either. So the app calls this module whenever the active theme changes and the
- * bar is repainted here (KNOT-020j).
+ * The window paints the navigation bar from its theme, and no theme native side
+ * can know the user's choice — it is stored by the JavaScript layer, where it is
+ * either an explicit setting or the system appearance. `StatusBar` in React
+ * Native does not reach the navigation bar either. So the app calls this module
+ * whenever the active theme changes and the bar is repainted here (KNOT-020j).
  *
- * Two properties are set:
+ * **Dialogs own the bar too.** React Native's `Modal` is a real Android `Dialog`
+ * with its own window, created from RN's `Theme.FullScreenDialog*` — a theme with
+ * no parent and no `navigationBarColor`, so while a modal is open the bar falls
+ * back to the platform default and the Activity's colour is hidden underneath
+ * (this was the dark-mode bug KNOT-020j-fix fixes). Every `ReactModalHostView`
+ * stays attached to the React root while its dialog is up and exposes that
+ * `Dialog`, so the same colour is applied to every open modal window:
+ *
+ * - whenever JavaScript sets a colour, which covers a theme change made while a
+ *   sheet is open (the Theme row lives inside the profile sheet);
+ * - whenever the window focus moves, which is what a dialog taking focus (and
+ *   giving it back on dismissal) does — see `MainActivity.onWindowFocusChanged`.
+ *
+ * Two properties are set on each window:
  *
  * - **the bar colour**, so it matches `colors.bg.canvas` in either theme;
- * - **the icon appearance**, so the clock-free gesture pill and the three-button
- *   icons stay legible: dark icons on the light canvas, light icons on the dark
- *   one.
+ * - **the icon appearance**, so the gesture pill and the three-button icons stay
+ *   legible: dark icons on the light canvas, light icons on the dark one.
  *
  * `isNavigationBarContrastEnforced` is switched off on API 29+, where Android
  * would otherwise paint its own translucent scrim behind the bar and defeat the
  * colour just set.
  *
  * The call is a no-op when there is no current activity (the app is in the
- * background); the next theme-driven call repaints it. The values handled here
- * are API-gated: the light-icon flag exists from API 26, and the insets
- * controller from API 30.
+ * background); the next focus change or theme-driven call repaints it. The
+ * values handled here are API-gated: the light-icon flag exists from API 26, and
+ * the insets controller from API 30.
  */
 class SystemBarsModule(reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
@@ -60,19 +75,56 @@ class SystemBarsModule(reactContext: ReactApplicationContext) :
           return
         }
 
+    lastColor = parsed
+    lastLightIcons = lightIcons
+
     UiThreadUtil.runOnUiThread {
       val activity = currentActivity ?: return@runOnUiThread
-      val window = activity.window ?: return@runOnUiThread
+      reapply(activity)
+    }
+  }
+
+  companion object {
+    /**
+     * The last colour JavaScript asked for. Held statically because the focus
+     * callback lives on the Activity, and because a dialog window can appear
+     * after the theme was chosen (KNOT-020j-fix).
+     */
+    private var lastColor: Int? = null
+    private var lastLightIcons: Boolean = false
+
+    /**
+     * Repaints the Activity's window and every open modal dialog.
+     *
+     * Called from `setNavigationBar` and from `MainActivity.onWindowFocusChanged`,
+     * so a dialog that has just taken focus is corrected and the Activity is
+     * corrected again when the dialog is dismissed. It must run on the UI thread;
+     * both callers already do.
+     */
+    fun reapply(activity: Activity) {
+      val color = lastColor ?: return
+      val decorView = activity.window?.decorView
+
+      applyToWindow(activity.window, color, lastLightIcons)
+      applyToOpenDialogs(decorView, color, lastLightIcons)
+    }
+
+    /** Sets the bar colour, contrast enforcement, and icon appearance on one window. */
+    private fun applyToWindow(window: Window?, color: Int, lightIcons: Boolean) {
+      if (window == null) {
+        return
+      }
 
       @Suppress("DEPRECATION")
-      window.navigationBarColor = parsed
+      window.navigationBarColor = color
 
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         window.isNavigationBarContrastEnforced = false
       }
 
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        val controller = window.insetsController ?: return@runOnUiThread
+        // Null until a dialog window is added; the next focus change retries.
+        val controller = window.insetsController ?: return
         val mask = WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS
         controller.setSystemBarsAppearance(if (lightIcons) mask else 0, mask)
       } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -87,5 +139,31 @@ class SystemBarsModule(reactContext: ReactApplicationContext) :
             }
       }
     }
+
+    /**
+     * Paints the window of every modal dialog in the view tree.
+     *
+     * A `ReactModalHostView` stays in the React root as a zero-sized child while
+     * its dialog is showing, and its `dialog` getter is public, so the dialog's
+     * window is reachable without reflection or a patched React Native. The walk
+     * is cheap and runs only on a theme change or a focus change, never per frame.
+     */
+    private fun applyToOpenDialogs(view: View?, color: Int, lightIcons: Boolean) {
+      if (view == null) {
+        return
+      }
+
+      if (view is ReactModalHostView) {
+        applyToWindow(view.dialog?.window, color, lightIcons)
+        return
+      }
+
+      if (view is ViewGroup) {
+        for (index in 0 until view.childCount) {
+          applyToOpenDialogs(view.getChildAt(index), color, lightIcons)
+        }
+      }
+    }
   }
 }
+

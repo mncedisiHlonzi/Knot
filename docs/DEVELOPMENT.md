@@ -444,8 +444,12 @@ no screen imports it any more.
   (`light-content` in dark), the Mapbox `styleURL` on the discovery screens, and
   the Android **navigation bar**, which `src/native/systemBars.ts` repaints
   through the app-local `SystemBarsModule` whenever the active theme changes
-  (KNOT-020j). The native theme's `navigationBarColor` is only the value shown
-  before JavaScript mounts.
+  (KNOT-020j). Modals need the same treatment: RN's `Modal` is an Android dialog
+  with its own window and RN's own container theme, so the module also repaints
+  every open `ReactModalHostView` dialog, on a theme change and on each
+  window-focus change (`MainActivity.onWindowFocusChanged`, KNOT-020j-fix). The
+  native theme's `navigationBarColor` is only the value shown before JavaScript
+  mounts.
 
 **Persistence.** `src/theme/themeStorage.ts` mirrors `session.ts`: best-effort
 AsyncStorage under `knot.theme.v1`, `saveTheme`/`loadTheme`/`clearTheme`, every
@@ -461,8 +465,12 @@ itself — see the comment in the setup file.
 #### Navigation and media overlays (KNOT-020j)
 
 **The tab bar** (`src/components/TabBar.tsx`) is five destinations: Home, Map,
-Create (the elevated action), Inquiries, and Notifications. Notifications took the
-slot Profile used to hold, so the inbox has a permanent home; the bell left the
+Create (the elevated action), Inquiries, and Notifications. The notifications tab
+shows the short label **Notice** so it fits an equal fifth of the bar on a narrow
+device; its accessibility label stays "Notifications". Inquiries draws a
+`ChatsCircle` glyph rather than a magnifier, which is the Feed header's search
+control (KNOT-020j-fix). Notifications took the slot Profile used to hold, so the
+inbox has a permanent home; the bell left the
 Feed header, and the header's right side is now the search glyph and the
 signed-in person's avatar, which opens their profile overlay. A tab renders as a
 screen in `App.tsx`'s `renderTab` (like Inquiries), so the bar stays visible and
