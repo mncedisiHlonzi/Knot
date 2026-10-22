@@ -85,9 +85,19 @@ returned object keeps its identity across renders. `useTheme()` also returns
   (`indigoOnTint`) and darkens in light (`indigo700`).
 - **`border.divider`** has no swatch in the reference; the role owns both values
   (light `#D5D9E0`, dark `#2E3442`) one step off the hairline in each theme.
-- **Not theme-aware in JS:** the Android **navigation bar** is set in the native
-  theme (`res/values/styles.xml`) and stays light in dark mode — RN's `StatusBar`
-  cannot reach it (KNOT-020g-fix8). The status bar itself does follow the theme.
+- **`text.onMedia`** is the ink for text and glyphs drawn over media, on a
+  `scrim.overlay` chip or disc (a video timestamp, the "Video" tag, a media
+  count, a play or mute glyph). It is white in **both** themes, because the scrim
+  is the same translucent navy in both — so it cannot reuse `text.onBrand`, which
+  is the canvas colour and flips to near-black in dark. Pair it with
+  `typeScale.label` and the shared `mediaOverlayText(colors)` helper, which adds
+  the legibility shadow (KNOT-020j).
+- **The system bars follow the theme.** The status bar is declared from JS
+  (`App.tsx`); the Android **navigation bar**, which RN's `StatusBar` cannot
+  reach, is repainted by the app-local `SystemBarsModule` (called through
+  `src/native/systemBars.ts`) whenever the active theme changes, with the icon
+  appearance flipped to match (KNOT-020j). The native `navigationBarColor` in
+  `res/values/styles.xml` is only the pre-mount default.
 
 ### Legacy colour aliases (deprecated)
 

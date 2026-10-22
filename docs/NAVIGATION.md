@@ -1,36 +1,39 @@
 # Knot — Navigation
 
-> **Status: partly implemented (KNOT-008).** The bottom tab bar described here now exists, with
-> **four** destinations — Home, Map, Create, and Profile — implemented as a hand-rolled tab bar
-> plus a single overlay slot, not a navigation library (KNOT-ADR-019). The **Messages**
-> destination, per-tab stacks, deep links, and back gestures remain **proposals**; treat those
-> parts of this document as not yet built.
+> **Status: partly implemented (KNOT-008; tabs finalised in KNOT-020j).** The bottom tab bar
+> described here now exists, with **five** destinations — Home, Map, Create (raised in the
+> centre), Inquiries, and Notifications — implemented as a hand-rolled tab bar plus a single
+> overlay slot, not a navigation library (KNOT-ADR-019). Profile is no longer a tab: the Feed
+> header's avatar opens it as an overlay. Per-tab stacks, deep links, and back gestures remain
+> **proposals**; treat those parts of this document as not yet built.
 
 ## Primary navigation
 
 The app's primary navigation is a **bottom tab bar**, implemented in KNOT-008:
 
 ```
-   Home          Map          Create          Profile
+   Home       Map       (Create)       Inquiries       Notifications
 ```
 
 - **Home** — the story feed.
 - **Map** — explore stories by place (the Discovery Map).
-- **Create** — publish a story.
-- **Profile** — the signed-in person's own cultural profile.
+- **Create** — publish a story, as the raised centre action.
+- **Inquiries** — the open questions, and where asking starts (KNOT-ADR-058).
+- **Notifications** — the activity inbox, carrying an unread-count badge (KNOT-020j).
+- **Profile** — the signed-in person's own wall, opened from the avatar at the right of the
+  Feed header rather than from the bar (KNOT-020j).
 
 The original concept proposed **five** destinations, with **Create** raised in the centre and a
-**Messages** tab. The implementation ships **four**: Create is an ordinary tab rather than a
-raised centre action, and Messages is not built — conversations are still reached from a story's
-detail screen. A tab that leads nowhere is worse than no tab, so Messages waits until there is a
-conversation inbox to put behind it.
+**Messages** tab. The implementation now ships **five**: Create is the raised centre action, and
+the fifth slot is **Notifications**, whose inbox exists, rather than Messages, whose global
+conversation inbox does not — conversations are still reached from a story's detail screen.
 
 ## Current state
 
 The app **has no navigation library**. `apps/mobile/App.tsx` models the app in two levels:
 
 ```ts
-type TabName = 'feed' | 'discoveryMap' | 'createStory' | 'profile';
+type TabName = 'feed' | 'discoveryMap' | 'createStory' | 'inquiries' | 'notifications';
 
 type Overlay =
   | { name: 'detail'; storyId: string }
@@ -41,8 +44,8 @@ type Overlay =
   | { name: 'placeStories'; place: string };
 ```
 
-An **active tab** is one of the four primary destinations, and an optional **overlay** is a
-secondary screen pushed over it. `TabBar` — a plain row of four buttons — is rendered **only
+An **active tab** is one of the five primary destinations, and an optional **overlay** is a
+secondary screen pushed over it. `TabBar` — a plain row of five buttons — is rendered **only
 when there is no overlay**, so a secondary screen replaces the whole surface rather than sitting
 inside the bar. Transitions are explicit, typed callbacks (`onBack`, `onOpenStory`,
 `onOpenPlace`, …), and each overlay carries the ids it needs to return to where it came from.

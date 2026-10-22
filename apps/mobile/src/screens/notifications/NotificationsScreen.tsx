@@ -33,8 +33,15 @@ type NotificationsScreenProps = {
   readonly token: string;
   /** Called when a notification is tapped, after it has been marked read. */
   readonly onOpenEntity: (notification: Notification) => void;
-  /** Called when the person returns to the feed. */
+  /** Called when the person leaves the inbox. */
   readonly onBack: () => void;
+  /**
+   * Whether the header draws the back control. Defaults to `true`, the pushed
+   * overlay's form. The screen is also the Notifications TAB since KNOT-020j,
+   * where the tab bar is how you leave it, so it is rendered without a back
+   * arrow.
+   */
+  readonly showBackButton?: boolean;
 };
 
 /**
@@ -57,6 +64,7 @@ export default function NotificationsScreen({
   token,
   onOpenEntity,
   onBack,
+  showBackButton = true,
 }: NotificationsScreenProps): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -181,14 +189,16 @@ export default function NotificationsScreen({
       <Header
         title="Notifications"
         left={
-          <Pressable
-            style={styles.iconButton}
-            onPress={onBack}
-            accessibilityRole="button"
-            accessibilityLabel="Back"
-          >
-            <ArrowLeft color={colors.text.primary} size={24} />
-          </Pressable>
+          showBackButton ? (
+            <Pressable
+              style={styles.iconButton}
+              onPress={onBack}
+              accessibilityRole="button"
+              accessibilityLabel="Back"
+            >
+              <ArrowLeft color={colors.text.primary} size={24} />
+            </Pressable>
+          ) : undefined
         }
         right={
           hasUnread ? (

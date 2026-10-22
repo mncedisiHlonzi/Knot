@@ -33,6 +33,7 @@ import { API_BASE_URL } from '../../config/api';
 import { languageName } from '../../data/languages';
 import {
   layout,
+  mediaOverlayText,
   radius,
   spacing,
   tabularNums,
@@ -408,7 +409,7 @@ export default function StoryDetailScreen({
                     style={[styles.counterPill, { top: HEADER_BAND + spacing.sm }]}
                     pointerEvents="none"
                   >
-                    <Text style={[typeScale.caption, tabularNums, styles.counterText]}>
+                    <Text style={[typeScale.label, tabularNums, mediaOverlayText(colors)]}>
                       {carouselCounter(safeIndex, media.length)}
                     </Text>
                   </View>
@@ -561,7 +562,7 @@ export default function StoryDetailScreen({
               accessibilityRole="button"
               accessibilityLabel="Back"
             >
-              <ArrowLeft color={colors.text.onBrand} size={24} />
+              <ArrowLeft color={colors.text.onMedia} size={24} />
             </Pressable>
           }
           right={
@@ -572,7 +573,7 @@ export default function StoryDetailScreen({
                 accessibilityRole="button"
                 accessibilityLabel="More options"
               >
-                <DotsThree color={colors.text.onBrand} size={24} weight="bold" />
+                <DotsThree color={colors.text.onMedia} size={24} weight="bold" />
               </Pressable>
             ) : null
           }
@@ -626,9 +627,6 @@ const createStyles = (colors: ThemeColors) =>
     },
     content: {
       paddingBottom: spacing.xxxl,
-    },
-    counterText: {
-      color: colors.text.onBrand,
     },
     counterPill: {
       backgroundColor: colors.scrim.overlay,

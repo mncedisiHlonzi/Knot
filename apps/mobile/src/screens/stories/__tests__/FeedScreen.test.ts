@@ -1,6 +1,8 @@
 import type { FeedItem } from '../../../api/stories';
+import Avatar from '../../../components/Avatar';
 import ConfirmSheet from '../../../components/ConfirmSheet';
 import FeedEntry from '../../../components/FeedEntry';
+import Header from '../../../components/Header';
 import { colors, spacing } from '../../../theme';
 import FeedScreen from '../FeedScreen';
 
@@ -87,8 +89,41 @@ function findElementByType(node: unknown, type: unknown): ElementLike | undefine
   return findElementByType(element.props?.children, type);
 }
 
-/** The entry the feed draws in every assertion below. */
-const ITEM: FeedItem = {
+/**
+ * Finds the first element of the given type anywhere under `node`, walking the
+ * element's props as well as its children. The Feed's header is an element whose
+ * leading and trailing nodes live in `left`/`right` props, not in `children`, so
+ * a children-only walk cannot see the avatar in the bar.
+ */
+function findInProps(node: unknown, type: unknown): ElementLike | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findInProps(child, type);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+  if (node === null || node === undefined || typeof node !== 'object') {
+    return undefined;
+  }
+
+  const element = node as ElementLike;
+  if (element.type === type) {
+    return element;
+  }
+
+  for (const value of Object.values(element.props ?? {})) {
+    const found = findInProps(value, type);
+    if (found !== undefined) {
+      return found;
+    }
+  }
+  return undefined;
+}
+
+/** The entry the feed draws in every assertion below. */ const ITEM: FeedItem = {
   id: 'story-1',
   kind: 'story',
   author_id: 'user-1',
@@ -106,10 +141,11 @@ const ITEM: FeedItem = {
 
 const SCREEN_PROPS = {
   token: 'token',
+  viewer: { display_name: 'Nomsa Khan', avatar_url: '' },
   onOpenStory: () => undefined,
   onOpenVersion: () => undefined,
   onOpenUserProfile: () => undefined,
-  onOpenNotifications: () => undefined,
+  onOpenProfile: () => undefined,
   onOpenSearch: () => undefined,
 };
 
@@ -166,6 +202,21 @@ describe('FeedScreen card structure', () => {
     const entry = findElementByType(cardFor(renderScreen()), FeedEntry);
 
     expect(entry?.props?.showBottomHairline).toBe(false);
+  });
+});
+
+describe('FeedScreen header', () => {
+  it('draws the signed-in person as an avatar beside search', () => {
+    const header = findElementByType(renderScreen(), Header);
+    const avatar = findInProps(header?.props?.right, Avatar);
+
+    expect(avatar).toBeDefined();
+    expect(avatar?.props?.displayName).toBe('Nomsa Khan');
+    // No uploaded avatar in this fixture, so the initials fallback is what draws.
+    expect(avatar?.props?.uri).toBeUndefined();
+    // The avatar is the tappable route to the signed-in person's profile
+    // (KNOT-020j): the bell it replaced has moved to the tab bar.
+    expect(typeof avatar?.props?.onPress).toBe('function');
   });
 });
 

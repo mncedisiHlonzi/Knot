@@ -21,6 +21,7 @@ export {
   lineHeights,
   typography,
 } from './typography';
+export { mediaOverlayText } from './mediaOverlay';
 export { spacing, layout } from './spacing';
 export { radius } from './radius';
 export { elevation } from './elevation';

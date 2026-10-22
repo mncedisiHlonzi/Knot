@@ -10,11 +10,11 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import { Bell, EyeSlash, Flag, MagnifyingGlass, type Icon } from 'phosphor-react-native';
+import { EyeSlash, Flag, MagnifyingGlass, type Icon } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
-import { notificationsApi } from '../../api/notifications';
 import { FEED_PAGE_SIZE, type FeedItem, storiesApi } from '../../api/stories';
+import Avatar from '../../components/Avatar';
 import ConfirmSheet from '../../components/ConfirmSheet';
 import EmptyState from '../../components/EmptyState';
 import FeedEntry from '../../components/FeedEntry';
@@ -22,13 +22,13 @@ import Header from '../../components/Header';
 import Logomark from '../../components/Logomark';
 import ReportModal from '../../components/ReportModal';
 import TheThread from '../../components/TheThread';
+import { API_BASE_URL } from '../../config/api';
 import {
   elevation,
   fontWeights,
   layout,
   radius,
   spacing,
-  tabularNums,
   typeScale,
   useTheme,
   useThemedStyles,
@@ -82,8 +82,18 @@ const FEED_TYPE_BY_TAB: Readonly<Record<string, FeedType>> = {
 };
 
 type FeedScreenProps = {
-  /** The signed-in user's access token, needed to read the unread count and the feed. */
+  /** The signed-in user's access token, needed to read the feed. */
   readonly token: string;
+  /**
+   * The signed-in person, drawn as the header's avatar. Only the two fields the
+   * avatar needs are required, so the screen does not depend on the whole `User`
+   * record (KNOT-020j).
+   */
+  readonly viewer: {
+    readonly display_name: string;
+    /** The API-relative avatar path, or an empty string when there is none. */
+    readonly avatar_url: string;
+  };
   /** Called when a story is tapped. */
   readonly onOpenStory: (id: string) => void;
   /**
@@ -93,8 +103,8 @@ type FeedScreenProps = {
   readonly onOpenVersion: (versionId: string) => void;
   /** Called when a story's author is tapped, to open their profile. */
   readonly onOpenUserProfile: (userId: string) => void;
-  /** Called when the person opens their notifications. */
-  readonly onOpenNotifications: () => void;
+  /** Called when the header avatar is tapped, to open the signed-in person's profile. */
+  readonly onOpenProfile: () => void;
   /** Called when the person opens search. */
   readonly onOpenSearch: () => void;
 };
@@ -125,10 +135,11 @@ type FeedScreenProps = {
  */
 export default function FeedScreen({
   token,
+  viewer,
   onOpenStory,
   onOpenVersion,
   onOpenUserProfile,
-  onOpenNotifications,
+  onOpenProfile,
   onOpenSearch,
 }: FeedScreenProps): React.ReactElement {
   const { colors } = useTheme();
@@ -139,7 +150,6 @@ export default function FeedScreen({
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
-  const [unreadCount, setUnreadCount] = useState(0);
   const [activeTab, setActiveTab] = useState<string>(FEED_TABS[0]);
   // The ordering the list is showing. A pillar tab is visual-only, so it keeps
   // whatever ordering was last chosen rather than forcing a re-fetch.
@@ -175,6 +185,12 @@ export default function FeedScreen({
     setIsMuted((current) => !current);
   }, []);
 
+  // The header avatar. The API sends an avatar as a relative path, so it is
+  // joined to the API base here; a blank path lets `Avatar` draw the initials
+  // rather than an empty frame (KNOT-020j).
+  const avatarPath = typeof viewer.avatar_url === 'string' ? viewer.avatar_url.trim() : '';
+  const avatarUri = avatarPath === '' ? undefined : `${API_BASE_URL}${avatarPath}`;
+
   const loadFirstPage = useCallback(async (): Promise<void> => {
     setLoading(true);
     setError(undefined);
@@ -193,28 +209,6 @@ export default function FeedScreen({
   useEffect(() => {
     void loadFirstPage();
   }, [loadFirstPage]);
-
-  /**
-   * Reads the bell's badge number.
-   *
-   * The count is supplementary: a failure leaves the badge as it was rather than
-   * showing an error over the feed, because the inbox itself still works.
-   */
-  const refreshUnreadCount = useCallback(async (): Promise<void> => {
-    try {
-      const { count } = await notificationsApi.getUnreadCount(token);
-      setUnreadCount(count);
-    } catch {
-      // Intentionally ignored: a badge is not worth an error state.
-    }
-  }, [token]);
-
-  // Reading the badge on mount also covers returning to the feed: leaving the tab
-  // or popping an overlay unmounts this screen, so coming back remounts it and
-  // runs this effect again.
-  useEffect(() => {
-    void refreshUnreadCount();
-  }, [refreshUnreadCount]);
 
   /** Pull-to-refresh: reload the first page from the top. */
   const refresh = useCallback(async (): Promise<void> => {
@@ -255,15 +249,6 @@ export default function FeedScreen({
       setLoadingMore(false);
     }
   }, [feedType, loadingMore, nextCursor, token]);
-
-  /** Opens the inbox and re-reads the badge, so a tap always shows the current count. */
-  const handleOpenNotifications = useCallback((): void => {
-    onOpenNotifications();
-    void refreshUnreadCount();
-  }, [onOpenNotifications, refreshUnreadCount]);
-
-  const bellLabel =
-    unreadCount === 0 ? 'Notifications, none unread' : `Notifications, ${unreadCount} unread`;
 
   /** Closes the options sheet without acting on the entry. */
   const closePostOptions = useCallback((): void => {
@@ -358,6 +343,9 @@ export default function FeedScreen({
           }
           right={
             <View style={styles.headerActions}>
+              {/* Search stays a glyph control beside the avatar, the pair the
+                  header carries now that the bell has moved to the tab bar
+                  (KNOT-020j). */}
               <Pressable
                 style={styles.iconButton}
                 onPress={onOpenSearch}
@@ -366,21 +354,16 @@ export default function FeedScreen({
               >
                 <MagnifyingGlass color={colors.text.tertiary} size={ICON_SIZE} />
               </Pressable>
-              <Pressable
-                style={styles.iconButton}
-                onPress={handleOpenNotifications}
-                accessibilityRole="button"
-                accessibilityLabel={bellLabel}
-              >
-                <Bell color={colors.text.tertiary} size={ICON_SIZE} />
-                {unreadCount > 0 ? (
-                  <View style={styles.badge}>
-                    <Text style={[typeScale.caption, tabularNums, styles.badgeText]}>
-                      {unreadCount > 99 ? '99+' : String(unreadCount)}
-                    </Text>
-                  </View>
-                ) : null}
-              </Pressable>
+              <View style={styles.avatar}>
+                <Avatar
+                  uri={avatarUri}
+                  displayName={viewer.display_name}
+                  size="md"
+                  onPress={onOpenProfile}
+                  accessibilityLabel="Open your profile"
+                  testID="feed-profile-avatar"
+                />
+              </View>
             </View>
           }
         />
@@ -668,19 +651,12 @@ function PostOptionRow({
 
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
-    badge: {
-      alignItems: 'center',
-      backgroundColor: colors.brand.primary,
-      borderRadius: radius.pill,
-      justifyContent: 'center',
-      minWidth: 18,
-      paddingHorizontal: spacing.xs,
-      position: 'absolute',
-      right: 6,
-      top: 6,
-    },
-    badgeText: {
-      color: colors.text.onBrand,
+    // The avatar sits in the header's own gutter, one step in from the search
+    // glyph's 44pt box so the pair reads as an icon and a face, not as two
+    // buttons (KNOT-020j).
+    avatar: {
+      marginLeft: spacing.xs,
+      marginRight: spacing.xs,
     },
     // One feed card: a full-width white block held apart from the next by a band of
     // the feed's separator surface. The band — not a rule drawn on the card, and not

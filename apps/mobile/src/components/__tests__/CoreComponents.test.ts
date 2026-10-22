@@ -71,11 +71,11 @@ jest.mock('react-native', () => ({
 // and Chip (its remove affordance). ReactionBar's icons are the committed brand
 // SVGs now, mapped to a stub by jest.config.js (KNOT-020b-fix).
 jest.mock('phosphor-react-native', () => ({
+  Bell: () => null,
   House: () => null,
   MagnifyingGlass: () => null,
   MapTrifold: () => null,
   Plus: () => null,
-  User: () => null,
   X: () => null,
 }));
 
@@ -248,11 +248,36 @@ describe('TabBar', () => {
     expect(onSelect).not.toHaveBeenCalled();
   });
 
+  // The fifth destination is Notifications, and Profile left the bar for the
+  // Feed header's avatar (KNOT-020j).
   it('renders with each tab active', () => {
     const onSelect = (): void => undefined;
-    for (const tab of ['feed', 'discoveryMap', 'createStory', 'inquiries', 'profile'] as const) {
+    for (const tab of [
+      'feed',
+      'discoveryMap',
+      'createStory',
+      'inquiries',
+      'notifications',
+    ] as const) {
       expect(TabBar({ activeTab: tab, onSelect })).toBeTruthy();
     }
+  });
+
+  it('draws the unread badge only when there is an unread count', () => {
+    const onSelect = (): void => undefined;
+
+    /** The badge is the notification glyph box's second child. */
+    const badgeFor = (unreadCount: number): unknown => {
+      const bar = TabBar({ activeTab: 'feed', onSelect, unreadCount });
+      const notificationsTab = bar.props.children[4] as {
+        props: { children: readonly { props: { children: readonly unknown[] } }[] };
+      };
+      const glyph = notificationsTab.props.children[0];
+      return glyph.props.children[1];
+    };
+
+    expect(badgeFor(0)).toBeNull();
+    expect(badgeFor(3)).not.toBeNull();
   });
 });
 

@@ -71,7 +71,7 @@ export default function VideoThumbnail({
       </View>
 
       <View style={styles.play}>
-        <Play color={colors.text.onBrand} size={PLAY_ICON_SIZE} weight="fill" />
+        <Play color={colors.text.onMedia} size={PLAY_ICON_SIZE} weight="fill" />
       </View>
     </View>
   );

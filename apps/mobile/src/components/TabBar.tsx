@@ -1,12 +1,13 @@
 import React, { useEffect, useRef } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
-import { House, MagnifyingGlass, MapTrifold, Plus, User, type Icon } from 'phosphor-react-native';
+import { Bell, House, MagnifyingGlass, MapTrifold, Plus, type Icon } from 'phosphor-react-native';
 
 import {
   fontWeights,
   motion,
   radius,
   spacing,
+  tabularNums,
   typeScale,
   useTheme,
   useThemedStyles,
@@ -14,7 +15,7 @@ import {
 import type { ThemeColors } from '../theme';
 
 /** The five primary destinations of the app. */
-export type TabName = 'feed' | 'discoveryMap' | 'createStory' | 'inquiries' | 'profile';
+export type TabName = 'feed' | 'discoveryMap' | 'createStory' | 'inquiries' | 'notifications';
 
 /** One tab's definition: where it goes, its label, and the icon it is drawn with. */
 type TabDefinition = {
@@ -32,7 +33,7 @@ const TABS: readonly TabDefinition[] = [
   // The Create tab is the elevated centre button; its label is never drawn.
   { name: 'createStory', label: 'Create', icon: Plus, accessibilityLabel: 'Create story' },
   { name: 'inquiries', label: 'Inquiries', icon: MagnifyingGlass },
-  { name: 'profile', label: 'Profile', icon: User },
+  { name: 'notifications', label: 'Notifications', icon: Bell },
 ];
 
 type TabBarProps = {
@@ -40,6 +41,13 @@ type TabBarProps = {
   readonly activeTab: TabName;
   /** Called when a tab is tapped. */
   readonly onSelect: (tab: TabName) => void;
+  /**
+   * The number of unread notifications, drawn as a badge on the Notifications
+   * tab. The app owns the count (it reads it when the bar is shown and whenever
+   * the active tab changes), so the bar itself stays stateless. Defaults to 0,
+   * which draws no badge (KNOT-020j).
+   */
+  readonly unreadCount?: number;
 };
 
 /** The bar's height. The bottom safe-area inset is inherited from the app root. */
@@ -121,9 +129,12 @@ function TabGlyph({
  * than shown inside it, so the bar is only ever rendered for a primary
  * destination. Using no navigation dependency is deliberate; see KNOT-ADR-019.
  *
- * Inquiries joined as the fourth tab between Create and Profile (KNOT-ADR-058): it
- * is a destination in its own right — finding and asking questions — rather than
- * something reached from Create, which stays a story composer.
+ * The five destinations are Home, Map, Create, Inquiries, and Notifications
+ * (KNOT-020j). Inquiries is a destination in its own right — finding and asking
+ * questions — rather than something reached from Create, which stays a story
+ * composer (KNOT-ADR-058). Notifications took the fifth slot, and the bell left
+ * the Feed's header, so the inbox has a permanent, always-reachable home; the
+ * profile it displaced is now the Feed header's avatar.
  *
  * Every tab is drawn with a Phosphor icon rather than a text glyph. The active tab
  * pairs the brand colour with the bold icon weight, so a selected tab reads
@@ -131,14 +142,22 @@ function TabGlyph({
  * fill, matching the design reference. The bottom safe-area inset is not applied
  * here: the bar already sits inside the app root's `SafeAreaView` (KNOT-020b).
  */
-export default function TabBar({ activeTab, onSelect }: TabBarProps): React.ReactElement {
+export default function TabBar({
+  activeTab,
+  onSelect,
+  unreadCount = 0,
+}: TabBarProps): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   return (
     <View style={styles.bar} accessibilityRole="tablist">
       {TABS.map((tab) => {
         const active = tab.name === activeTab;
-        const label = tab.accessibilityLabel ?? tab.label;
+        const unread = tab.name === 'notifications' ? unreadCount : 0;
+        const label =
+          tab.name === 'notifications' && unread > 0
+            ? `Notifications, ${unread} unread`
+            : (tab.accessibilityLabel ?? tab.label);
 
         if (tab.name === 'createStory') {
           return (
@@ -169,15 +188,30 @@ export default function TabBar({ activeTab, onSelect }: TabBarProps): React.Reac
             accessibilityState={{ selected: active }}
             accessibilityLabel={label}
           >
-            <TabGlyph
-              icon={IconComponent}
-              color={tint}
-              weight={active ? 'bold' : 'regular'}
-              active={active}
-            />
+            <View style={styles.glyph}>
+              <TabGlyph
+                icon={IconComponent}
+                color={tint}
+                weight={active ? 'bold' : 'regular'}
+                active={active}
+              />
+              {unread > 0 ? (
+                <View style={styles.badge} testID="tab-notifications-badge">
+                  <Text style={[typeScale.caption, tabularNums, styles.badgeText]}>
+                    {unread > 99 ? '99+' : String(unread)}
+                  </Text>
+                </View>
+              ) : null}
+            </View>
             <Text
               style={[typeScale.caption, styles.label, active ? styles.labelActive : null]}
               numberOfLines={1}
+              // "Notifications" is the longest label in the bar and the five tabs
+              // split the width evenly, so it is allowed to shrink rather than
+              // ellipsize on a narrow device. The floor keeps it above the
+              // legibility limit; the other four labels never reach it.
+              adjustsFontSizeToFit
+              minimumFontScale={0.8}
             >
               {tab.label}
             </Text>
@@ -190,6 +224,20 @@ export default function TabBar({ activeTab, onSelect }: TabBarProps): React.Reac
 
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
+    badge: {
+      alignItems: 'center',
+      backgroundColor: colors.brand.primary,
+      borderRadius: radius.pill,
+      justifyContent: 'center',
+      minWidth: 18,
+      paddingHorizontal: spacing.xs,
+      position: 'absolute',
+      right: -spacing.md,
+      top: -spacing.xs,
+    },
+    badgeText: {
+      color: colors.text.onBrand,
+    },
     bar: {
       alignItems: 'center',
       backgroundColor: colors.bg.canvas,
@@ -205,6 +253,13 @@ const createStyles = (colors: ThemeColors) =>
       height: CREATE_BUTTON_SIZE,
       justifyContent: 'center',
       width: CREATE_BUTTON_SIZE,
+    },
+    // The glyph's own box, so the unread badge can hang off the bell's
+    // top-right corner without moving the label below it.
+    glyph: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      position: 'relative',
     },
     label: {
       color: colors.text.tertiary,

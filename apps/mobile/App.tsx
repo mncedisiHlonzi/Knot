@@ -14,13 +14,14 @@ import {
 
 import type { AuthResponse, User } from './src/api/client';
 import { conversationsApi } from './src/api/conversations';
-import type { Notification } from './src/api/notifications';
+import { Notification, notificationsApi } from './src/api/notifications';
 import type { Story } from './src/api/stories';
 import { versionsApi } from './src/api/versions';
 import { DEFAULT_LANGUAGE_CODE } from './src/config/language';
 import { isLanguageCode } from './src/data/languages';
-import { motion, spacing, ThemeProvider, useTheme, useThemedStyles } from './src/theme';
+import { motion, ThemeProvider, useTheme, useThemedStyles } from './src/theme';
 import type { ThemeColors } from './src/theme';
+import { setNavigationBarColor } from './src/native/systemBars';
 import TabBar from './src/components/TabBar';
 import type { TabName } from './src/components/TabBar';
 import {
@@ -75,8 +76,8 @@ import StoryVersionScreen from './src/screens/stories/StoryVersionScreen';
  * the opaque canvas and the icons depend on. On iOS `backgroundColor` is
  * ignored — the platform has no bar to colour — and `barStyle` carries it, so the
  * same declaration is correct on both platforms. `StatusBar` cannot reach the
- * Android navigation bar; that is set in the native theme (KNOT-020g-fix8), so it
- * stays light in dark mode — a disclosed limitation (KNOT-020i).
+ * Android navigation bar; that is repainted at runtime from the active theme by
+ * the small native module in `src/native/systemBars.ts` (KNOT-020j).
  */
 function statusBarProps(colors: ThemeColors, theme: string): StatusBarProps {
   return {
@@ -101,7 +102,6 @@ type Overlay =
   | { readonly name: 'storyVersion'; readonly versionId: string }
   | { readonly name: 'comments'; readonly storyId: string; readonly versionId: string }
   | { readonly name: 'rootedSetup' }
-  | { readonly name: 'notifications' }
   | {
       readonly name: 'placeStories';
       readonly place: string;
@@ -155,11 +155,11 @@ function preferredLanguage(user: User): string {
  * Root component for the Knot mobile app.
  *
  * The app has three pieces of navigation state: an active tab (Home, Map, Create,
- * Inquiries, Profile), a stack of overlay screens pushed over it, and — before
- * there is a session — which auth screen is showing. The tab bar is rendered only
- * when the overlay stack is empty, so a secondary screen covers the whole surface
- * until it is popped. This is a hand-rolled state machine, not a navigation
- * library; see KNOT-ADR-019 and KNOT-ADR-025.
+ * Inquiries, Notifications), a stack of overlay screens pushed over it, and —
+ * before there is a session — which auth screen is showing. The tab bar is
+ * rendered only when the overlay stack is empty, so a secondary screen covers the
+ * whole surface until it is popped. This is a hand-rolled state machine, not a
+ * navigation library; see KNOT-ADR-019 and KNOT-ADR-025.
  *
  * The session is restored from AsyncStorage on launch and written back on login
  * or register, so it survives a restart; signing out clears it (KNOT-ADR-024).
@@ -187,6 +187,21 @@ function ThemedApp(): React.ReactElement {
   const [authMode, setAuthMode] = useState<AuthMode>('login');
   const [tab, setTab] = useState<TabName>('feed');
   const [overlays, setOverlays] = useState<readonly Overlay[]>([]);
+  // The unread notification count drawn on the bell tab. It is read here rather
+  // than inside the bar so the bar stays stateless, and it is re-read whenever
+  // the visible tab changes — which covers coming back from the inbox after it
+  // marked rows read (KNOT-020j).
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // The Android navigation bar is not reachable from React Native's `StatusBar`:
+  // the window paints it from the native theme, which cannot know the user's
+  // theme choice. The small native module repaints it (and picks the icon
+  // contrast) whenever the active theme changes, on every phase of the app —
+  // splash, onboarding, auth, and the signed-in roots (KNOT-020j). On iOS this
+  // is a no-op.
+  useEffect(() => {
+    setNavigationBarColor(colors.bg.canvas, theme === 'light');
+  }, [colors, theme]);
 
   // The overlay transition (KNOT-020h).
   //
@@ -256,6 +271,35 @@ function ThemedApp(): React.ReactElement {
     setOnboarded(true);
     setBootPhase('app');
   }
+
+  // Reads the badge count. The count is supplementary: a failure leaves the badge
+  // as it was rather than showing an error over a screen, because the inbox
+  // itself still works.
+  useEffect(() => {
+    const token = session?.accessToken;
+    if (token === undefined) {
+      setUnreadCount(0);
+      return undefined;
+    }
+
+    let active = true;
+    void (async () => {
+      try {
+        const { count } = await notificationsApi.getUnreadCount(token);
+        if (active) {
+          setUnreadCount(count);
+        }
+      } catch {
+        // Intentionally ignored: a badge is not worth an error state.
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+    // `overlays.length` re-reads the count when a pushed screen is popped, which
+    // is when the bar becomes visible again (KNOT-020j).
+  }, [session, tab, overlays.length]);
 
   /**
    * Pops the top overlay, sliding it out to the right first.
@@ -418,32 +462,18 @@ function ThemedApp(): React.ReactElement {
             onOpenUserProfile={openUserProfile}
           />
         );
-      case 'profile':
-        // The Profile tab is the signed-in user's own wall, the same screen the
-        // feed opens when an author is tapped. It is rendered without a back link,
-        // because a tab is a destination rather than a pushed screen
-        // (KNOT-ADR-044).
+      case 'notifications':
+        // Notifications is the fifth destination (KNOT-020j). It is rendered as
+        // a tab rather than pushed over the bar because it is a primary
+        // destination — the same treatment Inquiries receives — so the bar stays
+        // visible and the tab reads as selected. The back affordance is therefore
+        // omitted: the bar is how you leave it.
         return (
-          <UserProfileScreen
-            userId={current.user.id}
+          <NotificationsScreen
             token={current.accessToken}
-            isOwnProfile
+            onOpenEntity={handleOpenNotification}
+            onBack={() => setTab('feed')}
             showBackButton={false}
-            onOpenStory={(id) =>
-              setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId: id }))
-            }
-            onOpenComment={(storyId, versionId) =>
-              setOverlays((stack) => pushOverlay(stack, { name: 'comments', storyId, versionId }))
-            }
-            onOpenInquiry={(inquiryId) =>
-              setOverlays((stack) => pushOverlay(stack, { name: 'inquiry', inquiryId }))
-            }
-            onSetRooted={() => setOverlays((stack) => pushOverlay(stack, { name: 'rootedSetup' }))}
-            onOpenBlockedUsers={() =>
-              setOverlays((stack) => pushOverlay(stack, { name: 'blockedUsers' }))
-            }
-            onUserUpdated={handleUserUpdated}
-            onSignOut={handleSignOut}
           />
         );
       case 'feed':
@@ -451,6 +481,10 @@ function ThemedApp(): React.ReactElement {
         return (
           <FeedScreen
             token={current.accessToken}
+            viewer={{
+              display_name: current.user.display_name,
+              avatar_url: current.user.avatar_url,
+            }}
             onOpenStory={(id) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId: id }))
             }
@@ -460,10 +494,8 @@ function ThemedApp(): React.ReactElement {
             onOpenVersion={(versionId) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'storyVersion', versionId }))
             }
-            onOpenNotifications={() =>
-              setOverlays((stack) => pushOverlay(stack, { name: 'notifications' }))
-            }
             onOpenSearch={() => setOverlays((stack) => pushOverlay(stack, { name: 'search' }))}
+            onOpenProfile={() => openUserProfile(current.user.id)}
             onOpenUserProfile={openUserProfile}
           />
         );
@@ -697,14 +729,6 @@ function ThemedApp(): React.ReactElement {
             onCancel={handleBack}
           />
         );
-      case 'notifications':
-        return (
-          <NotificationsScreen
-            token={current.accessToken}
-            onOpenEntity={handleOpenNotification}
-            onBack={handleBack}
-          />
-        );
       case 'search':
         return (
           <SearchScreen
@@ -798,7 +822,9 @@ function ThemedApp(): React.ReactElement {
           {renderOverlay(session)}
         </Animated.View>
       </View>
-      {overlays.length === 0 ? <TabBar activeTab={tab} onSelect={setTab} /> : null}
+      {overlays.length === 0 ? (
+        <TabBar activeTab={tab} onSelect={setTab} unreadCount={unreadCount} />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -808,8 +834,6 @@ const createStyles = (colors: ThemeColors) =>
     authContainer: {
       backgroundColor: colors.bg.canvas,
       flex: 1,
-      justifyContent: 'center',
-      paddingHorizontal: spacing.xl,
     },
     body: {
       flex: 1,

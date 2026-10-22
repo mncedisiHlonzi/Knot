@@ -15,7 +15,15 @@
              `windowLightNavigationBar` add the dark icons that a light bar needs —
              without them the clock and the gesture pill would be white on white.
              The navigation bar's attribute is API 27+, so on API 24-26 the bar is
-             still white but keeps its default light icons (KNOT-020g-fix8). -->
+             still white but keeps its default light icons (KNOT-020g-fix8).
+
+             These values are the PRE-MOUNT defaults only. The app's theme is
+             user-selectable, and a native theme cannot read that choice, so
+             navigationBarColor is repainted at runtime by the app-local
+             SystemBarsModule (see src/native/systemBars.ts) whenever the active
+             theme changes — light canvas with dark icons, or dark canvas with
+             light icons (KNOT-020j). The status bar is likewise re-declared from
+             JavaScript by App.tsx. -->
         <item name="android:statusBarColor">@color/knot_canvas</item>
         <item name="android:windowLightStatusBar">true</item>
         <item name="android:navigationBarColor">@color/knot_canvas</item>

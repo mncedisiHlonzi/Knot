@@ -441,9 +441,11 @@ no screen imports it any more.
   roles (`indigoText`/`indigoFill`/`indigoOnTint`).
 - A sheet uses `colors.bg.sheet`, not `colors.bg.canvas` — they differ in dark.
 - Chrome that JS owns must follow the theme explicitly: the status-bar `barStyle`
-  (`light-content` in dark) and the Mapbox `styleURL` on the discovery screens.
-  The Android **navigation bar** is native-theme only and stays light in dark
-  mode (a disclosed gap).
+  (`light-content` in dark), the Mapbox `styleURL` on the discovery screens, and
+  the Android **navigation bar**, which `src/native/systemBars.ts` repaints
+  through the app-local `SystemBarsModule` whenever the active theme changes
+  (KNOT-020j). The native theme's `navigationBarColor` is only the value shown
+  before JavaScript mounts.
 
 **Persistence.** `src/theme/themeStorage.ts` mirrors `session.ts`: best-effort
 AsyncStorage under `knot.theme.v1`, `saveTheme`/`loadTheme`/`clearTheme`, every
@@ -455,6 +457,29 @@ provider follows `Appearance.getColorScheme()`; with neither, light.
 (the same value the context defaults to outside a provider). A suite that
 provides its own `jest.mock('react', …)` must therefore supply `useContext`
 itself — see the comment in the setup file.
+
+#### Navigation and media overlays (KNOT-020j)
+
+**The tab bar** (`src/components/TabBar.tsx`) is five destinations: Home, Map,
+Create (the elevated action), Inquiries, and Notifications. Notifications took the
+slot Profile used to hold, so the inbox has a permanent home; the bell left the
+Feed header, and the header's right side is now the search glyph and the
+signed-in person's avatar, which opens their profile overlay. A tab renders as a
+screen in `App.tsx`'s `renderTab` (like Inquiries), so the bar stays visible and
+the destination reads as selected. Adding or renaming a destination means
+changing `TabName` in `TabBar.tsx` and the `switch` in `App.tsx` together.
+
+The unread badge is data, not tab state: `App.tsx` reads
+`notificationsApi.getUnreadCount` whenever the signed-in tab changes and passes
+`unreadCount` to `TabBar`, which stays stateless.
+
+**Media text overlays** — a video timestamp, the "Video" tag, a media count, the
+carousel counter — always sit on `colors.scrim.overlay`. Their ink is
+`colors.text.onMedia`, which is white in BOTH themes because the scrim is,
+and their type is `typeScale.label` (13pt bold) or heavier. Do not use
+`text.onBrand` over media: it is the canvas colour and flips to near-black in the
+dark theme. `mediaOverlayText(colors)` (`src/theme/mediaOverlay.ts`) supplies the
+ink and the legibility shadow in one object.
 
 ### Author attribution (`AuthorLine`)
 

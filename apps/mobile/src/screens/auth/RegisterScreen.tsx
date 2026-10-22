@@ -3,9 +3,23 @@ import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
 import { api, AuthResponse, describeError } from '../../api/client';
 import Button from '../../components/Button';
+import Header from '../../components/Header';
 import Input from '../../components/Input';
 import LanguagePicker from '../../components/LanguagePicker';
-import { spacing, typeScale, useThemedStyles, type ThemeColors } from '../../theme';
+import Logomark from '../../components/Logomark';
+import { layout, spacing, typeScale, useThemedStyles, type ThemeColors } from '../../theme';
+
+/** The logomark's size in the auth header, one step up from the Feed's 32. */
+const LOGOMARK_SIZE = 36;
+
+/**
+ * The mark's horizontal nudge, so it lines up with the form's 24pt column.
+ *
+ * The header's own gutter is `spacing.sm` (8pt); the auth content sits at
+ * `layout.screenPaddingReading` (24pt). The extra 16pt lifts the mark onto that
+ * column, the same alignment trick the Feed header uses (KNOT-020g-fix13).
+ */
+const LOGOMARK_INSET = spacing.lg;
 
 type RegisterScreenProps = {
   /** Called with the issued tokens and user once registration succeeds. */
@@ -45,6 +59,12 @@ function validateForm(email: string, password: string, displayName: string): str
 
 /**
  * Registration form. Tokens are handed to the caller and kept in memory only.
+ *
+ * It shares the Login screen's editorial frame (KNOT-020j): the logomark in the
+ * header, the display headline and one sentence at the top, then the form in a
+ * single 24pt column. The optional fields stay in the same list rather than
+ * moving behind a disclosure — the page should read as one continuous form, the
+ * way the register reference draws it.
  */
 export default function RegisterScreen({
   onAuthenticated,
@@ -89,107 +109,151 @@ export default function RegisterScreen({
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
-      <Text style={[typeScale.h1, styles.title]}>Create your Knot account</Text>
-
-      {/* The fields are the design system's underline `Input`, the same control
-          every other form in the app uses (KNOT-020g-fix14). Its label is drawn in
-          the overline style, so the one standalone label below — the language
-          picker's, which is not an `Input` — matches it. */}
-      <Input
-        label="Email"
-        value={email}
-        onChangeText={setEmail}
-        autoCapitalize="none"
-        autoCorrect={false}
-        keyboardType="email-address"
-        placeholder="you@example.com"
+    <View style={styles.screen}>
+      {/* The mark replaces a title in the bar, exactly as the Login screen draws
+          it, so the two auth pages feel like two pages of one book. */}
+      <Header
+        left={
+          <View style={styles.logomark}>
+            <Logomark size={LOGOMARK_SIZE} />
+          </View>
+        }
       />
 
-      <Input
-        label="Password"
-        value={password}
-        onChangeText={setPassword}
-        secureTextEntry
-        placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
-      />
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        <View style={styles.intro}>
+          <Text style={[typeScale.h1, styles.title]}>Create your account</Text>
+          <Text style={[typeScale.body, styles.subtitle]}>
+            A place for the stories you carry, in every language you speak.
+          </Text>
+        </View>
 
-      <Input
-        label="Display name"
-        value={displayName}
-        onChangeText={setDisplayName}
-        placeholder="How you want to be known"
-      />
+        {/* The fields are the design system's underline `Input`, the same control
+            every other form in the app uses (KNOT-020g-fix14). Its label is drawn
+            in the overline style, so the one standalone label below — the language
+            picker's, which is not an `Input` — matches it. */}
+        <View style={styles.form}>
+          <Input
+            label="Email"
+            value={email}
+            onChangeText={setEmail}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
+            placeholder="you@example.com"
+          />
 
-      <Text style={[typeScale.overline, styles.fieldLabel]}>Languages you speak</Text>
-      <LanguagePicker
-        mode="multiple"
-        selected={languages}
-        onChange={setLanguages}
-        placeholder="Search, e.g. Zulu or zul"
-      />
+          <Input
+            label="Password"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry
+            placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
+          />
 
-      {/* `Input` has no `maxLength` prop, and extending the design system's field
-          is out of scope for this task, so the same cap is applied in the change
-          handler instead: the value handed to state is never longer than the
-          server's limit, which is what `maxLength` enforced (KNOT-020g-fix14). */}
-      <Input
-        label="Approximate location (optional)"
-        value={location}
-        onChangeText={(next) => setLocation(next.slice(0, MAX_LOCATION_LENGTH))}
-        placeholder="Cape Town"
-      />
+          <Input
+            label="Display name"
+            value={displayName}
+            onChangeText={setDisplayName}
+            placeholder="How you want to be known"
+          />
 
-      <Input
-        label="Phone (optional)"
-        value={phone}
-        onChangeText={(next) => setPhone(next.slice(0, MAX_PHONE_LENGTH))}
-        keyboardType="phone-pad"
-        placeholder="+27 00 000 0000"
-      />
+          <View>
+            <Text style={[typeScale.overline, styles.fieldLabel]}>Languages you speak</Text>
+            <LanguagePicker
+              mode="multiple"
+              selected={languages}
+              onChange={setLanguages}
+              placeholder="Search, e.g. Zulu or zul"
+            />
+          </View>
 
-      {error !== undefined ? <Text style={[typeScale.body, styles.error]}>{error}</Text> : null}
+          {/* `Input` has no `maxLength` prop, and extending the design system's
+              field is out of scope for this task, so the same cap is applied in the
+              change handler instead: the value handed to state is never longer than
+              the server's limit, which is what `maxLength` enforced
+              (KNOT-020g-fix14). */}
+          <Input
+            label="Approximate location (optional)"
+            value={location}
+            onChangeText={(next) => setLocation(next.slice(0, MAX_LOCATION_LENGTH))}
+            placeholder="Cape Town"
+          />
 
-      {/* The submit action is the design system's primary `Button`; its `loading`
-          state is what the hand-rolled "Creating account…" label used to be
-          (KNOT-020g-fix14). */}
-      <Button
-        variant="primary"
-        fullWidth
-        label="Create account"
-        loading={submitting}
-        onPress={() => {
-          void handleSubmit();
-        }}
-      />
+          <Input
+            label="Phone (optional)"
+            value={phone}
+            onChangeText={(next) => setPhone(next.slice(0, MAX_PHONE_LENGTH))}
+            keyboardType="phone-pad"
+            placeholder="+27 00 000 0000"
+          />
 
-      <Button
-        variant="ghost"
-        fullWidth
-        label="Already have an account? Sign in"
-        onPress={onSwitchToLogin}
-      />
+          {error !== undefined ? <Text style={[typeScale.body, styles.error]}>{error}</Text> : null}
+        </View>
 
-      <View style={styles.spacer} />
-    </ScrollView>
+        <View style={styles.actions}>
+          {/* The submit action is the design system's primary `Button`; its
+              `loading` state is what the hand-rolled "Creating account…" label
+              used to be (KNOT-020g-fix14). */}
+          <Button
+            variant="primary"
+            fullWidth
+            label="Create account"
+            loading={submitting}
+            onPress={() => {
+              void handleSubmit();
+            }}
+          />
+
+          <Button
+            variant="ghost"
+            fullWidth
+            label="Already have an account? Sign in"
+            onPress={onSwitchToLogin}
+          />
+        </View>
+      </ScrollView>
+    </View>
   );
 }
 
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
+    // The two chrome elements — the buttons — close the page: the gap above them
+    // is larger than the gap between fields, so the form reads as signed off.
+    actions: {
+      gap: spacing.sm,
+      marginTop: spacing.xl,
+    },
     content: {
-      backgroundColor: colors.bg.canvas,
-      gap: spacing.lg,
-      padding: spacing.xl,
+      paddingBottom: spacing.xxxl,
+      paddingHorizontal: layout.screenPaddingReading,
+      paddingTop: spacing.xl,
     },
     error: {
       color: colors.state.danger,
     },
     fieldLabel: {
       color: colors.text.secondary,
+      marginBottom: spacing.xs,
     },
-    spacer: {
-      height: spacing.xxl,
+    form: {
+      gap: spacing.lg,
+    },
+    // The headline and its sentence are one block of air above the form.
+    intro: {
+      gap: spacing.sm,
+      marginBottom: spacing.xxl,
+    },
+    logomark: {
+      marginLeft: LOGOMARK_INSET,
+    },
+    screen: {
+      backgroundColor: colors.bg.canvas,
+      flex: 1,
+    },
+    subtitle: {
+      color: colors.text.secondary,
     },
     title: {
       color: colors.text.primary,

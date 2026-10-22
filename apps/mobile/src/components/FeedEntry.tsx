@@ -14,6 +14,7 @@ import type { RecentInteraction } from '../api/stories';
 import { API_BASE_URL } from '../config/api';
 import {
   layout,
+  mediaOverlayText,
   radius,
   spacing,
   tabularNums,
@@ -512,8 +513,8 @@ export default function FeedEntry({
               style={[styles.countBadge, isVideo ? styles.countBadgeOverVideo : null]}
               accessibilityLabel={`${mediaCount} media items`}
             >
-              <Images color={colors.text.onBrand} size={COUNT_ICON_SIZE} weight="bold" />
-              <Text style={[typeScale.caption, tabularNums, styles.countBadgeText]}>
+              <Images color={colors.text.onMedia} size={COUNT_ICON_SIZE} weight="bold" />
+              <Text style={[typeScale.label, tabularNums, mediaOverlayText(colors)]}>
                 {mediaCount}
               </Text>
             </View>
@@ -572,9 +573,6 @@ const createStyles = (colors: ThemeColors) =>
     // badge sits directly above it instead of underneath it.
     countBadgeOverVideo: {
       bottom: spacing.sm + VIDEO_MUTE_BUTTON_SIZE + spacing.xs,
-    },
-    countBadgeText: {
-      color: colors.text.onBrand,
     },
     entry: {
       paddingTop: spacing.lg,

@@ -3,7 +3,15 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SpeakerHigh, SpeakerSlash } from 'phosphor-react-native';
 import Video, { type OnLoadData } from 'react-native-video';
 
-import { radius, spacing, tabularNums, typeScale, useTheme, useThemedStyles } from '../theme';
+import {
+  mediaOverlayText,
+  radius,
+  spacing,
+  tabularNums,
+  typeScale,
+  useTheme,
+  useThemedStyles,
+} from '../theme';
 import type { ThemeColors } from '../theme';
 import { formatDuration } from './feedVideoMeta';
 
@@ -159,7 +167,7 @@ export default function FeedVideo({
 
       {showTag ? (
         <View style={styles.mediaTag} pointerEvents="none">
-          <Text style={[typeScale.caption, styles.badgeText]}>Video</Text>
+          <Text style={[typeScale.label, mediaOverlayText(colors)]}>Video</Text>
         </View>
       ) : null}
 
@@ -173,7 +181,9 @@ export default function FeedVideo({
           ]}
           pointerEvents="none"
         >
-          <Text style={[typeScale.caption, tabularNums, styles.badgeText]}>{durationLabel}</Text>
+          <Text style={[typeScale.label, tabularNums, mediaOverlayText(colors)]}>
+            {durationLabel}
+          </Text>
         </View>
       ) : null}
 
@@ -184,9 +194,9 @@ export default function FeedVideo({
         accessibilityLabel={isMuted ? 'Unmute video' : 'Mute'}
       >
         {isMuted ? (
-          <SpeakerSlash color={colors.text.onBrand} size={MUTE_ICON_SIZE} weight="fill" />
+          <SpeakerSlash color={colors.text.onMedia} size={MUTE_ICON_SIZE} weight="fill" />
         ) : (
-          <SpeakerHigh color={colors.text.onBrand} size={MUTE_ICON_SIZE} weight="fill" />
+          <SpeakerHigh color={colors.text.onMedia} size={MUTE_ICON_SIZE} weight="fill" />
         )}
       </Pressable>
     </View>
@@ -195,9 +205,6 @@ export default function FeedVideo({
 
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
-    badgeText: {
-      color: colors.text.onBrand,
-    },
     container: {
       ...StyleSheet.absoluteFillObject,
     },

@@ -86,6 +86,26 @@ type ActivePalette = {
 const DIVIDER = { light: '#D5D9E0', dark: '#2E3442' } as const;
 
 /**
+ * The ink drawn over media, on a `scrim.overlay` chip or disc.
+ *
+ * It is white in BOTH themes, which is why it cannot be one of the palette's
+ * ink roles: `text.onBrand` is the canvas colour (near-black once the dark
+ * theme is active), and `text.primary` is the reading ink (near-black in light).
+ * A scrim is the same translucent navy in both themes, so the ink on it must
+ * stay the same light value too (KNOT-020j).
+ */
+const ON_MEDIA = '#FFFFFF' as const;
+
+/**
+ * The shadow drawn under text on a media scrim.
+ *
+ * Text sits on a translucent scrim over an arbitrary photo or video frame, so a
+ * light glyph can still land on a light area of the image. A tight, low-alpha
+ * shadow separates the two without reading as an effect (KNOT-020j).
+ */
+const MEDIA_TEXT_SHADOW = 'rgba(15, 23, 42, 0.55)' as const;
+
+/**
  * Flattens the raw palette for one theme into {@link ActivePalette}.
  *
  * The dark palette is deliberately NOT merged over the light one: every role is
@@ -173,6 +193,13 @@ function buildColors(active: ActivePalette) {
        * a raw hex, so the no-hardcoded-hex rule holds.
        */
       onBrand: active.canvas,
+      /**
+       * Text and glyphs drawn over media — a video timestamp, a "Video" tag, a
+       * multi-media count, a play or mute glyph. White in both themes because it
+       * always sits on `scrim.overlay`, which does not change with the theme
+       * (KNOT-020j).
+       */
+      onMedia: ON_MEDIA,
       /** @deprecated use `text.primary`. */
       inverse: active.ink900,
       /** @deprecated use `brand.primary`. */
@@ -233,6 +260,11 @@ function buildColors(active: ActivePalette) {
        * one place an overlay colour is defined.
        */
       overlay: 'rgba(15, 23, 42, 0.6)',
+      /**
+       * The shadow under light text drawn on `overlay`, so the label stays
+       * legible even where the media behind it is bright (KNOT-020j).
+       */
+      textShadow: MEDIA_TEXT_SHADOW,
     },
 
     // --- Deprecated top-level aliases (KNOT-020a) ------------------------------
