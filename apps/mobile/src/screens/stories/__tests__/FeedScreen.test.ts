@@ -169,6 +169,7 @@ const SCREEN_PROPS = {
   onOpenVersion: () => undefined,
   onOpenUserProfile: () => undefined,
   onOpenProfile: () => undefined,
+  onOpenMedia: () => undefined,
   onOpenSearch: () => undefined,
 };
 

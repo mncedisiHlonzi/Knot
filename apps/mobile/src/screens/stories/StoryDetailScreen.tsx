@@ -24,6 +24,7 @@ import { versionsApi } from '../../api/versions';
 import AuthorLine from '../../components/AuthorLine';
 import Button from '../../components/Button';
 import FeedVideo from '../../components/FeedVideo';
+import type { ViewerMedia } from '../../components/MediaGalleryModal';
 import Header from '../../components/Header';
 import PillarTag from '../../components/PillarTag';
 import ReactionBar from '../../components/ReactionBar';
@@ -117,6 +118,7 @@ function CarouselPage({
   isMuted,
   onToggleMute,
   onAspectRatio,
+  onPress,
 }: {
   readonly media: StoryMedia;
   readonly width: number;
@@ -125,6 +127,8 @@ function CarouselPage({
   readonly isMuted: boolean;
   readonly onToggleMute: () => void;
   readonly onAspectRatio: (mediaId: string, ratio: number | null) => void;
+  /** Called when the media is tapped, to open the full-screen viewer. */
+  readonly onPress: () => void;
 }): React.ReactElement {
   const styles = useThemedStyles(createStyles);
   const { aspectRatio, onLoadSize } = useMediaAspectRatio(media.width, media.height);
@@ -143,10 +147,14 @@ function CarouselPage({
   };
 
   return (
-    // TODO: Re-enable viewer in a future task. The page is a plain view on
-    // purpose: tapping the media must do nothing until the viewer returns
-    // (KNOT-025-fix5).
-    <View style={[styles.page, { height, width }]}>
+    // The page is a tap target for the full-screen viewer (KNOT-020k); the
+    // carousel's horizontal swipe still owns every drag.
+    <Pressable
+      style={[styles.page, { height, width }]}
+      onPress={onPress}
+      accessibilityRole="imagebutton"
+      accessibilityLabel="Open media in the full-screen viewer"
+    >
       {media.media_type === 'video' ? (
         <FeedVideo
           uri={uri}
@@ -167,7 +175,7 @@ function CarouselPage({
           accessibilityIgnoresInvertColors
         />
       )}
-    </View>
+    </Pressable>
   );
 }
 
@@ -195,6 +203,8 @@ type StoryDetailScreenProps = {
   readonly onConversation: (versionId: string) => void;
   /** Called when the story's author is tapped, to open their profile. */
   readonly onOpenUserProfile: (userId: string) => void;
+  /** Called when the media is tapped, to open the full-screen viewer. */
+  readonly onOpenMedia: (items: readonly ViewerMedia[], index: number) => void;
 };
 
 /**
@@ -232,6 +242,7 @@ export default function StoryDetailScreen({
   onViewTree,
   onConversation,
   onOpenUserProfile,
+  onOpenMedia,
 }: StoryDetailScreenProps): React.ReactElement {
   const { colors, theme } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -403,6 +414,7 @@ export default function StoryDetailScreen({
                       isMuted={isMuted}
                       onToggleMute={toggleMute}
                       onAspectRatio={handlePageRatio}
+                      onPress={() => onOpenMedia(media, index)}
                     />
                   ))}
                 </ScrollView>
@@ -421,9 +433,8 @@ export default function StoryDetailScreen({
             ) : null}
 
             {/* The thumbnail strip follows the pager: it scrolls itself to keep
-                the active page's tile in view. The tiles are static images or
-                placeholders, and tapping one does nothing while the viewer is
-                out of the tap flow (KNOT-025-fix1, KNOT-025-fix4, KNOT-025-fix9). */}
+                the active page's tile in view. Each tile opens the full-screen
+                viewer at its own index (KNOT-020k). */}
             {media.length > 1 ? (
               <ScrollView
                 ref={stripRef}
@@ -438,16 +449,17 @@ export default function StoryDetailScreen({
                   const active = index === safeIndex;
 
                   return (
-                    <View
+                    <Pressable
                       key={item.id}
                       style={[styles.thumbnail, active ? null : styles.thumbnailInactive]}
-                      accessibilityRole="image"
+                      onPress={() => onOpenMedia(media, index)}
+                      accessibilityRole="button"
                       accessibilityState={{ selected: active }}
-                      accessibilityLabel={carouselPositionLabel(
+                      accessibilityLabel={`Open ${carouselPositionLabel(
                         item.media_type,
                         index,
                         media.length,
-                      )}
+                      )}`}
                     >
                       {item.media_type === 'video' ? (
                         // `StoryMedia` has no poster field yet, so the optional
@@ -470,7 +482,7 @@ export default function StoryDetailScreen({
                         pointerEvents="none"
                         style={[styles.thumbnailRing, active ? styles.thumbnailRingActive : null]}
                       />
-                    </View>
+                    </Pressable>
                   );
                 })}
               </ScrollView>

@@ -29,6 +29,7 @@ import AuthorLine from './AuthorLine';
 import { feedMetaLine, isPreviewTruncated } from './feedEntryMeta';
 import FeedVideo, { VIDEO_MUTE_BUTTON_SIZE } from './FeedVideo';
 import PillarTag from './PillarTag';
+import type { ViewerMedia } from './MediaGalleryModal';
 import { hasSocialProof } from './socialProof';
 import SocialProofHeader, { type SocialProofAvatar } from './SocialProofHeader';
 
@@ -157,6 +158,12 @@ type FeedEntryProps = {
    */
   readonly onHide?: () => void;
   /**
+   * Called when the media itself is tapped, to open the full-screen viewer. The
+   * media area is its own tap target, so a tap there never also opens the story
+   * (KNOT-020k).
+   */
+  readonly onOpenMedia?: (items: readonly ViewerMedia[], index: number) => void;
+  /**
    * True when this entry is the one the feed judges to be on screen. It is the
    * single input that plays or pauses the entry's video, so only one video in the
    * feed is ever playing (KNOT-020c-fix3). Defaults to `false`.
@@ -268,6 +275,7 @@ export default function FeedEntry({
   onOpenAuthor,
   onOpenOptions,
   onHide,
+  onOpenMedia,
   isVisible = false,
   isMuted = true,
   onToggleMute = NOOP,
@@ -285,6 +293,24 @@ export default function FeedEntry({
   // The media's own shape when either source knows it; a neutral square until one
   // does. Never a fixed landscape frame — that is the crop this rule removes.
   const mediaFrame = aspectRatio ?? PLACEHOLDER_MEDIA_ASPECT_RATIO;
+
+  // The full-screen viewer takes the same item shape as `StoryMedia`; a feed
+  // entry carries only its first item, so its viewer is a single page
+  // (KNOT-020k).
+  const firstMediaPath =
+    typeof story.first_media_url === 'string' ? story.first_media_url.trim() : '';
+  const viewerItems: readonly ViewerMedia[] =
+    firstMediaPath === ''
+      ? []
+      : [
+          {
+            id: story.id,
+            media_type: isVideo ? 'video' : 'image',
+            url: firstMediaPath,
+            width: story.first_media_width ?? null,
+            height: story.first_media_height ?? null,
+          },
+        ];
 
   // The server's answer when it sent one; otherwise the text's own trailing
   // ellipsis decides. A feed entry renders the whole body under a three-line
@@ -490,23 +516,37 @@ export default function FeedEntry({
 
       {mediaUrl !== '' ? (
         <View style={[styles.mediaFrame, { aspectRatio: mediaFrame }]}>
-          {isVideo ? (
-            <FeedVideo
-              uri={mediaUrl}
-              isVisible={isVisible}
-              isMuted={isMuted}
-              onToggleMute={onToggleMute}
-              onLoadSize={onLoadSize}
-            />
-          ) : (
-            <Image
-              source={{ uri: mediaUrl }}
-              style={styles.media}
-              resizeMode="cover"
-              onLoad={handleImageLoad}
-              accessibilityIgnoresInvertColors
-            />
-          )}
+          {/* The media is its own tap target: the viewer is opened from here,
+              never from the card, whose tap still opens the story (KNOT-020k).
+              A feed entry only carries its FIRST item, so the viewer opens on a
+              single page; the story detail has the full list. */}
+          <Pressable
+            style={styles.mediaPress}
+            onPress={onOpenMedia === undefined ? undefined : () => onOpenMedia(viewerItems, 0)}
+            disabled={onOpenMedia === undefined}
+            accessibilityRole={onOpenMedia === undefined ? undefined : 'imagebutton'}
+            accessibilityLabel={
+              onOpenMedia === undefined ? undefined : `Open media from ${story.title}`
+            }
+          >
+            {isVideo ? (
+              <FeedVideo
+                uri={mediaUrl}
+                isVisible={isVisible}
+                isMuted={isMuted}
+                onToggleMute={onToggleMute}
+                onLoadSize={onLoadSize}
+              />
+            ) : (
+              <Image
+                source={{ uri: mediaUrl }}
+                style={styles.media}
+                resizeMode="cover"
+                onLoad={handleImageLoad}
+                accessibilityIgnoresInvertColors
+              />
+            )}
+          </Pressable>
 
           {mediaCount > 1 ? (
             <View
@@ -607,6 +647,16 @@ const createStyles = (colors: ThemeColors) =>
     media: {
       height: '100%',
       width: '100%',
+    },
+    // The media's tap target fills its frame. It is spelled out rather than using
+    // `StyleSheet.absoluteFillObject`, because the component tests call this file
+    // with a `StyleSheet` stub that only provides `create` (KNOT-020g-fix7).
+    mediaPress: {
+      bottom: 0,
+      left: 0,
+      position: 'absolute',
+      right: 0,
+      top: 0,
     }, // Full-bleed: no horizontal inset and no rounding, so the media runs edge to
     // edge (KNOT-020c-fix2). The ratio is set per entry from the media's own shape,
     // so it is not fixed here (KNOT-020g-fix5); the fill is `cover`, so the frame is

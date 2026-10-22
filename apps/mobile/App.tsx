@@ -24,6 +24,8 @@ import type { ThemeColors } from './src/theme';
 import { setNavigationBarColor } from './src/native/systemBars';
 import TabBar from './src/components/TabBar';
 import type { TabName } from './src/components/TabBar';
+import MediaGalleryModal from './src/components/MediaGalleryModal';
+import type { ViewerMedia } from './src/components/MediaGalleryModal';
 import {
   popAllOverlays,
   popOverlay,
@@ -192,6 +194,31 @@ function ThemedApp(): React.ReactElement {
   // the visible tab changes — which covers coming back from the inbox after it
   // marked rows read (KNOT-020j).
   const [unreadCount, setUnreadCount] = useState(0);
+
+  // The full-screen media viewer. It lives at the root because it is a modal over
+  // every screen — the Feed, a story, a version, a place, a profile — and because
+  // a screen that opens it unmounts nothing: the viewer is a sibling of the app,
+  // not a route (KNOT-020k).
+  const [mediaViewer, setMediaViewer] = useState<{
+    readonly items: readonly ViewerMedia[];
+    readonly index: number;
+  } | null>(null);
+
+  /**
+   * Opens the viewer on one of `items`.
+   *
+   * The index is clamped here as well as in the viewer, because a caller can
+   * hold a stale index after a list shrinks (KNOT-020k).
+   */
+  const openMediaViewer = useCallback((items: readonly ViewerMedia[], index: number): void => {
+    if (items.length === 0) {
+      return;
+    }
+    setMediaViewer({
+      items,
+      index: Math.min(Math.max(Math.round(index), 0), items.length - 1),
+    });
+  }, []);
 
   // The Android navigation bar is not reachable from React Native's `StatusBar`:
   // the window paints it from the native theme, which cannot know the user's
@@ -497,6 +524,7 @@ function ThemedApp(): React.ReactElement {
             onOpenSearch={() => setOverlays((stack) => pushOverlay(stack, { name: 'search' }))}
             onOpenProfile={() => openUserProfile(current.user.id)}
             onOpenUserProfile={openUserProfile}
+            onOpenMedia={openMediaViewer}
           />
         );
     }
@@ -617,6 +645,7 @@ function ThemedApp(): React.ReactElement {
               )
             }
             onOpenUserProfile={openUserProfile}
+            onOpenMedia={openMediaViewer}
           />
         );
       case 'adapt':
@@ -672,6 +701,7 @@ function ThemedApp(): React.ReactElement {
               setOverlays((stack) => pushOverlay(stack, { name: 'tree', storyId }))
             }
             onOpenUserProfile={openUserProfile}
+            onOpenMedia={openMediaViewer}
           />
         );
       case 'comments':
@@ -705,6 +735,7 @@ function ThemedApp(): React.ReactElement {
             onOpenStory={(id) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId: id }))
             }
+            onOpenMedia={openMediaViewer}
             onBack={handleBack}
           />
         );
@@ -768,6 +799,7 @@ function ThemedApp(): React.ReactElement {
             onOpenBlockedUsers={() =>
               setOverlays((stack) => pushOverlay(stack, { name: 'blockedUsers' }))
             }
+            onOpenMedia={openMediaViewer}
             onSignOut={handleSignOut}
             onBack={handleBack}
           />
@@ -825,6 +857,16 @@ function ThemedApp(): React.ReactElement {
       {overlays.length === 0 ? (
         <TabBar activeTab={tab} onSelect={setTab} unreadCount={unreadCount} />
       ) : null}
+
+      {/* The viewer is a Modal, so it draws above the bar and every overlay. It is
+          declared once for the signed-in app; opening it sets `mediaViewer`, and
+          the viewer fades itself in and out (KNOT-020k). */}
+      <MediaGalleryModal
+        visible={mediaViewer !== null}
+        media={mediaViewer?.items ?? []}
+        initialIndex={mediaViewer?.index ?? 0}
+        onClose={() => setMediaViewer(null)}
+      />
     </SafeAreaView>
   );
 }

@@ -24,6 +24,7 @@ import { StoryVersion, versionsApi } from '../../api/versions';
 import AuthorLine from '../../components/AuthorLine';
 import Button from '../../components/Button';
 import FeedVideo from '../../components/FeedVideo';
+import type { ViewerMedia } from '../../components/MediaGalleryModal';
 import Header from '../../components/Header';
 import PillarTag from '../../components/PillarTag';
 import ReactionBar from '../../components/ReactionBar';
@@ -112,6 +113,7 @@ function CarouselPage({
   isMuted,
   onToggleMute,
   onAspectRatio,
+  onPress,
 }: {
   readonly media: StoryMedia;
   readonly width: number;
@@ -120,6 +122,8 @@ function CarouselPage({
   readonly isMuted: boolean;
   readonly onToggleMute: () => void;
   readonly onAspectRatio: (mediaId: string, ratio: number | null) => void;
+  /** Called when the media is tapped, to open the full-screen viewer. */
+  readonly onPress: () => void;
 }): React.ReactElement {
   const styles = useThemedStyles(createStyles);
   const { aspectRatio, onLoadSize } = useMediaAspectRatio(media.width, media.height);
@@ -138,9 +142,14 @@ function CarouselPage({
   };
 
   return (
-    // TODO: Re-enable viewer in a future task. The page is a plain view on
-    // purpose, exactly as on the Story Detail (KNOT-025-fix5).
-    <View style={[styles.page, { height, width }]}>
+    // The page opens the full-screen viewer; the pager keeps the horizontal
+    // swipe (KNOT-020k).
+    <Pressable
+      style={[styles.page, { height, width }]}
+      onPress={onPress}
+      accessibilityRole="imagebutton"
+      accessibilityLabel="Open media in the full-screen viewer"
+    >
       {media.media_type === 'video' ? (
         <FeedVideo
           uri={uri}
@@ -161,7 +170,7 @@ function CarouselPage({
           accessibilityIgnoresInvertColors
         />
       )}
-    </View>
+    </Pressable>
   );
 }
 
@@ -195,6 +204,8 @@ type StoryVersionScreenProps = {
   readonly onViewTree: (storyId: string) => void;
   /** Called when the version's author is tapped, to open their profile. */
   readonly onOpenUserProfile: (userId: string) => void;
+  /** Called when the media is tapped, to open the full-screen viewer. */
+  readonly onOpenMedia: (items: readonly ViewerMedia[], index: number) => void;
 };
 
 /**
@@ -232,6 +243,7 @@ export default function StoryVersionScreen({
   onConversation,
   onViewTree,
   onOpenUserProfile,
+  onOpenMedia,
 }: StoryVersionScreenProps): React.ReactElement {
   const { colors, theme } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -412,6 +424,7 @@ export default function StoryVersionScreen({
                       isMuted={isMuted}
                       onToggleMute={toggleMute}
                       onAspectRatio={handlePageRatio}
+                      onPress={() => onOpenMedia(media, index)}
                     />
                   ))}
                 </ScrollView>
@@ -446,17 +459,19 @@ export default function StoryVersionScreen({
                   const active = index === safeIndex;
 
                   return (
-                    <View
+                    <Pressable
                       key={item.id}
                       style={[styles.thumbnail, active ? null : styles.thumbnailInactive]}
-                      accessibilityRole="image"
+                      onPress={() => onOpenMedia(media, index)}
+                      accessibilityRole="button"
                       accessibilityState={{ selected: active }}
-                      accessibilityLabel={carouselPositionLabel(
+                      accessibilityLabel={`Open ${carouselPositionLabel(
                         item.media_type,
                         index,
                         media.length,
-                      )}
+                      )}`}
                     >
+                      {' '}
                       {item.media_type === 'video' ? (
                         <VideoThumbnail size={THUMBNAIL_SIZE} />
                       ) : (
@@ -467,7 +482,6 @@ export default function StoryVersionScreen({
                           accessibilityIgnoresInvertColors
                         />
                       )}
-
                       {/* The ring is drawn over the media rather than as the
                           tile's border, so the media keeps its full 64pt
                           square (KNOT-025-fix5). */}
@@ -475,7 +489,7 @@ export default function StoryVersionScreen({
                         pointerEvents="none"
                         style={[styles.thumbnailRing, active ? styles.thumbnailRingActive : null]}
                       />
-                    </View>
+                    </Pressable>
                   );
                 })}
               </ScrollView>

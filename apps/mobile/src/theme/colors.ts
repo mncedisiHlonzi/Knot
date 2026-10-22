@@ -97,6 +97,16 @@ const DIVIDER = { light: '#D5D9E0', dark: '#2E3442' } as const;
 const ON_MEDIA = '#FFFFFF' as const;
 
 /**
+ * The media viewer's backdrop, and the surface behind full-screen video.
+ *
+ * It is black in BOTH themes: a photo viewer is a theatre, and a white or
+ * near-black canvas behind a photograph distorts how the image reads. Like
+ * `text.onMedia`, it is a role this layer owns because no palette swatch means
+ * "the room is dark" (KNOT-020k).
+ */
+const THEATER = '#000000' as const;
+
+/**
  * The shadow drawn under text on a media scrim.
  *
  * Text sits on a translucent scrim over an arbitrary photo or video frame, so a
@@ -172,6 +182,12 @@ function buildColors(active: ActivePalette) {
        * parity comes for free when the palette flips (KNOT-020i).
        */
       separator: active.line,
+      /**
+       * The full-screen media viewer's backdrop. Black in both themes, so a
+       * photograph or video is shown against the same room whatever the app's
+       * palette is (KNOT-020k).
+       */
+      theater: THEATER,
       /** @deprecated use `bg.canvas`. */
       primary: active.canvas,
       /** @deprecated use `bg.sunken`. */

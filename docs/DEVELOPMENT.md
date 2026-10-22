@@ -489,6 +489,40 @@ and their type is `typeScale.label` (13pt bold) or heavier. Do not use
 dark theme. `mediaOverlayText(colors)` (`src/theme/mediaOverlay.ts`) supplies the
 ink and the legibility shadow in one object.
 
+### The media viewer (KNOT-020k)
+
+Tapping media anywhere in the app opens one full-screen viewer. It is a React Native
+`Modal` owned by `App.tsx` (`mediaViewer: { items, index } | null`), so it sits above the
+tab bar and every overlay without being a route. A screen receives
+`onOpenMedia(items, index)` and calls it:
+
+- **Feed and Place Stories** (`FeedEntry`) open with the entry's first item only — the
+  feed payload carries one media preview, not the list.
+- **Story Detail and Version Detail** pass their whole `media` array and the tapped
+  index, so the hero carousel and the thumbnail strip both open on the right page.
+- **Profile** cards open on their single preview.
+
+The pieces:
+
+- **`MediaGalleryModal.tsx`** — the black theatre (`colors.bg.theater`), a paging
+  `FlatList`, and a close control with a counter. A `PanResponder` on the pager's
+  container dismisses on a downward drag (fade + slide) that is past `DISMISS_DISTANCE`
+  or fast enough; it claims only mostly-vertical movement, so the horizontal pager and a
+  zoomed image keep their own gestures.
+- **`VideoPlayer.tsx`** — `react-native-video` with the app's own overlay instead of the
+  platform controls: tap the picture to show/hide the fade-in controls, a large
+  play/pause disc, current/total time, a draggable scrub bar, and a mute toggle. It
+  autoplays while its page is the visible one and pauses when the gallery moves on. The
+  scrub previews a time under the finger and seeks on release. Videos start **muted**
+  (`START_MUTED`), following the app's rule that a video nobody explicitly unmuted should
+  not make a sound.
+- **`mediaViewer.ts`** — the pure maths (index clamping, progress, scrub seconds), kept
+  apart so it is covered by the renderer-less tests.
+
+Gestures use `Animated` and `PanResponder` only: the app has no gesture library and this
+viewer adds none (KNOT-ADR-037, KNOT-ADR-078). The navigation bar is painted black while
+the viewer is open and restored to the theme's canvas when it closes.
+
 ### Author attribution (`AuthorLine`)
 
 Every screen that shows user-generated content attributes it through one component,

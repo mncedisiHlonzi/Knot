@@ -45,6 +45,7 @@ import EmptyState from '../../components/EmptyState';
 import FeedVideo from '../../components/FeedVideo';
 import Header from '../../components/Header';
 import MediaPickerSheet, { PickedMedia } from '../../components/MediaPickerSheet';
+import type { ViewerMedia } from '../../components/MediaGalleryModal';
 import PillarTag from '../../components/PillarTag';
 import RootedBadge from '../../components/RootedBadge';
 import { API_BASE_URL } from '../../config/api';
@@ -101,6 +102,8 @@ type UserProfileScreenProps = {
   readonly onSetRooted: () => void;
   /** Called when the owner wants to see and manage the people they have blocked. */
   readonly onOpenBlockedUsers: () => void;
+  /** Called when a card's media is tapped, to open the full-screen viewer. */
+  readonly onOpenMedia: (items: readonly ViewerMedia[], index: number) => void;
   /** Called when the owner chooses to sign out. */
   readonly onSignOut: () => void;
   /**
@@ -159,14 +162,19 @@ function emptyIllustration(kind: ActivityKind): 'no-stories' | 'no-inquiries' {
  */
 function CardMedia({
   card,
+  mediaId,
   isVisible,
   isMuted,
   onToggleMute,
+  onOpenMedia,
 }: {
   readonly card: ProfileCard;
+  /** The activity's id, used as the viewer item's key. */
+  readonly mediaId: string;
   readonly isVisible: boolean;
   readonly isMuted: boolean;
   readonly onToggleMute: () => void;
+  readonly onOpenMedia: (items: readonly ViewerMedia[], index: number) => void;
 }): React.ReactElement | null {
   const styles = useThemedStyles(createStyles);
   // The hook is called before the early return, so the component always calls it
@@ -180,15 +188,32 @@ function CardMedia({
   const uri = `${API_BASE_URL}${card.mediaUrl}`;
   const frame = [styles.cardMedia, { aspectRatio: aspectRatio ?? PLACEHOLDER_MEDIA_ASPECT_RATIO }];
 
+  // A wall card carries one media item; `0` dimensions mean "unknown", which the
+  // viewer treats as unconstrained (KNOT-020k).
+  const viewerItems: readonly ViewerMedia[] = [
+    {
+      id: mediaId,
+      media_type: card.mediaType,
+      url: card.mediaUrl,
+      width: card.mediaWidth > 0 ? card.mediaWidth : null,
+      height: card.mediaHeight > 0 ? card.mediaHeight : null,
+    },
+  ];
+
   /** Takes the shape off a decoded image, for media the payload could not size. */
   const handleImageLoad = (event: NativeSyntheticEvent<ImageLoadEventData>): void => {
     const { width, height } = event.nativeEvent.source;
     onLoadSize(width, height);
   };
 
-  if (card.mediaType === 'video') {
-    return (
-      <View style={frame}>
+  return (
+    <Pressable
+      style={frame}
+      onPress={() => onOpenMedia(viewerItems, 0)}
+      accessibilityRole="imagebutton"
+      accessibilityLabel="Open media in the full-screen viewer"
+    >
+      {card.mediaType === 'video' ? (
         <FeedVideo
           uri={uri}
           isVisible={isVisible}
@@ -196,18 +221,16 @@ function CardMedia({
           onToggleMute={onToggleMute}
           onLoadSize={onLoadSize}
         />
-      </View>
-    );
-  }
-
-  return (
-    <Image
-      source={{ uri }}
-      style={frame}
-      resizeMode="cover"
-      onLoad={handleImageLoad}
-      accessibilityIgnoresInvertColors
-    />
+      ) : (
+        <Image
+          source={{ uri }}
+          style={styles.cardMediaFill}
+          resizeMode="cover"
+          onLoad={handleImageLoad}
+          accessibilityIgnoresInvertColors
+        />
+      )}
+    </Pressable>
   );
 }
 
@@ -342,6 +365,7 @@ export default function UserProfileScreen({
   onUserUpdated,
   onSetRooted,
   onOpenBlockedUsers,
+  onOpenMedia,
   onSignOut,
   onBack,
   showBackButton = true,
@@ -759,9 +783,11 @@ export default function UserProfileScreen({
 
               <CardMedia
                 card={card}
+                mediaId={item.id}
                 isVisible={item.id === activeItemId}
                 isMuted={isMuted}
                 onToggleMute={toggleMute}
+                onOpenMedia={onOpenMedia}
               />
 
               {card.meta === '' ? null : (
@@ -896,6 +922,12 @@ const createStyles = (colors: ThemeColors) =>
     cardMedia: {
       marginTop: spacing.sm,
       overflow: 'hidden',
+      width: '100%',
+    },
+    // The image fills the card's media frame, which is now the Pressable that
+    // opens the viewer (KNOT-020k).
+    cardMediaFill: {
+      height: '100%',
       width: '100%',
     },
     // The card's text column: it carries the gutter the card gave up, so the media

@@ -19,6 +19,7 @@ import { Story } from '../../api/stories';
 import Chip from '../../components/Chip';
 import EmptyState from '../../components/EmptyState';
 import FeedEntry from '../../components/FeedEntry';
+import type { ViewerMedia } from '../../components/MediaGalleryModal';
 import Header from '../../components/Header';
 import { KNOT_MAPBOX_TOKEN } from '../../config/dev';
 import {
@@ -107,6 +108,8 @@ type PlaceStoriesScreenProps = {
   readonly token?: string;
   /** Called when a story is tapped. */
   readonly onOpenStory: (id: string) => void;
+  /** Called when an entry's media is tapped, to open the full-screen viewer. */
+  readonly onOpenMedia: (items: readonly ViewerMedia[], index: number) => void;
   /** Called when the person leaves this place. */
   readonly onBack: () => void;
 };
@@ -151,6 +154,7 @@ export default function PlaceStoriesScreen({
   pillarCounts,
   token,
   onOpenStory,
+  onOpenMedia,
   onBack,
 }: PlaceStoriesScreenProps): React.ReactElement {
   const { colors, theme } = useTheme();
@@ -416,6 +420,7 @@ export default function PlaceStoriesScreen({
             isMuted={isMuted}
             onToggleMute={toggleMute}
             onPress={() => onOpenStory(item.id)}
+            onOpenMedia={onOpenMedia}
           />
         )}
         ListEmptyComponent={

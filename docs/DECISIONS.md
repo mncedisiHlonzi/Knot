@@ -2674,3 +2674,40 @@ and a stylesheet that hard-codes a colour will look right in one theme only. The
 navigation-bar mismatch and the absent dark treatment for elevation shadows remain known
 imperfections of a light-first design system continuing into its second theme.
 
+## KNOT-ADR-078 — The media viewer uses a custom video player and gesture-driven gallery
+
+**Context.** The app shows story media inline — the Feed autoplays a muted preview, the
+Story Detail has a paging carousel — but had no full-screen viewer: the one it shipped
+earlier was switched off in KNOT-025-fix5 because a stock gallery plus the platform
+video controls did not meet the design pass's standard. React Native's `<Video>` with
+`controls` renders a light, platform-specific sheet that ignores the app's tokens and
+looks foreign over a dark viewer, and the same is true of the platform image viewer.
+The app also has no `react-native-gesture-handler` and no reanimated, deliberately
+(KNOT-ADR-037).
+
+**Decision.**
+
+- **Build the viewer in the app, with the pieces already installed.** A paging
+  `FlatList`, React Native's `Animated` and `PanResponder`, `react-native-video` for
+  playback, and Phosphor glyphs. No new dependency, and no platform controls.
+- **The video player's controls are ours.** Tapping the picture toggles a native-driven
+  fade of an overlay carrying play/pause, a scrub bar, the times and a mute toggle. The
+  controls sit on the app's own scrim and use `text.onMedia`, so they read the same in
+  both themes and over any frame.
+- **A theatre surface is a token.** `colors.bg.theater` is black in both themes: a photo
+  viewer must not change how a photograph reads because the app is in light mode.
+- **Gesture ownership is layered.** The gallery's dismiss responder claims only a mostly
+  vertical downward drag; the horizontal pager owns horizontal movement; a zoomed image
+  claims the touch before the gallery sees it. That is also why pinch-to-zoom can use
+  `PanResponder` directly rather than a gesture library.
+- **The app root owns the viewer.** Screens take `onOpenMedia(items, index)`; they do not
+  render a viewer of their own, so one viewer serves the Feed, Place Stories, a story, a
+  version and a profile, and its state survives a screen's re-render.
+
+**Consequences.** The viewer has no ready-made platform behaviour to lean on: seek,
+zoom and dismiss are maintained code with pure helpers around them. In exchange it is
+consistent with the design system, opens the correct item from every surface, and adds
+no dependency. The known gaps are that video starts muted, the feed opens a single item
+because its payload carries one preview, and the modal's status-bar handling is
+declared per view rather than by a safe-area library.
+

@@ -205,6 +205,24 @@ function findByType(tree: unknown, type: unknown): ElementLike | undefined {
   return found;
 }
 
+/**
+ * Every accessibility label in the tree.
+ *
+ * Assertions about a control find it by what it announces rather than by its
+ * position, because the tree's first `Pressable` changes as screens gain tap
+ * targets (the carousel page gained one in KNOT-020k).
+ */
+function allLabels(tree: unknown): string[] {
+  const found: string[] = [];
+  collect(tree, (element) => {
+    const label = element.props?.accessibilityLabel;
+    if (typeof label === 'string' && label !== '') {
+      found.push(label);
+    }
+  });
+  return found;
+}
+
 /** Every `Button` in the tree, so actions can be asserted by their label. */
 function buttonElements(tree: unknown): ElementLike[] {
   const found: ElementLike[] = [];
@@ -249,6 +267,7 @@ function renderLoaded(overrides: RenderOverrides = {}): unknown {
     onConversation: overrides.onConversation ?? (() => undefined),
     onViewTree: () => undefined,
     onOpenUserProfile: () => undefined,
+    onOpenMedia: () => undefined,
   });
 }
 
@@ -302,7 +321,9 @@ describe('StoryVersionScreen', () => {
       variant: 'plain',
     });
 
-    const treeButton = findByType(tree, 'Pressable')?.props?.accessibilityLabel;
+    // The first Pressable in the tree is now the carousel page (it opens the
+    // viewer, KNOT-020k), so find the language-tree control by what it announces.
+    const treeButton = allLabels(tree).find((label) => label.startsWith('View the language tree'));
     expect(treeButton).toBe('View the language tree, 3 versions');
 
     expect(findByType(tree, ReactionBar)?.props).toMatchObject({

@@ -18,6 +18,7 @@ import Avatar from '../../components/Avatar';
 import ConfirmSheet from '../../components/ConfirmSheet';
 import EmptyState from '../../components/EmptyState';
 import FeedEntry from '../../components/FeedEntry';
+import type { ViewerMedia } from '../../components/MediaGalleryModal';
 import Header from '../../components/Header';
 import Logomark from '../../components/Logomark';
 import ReportModal from '../../components/ReportModal';
@@ -93,6 +94,8 @@ type FeedScreenProps = {
   readonly onOpenUserProfile: (userId: string) => void;
   /** Called when the header avatar is tapped, to open the signed-in person's profile. */
   readonly onOpenProfile: () => void;
+  /** Called when an entry's media is tapped, to open the full-screen viewer. */
+  readonly onOpenMedia: (items: readonly ViewerMedia[], index: number) => void;
   /** Called when the person opens search. */
   readonly onOpenSearch: () => void;
 };
@@ -128,6 +131,7 @@ export default function FeedScreen({
   onOpenVersion,
   onOpenUserProfile,
   onOpenProfile,
+  onOpenMedia,
   onOpenSearch,
 }: FeedScreenProps): React.ReactElement {
   const { colors } = useTheme();
@@ -486,6 +490,7 @@ export default function FeedScreen({
                 item.kind === 'version' ? onOpenVersion(item.id) : onOpenStory(item.id)
               }
               onOpenAuthor={() => onOpenUserProfile(item.author_id)}
+              onOpenMedia={onOpenMedia}
               onOpenOptions={() => setMenuItem(item)}
               // The one-tap hide asks first: it arms the confirmation rather than
               // removing the entry (KNOT-032-fix1).
