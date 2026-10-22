@@ -14,11 +14,11 @@ const LOGOMARK_SIZE = 36;
 /**
  * The mark's horizontal nudge, so it lines up with the form's 24pt column.
  *
- * The header's own gutter is `spacing.sm` (8pt); the auth content sits at
- * `layout.screenPaddingReading` (24pt). The extra 16pt lifts the mark onto that
- * column, the same alignment trick the Feed header uses (KNOT-020g-fix13).
+ * The header's own gutter is `layout.screenPaddingFeed` (16pt); the auth content
+ * sits at `layout.screenPaddingReading` (24pt). The extra 8pt lifts the mark onto
+ * that column (KNOT-020g-fix13, KNOT-020j-fix2).
  */
-const LOGOMARK_INSET = spacing.lg;
+const LOGOMARK_INSET = spacing.sm;
 
 type LoginScreenProps = {
   /** Called with the issued tokens and user once login succeeds. */

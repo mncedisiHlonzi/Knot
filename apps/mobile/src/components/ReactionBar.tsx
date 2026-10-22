@@ -249,8 +249,13 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.brand.primary,
     },
     bar: {
+      // Stretch to the parent's width: a detail screen may put the bar in a
+      // layout that does not stretch its children, and the four `flex: 1` pills
+      // then share a shrunk box and collide (KNOT-020j-fix2).
+      alignSelf: 'stretch',
       flexDirection: 'row',
       marginTop: spacing.md,
+      width: '100%',
     },
     count: {
       color: colors.text.tertiary,
@@ -297,16 +302,21 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.bg.paper,
     },
     // The four-column bar the Feed, version, and inquiry surfaces use. The count
-    // sits under the label so a narrow column still reads as one unit.
+    // sits under the label so a narrow column still reads as one unit. The label is
+    // allowed to shrink and wrap rather than push its pill wider than its share of
+    // the row (KNOT-020j-fix2).
     rowLabel: {
+      flexShrink: 1,
       textAlign: 'center',
     },
     rowPill: {
       flex: 1,
       flexDirection: 'column',
+      flexShrink: 1,
       gap: spacing.xs,
       justifyContent: 'center',
       marginHorizontal: spacing.xs,
+      minWidth: 0,
       paddingHorizontal: spacing.xs,
     },
   });

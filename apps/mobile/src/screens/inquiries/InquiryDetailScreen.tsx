@@ -10,7 +10,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { ArrowLeft, DotsThree } from 'phosphor-react-native';
+import { ArrowLeft } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { ANSWER_PAGE_SIZE, Inquiry, InquiryAnswer, inquiriesApi } from '../../api/inquiries';
@@ -206,12 +206,12 @@ export default function InquiryDetailScreen({
         }
         right={
           <Pressable
-            style={styles.iconButton}
+            style={styles.reportButton}
             onPress={() => setReportVisible(true)}
             accessibilityRole="button"
-            accessibilityLabel="More options"
+            accessibilityLabel="Report this question"
           >
-            <DotsThree color={colors.text.primary} size={24} weight="bold" />
+            <Text style={[typeScale.label, styles.reportLabel]}>Report</Text>
           </Pressable>
         }
       />
@@ -449,6 +449,17 @@ const createStyles = (colors: ThemeColors) =>
     questionTitle: {
       color: colors.text.primary,
       marginTop: spacing.xs,
+    },
+    // The header's report action: a text button in the danger ink, which is how
+    // the app marks a destructive action everywhere else (KNOT-020j-fix2).
+    reportButton: {
+      alignItems: 'center',
+      height: 44,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.sm,
+    },
+    reportLabel: {
+      color: colors.state.danger,
     },
     spinner: {
       marginVertical: spacing.lg,

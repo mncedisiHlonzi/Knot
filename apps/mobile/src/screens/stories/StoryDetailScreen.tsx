@@ -15,7 +15,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
-import { ArrowLeft, DotsThree, GitBranch } from 'phosphor-react-native';
+import { ArrowLeft, Flag, GitBranch } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { EMPTY_REACTION_COUNTS } from '../../api/reactions';
@@ -53,6 +53,9 @@ function resolveMediaUrl(url: string): string {
 
 /** The thumbnail strip's square item (KNOT-025-fix1, enlarged in fix5). */
 const THUMBNAIL_SIZE = 64;
+
+/** The flag beside the header's Report label (KNOT-020j-fix2). */
+const REPORT_ICON_SIZE = 16;
 
 /** The gap between thumbnail tiles, which also sets the strip's snap stride. */
 const THUMBNAIL_GAP = spacing.md;
@@ -568,12 +571,13 @@ export default function StoryDetailScreen({
           right={
             token !== undefined ? (
               <Pressable
-                style={styles.iconButton}
+                style={styles.reportButton}
                 onPress={() => setReportVisible(true)}
                 accessibilityRole="button"
-                accessibilityLabel="More options"
+                accessibilityLabel="Report this story"
               >
-                <DotsThree color={colors.text.onMedia} size={24} weight="bold" />
+                <Flag color={colors.text.onMedia} size={REPORT_ICON_SIZE} weight="bold" />
+                <Text style={[typeScale.label, styles.reportLabel]}>Report</Text>
               </Pressable>
             ) : null
           }
@@ -648,7 +652,7 @@ const createStyles = (colors: ThemeColors) =>
       right: 0,
       zIndex: 2,
     },
-    // A dark disc keeps the white control glyph legible on any media.
+    // A dark disc keeps the back control's white glyph legible on any media.
     iconButton: {
       alignItems: 'center',
       backgroundColor: colors.scrim.overlay,
@@ -656,6 +660,21 @@ const createStyles = (colors: ThemeColors) =>
       height: 44,
       justifyContent: 'center',
       width: 44,
+    },
+    // The header's report action: a scrim pill wide enough for the word, because
+    // an unlabelled glyph left the reader guessing what the tap would do
+    // (KNOT-020j-fix2). White ink stays legible on any photo.
+    reportButton: {
+      alignItems: 'center',
+      backgroundColor: colors.scrim.overlay,
+      borderRadius: radius.pill,
+      flexDirection: 'row',
+      gap: spacing.xs,
+      height: 36,
+      paddingHorizontal: spacing.md,
+    },
+    reportLabel: {
+      color: colors.text.onMedia,
     },
     languageLeft: {
       alignItems: 'center',

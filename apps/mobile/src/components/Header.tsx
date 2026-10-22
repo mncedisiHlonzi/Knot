@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { spacing, typeScale, useThemedStyles, type ThemeColors } from '../theme';
+import { layout, typeScale, useThemedStyles, type ThemeColors } from '../theme';
 
 type HeaderProps = {
   /** The title, always centred on the bar. When omitted, the middle stays empty. */
@@ -27,8 +27,12 @@ const HEIGHT = 56;
 /**
  * The inset the title keeps from each edge, so a long one cannot run under a side
  * slot's control.
+ *
+ * It is the screen gutter plus a 44-point control plus a small clearance: a side
+ * slot starts at `layout.screenPaddingFeed` (16) and ends at 60, so 64 keeps the
+ * centred title clear of it (KNOT-020j-fix2).
  */
-const TITLE_INSET = 56;
+const TITLE_INSET = layout.screenPaddingFeed + 48;
 
 /**
  * The screen header: a 56-point bar with a title centred on the bar itself.
@@ -48,6 +52,9 @@ const TITLE_INSET = 56;
  *
  * The status-bar inset is not applied here: every screen already sits inside the
  * app root's `SafeAreaView`, so adding another inset would double it (KNOT-020b).
+ *
+ * The bar's gutter is `layout.screenPaddingFeed`, the same 16pt the feed and list
+ * content use, so side controls and the content below them line up (KNOT-020j-fix2).
  */
 export default function Header({
   title,
@@ -98,7 +105,10 @@ const createStyles = (colors: ThemeColors) =>
       flexDirection: 'row',
       height: HEIGHT,
       justifyContent: 'space-between',
-      paddingHorizontal: spacing.sm,
+      // The same gutter as the list content beneath the bar, so a side control
+      // and the first row of a screen share one column. It was 8pt, which read as
+      // touching the screen edge (KNOT-020j-fix2).
+      paddingHorizontal: layout.screenPaddingFeed,
     },
     side: {
       alignItems: 'center',

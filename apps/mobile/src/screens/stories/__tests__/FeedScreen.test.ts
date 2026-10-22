@@ -123,6 +123,29 @@ function findInProps(node: unknown, type: unknown): ElementLike | undefined {
   return undefined;
 }
 
+/** Finds the first element carrying the given testID. */
+function findByTestID(node: unknown, testID: string): ElementLike | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findByTestID(child, testID);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+  if (node === null || node === undefined || typeof node !== 'object') {
+    return undefined;
+  }
+
+  const element = node as ElementLike;
+  if (element.props?.testID === testID) {
+    return element;
+  }
+
+  return findByTestID(element.props?.children, testID);
+}
+
 /** The entry the feed draws in every assertion below. */ const ITEM: FeedItem = {
   id: 'story-1',
   kind: 'story',
@@ -202,6 +225,18 @@ describe('FeedScreen card structure', () => {
     const entry = findElementByType(cardFor(renderScreen()), FeedEntry);
 
     expect(entry?.props?.showBottomHairline).toBe(false);
+  });
+
+  // The tab row and the first story are parted by the same band that parts two
+  // stories, so the row's old inset 1px rule is gone and the rhythm is even
+  // (KNOT-020j-fix2).
+  it('parts the tab row from the first story with the feed separator band', () => {
+    const divider = findByTestID(renderScreen(), 'feed-tabs-divider');
+    const style = divider?.props?.style as Record<string, unknown> | undefined;
+
+    expect(divider).toBeDefined();
+    expect(style?.backgroundColor).toBe(colors.bg.separator);
+    expect(style?.height).toBe(spacing.sm);
   });
 });
 

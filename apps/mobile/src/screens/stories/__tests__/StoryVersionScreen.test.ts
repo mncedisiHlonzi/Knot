@@ -51,7 +51,7 @@ jest.mock('react-native', () => ({
 
 jest.mock('phosphor-react-native', () => ({
   ArrowLeft: () => null,
-  DotsThree: () => null,
+  Flag: () => null,
   GitBranch: () => null,
 }));
 

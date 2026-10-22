@@ -18,12 +18,14 @@ type ReportActionProps = {
 };
 
 /**
- * A compact overflow control that opens the report flow for one piece of content.
+ * The report action for one piece of content: a small text button reading
+ * "Report".
  *
- * It is the "⋯" menu the action rows carry (KNOT-017a). One item today — Report —
- * with Block joining it on a user profile. The menu is a single tap for now
- * because there is a single item; a full menu is deferred until a second action
- * needs it.
+ * It used to be a "⋯" menu (KNOT-017a) with Report as its only item, which made a
+ * consequential action look like an ambiguous overflow. It is now named on screen
+ * and takes the danger ink every other destructive action uses, so a reader knows
+ * what will happen before tapping (KNOT-020j-fix2). `hitSlop` keeps the text at
+ * the design system's 44pt touch target without making the row taller.
  */
 export default function ReportAction({
   token,
@@ -49,7 +51,7 @@ export default function ReportAction({
         accessibilityLabel="Report content"
         hitSlop={spacing.sm}
       >
-        <Text style={[typeScale.h2, styles.triggerText]}>⋯</Text>
+        <Text style={[typeScale.label, styles.triggerText]}>Report</Text>
       </Pressable>
       <ReportModal
         visible={visible}
@@ -71,10 +73,12 @@ const createStyles = (colors: ThemeColors) =>
     trigger: {
       alignItems: 'center',
       justifyContent: 'center',
+      minHeight: 32,
       paddingHorizontal: spacing.sm,
       paddingVertical: spacing.xs,
     },
+    // The destructive-action ink, as every other report/delete control uses.
     triggerText: {
-      color: colors.text.secondary,
+      color: colors.state.danger,
     },
   });

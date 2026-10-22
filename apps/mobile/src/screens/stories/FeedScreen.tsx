@@ -43,18 +43,6 @@ import {
 /** The logomark's size in the feed header. */
 const LOGOMARK_SIZE = 32;
 
-/**
- * The logomark's horizontal nudge, so its left edge lines up with the content
- * beneath it.
- *
- * The header's own gutter is `spacing.sm` (8pt); the feed's entries sit at
- * `layout.screenPaddingFeed` (16pt). The extra 8pt here lifts the mark onto that
- * same column, which is what the home reference draws (its header is
- * `padding: 0 6px 0 16px`). Without it the mark reads as drifting left of every
- * story below it (KNOT-020g-fix13).
- */
-const LOGOMARK_INSET = spacing.sm;
-
 /** The header icon size. */
 const ICON_SIZE = 24;
 
@@ -337,9 +325,10 @@ export default function FeedScreen({
         <Header
           pinned
           left={
-            <View style={styles.logomark}>
-              <Logomark size={LOGOMARK_SIZE} />
-            </View>
+            // The bar's own gutter is `layout.screenPaddingFeed`, the same column
+            // the stories sit on, so the mark needs no nudge of its own
+            // (KNOT-020g-fix13, KNOT-020j-fix2).
+            <Logomark size={LOGOMARK_SIZE} />
           }
           right={
             <View style={styles.headerActions}>
@@ -372,14 +361,16 @@ export default function FeedScreen({
             semibold); the active tab is distinguished by ink and the indigo
             underline rather than by weight, so the row stays confident and even
             (KNOT-020c-fix2). `For you` and `Latest` change the request; the
-            pillar and place tabs are visual only (KNOT-027). */}
+            pillar and place tabs are visual only (KNOT-027). The row itself draws
+            no rule: the separation below it is the feed's own separator band,
+            identical to the one between two stories (KNOT-020j-fix2). */}
         <View style={styles.tabs}>
           {FEED_TABS.map((label) => {
             const active = label === activeTab;
             return (
               <Pressable
                 key={label}
-                style={[styles.tab, active ? styles.tabActive : null]}
+                style={styles.tab}
                 onPress={() => setActiveTab(label)}
                 accessibilityRole="button"
                 accessibilityState={{ selected: active }}
@@ -391,11 +382,20 @@ export default function FeedScreen({
                 >
                   {label}
                 </Text>
+                {/* The selected tab's underline is drawn inside its own tab, at the
+                    row's bottom edge, so only the active tab carries a line. */}
+                {active ? <View style={styles.tabUnderline} /> : null}
               </Pressable>
             );
           })}
         </View>
       </View>
+
+      {/* The first separator: the same full-bleed band that holds two stories
+          apart (`bg.separator`, 8pt), so tabs, the gap and the first story read as
+          one rhythm rather than an inset hairline over a grey band
+          (KNOT-020j-fix2). */}
+      <View style={styles.feedDivider} testID="feed-tabs-divider" />
 
       <FlatList
         data={items}
@@ -675,6 +675,13 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.bg.separator,
       flex: 1,
     },
+    // The band between the tab row and the first story, and between every two
+    // stories: one surface, one height, full bleed. The top bar paints the canvas,
+    // so this band is visible against it exactly as it is against two cards.
+    feedDivider: {
+      backgroundColor: colors.bg.separator,
+      height: spacing.sm,
+    },
     error: {
       color: colors.state.danger,
       paddingHorizontal: layout.screenPaddingFeed,
@@ -701,11 +708,6 @@ const createStyles = (colors: ThemeColors) =>
     // the line reads as the refresh indicator rather than as part of a card.
     refreshingThread: {
       marginBottom: spacing.xs,
-    },
-    // The mark's own inset, on top of the header's 8pt gutter, so it lines up with
-    // the feed's 16pt content column (KNOT-020g-fix13).
-    logomark: {
-      marginLeft: LOGOMARK_INSET,
     },
     // One row of the post options sheet: a leading icon and the label, at the 44pt
     // minimum touch size. Rows are separated by spacing alone — no drawn dividers.
@@ -771,17 +773,24 @@ const createStyles = (colors: ThemeColors) =>
     },
     // One tab, one quarter of the row: the label is centred and single-lined, so it
     // cannot clip. The 2px underline sits below the label, over the row's hairline.
+    // The four-column tab. The row draws no rule of its own: the feed's separator
+    // band below it does that job (KNOT-020j-fix2).
     tab: {
       alignItems: 'center',
-      borderBottomColor: colors.border.hairline,
-      borderBottomWidth: 1,
       flex: 1,
       paddingBottom: spacing.sm,
       paddingTop: spacing.md,
+      position: 'relative',
     },
-    tabActive: {
-      borderBottomColor: colors.brand.primary,
-      borderBottomWidth: 2,
+    // The selected tab's marker: a 2pt indigo rule along the tab's own width,
+    // drawn only for the active tab.
+    tabUnderline: {
+      backgroundColor: colors.brand.primary,
+      bottom: 0,
+      height: 2,
+      left: 0,
+      position: 'absolute',
+      right: 0,
     },
     tabLabel: {
       color: colors.text.tertiary,
