@@ -52,6 +52,17 @@ type VideoPlayerProps = {
   /** The resolved, absolute URL of the video. */
   readonly uri: string;
   /**
+   * The page's width, in points.
+   *
+   * A page inside a horizontal list cannot size itself: the list gives each cell
+   * a row container with no width, so `flex: 1` resolves to zero and the native
+   * video surface is never drawn. The pager therefore measures the page and
+   * passes the size in, exactly as `ZoomableImage` does (KNOT-020k-fix).
+   */
+  readonly width: number;
+  /** The page's height, in points. See {@link width}. */
+  readonly height: number;
+  /**
    * True while this page is the one on screen. It is the only input that starts
    * or stops playback, so a gallery of videos plays exactly one at a time.
    */
@@ -77,6 +88,8 @@ type VideoPlayerProps = {
  */
 export default function VideoPlayer({
   uri,
+  width,
+  height,
   isActive,
   durationMs,
 }: VideoPlayerProps): React.ReactElement {
@@ -198,7 +211,7 @@ export default function VideoPlayer({
   const playing = isActive && !userPaused && !ended;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { height, width }]}>
       <Video
         ref={videoRef}
         source={{ uri }}
@@ -231,9 +244,12 @@ export default function VideoPlayer({
         accessibilityLabel={controlsVisible ? 'Hide video controls' : 'Show video controls'}
       />
 
+      {/* `box-none` while visible: the overlay must not swallow a tap on the
+          empty part of the picture, or the controls could never be hidden
+          again. Its own controls still receive their taps. */}
       <Animated.View
         style={[styles.overlay, { opacity: controlsOpacity }]}
-        pointerEvents={controlsVisible ? 'auto' : 'none'}
+        pointerEvents={controlsVisible ? 'box-none' : 'none'}
       >
         <Pressable
           style={styles.playDisc}
@@ -304,7 +320,6 @@ const createStyles = (colors: ThemeColors) =>
     },
     container: {
       backgroundColor: colors.bg.theater,
-      flex: 1,
     },
     // The controls live on the black page, so a scrim disc behind each glyph is
     // what keeps it legible over a bright frame.

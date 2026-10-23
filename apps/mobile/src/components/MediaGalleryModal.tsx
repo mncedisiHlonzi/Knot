@@ -423,6 +423,8 @@ export default function MediaGalleryModal({
             item.media_type === 'video' ? (
               <VideoPlayer
                 uri={resolveUri(item.url)}
+                width={width}
+                height={height}
                 isActive={pageIndex === safeIndex}
                 durationMs={item.duration_ms}
               />
