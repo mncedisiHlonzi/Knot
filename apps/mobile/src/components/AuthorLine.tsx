@@ -2,7 +2,7 @@ import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { API_BASE_URL } from '../config/api';
-import { spacing, typeScale, useThemedStyles, type ThemeColors } from '../theme';
+import { mediaOverlayText, spacing, typeScale, useThemedStyles, type ThemeColors } from '../theme';
 import { formatRelativeTime, formatRelativeTimeShort } from '../utils/time';
 import Avatar from './Avatar';
 import RootedBadge from './RootedBadge';
@@ -22,6 +22,14 @@ export type AuthorLineTimeFormat = 'long' | 'short';
  * then Rooted, then time, with the avatar to the left (KNOT-023b).
  */
 export type AuthorLineLayout = 'inline' | 'stacked';
+
+/**
+ * The ink the line is drawn in. `default` is the canvas ink every screen uses;
+ * `media` is the light ink with a legibility shadow that the media viewer's
+ * transparent overlay needs, because it is painted straight over a photo or a
+ * video frame (KNOT-020k-fix3).
+ */
+export type AuthorLineTone = 'default' | 'media';
 
 /**
  * The inline Rooted summary AuthorLine renders. It is typed as plain strings (not
@@ -80,6 +88,11 @@ type AuthorLineProps = {
    * profile Pressable (KNOT-029).
    */
   readonly badge?: React.ReactNode; /**
+   * How the name and timestamp are inked. Defaults to `default`, the canvas ink
+   * every existing caller wants; `media` draws the light media ink with its
+   * shadow, for a line that sits directly on a photograph (KNOT-020k-fix3).
+   */
+  readonly tone?: AuthorLineTone; /**
    * Called when the author's avatar or name is tapped, to open their profile.
    *
    * When omitted, the identity is plain (not a tap target). The Rooted badge and
@@ -139,12 +152,17 @@ export default function AuthorLine({
   showRootedOnNewLine = false,
   timeFormat = 'long',
   layout = 'inline',
+  tone = 'default',
   badge,
   onPress,
   testID,
 }: AuthorLineProps): React.ReactElement | null {
   const styles = useThemedStyles(createStyles);
   const name = typeof displayName === 'string' ? displayName.trim() : '';
+
+  // The media tone inverts the identity ink for a line drawn straight on a photo
+  // or a video frame; every other caller keeps the canvas ink (KNOT-020k-fix3).
+  const mediaInk = tone === 'media' ? styles.mediaInk : null;
 
   const path = typeof avatarUrl === 'string' ? avatarUrl.trim() : '';
   const avatarUri = path === '' ? undefined : `${API_BASE_URL}${path}`;
@@ -193,7 +211,7 @@ export default function AuthorLine({
   const nameNode =
     name === '' ? null : (
       <Text
-        style={[size === 'large' ? typeScale.h3 : typeScale.label, styles.name]}
+        style={[size === 'large' ? typeScale.h3 : typeScale.label, styles.name, mediaInk]}
         numberOfLines={1}
       >
         {name}
@@ -202,7 +220,7 @@ export default function AuthorLine({
 
   const timeText =
     relative === '' ? null : (
-      <Text style={[typeScale.caption, styles.time]}>
+      <Text style={[typeScale.caption, styles.time, mediaInk]}>
         {hasLeadingSegment ? `· ${relative}` : relative}
       </Text>
     );
@@ -231,7 +249,7 @@ export default function AuthorLine({
         <View style={styles.stackedDetails}>
           <View style={styles.stackedNameRow}>
             {name === '' ? null : onPress === undefined ? (
-              <Text style={[typeScale.label, styles.name]} numberOfLines={1}>
+              <Text style={[typeScale.label, styles.name, mediaInk]} numberOfLines={1}>
                 {name}
               </Text>
             ) : (
@@ -241,7 +259,7 @@ export default function AuthorLine({
                 accessibilityRole="button"
                 accessibilityLabel={openProfileLabel}
               >
-                <Text style={[typeScale.label, styles.name]} numberOfLines={1}>
+                <Text style={[typeScale.label, styles.name, mediaInk]} numberOfLines={1}>
                   {name}
                 </Text>
               </Pressable>
@@ -259,7 +277,7 @@ export default function AuthorLine({
           ) : null}
 
           {relative === '' ? null : (
-            <Text style={[typeScale.caption, styles.time]}>{relative}</Text>
+            <Text style={[typeScale.caption, styles.time, mediaInk]}>{relative}</Text>
           )}
         </View>
       </View>
@@ -372,6 +390,9 @@ const createStyles = (colors: ThemeColors) =>
       flexShrink: 1,
       gap: spacing.sm,
     },
+    // The ink for a line drawn straight on media: white plus the legibility
+    // shadow, from the one helper that owns that treatment (KNOT-020k-fix3).
+    mediaInk: mediaOverlayText(colors),
     name: {
       color: colors.text.primary,
       flexShrink: 1,

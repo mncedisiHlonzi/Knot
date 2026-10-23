@@ -273,25 +273,19 @@ export default function StoryVersionScreen({
   // The inherited presentation: a future server may repeat these on the version,
   // and the current one does not, so the parent story is the fallback (KNOT-026).
   const media = version?.media ?? story?.media ?? [];
-  // The viewer's contextual sheet: the adaptation's own content and author. Its
-  // signals are the VERSION's, because that is what a reader reacts to here, and
-  // "View Story" opens the story the version adapts (KNOT-020k-fix2).
+  // The viewer's overlay: the adaptation's own content and author. "Read more..."
+  // opens the story the version adapts (KNOT-020k-fix3).
   const viewerStory: ViewerStory | undefined =
     version === undefined
       ? undefined
       : {
           storyId: version.story_id,
-          reactionEntityType: 'version',
-          reactionEntityId: version.id,
           title: version.title,
           body: version.body,
-          authorId: version.author_id,
           authorDisplayName: version.author_display_name,
           authorAvatarUrl: version.author_avatar_url,
           authorRooted: version.author_rooted ?? null,
           createdAt: version.created_at,
-          reactions: version.reactions,
-          myReactions: version.my_reactions,
         };
   const pillar = version?.pillar ?? story?.pillar;
   const place = version?.approximate_location ?? story?.approximate_location;

@@ -113,3 +113,18 @@ export function viewerSnippet(
 export function viewerTimeLabel(seconds: number): string {
   return formatDuration(seconds) || '0:00';
 }
+/**
+ * The page a viewability report points at.
+ *
+ * A pager reports the *visible* item's key, but the viewer's active page is an
+ * index, so the key has to be resolved against the items on screen. `-1` means
+ * "the report named an item this viewer does not hold", which a caller should
+ * ignore rather than treat as the first page — a stale key from a list that has
+ * since shrunk must never yank the theatre back to page one (KNOT-020k-fix3).
+ */
+export function viewerIndexForId(ids: readonly string[], key: string): number {
+  if (typeof key !== 'string' || key === '') {
+    return -1;
+  }
+  return ids.indexOf(key);
+}

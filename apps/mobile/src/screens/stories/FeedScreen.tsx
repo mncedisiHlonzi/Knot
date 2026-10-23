@@ -461,7 +461,6 @@ export default function FeedScreen({
                 language: item.language,
                 language_count: item.language_count,
                 media_count: item.media_count,
-                my_reactions: item.my_reactions,
                 pillar: item.pillar,
                 place: item.approximate_location,
                 preview: item.body,

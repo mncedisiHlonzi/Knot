@@ -106,8 +106,6 @@ type FeedEntryStory = {
     readonly adds_something_new: number;
     readonly needs_a_source: number;
   };
-  /** The signals the signed-in reader already holds, as reaction-type strings. */
-  readonly my_reactions?: readonly string[];
   /**
    * The entry's latest social proof, newest first. A version card heads the entry
    * with it, falling back to `attributionLine` when it is empty (KNOT-028).
@@ -346,22 +344,17 @@ export default function FeedEntry({
 
   const isVersion = variant === 'version';
 
-  // The viewer's contextual sheet draws the same story content this card does
-  // (author, title, opening lines) plus what it needs to react to it. A version
-  // entry reacts to the VERSION — the card's signals belong to the adaptation —
-  // while its "View Story" opens the story it adapts (KNOT-020k-fix2).
+  // The viewer's overlay draws the same story content this card does (author,
+  // title, opening lines) and nothing else, so the projection carries exactly
+  // those fields (KNOT-020k-fix3).
   const viewerStory: ViewerStory = {
     storyId: story.storyId ?? story.id,
-    reactionEntityType: isVersion ? 'version' : 'story',
-    reactionEntityId: story.id,
     title: story.title,
     body: story.preview,
     authorDisplayName: story.author_display_name,
     authorAvatarUrl: story.author_avatar_url,
     authorRooted: story.author_rooted ?? null,
     createdAt: story.created_at,
-    reactions: story.reactions,
-    myReactions: story.my_reactions,
   };
   // The people the row credits are the LINEAGE, not the poster: the author of the
   // version this one adapts (the parent) and the story's original author (the

@@ -17,11 +17,11 @@ import {
 } from 'react-native';
 import { X } from 'phosphor-react-native';
 
-import { EMPTY_REACTION_COUNTS, type ReactionCounts } from '../api/reactions';
 import { API_BASE_URL } from '../config/api';
 import { setNavigationBarColor } from '../native/systemBars';
 import {
   layout,
+  mediaOverlayText,
   motion,
   radius,
   spacing,
@@ -31,12 +31,14 @@ import {
   useThemedStyles,
 } from '../theme';
 import type { ThemeColors } from '../theme';
+import {
+  activeViewableKey,
+  VIEWABILITY_CONFIG,
+  type ViewableItemsInfo,
+} from '../utils/viewability';
 import AuthorLine, { type AuthorRootedSummary } from './AuthorLine';
-import Button from './Button';
-import { clampViewerIndex, viewerSnippet } from './mediaViewer';
-import ReactionBar, { type ReactionBarEntityType } from './ReactionBar';
+import { clampViewerIndex, viewerIndexForId, viewerSnippet } from './mediaViewer';
 import VideoPlayer from './VideoPlayer';
-
 /** One item the viewer can show. Story media satisfies this shape directly. */
 export type ViewerMedia = {
   readonly id: string;
@@ -49,35 +51,25 @@ export type ViewerMedia = {
 };
 
 /**
- * The story context the viewer's bottom sheet presents.
+ * The story context the viewer's overlay presents.
  *
  * It is a projection of the story (or the adaptation) the media belongs to, not
- * the whole payload: only what the sheet draws, so a screen can hand over its
+ * the whole payload: only what the overlay draws, so a screen can hand over its
  * own record without the viewer needing to know any API type. `storyId` is the
- * story a reader lands on from "View Story", which for an adaptation is the
- * story it adapts rather than the version itself (KNOT-020k-fix2).
+ * story the "Read more..." link opens, which for an adaptation is the story it
+ * adapts rather than the version itself (KNOT-020k-fix2).
  */
 export type ViewerStory = {
-  /** The story the "View Story" action opens. */
+  /** The story the "Read more..." link opens. */
   readonly storyId: string;
   /** The title drawn under the author line. */
   readonly title: string;
-  /** The body the sheet quotes two lines of. */
+  /** The body the overlay quotes three lines of. */
   readonly body: string;
-  readonly authorId?: string;
   readonly authorDisplayName?: string | null;
   readonly authorAvatarUrl?: string | null;
   readonly authorRooted?: AuthorRootedSummary | null;
   readonly createdAt?: string | null;
-  /**
-   * What the reaction bar reacts to. A story is the default; a version entry
-   * passes its own kind and id, because the feed's adaptation card carries the
-   * version's signals rather than the story's (KNOT-020k-fix2).
-   */
-  readonly reactionEntityType?: ReactionBarEntityType;
-  readonly reactionEntityId?: string;
-  readonly reactions?: ReactionCounts;
-  readonly myReactions?: readonly string[];
 };
 
 /** The largest zoom a pinch or a double tap can reach. */
@@ -90,17 +82,11 @@ const DOUBLE_TAP_MS = 280;
 const DISMISS_DISTANCE = 120;
 
 /**
- * The contextual sheet's resting height, as a share of the window, and the strip
- * it leaves showing when it is collapsed to its handle. The media stays visible
- * above (and, collapsed, almost all of it is visible) — the sheet is context, not
- * a wall (KNOT-020k-fix2).
+ * How many lines of the story the overlay quotes. It ends with the
+ * "Read more..." link, so three lines is what reads as a paragraph rather than a
+ * fragment (KNOT-020k-fix3).
  */
-const SHEET_HEIGHT_RATIO = 0.55;
-const SHEET_PEEK_HEIGHT = spacing.xxxl;
-
-/** The sheet's grab handle. */
-const HANDLE_WIDTH = 36;
-const HANDLE_HEIGHT = 4;
+const CONTEXT_BODY_LINES = 3;
 
 /** The close control's disc and glyph. */
 const CLOSE_DISC_SIZE = 44;
@@ -327,44 +313,54 @@ type MediaGalleryModalProps = {
   /** The item the viewer opens on. Out-of-range values are clamped. */
   readonly initialIndex: number;
   /**
-   * The story the media belongs to, which the contextual sheet presents. When it
-   * is omitted the viewer is a pure theatre: the media and a close control.
+   * The story the media belongs to, which the overlay presents. When it is
+   * omitted the viewer is a pure theatre: the media and a close control.
    */
   readonly story?: ViewerStory | null;
-  /** The reader's access token, so the sheet's signals can be saved. */
-  readonly token?: string;
   /** Called when the viewer is dismissed, by the close control or a swipe. */
   readonly onClose: () => void;
   /**
-   * Called when the sheet's "View Story" action is chosen, after the viewer has
-   * closed itself, so the caller only has to navigate (KNOT-020k-fix2).
+   * Called by the overlay's "Read more..." link, after the viewer has closed
+   * itself, so the caller only has to navigate (KNOT-020k-fix2).
    */
-  readonly onViewStory?: (storyId: string) => void;
+  readonly onOpenStory?: (storyId: string) => void;
 };
 
 /**
  * The full-screen media viewer: a theatre, not a page.
  *
- * A black room, the media edge to edge behind the status bar, a floating top bar
- * (page counter on the left, close on the right), and — when it was given a story
- * — a contextual bottom sheet carrying the author, the title, two lines of the
- * body, the story's four perspective signals, and a "View Story" action
- * (KNOT-020k, KNOT-020k-fix2).
+ * A black room, the media edge to edge behind the status bar, and two floating
+ * pieces of chrome: a top bar (page counter on the left, close on the right) and
+ * — when it was given a story — a transparent overlay at the bottom carrying the
+ * author, the title, three lines of the body and a bold "Read more..." link
+ * (KNOT-020k, KNOT-020k-fix3).
+ *
+ * The overlay is deliberately **not a surface**: nothing is filled behind it, so
+ * the picture runs to the bottom of the screen and the words sit on it. Its ink
+ * is the media ink (white plus a shadow) rather than the canvas ink, which is
+ * what keeps it legible over a dark photograph. The one tappable thing in it is
+ * the link, which closes the viewer and opens the story.
  *
  * ## Gestures
  *
  * - Horizontal: the pager. A zoomed image claims the touch first, so a zoomed
  *   picture pans instead of paging.
  * - Downward on the media: dismiss the viewer, fading the room out as it leaves.
- * - Downward on the sheet: collapse it to its handle, so the whole picture is
- *   visible. A tap or an upward drag brings it back. The sheet never dismisses
- *   the viewer — that gesture belongs to the media.
  *
  * ## Chrome
  *
- * For a video the top bar and the player's control bar hide together on a tap of
- * the picture, and return on the next tap (or on paging). An image keeps its
- * chrome, because a tap there is the zoom gesture.
+ * For a video the top bar, the player's control bar and the context overlay hide
+ * together on a tap of the picture, and return on the next tap (or on paging).
+ * An image keeps its chrome, because a tap there is the zoom gesture.
+ *
+ * ## Mounting
+ *
+ * The modal itself is mounted for the session, but the interactive stage is
+ * mounted **per open** (`MediaGalleryModal` renders `ViewerStage` only while
+ * visible). That is what lets the pager seed its active page from `initialIndex`:
+ * the first frame of a newly opened viewer already knows which page it is on, so
+ * a video there starts playing immediately instead of waiting for a scroll event
+ * that a freshly mounted list never emits (KNOT-020k-fix3).
  *
  * It is an RN `Modal`, so it owns its window and renders above the tab bar and
  * every overlay; the app passes it the media, an index and the story context, and
@@ -375,79 +371,127 @@ export default function MediaGalleryModal({
   media,
   initialIndex,
   story,
-  token,
   onClose,
-  onViewStory,
+  onOpenStory,
 }: MediaGalleryModalProps): React.ReactElement {
   const { colors, theme } = useTheme();
+
+  // A theatre's system chrome is dark: the navigation bar goes black while the
+  // viewer is open and returns to the theme's canvas when it closes (KNOT-020k).
+  useEffect(() => {
+    if (!visible) {
+      return undefined;
+    }
+    setNavigationBarColor(colors.bg.theater, false);
+    return () => setNavigationBarColor(colors.bg.canvas, theme === 'light');
+  }, [colors, theme, visible]);
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
+      {/* The viewer is its own window: declare the light status icons for the
+          black room. Unmounting restores the app's own declaration. */}
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+
+      {/* A fresh stage per open, so every page index — including the active one —
+          starts from `initialIndex` rather than from a state left over from the
+          last time the viewer was shown (KNOT-020k-fix3). */}
+      {visible ? (
+        <ViewerStage
+          key={`${initialIndex}:${media.length}`}
+          media={media}
+          initialIndex={initialIndex}
+          story={story}
+          onClose={onClose}
+          onOpenStory={onOpenStory}
+        />
+      ) : null}
+    </Modal>
+  );
+}
+
+type ViewerStageProps = {
+  readonly media: readonly ViewerMedia[];
+  readonly initialIndex: number;
+  readonly story?: ViewerStory | null;
+  readonly onClose: () => void;
+  readonly onOpenStory?: (storyId: string) => void;
+};
+
+/** The theatre itself: the room, the pager, the top bar and the context overlay. */
+function ViewerStage({
+  media,
+  initialIndex,
+  story,
+  onClose,
+  onOpenStory,
+}: ViewerStageProps): React.ReactElement {
+  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const { width, height } = useWindowDimensions();
-  const [index, setIndex] = useState(() => clampViewerIndex(initialIndex, media.length));
   const translateY = useRef(new Animated.Value(0)).current;
 
-  // The sheet's signal counts live here rather than in the sheet, so an
-  // optimistic tap survives the sheet's own re-renders. The `story` prop is kept
-  // in a ref because callers build it per render; the seed is read only when the
-  // viewer opens (KNOT-020k-fix2).
-  const storyRef = useRef<ViewerStory | null | undefined>(story);
-  storyRef.current = story;
-  const [reactions, setReactions] = useState<ReactionCounts>(
-    story?.reactions ?? EMPTY_REACTION_COUNTS,
+  // The page on screen. Seeding it from `initialIndex` — rather than from zero —
+  // is the fix for a video that would not play when the viewer was opened on it:
+  // the first render already marks that page active, so the player mounts
+  // playing, and `onViewableItemsChanged` only has to keep it in step afterwards
+  // (KNOT-020k-fix3).
+  const [activeIndex, setActiveIndex] = useState(() =>
+    clampViewerIndex(initialIndex, media.length),
   );
-  const [myReactions, setMyReactions] = useState<readonly string[]>(story?.myReactions ?? []);
 
-  // The chrome a video's tap hides: the top bar and the player's control bar.
+  // The chrome a video's tap hides: the top bar, the control bar and the
+  // overlay; its opacity is animated so the change reads as a fade.
   const [chromeVisible, setChromeVisible] = useState(true);
   const chromeOpacity = useRef(new Animated.Value(1)).current;
 
-  // The contextual sheet's detent and drag.
-  const [sheetOpen, setSheetOpen] = useState(true);
-  const sheetOffset = useRef(new Animated.Value(0)).current;
-  const sheetDragStart = useRef(0);
+  // The overlay's own height, measured so a video's control bar floats above it
+  // instead of landing behind the text (KNOT-020k-fix3).
+  const [contextHeight, setContextHeight] = useState(0);
 
-  const sheetHeight = Math.round(height * SHEET_HEIGHT_RATIO);
-  const sheetCollapsedOffset = Math.max(sheetHeight - SHEET_PEEK_HEIGHT, 0);
-  const hasStory = story != null;
-  const sheetInset = !hasStory ? 0 : sheetOpen ? sheetHeight : SHEET_PEEK_HEIGHT;
-
-  const safeIndex = clampViewerIndex(index, media.length);
+  const safeIndex = clampViewerIndex(activeIndex, media.length);
   const currentItem = media[safeIndex];
   const videoPage = currentItem !== undefined && currentItem.media_type === 'video';
   const counter = media.length > 1 ? `${safeIndex + 1} / ${media.length}` : null;
   const snippet = viewerSnippet(story?.body ?? '');
+  const hasStory = story != null;
+  const bottomInset = hasStory ? contextHeight + spacing.md : spacing.xl;
 
-  // Opening at a different item, or reopening the same one, always starts at the
-  // top of the screen, on the requested page, with the chrome and sheet open and
-  // the story's own counts.
-  useEffect(() => {
-    if (!visible) {
+  // A freshly mounted list also reports what it is showing once, and that report
+  // can arrive before the initial offset has settled. The seeded page is already
+  // correct on the first frame, so a report is only trusted once the pager has
+  // actually moved — otherwise a stale "page one" report could pause the video
+  // the viewer opened on (KNOT-020k-fix3).
+  const pagerMoved = useRef(false);
+
+  // The viewability config and its callback must keep their identity for the
+  // list's life, or `FlatList` warns and stops reporting — the same rule the Feed
+  // follows (KNOT-020c-fix3). The stage is mounted per open with a fixed media
+  // list, so closing over it here is safe.
+  const viewabilityConfig = useRef(VIEWABILITY_CONFIG).current;
+  const onViewableItemsChanged = useRef((info: ViewableItemsInfo): void => {
+    if (!pagerMoved.current) {
       return;
     }
-    setIndex(clampViewerIndex(initialIndex, media.length));
-    translateY.setValue(0);
-    setChromeVisible(true);
-    setSheetOpen(true);
-    sheetOffset.setValue(0);
-    const seed = storyRef.current;
-    setReactions(seed?.reactions ?? EMPTY_REACTION_COUNTS);
-    setMyReactions(seed?.myReactions ?? []);
-  }, [visible, initialIndex, media.length, sheetOffset, translateY]);
-
-  // The sheet arrives with the theatre: it starts below the edge and springs up,
-  // so the story context feels attached to the media rather than switched on
-  // (KNOT-020k-fix2).
-  useEffect(() => {
-    if (!visible || !hasStory) {
+    const key = activeViewableKey(info);
+    if (key === undefined) {
       return;
     }
-    sheetOffset.setValue(sheetHeight);
-    Animated.spring(sheetOffset, {
-      toValue: 0,
-      speed: 16,
-      bounciness: 2,
-      useNativeDriver: true,
-    }).start();
-  }, [visible, hasStory, sheetHeight, sheetOffset]);
+    const next = viewerIndexForId(
+      media.map((item) => item.id),
+      key,
+    );
+    // A report naming an item this viewer no longer holds is ignored rather than
+    // read as "page one".
+    if (next >= 0) {
+      setActiveIndex(next);
+    }
+  }).current;
 
   // An image has nothing to toggle, so its chrome stays up; a video's follows the
   // tap. The fade runs on the native driver (KNOT-020k-fix2).
@@ -465,16 +509,6 @@ export default function MediaGalleryModal({
   useEffect(() => {
     setChromeVisible(true);
   }, [safeIndex]);
-
-  // A theatre's system chrome is dark: the navigation bar goes black while the
-  // viewer is open and returns to the theme's canvas when it closes (KNOT-020k).
-  useEffect(() => {
-    if (!visible) {
-      return undefined;
-    }
-    setNavigationBarColor(colors.bg.theater, false);
-    return () => setNavigationBarColor(colors.bg.canvas, theme === 'light');
-  }, [colors, theme, visible]);
 
   const dismiss = useCallback((): void => {
     Animated.timing(translateY, {
@@ -531,99 +565,46 @@ export default function MediaGalleryModal({
     [dismiss, translateY],
   );
 
-  const settleSheet = useCallback(
-    (open: boolean): void => {
-      setSheetOpen(open);
-      Animated.spring(sheetOffset, {
-        toValue: open ? 0 : sheetCollapsedOffset,
-        speed: 20,
-        bounciness: 2,
-        useNativeDriver: true,
-      }).start();
-    },
-    [sheetCollapsedOffset, sheetOffset],
-  );
-
-  // The sheet's own gesture: a downward drag collapses it to its handle, an
-  // upward drag opens it. It never closes the viewer — that is the media's swipe
-  // (KNOT-020k-fix2).
-  const sheetResponder = useMemo(
-    () =>
-      PanResponder.create({
-        onMoveShouldSetPanResponder: (_event, gesture) =>
-          Math.abs(gesture.dy) > 6 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.2,
-        onPanResponderGrant: () => {
-          sheetDragStart.current = sheetOpen ? 0 : sheetCollapsedOffset;
-        },
-        onPanResponderMove: (_event, gesture) => {
-          const next = Math.min(
-            Math.max(sheetDragStart.current + gesture.dy, 0),
-            sheetCollapsedOffset,
-          );
-          sheetOffset.setValue(next);
-        },
-        onPanResponderRelease: (_event, gesture) => {
-          const dragged = sheetDragStart.current + gesture.dy;
-          const open =
-            gesture.vy < -0.4
-              ? true
-              : gesture.vy > 0.4
-                ? false
-                : dragged < sheetCollapsedOffset / 2;
-          settleSheet(open);
-        },
-        onPanResponderTerminate: () => {
-          settleSheet(sheetOpen);
-        },
-      }),
-    [settleSheet, sheetCollapsedOffset, sheetOffset, sheetOpen],
-  );
-
   /**
-   * Leaves the theatre and opens the story: the viewer closes first, so the
-   * caller's navigation pushes onto a clean stack (KNOT-020k-fix2).
+   * Leaves the theatre and opens the story. The viewer closes first, so the
+   * caller's navigation pushes onto a clean stack (KNOT-020k-fix3).
    */
-  const handleViewStory = (): void => {
+  const handleReadMore = (): void => {
     const id = story?.storyId;
-    if (id === undefined || id === '' || onViewStory === undefined) {
+    if (id === undefined || id === '' || onOpenStory === undefined) {
       return;
     }
     onClose();
-    onViewStory(id);
+    onOpenStory(id);
   };
 
+  /**
+   * The arithmetic half of the active-page rule.
+   *
+   * `onViewableItemsChanged` is the primary signal, but it can lag a fast fling;
+   * once the pager has stopped its offset is exact, so this settles any page the
+   * viewability report missed (KNOT-020k-fix3).
+   */
   const handleScrollEnd = (event: NativeSyntheticEvent<NativeScrollEvent>): void => {
     if (width <= 0) {
       return;
     }
+    pagerMoved.current = true;
     const next = clampViewerIndex(event.nativeEvent.contentOffset.x / width, media.length);
-    if (next !== index) {
-      setIndex(next);
+    if (next !== activeIndex) {
+      setActiveIndex(next);
     }
   };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="fade"
-      statusBarTranslucent
-      onRequestClose={onClose}
-    >
-      {/* The viewer is its own window: declare the light status icons for the
-          black room. Unmounting restores the app's own declaration. */}
-      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-
+    <>
       <Animated.View style={[styles.room, { opacity: backdropOpacity }]} />
 
       <Animated.View style={[styles.stage, { transform: [{ translateY }] }]}>
         {/* Only the media owns the dismiss gesture: a downward drag here leaves
-            the theatre, while the same drag on the sheet collapses the sheet. */}
+            the theatre. */}
         <View style={styles.media} {...dismissResponder.panHandlers}>
           <FlatList
-            // Remounting on open lands on the tapped item without a scroll
-            // animation flashing across the screen.
-            key={visible ? `open-${initialIndex}` : 'closed'}
             data={media}
             keyExtractor={(item) => item.id}
             horizontal
@@ -636,6 +617,8 @@ export default function MediaGalleryModal({
               offset: width * i,
               index: i,
             })}
+            viewabilityConfig={viewabilityConfig}
+            onViewableItemsChanged={onViewableItemsChanged}
             onMomentumScrollEnd={handleScrollEnd}
             renderItem={({ item, index: pageIndex }) =>
               item.media_type === 'video' ? (
@@ -647,7 +630,7 @@ export default function MediaGalleryModal({
                   durationMs={item.duration_ms}
                   chromeVisible={chromeVisible}
                   onToggleChrome={() => setChromeVisible((shown) => !shown)}
-                  bottomInset={sheetInset + spacing.md}
+                  bottomInset={bottomInset}
                 />
               ) : (
                 <ZoomableImage uri={resolveUri(item.url)} width={width} height={height} />
@@ -682,82 +665,50 @@ export default function MediaGalleryModal({
           </Animated.View>
         </View>
 
+        {/* The context overlay: no fill, no card, no handle — the story's
+            attribution and its opening words sit straight on the picture, with
+            one bold link out. `onLayout` publishes its height so a video's
+            control bar floats above it rather than behind the text
+            (KNOT-020k-fix3). */}
         {story != null ? (
           <Animated.View
-            style={[
-              styles.sheet,
-              { height: sheetHeight, transform: [{ translateY: sheetOffset }] },
-            ]}
-            {...sheetResponder.panHandlers}
+            style={[styles.context, { opacity: chromeOpacity }]}
+            pointerEvents={chromeVisible || !videoPage ? 'box-none' : 'none'}
+            onLayout={(event) => setContextHeight(event.nativeEvent.layout.height)}
           >
-            <Pressable
-              style={styles.sheetHandleHit}
-              onPress={() => settleSheet(!sheetOpen)}
-              accessibilityRole="button"
-              accessibilityLabel={sheetOpen ? 'Collapse story details' : 'Expand story details'}
-            >
-              <View style={styles.sheetHandle} />
-            </Pressable>
+            <AuthorLine
+              displayName={story.authorDisplayName}
+              avatarUrl={story.authorAvatarUrl}
+              createdAt={story.createdAt}
+              rooted={story.authorRooted ?? null}
+              size="medium"
+              timeFormat="short"
+              tone="media"
+            />
 
-            <View style={styles.sheetBody} pointerEvents={sheetOpen ? 'auto' : 'none'}>
-              <AuthorLine
-                displayName={story.authorDisplayName}
-                avatarUrl={story.authorAvatarUrl}
-                createdAt={story.createdAt}
-                rooted={story.authorRooted ?? null}
-                size="medium"
-                timeFormat="short"
-              />
+            <Text style={[typeScale.h3, styles.contextTitle]} numberOfLines={2}>
+              {story.title}
+            </Text>
 
-              <Text style={[typeScale.h3, styles.sheetTitle]} numberOfLines={2}>
-                {story.title}
+            {snippet.text === '' ? null : (
+              <Text style={[typeScale.body, styles.contextBody]} numberOfLines={CONTEXT_BODY_LINES}>
+                {snippet.text}
               </Text>
+            )}
 
-              {snippet.text === '' ? null : (
-                <Text style={[typeScale.body, styles.sheetSnippet]} numberOfLines={2}>
-                  {snippet.text}
-                </Text>
-              )}
-
-              {snippet.truncated ? (
-                <Pressable
-                  style={styles.readMore}
-                  onPress={handleViewStory}
-                  hitSlop={spacing.sm}
-                  accessibilityRole="link"
-                  accessibilityLabel={`Read more of ${story.title}`}
-                >
-                  <Text style={[typeScale.label, styles.readMoreText]}>Read more…</Text>
-                </Pressable>
-              ) : null}
-
-              <ReactionBar
-                entityType={story.reactionEntityType ?? 'story'}
-                entityId={story.reactionEntityId ?? story.storyId}
-                counts={reactions}
-                myReactions={myReactions}
-                token={token}
-                onChange={(counts, mine) => {
-                  setReactions(counts);
-                  setMyReactions(mine);
-                }}
-              />
-
-              {onViewStory === undefined ? null : (
-                <View style={styles.viewStory}>
-                  <Button
-                    variant="primary"
-                    fullWidth
-                    label="View Story"
-                    onPress={handleViewStory}
-                  />
-                </View>
-              )}
-            </View>
+            <Pressable
+              style={styles.readMore}
+              onPress={handleReadMore}
+              hitSlop={spacing.sm}
+              accessibilityRole="link"
+              accessibilityLabel={`Read more of ${story.title}`}
+            >
+              <Text style={[typeScale.button, styles.readMoreText]}>Read more...</Text>
+            </Pressable>
           </Animated.View>
         ) : null}
       </Animated.View>
-    </Modal>
+    </>
   );
 }
 
@@ -805,53 +756,34 @@ const createStyles = (colors: ThemeColors) =>
       height: '100%',
       width: '100%',
     },
+    // The context overlay: no surface at all. It sits on the media, so its ink is
+    // the media ink and the picture runs behind the words (KNOT-020k-fix3).
+    context: {
+      bottom: 0,
+      gap: spacing.xs,
+      left: 0,
+      paddingBottom: spacing.xl,
+      paddingHorizontal: layout.screenPaddingFeed,
+      position: 'absolute',
+      right: 0,
+    },
+    contextBody: mediaOverlayText(colors),
+    contextTitle: mediaOverlayText(colors),
     readMore: {
       alignSelf: 'flex-start',
     },
+    // The one control in the overlay: bold, brand ink, with the media shadow so it
+    // still reads over a bright frame (KNOT-020k-fix3).
     readMoreText: {
       color: colors.brand.primary,
+      textShadowColor: colors.scrim.textShadow,
+      textShadowOffset: { width: 0, height: 1 },
+      textShadowRadius: 2,
     },
     // The black room behind the media; its opacity follows the dismiss drag.
     room: {
       ...StyleSheet.absoluteFillObject,
       backgroundColor: colors.bg.theater,
-    },
-    // The contextual sheet: the app's sheet treatment (canvas/sheet fill, `xxl`
-    // top corners) floating over the theatre. It is a surface, so it uses the
-    // theme's ink rather than the media ink (KNOT-020k-fix2).
-    sheet: {
-      backgroundColor: colors.bg.sheet,
-      borderTopLeftRadius: radius.xxl,
-      borderTopRightRadius: radius.xxl,
-      bottom: 0,
-      left: 0,
-      overflow: 'hidden',
-      position: 'absolute',
-      right: 0,
-    },
-    sheetBody: {
-      flexShrink: 1,
-      gap: spacing.sm,
-      paddingBottom: spacing.xl,
-      paddingHorizontal: layout.screenPaddingFeed,
-    },
-    sheetHandle: {
-      backgroundColor: colors.border.hairline,
-      borderRadius: radius.pill,
-      height: HANDLE_HEIGHT,
-      width: HANDLE_WIDTH,
-    },
-    // A 48pt grab band around a 4pt handle, so the sheet is easy to catch.
-    sheetHandleHit: {
-      alignItems: 'center',
-      height: SHEET_PEEK_HEIGHT,
-      justifyContent: 'center',
-    },
-    sheetSnippet: {
-      color: colors.text.secondary,
-    },
-    sheetTitle: {
-      color: colors.text.primary,
     },
     stage: {
       ...StyleSheet.absoluteFillObject,
@@ -865,8 +797,5 @@ const createStyles = (colors: ThemeColors) =>
       left: spacing.lg,
       position: 'absolute',
       right: spacing.lg,
-    },
-    viewStory: {
-      marginTop: spacing.xs,
     },
   });

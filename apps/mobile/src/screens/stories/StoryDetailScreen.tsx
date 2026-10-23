@@ -268,9 +268,8 @@ export default function StoryDetailScreen({
   const stripRef = useRef<ScrollView>(null);
 
   const media = story?.media ?? [];
-  // The viewer's contextual sheet: this story's own content, its author, and its
-  // signals, so the theatre never loses the story it is showing
-  // (KNOT-020k-fix2).
+  // The viewer's overlay: this story's own content and author, so the theatre
+  // never loses the story it is showing (KNOT-020k-fix3).
   const viewerStory: ViewerStory | undefined =
     story === undefined
       ? undefined
@@ -278,13 +277,10 @@ export default function StoryDetailScreen({
           storyId: story.id,
           title: story.title,
           body: story.body,
-          authorId: story.author_id,
           authorDisplayName: story.author_display_name,
           authorAvatarUrl: story.author_avatar_url,
           authorRooted: story.author_rooted ?? null,
           createdAt: story.created_at,
-          reactions: story.reactions,
-          myReactions: story.my_reactions,
         };
   const safeIndex = media.length === 0 ? 0 : Math.min(activeIndex, media.length - 1);
   const activeMedia = media[safeIndex];

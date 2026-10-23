@@ -91,7 +91,7 @@ type VideoPlayerProps = {
   readonly onToggleChrome: () => void;
   /**
    * How far the control bar floats above the page's bottom edge, in points. The
-   * viewer passes the contextual sheet's current height so the bar is never
+   * viewer passes the context overlay's measured height so the bar is never
    * covered by it (KNOT-020k-fix2).
    */
   readonly bottomInset?: number;

@@ -882,16 +882,15 @@ function ThemedApp(): React.ReactElement {
       {/* The viewer is a Modal, so it draws above the bar and every overlay. It is
           declared once for the signed-in app; opening it sets `mediaViewer`, and
           the viewer fades itself in and out (KNOT-020k). It carries the story's
-          context into its bottom sheet and can hand the reader to the story
-          itself (KNOT-020k-fix2). */}
+          context into its bottom overlay and can hand the reader to the story
+          itself (KNOT-020k-fix3). */}
       <MediaGalleryModal
         visible={mediaViewer !== null}
         media={mediaViewer?.items ?? []}
         initialIndex={mediaViewer?.index ?? 0}
         story={mediaViewer?.story ?? null}
-        token={session?.accessToken}
         onClose={() => setMediaViewer(null)}
-        onViewStory={handleViewStory}
+        onOpenStory={handleViewStory}
       />
     </SafeAreaView>
   );

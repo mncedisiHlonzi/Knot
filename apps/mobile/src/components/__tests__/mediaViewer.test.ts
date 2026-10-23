@@ -1,6 +1,7 @@
 import {
   clampViewerIndex,
   scrubSeconds,
+  viewerIndexForId,
   viewerProgress,
   viewerSnippet,
   viewerTimeLabel,
@@ -106,5 +107,18 @@ describe('viewerTimeLabel', () => {
 
   it('reads past an hour like the duration badge does', () => {
     expect(viewerTimeLabel(3725)).toBe('1:02:05');
+  });
+});
+
+describe('viewerIndexForId', () => {
+  it('resolves a reported key to its page', () => {
+    expect(viewerIndexForId(['a', 'b', 'c'], 'a')).toBe(0);
+    expect(viewerIndexForId(['a', 'b', 'c'], 'c')).toBe(2);
+  });
+
+  it('reports a key this viewer does not hold instead of guessing a page', () => {
+    expect(viewerIndexForId(['a', 'b'], 'gone')).toBe(-1);
+    expect(viewerIndexForId([], 'a')).toBe(-1);
+    expect(viewerIndexForId(['a'], '')).toBe(-1);
   });
 });
