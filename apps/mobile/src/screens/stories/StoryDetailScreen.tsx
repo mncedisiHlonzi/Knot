@@ -24,7 +24,7 @@ import { versionsApi } from '../../api/versions';
 import AuthorLine from '../../components/AuthorLine';
 import Button from '../../components/Button';
 import FeedVideo from '../../components/FeedVideo';
-import type { ViewerMedia } from '../../components/MediaGalleryModal';
+import type { ViewerMedia, ViewerStory } from '../../components/MediaGalleryModal';
 import Header from '../../components/Header';
 import PillarTag from '../../components/PillarTag';
 import ReactionBar from '../../components/ReactionBar';
@@ -204,7 +204,11 @@ type StoryDetailScreenProps = {
   /** Called when the story's author is tapped, to open their profile. */
   readonly onOpenUserProfile: (userId: string) => void;
   /** Called when the media is tapped, to open the full-screen viewer. */
-  readonly onOpenMedia: (items: readonly ViewerMedia[], index: number) => void;
+  readonly onOpenMedia: (
+    items: readonly ViewerMedia[],
+    index: number,
+    story?: ViewerStory | null,
+  ) => void;
 };
 
 /**
@@ -264,6 +268,24 @@ export default function StoryDetailScreen({
   const stripRef = useRef<ScrollView>(null);
 
   const media = story?.media ?? [];
+  // The viewer's contextual sheet: this story's own content, its author, and its
+  // signals, so the theatre never loses the story it is showing
+  // (KNOT-020k-fix2).
+  const viewerStory: ViewerStory | undefined =
+    story === undefined
+      ? undefined
+      : {
+          storyId: story.id,
+          title: story.title,
+          body: story.body,
+          authorId: story.author_id,
+          authorDisplayName: story.author_display_name,
+          authorAvatarUrl: story.author_avatar_url,
+          authorRooted: story.author_rooted ?? null,
+          createdAt: story.created_at,
+          reactions: story.reactions,
+          myReactions: story.my_reactions,
+        };
   const safeIndex = media.length === 0 ? 0 : Math.min(activeIndex, media.length - 1);
   const activeMedia = media[safeIndex];
   // The frame takes the active media's shape: the shape the page reported, else
@@ -414,7 +436,7 @@ export default function StoryDetailScreen({
                       isMuted={isMuted}
                       onToggleMute={toggleMute}
                       onAspectRatio={handlePageRatio}
-                      onPress={() => onOpenMedia(media, index)}
+                      onPress={() => onOpenMedia(media, index, viewerStory)}
                     />
                   ))}
                 </ScrollView>
@@ -452,7 +474,7 @@ export default function StoryDetailScreen({
                     <Pressable
                       key={item.id}
                       style={[styles.thumbnail, active ? null : styles.thumbnailInactive]}
-                      onPress={() => onOpenMedia(media, index)}
+                      onPress={() => onOpenMedia(media, index, viewerStory)}
                       accessibilityRole="button"
                       accessibilityState={{ selected: active }}
                       accessibilityLabel={`Open ${carouselPositionLabel(

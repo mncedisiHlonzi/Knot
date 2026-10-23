@@ -489,35 +489,48 @@ and their type is `typeScale.label` (13pt bold) or heavier. Do not use
 dark theme. `mediaOverlayText(colors)` (`src/theme/mediaOverlay.ts`) supplies the
 ink and the legibility shadow in one object.
 
-### The media viewer (KNOT-020k)
+### The media viewer (KNOT-020k, rebuilt in KNOT-020k-fix2)
 
 Tapping media anywhere in the app opens one full-screen viewer. It is a React Native
-`Modal` owned by `App.tsx` (`mediaViewer: { items, index } | null`), so it sits above the
-tab bar and every overlay without being a route. A screen receives
-`onOpenMedia(items, index)` and calls it:
+`Modal` owned by `App.tsx`
+(`mediaViewer: { items, index, story } | null`), so it sits above the tab bar and every
+overlay without being a route. A screen receives
+`onOpenMedia(items, index, story?)` and calls it:
 
 - **Feed and Place Stories** (`FeedEntry`) open with the entry's first item only — the
-  feed payload carries one media preview, not the list.
+  feed payload carries one media preview, not the list. A version entry passes the
+  version's id as the item and the story it adapts as `story.storyId`.
 - **Story Detail and Version Detail** pass their whole `media` array and the tapped
   index, so the hero carousel and the thumbnail strip both open on the right page.
-- **Profile** cards open on their single preview.
+- **Profile** cards open on their single preview, with the wall owner as the author.
+
+`story` is a `ViewerStory` — a projection (`storyId`, `title`, `body`, author fields,
+`reactions`, `myReactions`, and optionally which entity the signals belong to). It
+carries only what the sheet draws, so a screen hands over its own record without the
+viewer knowing any API type.
 
 The pieces:
 
-- **`MediaGalleryModal.tsx`** — the black theatre (`colors.bg.theater`), a paging
-  `FlatList`, and a close control with a counter. A `PanResponder` on the pager's
-  container dismisses on a downward drag (fade + slide) that is past `DISMISS_DISTANCE`
-  or fast enough; it claims only mostly-vertical movement, so the horizontal pager and a
-  zoomed image keep their own gestures.
-- **`VideoPlayer.tsx`** — `react-native-video` with the app's own overlay instead of the
-  platform controls: tap the picture to show/hide the fade-in controls, a large
-  play/pause disc, current/total time, a draggable scrub bar, and a mute toggle. It
-  autoplays while its page is the visible one and pauses when the gallery moves on. The
-  scrub previews a time under the finger and seeks on release. Videos start **muted**
-  (`START_MUTED`), following the app's rule that a video nobody explicitly unmuted should
-  not make a sound.
-- **`mediaViewer.ts`** — the pure maths (index clamping, progress, scrub seconds), kept
-  apart so it is covered by the renderer-less tests.
+- **`MediaGalleryModal.tsx`** — the black theatre (`colors.bg.theater`) with the media
+  edge to edge behind the status bar, a floating top bar (page counter on the left,
+  close on the right), and the **contextual bottom sheet**: `AuthorLine`, the title at
+  `typeScale.h3`, two lines of the body (with "Read more…"), the `ReactionBar`, and a
+  primary **View Story** button that closes the viewer and navigates. The sheet is a
+  surface (`colors.bg.sheet`, `radius.xxl` top corners); it springs up on open and
+  collapses to a 48pt handle on a downward drag, so the whole picture can be seen.
+- **Gesture ownership:** the media owns swipe-down-to-dismiss and the horizontal pager;
+  the sheet owns vertical drags on itself. The two never compete.
+- **`VideoPlayer.tsx`** — `react-native-video` with the app's own floating control bar:
+  a thin scrub line that swells into a handle under the finger, play/pause, a running
+  `0:12 / 0:45`, and mute. It autoplays while its page is the visible one. Chrome
+  visibility belongs to the viewer, so a tap on the picture hides the top bar **and** the
+  control bar together; paging restores them. The bar's `bottomInset` is the sheet's
+  current height, so the sheet never covers it. Videos start **muted** (`START_MUTED`),
+  following the app's rule that a video nobody explicitly unmuted should not make a
+  sound.
+- **`mediaViewer.ts`** — the pure helpers (index clamping, progress, scrub seconds, the
+  sheet's `viewerSnippet` window, and `viewerTimeLabel`'s "0:00" clock), kept apart so they
+  are covered by the renderer-less tests.
 
 Gestures use `Animated` and `PanResponder` only: the app has no gesture library and this
 viewer adds none (KNOT-ADR-037, KNOT-ADR-078). The navigation bar is painted black while

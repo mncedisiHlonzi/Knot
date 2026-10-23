@@ -25,7 +25,7 @@ import { setNavigationBarColor } from './src/native/systemBars';
 import TabBar from './src/components/TabBar';
 import type { TabName } from './src/components/TabBar';
 import MediaGalleryModal from './src/components/MediaGalleryModal';
-import type { ViewerMedia } from './src/components/MediaGalleryModal';
+import type { ViewerMedia, ViewerStory } from './src/components/MediaGalleryModal';
 import {
   popAllOverlays,
   popOverlay,
@@ -202,22 +202,43 @@ function ThemedApp(): React.ReactElement {
   const [mediaViewer, setMediaViewer] = useState<{
     readonly items: readonly ViewerMedia[];
     readonly index: number;
+    /**
+     * The story the media belongs to, which the viewer's contextual sheet
+     * presents. Null for a caller that has no story context (KNOT-020k-fix2).
+     */
+    readonly story: ViewerStory | null;
   } | null>(null);
 
   /**
    * Opens the viewer on one of `items`.
    *
    * The index is clamped here as well as in the viewer, because a caller can
-   * hold a stale index after a list shrinks (KNOT-020k).
+   * hold a stale index after a list shrinks (KNOT-020k). The story context is
+   * optional so a caller can still open the theatre alone.
    */
-  const openMediaViewer = useCallback((items: readonly ViewerMedia[], index: number): void => {
-    if (items.length === 0) {
-      return;
-    }
-    setMediaViewer({
-      items,
-      index: Math.min(Math.max(Math.round(index), 0), items.length - 1),
-    });
+  const openMediaViewer = useCallback(
+    (items: readonly ViewerMedia[], index: number, story?: ViewerStory | null): void => {
+      if (items.length === 0) {
+        return;
+      }
+      setMediaViewer({
+        items,
+        index: Math.min(Math.max(Math.round(index), 0), items.length - 1),
+        story: story ?? null,
+      });
+    },
+    [],
+  );
+
+  /**
+   * Opens the story the viewer was showing.
+   *
+   * The viewer closes itself before calling this, so the push lands on a clean
+   * stack and the reader returns to the feed (or the wall) when they come back
+   * (KNOT-020k-fix2).
+   */
+  const handleViewStory = useCallback((storyId: string): void => {
+    setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId }));
   }, []);
 
   // The Android navigation bar is not reachable from React Native's `StatusBar`:
@@ -860,12 +881,17 @@ function ThemedApp(): React.ReactElement {
 
       {/* The viewer is a Modal, so it draws above the bar and every overlay. It is
           declared once for the signed-in app; opening it sets `mediaViewer`, and
-          the viewer fades itself in and out (KNOT-020k). */}
+          the viewer fades itself in and out (KNOT-020k). It carries the story's
+          context into its bottom sheet and can hand the reader to the story
+          itself (KNOT-020k-fix2). */}
       <MediaGalleryModal
         visible={mediaViewer !== null}
         media={mediaViewer?.items ?? []}
         initialIndex={mediaViewer?.index ?? 0}
+        story={mediaViewer?.story ?? null}
+        token={session?.accessToken}
         onClose={() => setMediaViewer(null)}
+        onViewStory={handleViewStory}
       />
     </SafeAreaView>
   );

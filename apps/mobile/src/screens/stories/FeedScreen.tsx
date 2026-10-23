@@ -18,7 +18,7 @@ import Avatar from '../../components/Avatar';
 import ConfirmSheet from '../../components/ConfirmSheet';
 import EmptyState from '../../components/EmptyState';
 import FeedEntry from '../../components/FeedEntry';
-import type { ViewerMedia } from '../../components/MediaGalleryModal';
+import type { ViewerMedia, ViewerStory } from '../../components/MediaGalleryModal';
 import Header from '../../components/Header';
 import Logomark from '../../components/Logomark';
 import ReportModal from '../../components/ReportModal';
@@ -95,7 +95,11 @@ type FeedScreenProps = {
   /** Called when the header avatar is tapped, to open the signed-in person's profile. */
   readonly onOpenProfile: () => void;
   /** Called when an entry's media is tapped, to open the full-screen viewer. */
-  readonly onOpenMedia: (items: readonly ViewerMedia[], index: number) => void;
+  readonly onOpenMedia: (
+    items: readonly ViewerMedia[],
+    index: number,
+    story?: ViewerStory | null,
+  ) => void;
   /** Called when the person opens search. */
   readonly onOpenSearch: () => void;
 };
@@ -450,9 +454,14 @@ export default function FeedScreen({
                 first_media_width: item.first_media_width ?? null,
                 first_media_height: item.first_media_height ?? null,
                 id: item.id,
+                // The story a version entry adapts, so the viewer's "View Story"
+                // has a story to open; a story entry's own id is the story
+                // (KNOT-020k-fix2).
+                storyId: item.kind === 'version' ? item.story_id : item.id,
                 language: item.language,
                 language_count: item.language_count,
                 media_count: item.media_count,
+                my_reactions: item.my_reactions,
                 pillar: item.pillar,
                 place: item.approximate_location,
                 preview: item.body,

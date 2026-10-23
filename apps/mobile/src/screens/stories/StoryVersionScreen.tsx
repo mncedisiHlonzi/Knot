@@ -24,7 +24,7 @@ import { StoryVersion, versionsApi } from '../../api/versions';
 import AuthorLine from '../../components/AuthorLine';
 import Button from '../../components/Button';
 import FeedVideo from '../../components/FeedVideo';
-import type { ViewerMedia } from '../../components/MediaGalleryModal';
+import type { ViewerMedia, ViewerStory } from '../../components/MediaGalleryModal';
 import Header from '../../components/Header';
 import PillarTag from '../../components/PillarTag';
 import ReactionBar from '../../components/ReactionBar';
@@ -205,7 +205,11 @@ type StoryVersionScreenProps = {
   /** Called when the version's author is tapped, to open their profile. */
   readonly onOpenUserProfile: (userId: string) => void;
   /** Called when the media is tapped, to open the full-screen viewer. */
-  readonly onOpenMedia: (items: readonly ViewerMedia[], index: number) => void;
+  readonly onOpenMedia: (
+    items: readonly ViewerMedia[],
+    index: number,
+    story?: ViewerStory | null,
+  ) => void;
 };
 
 /**
@@ -269,6 +273,26 @@ export default function StoryVersionScreen({
   // The inherited presentation: a future server may repeat these on the version,
   // and the current one does not, so the parent story is the fallback (KNOT-026).
   const media = version?.media ?? story?.media ?? [];
+  // The viewer's contextual sheet: the adaptation's own content and author. Its
+  // signals are the VERSION's, because that is what a reader reacts to here, and
+  // "View Story" opens the story the version adapts (KNOT-020k-fix2).
+  const viewerStory: ViewerStory | undefined =
+    version === undefined
+      ? undefined
+      : {
+          storyId: version.story_id,
+          reactionEntityType: 'version',
+          reactionEntityId: version.id,
+          title: version.title,
+          body: version.body,
+          authorId: version.author_id,
+          authorDisplayName: version.author_display_name,
+          authorAvatarUrl: version.author_avatar_url,
+          authorRooted: version.author_rooted ?? null,
+          createdAt: version.created_at,
+          reactions: version.reactions,
+          myReactions: version.my_reactions,
+        };
   const pillar = version?.pillar ?? story?.pillar;
   const place = version?.approximate_location ?? story?.approximate_location;
   const versionCount = version?.version_count ?? story?.version_count ?? 0;
@@ -424,7 +448,7 @@ export default function StoryVersionScreen({
                       isMuted={isMuted}
                       onToggleMute={toggleMute}
                       onAspectRatio={handlePageRatio}
-                      onPress={() => onOpenMedia(media, index)}
+                      onPress={() => onOpenMedia(media, index, viewerStory)}
                     />
                   ))}
                 </ScrollView>
@@ -462,7 +486,7 @@ export default function StoryVersionScreen({
                     <Pressable
                       key={item.id}
                       style={[styles.thumbnail, active ? null : styles.thumbnailInactive]}
-                      onPress={() => onOpenMedia(media, index)}
+                      onPress={() => onOpenMedia(media, index, viewerStory)}
                       accessibilityRole="button"
                       accessibilityState={{ selected: active }}
                       accessibilityLabel={`Open ${carouselPositionLabel(

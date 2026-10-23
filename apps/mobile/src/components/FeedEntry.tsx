@@ -29,7 +29,7 @@ import AuthorLine from './AuthorLine';
 import { feedMetaLine, isPreviewTruncated } from './feedEntryMeta';
 import FeedVideo, { VIDEO_MUTE_BUTTON_SIZE } from './FeedVideo';
 import PillarTag from './PillarTag';
-import type { ViewerMedia } from './MediaGalleryModal';
+import type { ViewerMedia, ViewerStory } from './MediaGalleryModal';
 import { hasSocialProof } from './socialProof';
 import SocialProofHeader, { type SocialProofAvatar } from './SocialProofHeader';
 
@@ -43,6 +43,13 @@ import SocialProofHeader, { type SocialProofAvatar } from './SocialProofHeader';
  */
 type FeedEntryStory = {
   readonly id: string;
+  /**
+   * The STORY this entry belongs to, when it differs from `id`. A version entry's
+   * `id` is the version (what the card opens), so the viewer's "View Story" needs
+   * the story it adapts instead (KNOT-020k-fix2). Absent on a story entry, where
+   * `id` is already the story.
+   */
+  readonly storyId?: string;
   readonly title: string;
   readonly pillar: 'wonder' | 'heritage';
   readonly preview: string;
@@ -99,6 +106,8 @@ type FeedEntryStory = {
     readonly adds_something_new: number;
     readonly needs_a_source: number;
   };
+  /** The signals the signed-in reader already holds, as reaction-type strings. */
+  readonly my_reactions?: readonly string[];
   /**
    * The entry's latest social proof, newest first. A version card heads the entry
    * with it, falling back to `attributionLine` when it is empty (KNOT-028).
@@ -160,9 +169,14 @@ type FeedEntryProps = {
   /**
    * Called when the media itself is tapped, to open the full-screen viewer. The
    * media area is its own tap target, so a tap there never also opens the story
-   * (KNOT-020k).
+   * (KNOT-020k). The third argument is the story context the viewer's sheet
+   * presents (KNOT-020k-fix2).
    */
-  readonly onOpenMedia?: (items: readonly ViewerMedia[], index: number) => void;
+  readonly onOpenMedia?: (
+    items: readonly ViewerMedia[],
+    index: number,
+    story?: ViewerStory | null,
+  ) => void;
   /**
    * True when this entry is the one the feed judges to be on screen. It is the
    * single input that plays or pauses the entry's video, so only one video in the
@@ -331,6 +345,24 @@ export default function FeedEntry({
   });
 
   const isVersion = variant === 'version';
+
+  // The viewer's contextual sheet draws the same story content this card does
+  // (author, title, opening lines) plus what it needs to react to it. A version
+  // entry reacts to the VERSION — the card's signals belong to the adaptation —
+  // while its "View Story" opens the story it adapts (KNOT-020k-fix2).
+  const viewerStory: ViewerStory = {
+    storyId: story.storyId ?? story.id,
+    reactionEntityType: isVersion ? 'version' : 'story',
+    reactionEntityId: story.id,
+    title: story.title,
+    body: story.preview,
+    authorDisplayName: story.author_display_name,
+    authorAvatarUrl: story.author_avatar_url,
+    authorRooted: story.author_rooted ?? null,
+    createdAt: story.created_at,
+    reactions: story.reactions,
+    myReactions: story.my_reactions,
+  };
   // The people the row credits are the LINEAGE, not the poster: the author of the
   // version this one adapts (the parent) and the story's original author (the
   // root). The poster -- this version's own author -- is already the AuthorLine
@@ -522,7 +554,9 @@ export default function FeedEntry({
               single page; the story detail has the full list. */}
           <Pressable
             style={styles.mediaPress}
-            onPress={onOpenMedia === undefined ? undefined : () => onOpenMedia(viewerItems, 0)}
+            onPress={
+              onOpenMedia === undefined ? undefined : () => onOpenMedia(viewerItems, 0, viewerStory)
+            }
             disabled={onOpenMedia === undefined}
             accessibilityRole={onOpenMedia === undefined ? undefined : 'imagebutton'}
             accessibilityLabel={

@@ -19,7 +19,7 @@ import { Story } from '../../api/stories';
 import Chip from '../../components/Chip';
 import EmptyState from '../../components/EmptyState';
 import FeedEntry from '../../components/FeedEntry';
-import type { ViewerMedia } from '../../components/MediaGalleryModal';
+import type { ViewerMedia, ViewerStory } from '../../components/MediaGalleryModal';
 import Header from '../../components/Header';
 import { KNOT_MAPBOX_TOKEN } from '../../config/dev';
 import {
@@ -109,7 +109,11 @@ type PlaceStoriesScreenProps = {
   /** Called when a story is tapped. */
   readonly onOpenStory: (id: string) => void;
   /** Called when an entry's media is tapped, to open the full-screen viewer. */
-  readonly onOpenMedia: (items: readonly ViewerMedia[], index: number) => void;
+  readonly onOpenMedia: (
+    items: readonly ViewerMedia[],
+    index: number,
+    story?: ViewerStory | null,
+  ) => void;
   /** Called when the person leaves this place. */
   readonly onBack: () => void;
 };
@@ -408,6 +412,7 @@ export default function PlaceStoriesScreen({
               language: item.language,
               language_count: item.language_count,
               media_count: item.media_count,
+              my_reactions: item.my_reactions,
               pillar: item.pillar,
               place: item.approximate_location,
               preview: item.body,

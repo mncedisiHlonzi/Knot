@@ -45,7 +45,7 @@ import EmptyState from '../../components/EmptyState';
 import FeedVideo from '../../components/FeedVideo';
 import Header from '../../components/Header';
 import MediaPickerSheet, { PickedMedia } from '../../components/MediaPickerSheet';
-import type { ViewerMedia } from '../../components/MediaGalleryModal';
+import type { ViewerMedia, ViewerStory } from '../../components/MediaGalleryModal';
 import PillarTag from '../../components/PillarTag';
 import RootedBadge from '../../components/RootedBadge';
 import { API_BASE_URL } from '../../config/api';
@@ -103,7 +103,11 @@ type UserProfileScreenProps = {
   /** Called when the owner wants to see and manage the people they have blocked. */
   readonly onOpenBlockedUsers: () => void;
   /** Called when a card's media is tapped, to open the full-screen viewer. */
-  readonly onOpenMedia: (items: readonly ViewerMedia[], index: number) => void;
+  readonly onOpenMedia: (
+    items: readonly ViewerMedia[],
+    index: number,
+    story?: ViewerStory | null,
+  ) => void;
   /** Called when the owner chooses to sign out. */
   readonly onSignOut: () => void;
   /**
@@ -163,6 +167,7 @@ function emptyIllustration(kind: ActivityKind): 'no-stories' | 'no-inquiries' {
 function CardMedia({
   card,
   mediaId,
+  viewerStory,
   isVisible,
   isMuted,
   onToggleMute,
@@ -171,10 +176,16 @@ function CardMedia({
   readonly card: ProfileCard;
   /** The activity's id, used as the viewer item's key. */
   readonly mediaId: string;
+  /** The story context the viewer's sheet presents (KNOT-020k-fix2). */
+  readonly viewerStory: ViewerStory;
   readonly isVisible: boolean;
   readonly isMuted: boolean;
   readonly onToggleMute: () => void;
-  readonly onOpenMedia: (items: readonly ViewerMedia[], index: number) => void;
+  readonly onOpenMedia: (
+    items: readonly ViewerMedia[],
+    index: number,
+    story?: ViewerStory | null,
+  ) => void;
 }): React.ReactElement | null {
   const styles = useThemedStyles(createStyles);
   // The hook is called before the early return, so the component always calls it
@@ -209,7 +220,7 @@ function CardMedia({
   return (
     <Pressable
       style={frame}
-      onPress={() => onOpenMedia(viewerItems, 0)}
+      onPress={() => onOpenMedia(viewerItems, 0, viewerStory)}
       accessibilityRole="imagebutton"
       accessibilityLabel="Open media in the full-screen viewer"
     >
@@ -731,6 +742,20 @@ export default function UserProfileScreen({
             return null;
           }
 
+          // The viewer's contextual sheet presents the card's own content and its
+          // author, who on a wall is the person whose profile this is. The profile
+          // payload carries no signal counts, so the sheet's bar starts empty and
+          // works against the story the card belongs to (KNOT-020k-fix2).
+          const viewerStory: ViewerStory = {
+            storyId: item.kind === 'version' ? item.payload.story_id : item.id,
+            title: card.title,
+            body: card.preview,
+            authorDisplayName: profile?.display_name,
+            authorAvatarUrl: profile?.avatar_url ?? null,
+            authorRooted: profile?.rooted ?? null,
+            createdAt: item.created_at,
+          };
+
           return (
             <Pressable
               style={styles.card}
@@ -784,6 +809,7 @@ export default function UserProfileScreen({
               <CardMedia
                 card={card}
                 mediaId={item.id}
+                viewerStory={viewerStory}
                 isVisible={item.id === activeItemId}
                 isMuted={isMuted}
                 onToggleMute={toggleMute}

@@ -22,8 +22,7 @@ import {
   useThemedStyles,
 } from '../theme';
 import type { ThemeColors } from '../theme';
-import { formatDuration } from './feedVideoMeta';
-import { scrubSeconds, viewerProgress } from './mediaViewer';
+import { scrubSeconds, viewerProgress, viewerTimeLabel } from './mediaViewer';
 
 /**
  * Whether a video starts muted.
@@ -31,22 +30,33 @@ import { scrubSeconds, viewerProgress } from './mediaViewer';
  * The app's rule for a video that starts itself is that it must never make a
  * sound (FeedVideo). A viewer opened on purpose is a different context — the
  * person chose to watch — but the tap that opened it did not ask for audio, so
- * it starts muted and the unmute control is the first thing in the bottom bar
- * (KNOT-020k). Flip this one constant to start with sound.
+ * it starts muted and the unmute control is the right-hand toggle of the control
+ * bar (KNOT-020k). Flip this one constant to start with sound.
  */
 const START_MUTED = true;
 
-/** The centre play/pause disc. */
-const PLAY_DISC_SIZE = 68;
-const PLAY_ICON_SIZE = 30;
+/** The pause disc drawn mid-picture while the video is not running. */
+const CENTRE_DISC_SIZE = 68;
+const CENTRE_ICON_SIZE = 30;
+
+/** The control bar's own play/pause target. */
+const PLAY_BUTTON_SIZE = 40;
+const PLAY_ICON_SIZE = 22;
 
 /** The mute control's disc and glyph. */
-const MUTE_DISC_SIZE = 44;
-const MUTE_ICON_SIZE = 20;
+const MUTE_DISC_SIZE = 36;
+const MUTE_ICON_SIZE = 18;
 
-/** The scrub track's rendered height, and its touch band. */
-const TRACK_HEIGHT = 4;
-const TRACK_TOUCH_HEIGHT = 28;
+/** The scrub track at rest, and while a finger is on it. */
+const TRACK_HEIGHT = 3;
+const TRACK_ACTIVE_HEIGHT = 5;
+const THUMB_ACTIVE_SIZE = 16;
+
+/** The touch band around the scrub track, so a 3pt line is still grabbable. */
+const TRACK_TOUCH_HEIGHT = 32;
+
+/** The control bar's inset from the page's sides. */
+const BAR_INSET = spacing.md;
 
 type VideoPlayerProps = {
   /** The resolved, absolute URL of the video. */
@@ -69,19 +79,39 @@ type VideoPlayerProps = {
   readonly isActive: boolean;
   /** The duration the payload knows, in milliseconds, to seed the total time. */
   readonly durationMs?: number | null;
+  /**
+   * Whether the viewer's chrome — its top bar and this control bar — is showing.
+   *
+   * The viewer owns this, because a tap on the picture must hide both bars at
+   * once; the player only draws and fades what the viewer decides
+   * (KNOT-020k-fix2).
+   */
+  readonly chromeVisible: boolean;
+  /** Called when the picture itself is tapped, to show or hide that chrome. */
+  readonly onToggleChrome: () => void;
+  /**
+   * How far the control bar floats above the page's bottom edge, in points. The
+   * viewer passes the contextual sheet's current height so the bar is never
+   * covered by it (KNOT-020k-fix2).
+   */
+  readonly bottomInset?: number;
 };
 
 /**
  * The media viewer's video page: a full-bleed player with its own controls.
  *
  * The platform controls are deliberately unused — they are a light, stock sheet
- * that breaks the theatre — so this draws its own overlay: a large play/pause
- * disc in the centre and, along the bottom, the current time, a draggable scrub
- * bar, the total duration and a mute toggle. Tapping the video toggles the
- * overlay; the tap therefore never closes the viewer, which is the gallery's
- * swipe-down gesture.
+ * that breaks the theatre — so this draws a modern floating bar: a thin scrub
+ * line that swells into a grabbable handle while a finger is on it, and beneath
+ * it the play/pause control, the running time (`0:12 / 0:45`) and the mute
+ * toggle. While the picture is still, a single pause disc sits over it; a
+ * playing video is left clean (KNOT-020k-fix2).
  *
- * The overlay fades with `Animated` on the native driver. The scrub bar is a
+ * Chrome visibility belongs to the viewer: tapping the picture calls
+ * `onToggleChrome`, so the top bar and this bar hide and return together, and
+ * the tap never closes the viewer — that is the gallery's swipe-down gesture.
+ *
+ * The chrome fades with `Animated` on the native driver. The scrub bar is a
  * `PanResponder`: a touch anywhere on its band seeks there on release, and a drag
  * previews the target time before committing — so the bar follows the finger
  * without flooding the player with seeks it cannot serve.
@@ -92,6 +122,9 @@ export default function VideoPlayer({
   height,
   isActive,
   durationMs,
+  chromeVisible,
+  onToggleChrome,
+  bottomInset = spacing.xl,
 }: VideoPlayerProps): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -108,10 +141,14 @@ export default function VideoPlayer({
   );
   const [current, setCurrent] = useState(0);
 
-  // The overlay's visibility is state (it decides `pointerEvents`), while its
-  // fade is an animated value on the native driver.
-  const [controlsVisible, setControlsVisible] = useState(true);
-  const controlsOpacity = useRef(new Animated.Value(1)).current;
+  // Whether a finger is on the scrub band: the line thickens and grows a handle
+  // while it is, so the bar answers the touch before the seek lands
+  // (KNOT-020k-fix2).
+  const [dragging, setDragging] = useState(false);
+
+  // The chrome's fade runs on the native driver; its visibility belongs to the
+  // viewer, so one tap can hide the top bar and this bar together.
+  const chromeOpacity = useRef(new Animated.Value(1)).current;
 
   // Refs mirror the values the responders read, so the gesture callbacks never
   // close over a stale render.
@@ -125,18 +162,14 @@ export default function VideoPlayer({
     durationRef.current = duration;
   }, [duration]);
 
-  const fadeControls = useCallback(
-    (visible: boolean): void => {
-      setControlsVisible(visible);
-      Animated.timing(controlsOpacity, {
-        toValue: visible ? 1 : 0,
-        duration: motion.durations.small,
-        easing: Easing.bezier(...motion.easing.standard),
-        useNativeDriver: true,
-      }).start();
-    },
-    [controlsOpacity],
-  );
+  useEffect(() => {
+    Animated.timing(chromeOpacity, {
+      toValue: chromeVisible ? 1 : 0,
+      duration: motion.durations.small,
+      easing: Easing.bezier(...motion.easing.standard),
+      useNativeDriver: true,
+    }).start();
+  }, [chromeOpacity, chromeVisible]);
 
   const seek = useCallback((seconds: number): void => {
     videoRef.current?.seek(seconds);
@@ -183,6 +216,7 @@ export default function VideoPlayer({
         onPanResponderTerminationRequest: () => false,
         onPanResponderGrant: (event) => {
           seeking.current = true;
+          setDragging(true);
           previewAt(event.nativeEvent.locationX);
         },
         onPanResponderMove: (event) => {
@@ -190,6 +224,7 @@ export default function VideoPlayer({
         },
         onPanResponderRelease: () => {
           seeking.current = false;
+          setDragging(false);
           const target = previewRef.current;
           previewRef.current = null;
           setPreview(null);
@@ -199,6 +234,7 @@ export default function VideoPlayer({
         },
         onPanResponderTerminate: () => {
           seeking.current = false;
+          setDragging(false);
           previewRef.current = null;
           setPreview(null);
         },
@@ -235,40 +271,39 @@ export default function VideoPlayer({
 
       {loaded ? null : <ActivityIndicator style={styles.loader} color={colors.text.onMedia} />}
 
-      {/* The tap layer: it sits under the overlay, so a tap on the picture toggles
-          the controls while a tap on a control still reaches the control. */}
+      {/* The tap layer spans the whole picture and sits under the controls, so a
+          tap on the video toggles the viewer's chrome while a tap on a control
+          still reaches that control (KNOT-020k-fix2). */}
       <Pressable
         style={StyleSheet.absoluteFill}
-        onPress={() => fadeControls(!controlsVisible)}
+        onPress={onToggleChrome}
         accessibilityRole="button"
-        accessibilityLabel={controlsVisible ? 'Hide video controls' : 'Show video controls'}
+        accessibilityLabel={chromeVisible ? 'Hide video controls' : 'Show video controls'}
       />
 
-      {/* `box-none` while visible: the overlay must not swallow a tap on the
-          empty part of the picture, or the controls could never be hidden
-          again. Its own controls still receive their taps. */}
       <Animated.View
-        style={[styles.overlay, { opacity: controlsOpacity }]}
-        pointerEvents={controlsVisible ? 'box-none' : 'none'}
+        style={[styles.overlay, { opacity: chromeOpacity }]}
+        pointerEvents={chromeVisible ? 'box-none' : 'none'}
       >
-        <Pressable
-          style={styles.playDisc}
-          onPress={togglePlayback}
-          accessibilityRole="button"
-          accessibilityLabel={playing ? 'Pause video' : 'Play video'}
-        >
-          {playing ? (
-            <Pause color={colors.text.onMedia} size={PLAY_ICON_SIZE} weight="fill" />
-          ) : (
-            <Play color={colors.text.onMedia} size={PLAY_ICON_SIZE} weight="fill" />
-          )}
-        </Pressable>
+        {/* The pause disc is drawn only while the picture is still: a playing
+            video is a clean image with one quiet bar under it. */}
+        {playing ? null : (
+          <Pressable
+            style={[
+              styles.centreDisc,
+              // Centred in the picture the sheet leaves visible, not in the whole
+              // window, so the disc never hides behind the sheet.
+              { top: (height - bottomInset) / 2 - CENTRE_DISC_SIZE / 2 },
+            ]}
+            onPress={togglePlayback}
+            accessibilityRole="button"
+            accessibilityLabel={ended ? 'Replay video' : 'Play video'}
+          >
+            <Play color={colors.text.onMedia} size={CENTRE_ICON_SIZE} weight="fill" />
+          </Pressable>
+        )}
 
-        <View style={styles.bottomBar}>
-          <Text style={[typeScale.label, tabularNums, styles.time]}>
-            {formatDuration(shownTime) || '0:00'}
-          </Text>
-
+        <View style={[styles.controlBar, { bottom: bottomInset }]}>
           <View
             style={styles.trackTouch}
             onLayout={(event) => {
@@ -279,28 +314,50 @@ export default function VideoPlayer({
             accessibilityLabel="Video position"
             accessibilityValue={{ min: 0, max: Math.round(duration) }}
           >
-            <View style={styles.track}>
+            <View style={[styles.track, dragging ? styles.trackActive : null]}>
               <View style={[styles.trackFill, { width: `${progress * 100}%` }]} />
-              <View style={[styles.thumb, { left: `${progress * 100}%` }]} />
+              {dragging ? (
+                <View
+                  style={[styles.thumbActive, { left: `${progress * 100}%` }]}
+                  pointerEvents="none"
+                />
+              ) : null}
             </View>
           </View>
 
-          <Text style={[typeScale.label, tabularNums, styles.time]}>
-            {formatDuration(duration) || '0:00'}
-          </Text>
+          <View style={styles.buttonRow}>
+            <Pressable
+              style={styles.playButton}
+              onPress={togglePlayback}
+              accessibilityRole="button"
+              accessibilityLabel={playing ? 'Pause video' : 'Play video'}
+            >
+              {playing ? (
+                <Pause color={colors.text.onMedia} size={PLAY_ICON_SIZE} weight="fill" />
+              ) : (
+                <Play color={colors.text.onMedia} size={PLAY_ICON_SIZE} weight="fill" />
+              )}
+            </Pressable>
 
-          <Pressable
-            style={styles.muteDisc}
-            onPress={() => setMuted((value) => !value)}
-            accessibilityRole="button"
-            accessibilityLabel={muted ? 'Unmute video' : 'Mute video'}
-          >
-            {muted ? (
-              <SpeakerSlash color={colors.text.onMedia} size={MUTE_ICON_SIZE} weight="fill" />
-            ) : (
-              <SpeakerHigh color={colors.text.onMedia} size={MUTE_ICON_SIZE} weight="fill" />
-            )}
-          </Pressable>
+            <Text style={[typeScale.label, tabularNums, styles.time]}>
+              {`${viewerTimeLabel(shownTime)} / ${viewerTimeLabel(duration)}`}
+            </Text>
+
+            <View style={styles.spacer} />
+
+            <Pressable
+              style={styles.muteButton}
+              onPress={() => setMuted((value) => !value)}
+              accessibilityRole="button"
+              accessibilityLabel={muted ? 'Unmute video' : 'Mute video'}
+            >
+              {muted ? (
+                <SpeakerSlash color={colors.text.onMedia} size={MUTE_ICON_SIZE} weight="fill" />
+              ) : (
+                <SpeakerHigh color={colors.text.onMedia} size={MUTE_ICON_SIZE} weight="fill" />
+              )}
+            </Pressable>
+          </View>
         </View>
       </Animated.View>
     </View>
@@ -309,29 +366,46 @@ export default function VideoPlayer({
 
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
-    bottomBar: {
+    buttonRow: {
       alignItems: 'center',
-      bottom: spacing.xxxl,
       flexDirection: 'row',
       gap: spacing.md,
-      left: spacing.xl,
+      marginTop: spacing.xs,
+    },
+    // The pause disc: a scrim disc behind the glyph, because the frame behind it
+    // may be any brightness. Its `top` is supplied inline, from the visible area.
+    centreDisc: {
+      alignItems: 'center',
+      alignSelf: 'center',
+      backgroundColor: colors.scrim.overlay,
+      borderRadius: radius.pill,
+      height: CENTRE_DISC_SIZE,
+      justifyContent: 'center',
       position: 'absolute',
-      right: spacing.xl,
+      width: CENTRE_DISC_SIZE,
     },
     container: {
       backgroundColor: colors.bg.theater,
     },
-    // The controls live on the black page, so a scrim disc behind each glyph is
-    // what keeps it legible over a bright frame.
+    // The floating bar: one translucent card that holds the scrub line and, under
+    // it, the transport row. It rides above the contextual sheet rather than
+    // behind it (KNOT-020k-fix2).
+    controlBar: {
+      backgroundColor: colors.scrim.overlay,
+      borderRadius: radius.xl,
+      left: BAR_INSET,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.sm,
+      position: 'absolute',
+      right: BAR_INSET,
+    },
     loader: {
       ...StyleSheet.absoluteFillObject,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    muteDisc: {
+    muteButton: {
       alignItems: 'center',
-      backgroundColor: colors.scrim.overlay,
-      borderRadius: radius.pill,
       height: MUTE_DISC_SIZE,
       justifyContent: 'center',
       width: MUTE_DISC_SIZE,
@@ -339,49 +413,50 @@ const createStyles = (colors: ThemeColors) =>
     overlay: {
       ...StyleSheet.absoluteFillObject,
     },
-    playDisc: {
+    playButton: {
       alignItems: 'center',
-      alignSelf: 'center',
-      backgroundColor: colors.scrim.overlay,
-      borderRadius: radius.pill,
-      height: PLAY_DISC_SIZE,
+      height: PLAY_BUTTON_SIZE,
       justifyContent: 'center',
-      position: 'absolute',
-      top: '50%',
-      marginTop: -PLAY_DISC_SIZE / 2,
-      width: PLAY_DISC_SIZE,
+      width: PLAY_BUTTON_SIZE,
     },
-    thumb: {
+    spacer: {
+      flex: 1,
+    },
+    // The played portion and the handle are white; the unplayed track is the
+    // tertiary ink, which reads against the scrim in both themes.
+    thumbActive: {
       backgroundColor: colors.text.onMedia,
       borderRadius: radius.pill,
-      height: 12,
-      marginLeft: -6,
-      marginTop: (TRACK_HEIGHT - 12) / 2,
+      height: THUMB_ACTIVE_SIZE,
+      marginLeft: -THUMB_ACTIVE_SIZE / 2,
+      marginTop: -THUMB_ACTIVE_SIZE / 2,
       position: 'absolute',
-      top: 0,
-      width: 12,
+      top: '50%',
+      width: THUMB_ACTIVE_SIZE,
     },
     time: {
       color: colors.text.onMedia,
-      minWidth: 40,
-      textAlign: 'center',
     },
     track: {
-      backgroundColor: colors.scrim.overlay,
+      backgroundColor: colors.text.tertiary,
       borderRadius: radius.pill,
       height: TRACK_HEIGHT,
       overflow: 'visible',
       width: '100%',
     },
+    // The line swells under the finger, so the scrub target is felt as well as
+    // seen (KNOT-020k-fix2).
+    trackActive: {
+      height: TRACK_ACTIVE_HEIGHT,
+    },
     trackFill: {
       backgroundColor: colors.text.onMedia,
       borderRadius: radius.pill,
-      height: TRACK_HEIGHT,
+      height: '100%',
     },
-    // A thin visual track inside a tall touch band, so the bar is easy to grab
-    // without a heavy line across the picture (KNOT-020k).
+    // A thin visual line inside a tall touch band, so the bar is easy to grab
+    // without a heavy rule across the picture.
     trackTouch: {
-      flex: 1,
       height: TRACK_TOUCH_HEIGHT,
       justifyContent: 'center',
     },
