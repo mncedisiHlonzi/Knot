@@ -56,8 +56,6 @@ jest.mock('react-native', () => {
 
 jest.mock('phosphor-react-native', () => ({
   ArrowLeft: 'ArrowLeft',
-  ChatCircle: 'ChatCircle',
-  TreeStructure: 'TreeStructure',
 }));
 
 jest.mock('../Avatar', () => ({ __esModule: true, default: 'Avatar' }));
@@ -96,11 +94,6 @@ function elements(node: unknown, found: Element[] = []): Element[] {
   return found;
 }
 
-/** The one element carrying an accessibility label, or undefined. */
-function byLabel(tree: unknown, label: string): Element | undefined {
-  return elements(tree).find((element) => element.props?.accessibilityLabel === label);
-}
-
 const MEDIA: readonly ViewerMedia[] = [
   { id: 'media-1', media_type: 'image', url: '/stories/story-1/media/media-1/content' },
 ];
@@ -117,27 +110,21 @@ const STORY: ViewerStory = {
 
 type StageOverrides = Partial<Parameters<typeof ViewerStage>[0]>;
 
-/** Calls the stage with a story and spies for the two new actions. */
+/** Calls the stage with a story the overlay can draw. */
 function renderStage(overrides: StageOverrides = {}): {
   readonly tree: unknown;
   readonly onClose: jest.Mock;
-  readonly onOpenComments: jest.Mock;
-  readonly onOpenTree: jest.Mock;
 } {
   const onClose = jest.fn();
-  const onOpenComments = jest.fn();
-  const onOpenTree = jest.fn();
   const tree = ViewerStage({
     media: MEDIA,
     initialIndex: 0,
     story: STORY,
     onClose,
-    onOpenComments,
-    onOpenTree,
     ...overrides,
   });
 
-  return { tree, onClose, onOpenComments, onOpenTree };
+  return { tree, onClose };
 }
 
 describe('MediaGalleryModal header navigation', () => {
@@ -170,56 +157,36 @@ describe('MediaGalleryModal header navigation', () => {
   });
 });
 
-describe('MediaGalleryModal story actions', () => {
-  it('shows the comment and language-tree glyphs', () => {
+describe('MediaGalleryModal story overlay', () => {
+  it('draws no surface behind the story text', () => {
     const { tree } = renderStage();
+    const overlay = elements(tree).find((element) => {
+      const style = element.props?.style;
+      return (
+        Array.isArray(style) &&
+        (style[0] as { paddingHorizontal?: number } | undefined)?.paddingHorizontal !== undefined
+      );
+    });
+    const overlayStyle = (overlay?.props?.style as Array<Record<string, unknown>>)[0];
 
-    expect(elements(tree).some((element) => element.type === 'ChatCircle')).toBe(true);
-    expect(elements(tree).some((element) => element.type === 'TreeStructure')).toBe(true);
+    expect(overlayStyle?.backgroundColor).toBeUndefined();
   });
 
-  it('gives each action a 44pt tap target', () => {
+  it('keeps the story text legible with its media shadow', () => {
     const { tree } = renderStage();
-    const comment = byLabel(tree, 'Open the conversation');
-    const treeAction = byLabel(tree, 'Open the language tree');
+    const title = elements(tree).find((element) => element.props?.children === STORY.title);
+    const titleStyle = title?.props?.style as Array<Record<string, unknown>> | undefined;
 
-    expect(comment?.props?.style).toMatchObject({ height: 44, width: 44 });
-    expect(treeAction?.props?.style).toMatchObject({ height: 44, width: 44 });
+    expect(titleStyle?.[1]).toMatchObject({ textShadowRadius: 5 });
   });
 
-  it('opens the conversation for the current story and closes the viewer', () => {
-    const { tree, onClose, onOpenComments, onOpenTree } = renderStage();
-    const comment = byLabel(tree, 'Open the conversation');
+  it('draws neither of the removed action icons', () => {
+    const { tree } = renderStage();
+    const labels = elements(tree).map((element) => element.props?.accessibilityLabel);
 
-    (comment?.props?.onPress as () => void)();
-
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(onOpenComments).toHaveBeenCalledWith('story-1');
-    expect(onOpenTree).not.toHaveBeenCalled();
-  });
-
-  it('opens the language tree for the current story and closes the viewer', () => {
-    const { tree, onClose, onOpenComments, onOpenTree } = renderStage();
-    const treeAction = byLabel(tree, 'Open the language tree');
-
-    (treeAction?.props?.onPress as () => void)();
-
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(onOpenTree).toHaveBeenCalledWith('story-1');
-    expect(onOpenComments).not.toHaveBeenCalled();
-  });
-
-  it('draws no story chrome at all for a pure-theatre caller', () => {
-    const { tree } = renderStage({ story: null });
-
-    expect(byLabel(tree, 'Open the conversation')).toBeUndefined();
-    expect(byLabel(tree, 'Open the language tree')).toBeUndefined();
-  });
-
-  it('draws only the action whose handler the caller provided', () => {
-    const { tree } = renderStage({ onOpenComments: undefined });
-
-    expect(byLabel(tree, 'Open the conversation')).toBeUndefined();
-    expect(byLabel(tree, 'Open the language tree')).toBeDefined();
+    expect(elements(tree).some((element) => element.type === 'ChatCircle')).toBe(false);
+    expect(elements(tree).some((element) => element.type === 'TreeStructure')).toBe(false);
+    expect(labels).not.toContain('Open the conversation');
+    expect(labels).not.toContain('Open the language tree');
   });
 });

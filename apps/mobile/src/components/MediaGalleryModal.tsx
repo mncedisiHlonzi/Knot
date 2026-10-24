@@ -16,12 +16,11 @@ import {
   type NativeSyntheticEvent,
   type TextStyle,
 } from 'react-native';
-import { ArrowLeft, ChatCircle, TreeStructure } from 'phosphor-react-native';
+import { ArrowLeft } from 'phosphor-react-native';
 
 import { API_BASE_URL } from '../config/api';
 import { setNavigationBarColor } from '../native/systemBars';
 import {
-  elevation,
   fontWeights,
   layout,
   motion,
@@ -113,10 +112,6 @@ const TEXT_SHADOW_RADIUS = 5;
 /** The close control's disc and glyph. */
 const CLOSE_DISC_SIZE = 44;
 const CLOSE_ICON_SIZE = 20;
-
-/** The side action rail's tap target and glyph. */
-const ACTION_BUTTON_SIZE = 44;
-const ACTION_ICON_SIZE = 22;
 
 /**
  * The top chrome's inset. A modal draws its own window, so the app's
@@ -350,17 +345,6 @@ type MediaGalleryModalProps = {
    * itself, so the caller only has to navigate (KNOT-020k-fix2).
    */
   readonly onOpenStory?: (storyId: string) => void;
-  /**
-   * Called by the comment action on the overlay's right rail, after the viewer
-   * has closed itself. The caller resolves the story to its conversation
-   * (KNOT-020k-fix6).
-   */
-  readonly onOpenComments?: (storyId: string) => void;
-  /**
-   * Called by the language-tree action on the overlay's right rail, after the
-   * viewer has closed itself (KNOT-020k-fix6).
-   */
-  readonly onOpenTree?: (storyId: string) => void;
 };
 
 /**
@@ -368,17 +352,19 @@ type MediaGalleryModalProps = {
  *
  * A black room, the media edge to edge behind the status bar, and two floating
  * pieces of chrome: a top bar (back on the left, page counter on the right) and
- * — when it was given a story — a solid black block at the bottom carrying one
+ * — when it was given a story — a transparent block at the bottom carrying one
  * bold author line, the title, three lines of the body and a bold "Read more"
- * link, with a comment and language-tree rail on its right (KNOT-020k,
- * KNOT-020k-fix4, KNOT-020k-fix5, KNOT-020k-fix6).
+ * link (KNOT-020k, KNOT-020k-fix4, KNOT-020k-fix5).
  *
- * The overlay is a solid `bg.theater` block, not a scrim or a gradient: it gives
- * the words and the transport a high-contrast floor on every kind of media, and
- * its top edge is a clean horizontal line. The type keeps its shadow so a
- * partially transparent frame cannot leave a line unreadable (KNOT-020k-fix6).
- * The tappable things in it are the story link, the comment action and the
- * language-tree action.
+ * The overlay draws no surface at all: no scrim, no gradient, no fill. The words
+ * sit straight on the picture and every line carries a heavy black text shadow,
+ * which is what keeps them legible over a bright frame. The theatre's black
+ * ground is completed by the system navigation bar, which this component paints
+ * `bg.theater` while open and restores to the theme's canvas on close
+ * (KNOT-020k-fix7).
+ *
+ * The one tappable thing in the overlay is the story link, which closes the
+ * viewer and opens the story.
  *
  * ## Gestures
  *
@@ -412,13 +398,13 @@ export default function MediaGalleryModal({
   story,
   onClose,
   onOpenStory,
-  onOpenComments,
-  onOpenTree,
 }: MediaGalleryModalProps): React.ReactElement {
   const { colors, theme } = useTheme();
 
   // A theatre's system chrome is dark: the navigation bar goes black while the
-  // viewer is open and returns to the theme's canvas when it closes (KNOT-020k).
+  // viewer is open and returns to the theme's canvas when it closes. The overlay
+  // itself stays transparent, so the black bar is what completes the room behind
+  // the media (KNOT-020k, KNOT-020k-fix7).
   useEffect(() => {
     if (!visible) {
       return undefined;
@@ -450,8 +436,6 @@ export default function MediaGalleryModal({
           story={story}
           onClose={onClose}
           onOpenStory={onOpenStory}
-          onOpenComments={onOpenComments}
-          onOpenTree={onOpenTree}
         />
       ) : null}
     </Modal>
@@ -464,16 +448,14 @@ type ViewerStageProps = {
   readonly story?: ViewerStory | null;
   readonly onClose: () => void;
   readonly onOpenStory?: (storyId: string) => void;
-  readonly onOpenComments?: (storyId: string) => void;
-  readonly onOpenTree?: (storyId: string) => void;
 };
 
 /**
  * The theatre itself: the room, the pager, the top bar and the context overlay.
  *
- * Exported so the chrome contract (back control on the left, the comment and
- * language-tree actions wired to their handlers) can be tested by calling it
- * directly, which is the project's renderer-less test pattern (KNOT-020k-fix6).
+ * Exported so the chrome contract (back control on the left, transparent story
+ * overlay) can be tested by calling it directly, which is the project's
+ * renderer-less test pattern (KNOT-020k-fix6, KNOT-020k-fix7).
  */
 export function ViewerStage({
   media,
@@ -481,8 +463,6 @@ export function ViewerStage({
   story,
   onClose,
   onOpenStory,
-  onOpenComments,
-  onOpenTree,
 }: ViewerStageProps): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -649,30 +629,6 @@ export function ViewerStage({
     onOpenStory(id);
   };
 
-  /** The story the rail's actions apply to, or an empty string without one. */
-  const storyId = typeof story?.storyId === 'string' ? story.storyId : '';
-
-  /**
-   * Opens the story's conversation. Like "Read more", the viewer closes first,
-   * so the caller's navigation pushes onto a clean stack (KNOT-020k-fix6).
-   */
-  const handleOpenComments = (): void => {
-    if (storyId === '' || onOpenComments === undefined) {
-      return;
-    }
-    onClose();
-    onOpenComments(storyId);
-  };
-
-  /** Opens the story's language tree, closing the theatre first. */
-  const handleOpenTree = (): void => {
-    if (storyId === '' || onOpenTree === undefined) {
-      return;
-    }
-    onClose();
-    onOpenTree(storyId);
-  };
-
   /**
    * The arithmetic half of the active-page rule.
    *
@@ -764,10 +720,11 @@ export function ViewerStage({
           </Animated.View>
         </View>
 
-        {/* The story context: a solid black block across the bottom, so the words
-            and (on a video) the transport always sit on a high-contrast floor.
-            Its top edge is a clean horizontal line, with no gradient and no
-            rounded corner to feather it (KNOT-020k-fix6). */}
+        {/* The story context: transparent, with nothing drawn behind it. Every
+            line is media ink carrying a heavy black shadow, so the type survives
+            a white photograph while the picture is never dimmed; the black
+            system navigation bar, not the overlay, completes the room
+            (KNOT-020k-fix5, KNOT-020k-fix7). */}
         {story != null ? (
           <Animated.View
             style={[
@@ -777,51 +734,21 @@ export function ViewerStage({
             ]}
             pointerEvents={chromeVisible || !videoPage ? 'box-none' : 'none'}
           >
-            <View style={styles.contextHeader}>
-              <View style={styles.authorRow}>
-                <Avatar
-                  uri={avatarUri}
-                  displayName={authorName}
-                  size="sm"
-                  accessibilityLabel={
-                    authorName === '' ? 'Author profile picture' : `${authorName}'s profile picture`
-                  }
-                />
-                {authorName === '' ? null : (
-                  <Text style={[typeScale.body, styles.authorText]} numberOfLines={1}>
-                    <Text style={styles.authorName}>{authorName}</Text>
-                    {timestamp === '' ? null : ` · ${timestamp}`}
-                  </Text>
-                )}
-              </View>
-
-              {/* The Knot actions, on the same line as the author's avatar and
-                  above the text. Each is drawn only when its handler exists, so
-                  a pure-theatre caller never sees a dead control. */}
-              {storyId !== '' && (onOpenComments !== undefined || onOpenTree !== undefined) ? (
-                <View style={styles.actions}>
-                  {onOpenComments === undefined ? null : (
-                    <Pressable
-                      style={styles.actionButton}
-                      onPress={handleOpenComments}
-                      accessibilityRole="button"
-                      accessibilityLabel="Open the conversation"
-                    >
-                      <ChatCircle color={colors.text.onMedia} size={ACTION_ICON_SIZE} />
-                    </Pressable>
-                  )}
-                  {onOpenTree === undefined ? null : (
-                    <Pressable
-                      style={styles.actionButton}
-                      onPress={handleOpenTree}
-                      accessibilityRole="button"
-                      accessibilityLabel="Open the language tree"
-                    >
-                      <TreeStructure color={colors.text.onMedia} size={ACTION_ICON_SIZE} />
-                    </Pressable>
-                  )}
-                </View>
-              ) : null}
+            <View style={styles.authorRow}>
+              <Avatar
+                uri={avatarUri}
+                displayName={authorName}
+                size="sm"
+                accessibilityLabel={
+                  authorName === '' ? 'Author profile picture' : `${authorName}'s profile picture`
+                }
+              />
+              {authorName === '' ? null : (
+                <Text style={[typeScale.body, styles.authorText]} numberOfLines={1}>
+                  <Text style={styles.authorName}>{authorName}</Text>
+                  {timestamp === '' ? null : ` · ${timestamp}`}
+                </Text>
+              )}
             </View>
 
             <Text style={[typeScale.h3, styles.contextTitle]} numberOfLines={2}>
@@ -912,12 +839,12 @@ const createStyles = (colors: ThemeColors) =>
       height: '100%',
       width: '100%',
     },
-    // The context overlay: a solid theatre-black block, so the type and the
-    // transport always sit on the same high-contrast floor for every medium. The
-    // type keeps its shadow as a defence for a partially transparent frame
-    // (KNOT-020k-fix6).
+    // The context overlay: no surface of its own, and no scrim behind it. Each
+    // line is media ink carrying its own shadow, so the picture runs untouched
+    // behind the words and is never dimmed. The black room continuing below the
+    // media is the system navigation bar, not this view (KNOT-020k-fix5,
+    // KNOT-020k-fix7).
     context: {
-      backgroundColor: colors.bg.theater,
       bottom: 0,
       gap: spacing.xs,
       left: 0,
@@ -925,34 +852,6 @@ const createStyles = (colors: ThemeColors) =>
       paddingHorizontal: layout.screenPaddingFeed,
       position: 'absolute',
       right: 0,
-    },
-    // The avatar line and the action rail share one row, so the rail starts on
-    // the avatar's own vertical line instead of floating over the copy.
-    contextHeader: {
-      alignItems: 'flex-start',
-      flexDirection: 'row',
-      gap: spacing.sm,
-      justifyContent: 'space-between',
-    },
-    // The rail: a column of 44pt targets, each on the viewer's scrim disc so it
-    // reads over any frame and carries a subtle floating shadow.
-    actions: {
-      gap: spacing.xs,
-    },
-    actionButton: {
-      alignItems: 'center',
-      backgroundColor: colors.scrim.overlay,
-      borderRadius: radius.pill,
-      height: ACTION_BUTTON_SIZE,
-      justifyContent: 'center',
-      width: ACTION_BUTTON_SIZE,
-      ...elevation[1],
-    },
-    authorRow: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      flexShrink: 1,
-      gap: spacing.sm,
     },
     // On a video the text has to clear the transport, which is anchored to the
     // bottom of the page. The transport is `VIDEO_CONTROLS_HEIGHT` tall and its
@@ -965,10 +864,12 @@ const createStyles = (colors: ThemeColors) =>
     },
     // One bold line: `[avatar] [name] · [time]`, and nothing else — the Rooted
     // badge stays on the surfaces that have room to explain it (KNOT-020k-fix4).
-    authorText: {
-      ...overlayText(colors),
-      flexShrink: 1,
+    authorRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.sm,
     },
+    authorText: overlayText(colors),
     authorName: {
       fontWeight: fontWeights.bold,
     },
