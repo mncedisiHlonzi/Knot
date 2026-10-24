@@ -278,6 +278,43 @@ function ThemedApp(): React.ReactElement {
     setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId }));
   }, []);
 
+  /**
+   * Opens the language tree for the story the viewer was showing, from the
+   * viewer's own action rail. The viewer closes itself first, exactly as
+   * "Read more" does (KNOT-020k-fix6).
+   */
+  const handleViewTree = useCallback((storyId: string): void => {
+    setOverlays((stack) => pushOverlay(stack, { name: 'tree', storyId }));
+  }, []);
+
+  /**
+   * Opens the conversation for the story the viewer was showing.
+   *
+   * A comment thread is keyed by VERSION, while the viewer's story context
+   * carries only the story. This therefore reads the story once to resolve its
+   * root version — the same version Story Detail's conversation action opens —
+   * and then pushes the thread. A read that fails opens nothing: the viewer has
+   * already closed, and an error over the reader's screen would be worse than a
+   * quiet no-op (KNOT-020k-fix6).
+   */
+  const handleViewComments = useCallback(
+    (storyId: string): void => {
+      void (async (): Promise<void> => {
+        try {
+          const { story } = await storiesApi.getStory(storyId, session?.accessToken);
+          const versionId = typeof story.root_version_id === 'string' ? story.root_version_id : '';
+          if (versionId === '') {
+            return;
+          }
+          setOverlays((stack) => pushOverlay(stack, { name: 'comments', storyId, versionId }));
+        } catch {
+          // Intentionally ignored; see the doc comment above.
+        }
+      })();
+    },
+    [session],
+  );
+
   // The Android navigation bar is not reachable from React Native's `StatusBar`:
   // the window paints it from the native theme, which cannot know the user's
   // theme choice. The small native module repaints it (and picks the icon
@@ -928,6 +965,8 @@ function ThemedApp(): React.ReactElement {
         story={mediaViewer?.story ?? null}
         onClose={() => setMediaViewer(null)}
         onOpenStory={handleViewStory}
+        onOpenComments={handleViewComments}
+        onOpenTree={handleViewTree}
       />
     </SafeAreaView>
   );
