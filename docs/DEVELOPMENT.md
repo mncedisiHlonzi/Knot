@@ -489,7 +489,7 @@ and their type is `typeScale.label` (13pt bold) or heavier. Do not use
 dark theme. `mediaOverlayText(colors)` (`src/theme/mediaOverlay.ts`) supplies the
 ink and the legibility shadow in one object.
 
-### The media viewer (KNOT-020k; definitive pass KNOT-020k-fix4)
+### The media viewer (KNOT-020k; definitive pass KNOT-020k-fix4; final polish KNOT-020k-fix5)
 
 Tapping media anywhere in the app opens one full-screen viewer. It is a React Native
 `Modal` owned by `App.tsx` (`mediaViewer: { items, index, story } | null`), so it sits
@@ -517,12 +517,14 @@ The pieces:
   edge to edge behind the status bar; a floating top bar (page counter on the left,
   close on the right); and, when it was given a story, a bottom overlay of **one bold
   author line** (`Avatar size="sm"` + bold name + `·` compact time, no Rooted badge),
-  the title at `typeScale.h3`, three lines of the body, and one bold **"Read more..."**
-  link. Legibility comes from a **black-to-transparent gradient** painted by
-  `react-native-svg` (`LinearGradient` over a `Rect`, stops `colors.bg.theater` at
-  opacity 0 → 0.9) whose height is the measured overlay height, so it ends just above
-  the avatar. There is no fill, no radius and no card. The link closes the viewer and
-  opens the story. There are deliberately **no reactions and no CTA** here.
+  the title at `typeScale.h3`, three lines of the body, and one bold **"Read more"**
+  link. The overlay is fully **transparent**: there is no fill, no radius, no card and
+  **no scrim or gradient**. Legibility comes from a heavy `textShadow` on every text
+  node (radius 5, `colors.bg.theater`) — the TikTok/Instagram treatment — so white type
+  reads over a white photograph while the picture is never dimmed. The shadow must be
+  applied to the nested name `Text` too: RN does not inherit `textShadow*`. The link
+  closes the viewer and opens the story. There are deliberately **no reactions and no
+  CTA** here.
 - **Mounting and the autoplay rule.** The modal is mounted for the session, but the
   interactive `ViewerStage` is mounted **per open**, and its pager state is seeded with
   `useState(() => clampViewerIndex(initialIndex, media.length))`. `FlatList` gets
@@ -533,14 +535,27 @@ The pieces:
   `onViewableItemsChanged` keeps the page in step with swipes (ignored until the pager
   has moved once, so a mount-time report cannot override the seeded page);
   `onMomentumScrollEnd` is the exact arithmetic fallback.
+- **Why a Feed video "would not open" (KNOT-020k-fix5) — the player ate the tap.**
+  None of the pager seeding above was ever the cause. On Android the native video
+  surface is the topmost thing over the picture, and it consumed the press before it
+  reached the `Pressable` the card wraps its media in, so `onOpenMedia` never fired and
+  no modal window was created — while tapping an image in the same card opened the
+  viewer perfectly. `FeedVideo` therefore wraps `<Video>` in a `View` with
+  `pointerEvents="none"`; `box-none` is not enough, the surface itself has to be
+  skipped. This is also what makes the profile wall's video cards work. **Any new
+  component that draws a video under a tap target must do the same** — and the mute
+  control stays a *sibling* above the anchor so it remains tappable.
 - **`VideoPlayer.tsx`** — `react-native-video` with a **transparent** transport strip
   anchored to the bottom: a thin scrub line that swells into a handle under the finger,
   the running `0:12 / 0:45`, and mute. There is **no play/pause button**: a tap on the
   picture toggles playback *and* the chrome. `VIDEO_CONTROLS_HEIGHT` is exported so the
-  viewer can keep the story text clear of the strip. Videos start with **sound on**
-  (`START_MUTED = false`), because the viewer was opened deliberately; the Feed's
-  in-place previews keep their own always-muted rule (`FeedVideo`). The overlay and the
-  transport fade with the chrome on a tap.
+  viewer can keep the story text clear of the strip; the overlay adds a whole `lg` on top
+  of it, because the scrub bar's 32pt touch band is invisible — text that merely abutted
+  the strip would look clear while still swallowing taps aimed at **"Read more"**.
+  Videos **loop** (`repeat`), so there is no ended state to recover from. Videos start
+  with **sound on** (`START_MUTED = false`), because the viewer was opened deliberately;
+  the Feed's in-place previews keep their own always-muted rule (`FeedVideo`). The
+  overlay and the transport fade with the chrome on a tap.
 - **`mediaViewer.ts`** — the pure helpers (index clamping, progress, scrub seconds, the
   overlay's `viewerSnippet` window, `viewerTimeLabel`'s "0:00" clock, and
   `viewerIndexForId`'s key→page resolution).

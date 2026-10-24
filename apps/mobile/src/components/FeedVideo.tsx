@@ -86,10 +86,11 @@ type FeedVideoProps = {
  * the video — which needs hooks — lives here (KNOT-020c-fix3).
  *
  * There is no centre play button: the video starts on its own when it scrolls into
- * view, and tapping anywhere on it (except the mute control) opens the story,
- * which is the enclosing card's own tap target. A grey layer sits behind the video
- * so something is drawn while the first frame decodes or if playback is
- * impossible.
+ * view, and tapping anywhere on it (except the mute control) reaches the tap target
+ * the caller wrapped it in — the card opens the story, the media opens the viewer.
+ * The player itself is deliberately transparent to touches, or its native surface
+ * would swallow that tap (KNOT-020k-fix5). A grey layer sits behind the video so
+ * something is drawn while the first frame decodes or if playback is impossible.
  *
  * Every screen that draws a story's video uses this component — the Feed, Place
  * Stories, and the profile wall — so they all autoplay and mute the same way
@@ -155,15 +156,24 @@ export default function FeedVideo({
           if the video can never play. */}
       <View style={styles.fallback} />
 
-      <Video
-        source={{ uri }}
-        style={styles.video}
-        paused={!playing}
-        muted={isMuted}
-        repeat
-        resizeMode="cover"
-        onLoad={handleLoad}
-      />
+      {/* The player is decoration, never a control: it is wrapped in a view that
+          receives no pointer events. On Android the native video surface is the
+          topmost thing over the picture, and a touch that lands on it is consumed
+          by the player instead of reaching the Pressable the caller wrapped this
+          component in — so tapping a video did nothing at all while an image in the
+          same card opened the viewer (KNOT-020k-fix5). `box-none` is not enough:
+          the surface itself has to be skipped, not just the wrapper's own box. */}
+      <View style={styles.videoAnchor} pointerEvents="none">
+        <Video
+          source={{ uri }}
+          style={styles.video}
+          paused={!playing}
+          muted={isMuted}
+          repeat
+          resizeMode="cover"
+          onLoad={handleLoad}
+        />
+      </View>
 
       {showTag ? (
         <View style={styles.mediaTag} pointerEvents="none">
@@ -248,6 +258,9 @@ const createStyles = (colors: ThemeColors) =>
       width: VIDEO_MUTE_BUTTON_SIZE,
     },
     video: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    videoAnchor: {
       ...StyleSheet.absoluteFillObject,
     },
   });

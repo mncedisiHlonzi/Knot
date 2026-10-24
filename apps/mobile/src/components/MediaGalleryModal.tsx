@@ -14,16 +14,15 @@ import {
   useWindowDimensions,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
+  type TextStyle,
 } from 'react-native';
 import { X } from 'phosphor-react-native';
-import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { API_BASE_URL } from '../config/api';
 import { setNavigationBarColor } from '../native/systemBars';
 import {
   fontWeights,
   layout,
-  mediaOverlayText,
   motion,
   radius,
   spacing,
@@ -59,11 +58,11 @@ export type ViewerMedia = {
  * It is a projection of the story (or the adaptation) the media belongs to, not
  * the whole payload: only what the overlay draws, so a screen can hand over its
  * own record without the viewer needing to know any API type. `storyId` is the
- * story the "Read more..." link opens, which for an adaptation is the story it
+ * story the "Read more" link opens, which for an adaptation is the story it
  * adapts rather than the version itself (KNOT-020k-fix2).
  */
 export type ViewerStory = {
-  /** The story the "Read more..." link opens. */
+  /** The story the "Read more" link opens. */
   readonly storyId: string;
   /** The title drawn under the author line. */
   readonly title: string;
@@ -94,10 +93,21 @@ const DISMISS_DISTANCE = 120;
 
 /**
  * How many lines of the story the overlay quotes. It ends with the
- * "Read more..." link, so three lines is what reads as a paragraph rather than a
+ * "Read more" link, so three lines is what reads as a paragraph rather than a
  * fragment (KNOT-020k-fix3).
  */
 const CONTEXT_BODY_LINES = 3;
+
+/**
+ * How far the overlay's text shadow spreads, in points.
+ *
+ * There is no scrim behind the type: the words sit straight on the picture, so the
+ * shadow is what keeps them legible over a white shirt or a bright sky — the same
+ * treatment TikTok and Instagram use (KNOT-020k-fix5). A radius of five is the
+ * smallest that stays readable on pure white without turning the glyphs into
+ * smudges.
+ */
+const TEXT_SHADOW_RADIUS = 5;
 
 /** The close control's disc and glyph. */
 const CLOSE_DISC_SIZE = 44;
@@ -331,7 +341,7 @@ type MediaGalleryModalProps = {
   /** Called when the viewer is dismissed, by the close control or a swipe. */
   readonly onClose: () => void;
   /**
-   * Called by the overlay's "Read more..." link, after the viewer has closed
+   * Called by the overlay's "Read more" link, after the viewer has closed
    * itself, so the caller only has to navigate (KNOT-020k-fix2).
    */
   readonly onOpenStory?: (storyId: string) => void;
@@ -342,14 +352,15 @@ type MediaGalleryModalProps = {
  *
  * A black room, the media edge to edge behind the status bar, and two floating
  * pieces of chrome: a top bar (page counter on the left, close on the right) and
- * — when it was given a story — a gradient scrim at the bottom carrying one bold
- * author line, the title, three lines of the body and a bold "Read more..." link
- * (KNOT-020k, KNOT-020k-fix4).
+ * — when it was given a story — a transparent block at the bottom carrying one
+ * bold author line, the title, three lines of the body and a bold "Read more"
+ * link (KNOT-020k, KNOT-020k-fix4, KNOT-020k-fix5).
  *
- * The overlay is deliberately **not a surface**: nothing is filled or rounded
- * behind it. A black-to-transparent gradient dims the bottom of the frame so the
- * white text reads over any photograph, and the picture still runs to the screen
- * edge underneath. The one tappable thing in it is the link, which closes the
+ * The overlay is deliberately **not a surface**: nothing is filled, dimmed or
+ * rounded behind it. There is no scrim and no gradient — the words sit straight on
+ * the picture and every line carries a heavy black text shadow, which is what
+ * keeps them legible over a bright frame while leaving the image untouched
+ * (KNOT-020k-fix5). The one tappable thing in it is the link, which closes the
  * viewer and opens the story.
  *
  * ## Gestures
@@ -461,11 +472,6 @@ function ViewerStage({
   // overlay; its opacity is animated so the change reads as a fade.
   const [chromeVisible, setChromeVisible] = useState(true);
   const chromeOpacity = useRef(new Animated.Value(1)).current;
-
-  // The overlay's own height, measured so the gradient behind it can end exactly
-  // above the author line instead of guessing a share of the window
-  // (KNOT-020k-fix4).
-  const [contextHeight, setContextHeight] = useState(0);
 
   const safeIndex = clampViewerIndex(activeIndex, media.length);
   const currentItem = media[safeIndex];
@@ -702,82 +708,77 @@ function ViewerStage({
           </Animated.View>
         </View>
 
-        {/* The story context, as one unit: a gradient that dims the bottom of the
-            frame and fades to nothing above the author line, and the text sitting
-            on it. Nothing is filled or rounded, so the picture still runs edge to
-            edge; the dim is what makes white type readable over any frame
-            (KNOT-020k-fix4). */}
+        {/* The story context: transparent, with nothing drawn behind it. Every line
+            is media ink carrying a heavy black shadow, so the type survives a white
+            photograph while the picture is never dimmed (KNOT-020k-fix5). */}
         {story != null ? (
-          <>
-            <Animated.View
-              style={[styles.scrim, { height: contextHeight + spacing.md, opacity: chromeOpacity }]}
-              pointerEvents="none"
-            >
-              <Svg width="100%" height="100%">
-                <Defs>
-                  <LinearGradient id="knotViewerScrim" x1="0" y1="0" x2="0" y2="1">
-                    <Stop offset="0" stopColor={colors.bg.theater} stopOpacity={0} />
-                    <Stop offset="1" stopColor={colors.bg.theater} stopOpacity={0.9} />
-                  </LinearGradient>
-                </Defs>
-                <Rect width="100%" height="100%" fill="url(#knotViewerScrim)" />
-              </Svg>
-            </Animated.View>
-
-            <Animated.View
-              style={[
-                styles.context,
-                videoPage ? styles.contextAboveControls : null,
-                { opacity: chromeOpacity },
-              ]}
-              pointerEvents={chromeVisible || !videoPage ? 'box-none' : 'none'}
-              onLayout={(event) => setContextHeight(event.nativeEvent.layout.height)}
-            >
-              <View style={styles.authorRow}>
-                <Avatar
-                  uri={avatarUri}
-                  displayName={authorName}
-                  size="sm"
-                  accessibilityLabel={
-                    authorName === '' ? 'Author profile picture' : `${authorName}'s profile picture`
-                  }
-                />
-                {authorName === '' ? null : (
-                  <Text style={[typeScale.body, styles.authorText]} numberOfLines={1}>
-                    <Text style={styles.authorName}>{authorName}</Text>
-                    {timestamp === '' ? null : ` · ${timestamp}`}
-                  </Text>
-                )}
-              </View>
-
-              <Text style={[typeScale.h3, styles.contextTitle]} numberOfLines={2}>
-                {story.title}
-              </Text>
-
-              {snippet.text === '' ? null : (
-                <Text
-                  style={[typeScale.body, styles.contextBody]}
-                  numberOfLines={CONTEXT_BODY_LINES}
-                >
-                  {snippet.text}
+          <Animated.View
+            style={[
+              styles.context,
+              videoPage ? styles.contextAboveControls : null,
+              { opacity: chromeOpacity },
+            ]}
+            pointerEvents={chromeVisible || !videoPage ? 'box-none' : 'none'}
+          >
+            <View style={styles.authorRow}>
+              <Avatar
+                uri={avatarUri}
+                displayName={authorName}
+                size="sm"
+                accessibilityLabel={
+                  authorName === '' ? 'Author profile picture' : `${authorName}'s profile picture`
+                }
+              />
+              {authorName === '' ? null : (
+                <Text style={[typeScale.body, styles.authorText]} numberOfLines={1}>
+                  <Text style={styles.authorName}>{authorName}</Text>
+                  {timestamp === '' ? null : ` · ${timestamp}`}
                 </Text>
               )}
+            </View>
 
-              <Pressable
-                style={styles.readMore}
-                onPress={handleReadMore}
-                hitSlop={spacing.sm}
-                accessibilityRole="link"
-                accessibilityLabel={`Read more of ${story.title}`}
-              >
-                <Text style={[typeScale.button, styles.readMoreText]}>Read more...</Text>
-              </Pressable>
-            </Animated.View>
-          </>
+            <Text style={[typeScale.h3, styles.contextTitle]} numberOfLines={2}>
+              {story.title}
+            </Text>
+
+            {snippet.text === '' ? null : (
+              <Text style={[typeScale.body, styles.contextBody]} numberOfLines={CONTEXT_BODY_LINES}>
+                {snippet.text}
+              </Text>
+            )}
+
+            <Pressable
+              style={styles.readMore}
+              onPress={handleReadMore}
+              hitSlop={spacing.sm}
+              accessibilityRole="link"
+              accessibilityLabel={`Read more of ${story.title}`}
+            >
+              <Text style={[typeScale.button, styles.readMoreText]}>Read more</Text>
+            </Pressable>
+          </Animated.View>
         ) : null}
       </Animated.View>
     </>
   );
+}
+
+/**
+ * The overlay's ink: media white with a heavy black shadow, drawn straight on the
+ * picture.
+ *
+ * The shadow — not a scrim — is what keeps a line readable over a white shirt or a
+ * bright sky, and it is applied to every text node: RN does not pass
+ * `textShadow*` down from a parent `Text` to the spans nested inside it, so the
+ * author's name needs the same treatment as the line around it (KNOT-020k-fix5).
+ */
+function overlayText(colors: ThemeColors): TextStyle {
+  return {
+    color: colors.text.onMedia,
+    textShadowColor: colors.bg.theater,
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: TEXT_SHADOW_RADIUS,
+  };
 }
 
 const createStyles = (colors: ThemeColors) =>
@@ -824,8 +825,9 @@ const createStyles = (colors: ThemeColors) =>
       height: '100%',
       width: '100%',
     },
-    // The context overlay: no surface of its own. The gradient below supplies the
-    // dim; the text is media ink and the picture runs behind it (KNOT-020k-fix4).
+    // The context overlay: no surface of its own, and no scrim behind it. Each line
+    // is media ink carrying its own shadow, so the picture runs untouched behind
+    // the words and is never dimmed (KNOT-020k-fix5).
     context: {
       bottom: 0,
       gap: spacing.xs,
@@ -835,17 +837,14 @@ const createStyles = (colors: ThemeColors) =>
       position: 'absolute',
       right: 0,
     },
-    // On a video the text clears the transport, which is anchored to the bottom of
-    // the page; on an image there is nothing to clear (KNOT-020k-fix4).
+    // On a video the text has to clear the transport, which is anchored to the
+    // bottom of the page. The transport is `VIDEO_CONTROLS_HEIGHT` tall and its
+    // scrub bar answers touches across a full 32pt band, so a whole `lg` of air is
+    // added on top of it: otherwise the link's own hit slop reaches into that band
+    // and a tap on "Read more" seeks the video instead of opening the story
+    // (KNOT-020k-fix5). An image has no transport, so it keeps the resting inset.
     contextAboveControls: {
-      paddingBottom: VIDEO_CONTROLS_HEIGHT + spacing.xs,
-    },
-    // Between the gradient's dim and the video under it.
-    scrim: {
-      bottom: 0,
-      left: 0,
-      position: 'absolute',
-      right: 0,
+      paddingBottom: VIDEO_CONTROLS_HEIGHT + spacing.lg,
     },
     // One bold line: `[avatar] [name] · [time]`, and nothing else — the Rooted
     // badge stays on the surfaces that have room to explain it (KNOT-020k-fix4).
@@ -854,22 +853,21 @@ const createStyles = (colors: ThemeColors) =>
       flexDirection: 'row',
       gap: spacing.sm,
     },
-    authorText: mediaOverlayText(colors),
+    authorText: overlayText(colors),
     authorName: {
       fontWeight: fontWeights.bold,
     },
-    contextBody: mediaOverlayText(colors),
-    contextTitle: mediaOverlayText(colors),
+    contextBody: overlayText(colors),
+    contextTitle: overlayText(colors),
     readMore: {
       alignSelf: 'flex-start',
     },
-    // The one control in the overlay: bold, brand ink, with the media shadow so it
-    // still reads over a bright frame (KNOT-020k-fix3).
+    // The one control in the overlay: bold, brand ink, carrying the same heavy
+    // shadow as the rest of the block so it reads over a bright frame without a
+    // scrim behind it (KNOT-020k-fix3, KNOT-020k-fix5).
     readMoreText: {
+      ...overlayText(colors),
       color: colors.brand.primary,
-      textShadowColor: colors.scrim.textShadow,
-      textShadowOffset: { width: 0, height: 1 },
-      textShadowRadius: 2,
     },
     // The black room behind the media; its opacity follows the dismiss drag.
     room: {

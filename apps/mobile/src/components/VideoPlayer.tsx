@@ -56,6 +56,10 @@ const BAR_BOTTOM = spacing.sm;
 /**
  * The transport stack's total height, exported so the viewer can keep the story
  * text clear of it instead of guessing (KNOT-020k-fix4).
+ *
+ * The viewer adds its own breathing room on top of this: the scrub bar's 32pt touch
+ * band is invisible, so text that merely abutted the stack would look clear while
+ * still swallowing taps aimed at it (KNOT-020k-fix5).
  */
 export const VIDEO_CONTROLS_HEIGHT =
   TRACK_TOUCH_HEIGHT + CONTROLS_GAP + MUTE_DISC_SIZE + CONTROLS_PADDING + BAR_BOTTOM;
@@ -105,9 +109,14 @@ type VideoPlayerProps = {
  * the play/pause control, and a tap on it also hides or shows the chrome. What is
  * drawn is only a transparent strip along the bottom: a thin scrub line that
  * swells into a grabbable handle under the finger, the running time
- * (`0:12 / 0:45`), and the mute toggle. Nothing is filled behind it, so the frame
- * runs behind the controls and only the viewer's gradient scrim dims them
- * (KNOT-020k-fix4).
+ * (`0:12 / 0:45`), and the mute toggle. Nothing is filled behind it and the viewer
+ * draws no scrim, so the frame runs untouched behind the controls and the story
+ * text sits above them (KNOT-020k-fix4, KNOT-020k-fix5).
+ *
+ * The clip loops: the viewer is a place to watch something, not a page with an end,
+ * so the player repeats by itself and never parks on its last frame. There is
+ * deliberately no ended state — it would stop the loop after one pass
+ * (KNOT-020k-fix5).
  *
  * Chrome visibility belongs to the viewer: tapping the picture calls
  * `onToggleChrome` and `togglePlayback` together, so the top bar, the transport
@@ -133,7 +142,6 @@ export default function VideoPlayer({
   const videoRef = useRef<React.ComponentRef<typeof Video>>(null);
 
   const [userPaused, setUserPaused] = useState(false);
-  const [ended, setEnded] = useState(false);
   const [muted, setMuted] = useState(START_MUTED);
   const [loaded, setLoaded] = useState(false);
   const [duration, setDuration] = useState(() =>
@@ -179,16 +187,8 @@ export default function VideoPlayer({
   }, []);
 
   const togglePlayback = useCallback((): void => {
-    if (ended) {
-      // Replay from the start rather than leaving a finished video paused at its
-      // last frame.
-      seek(0);
-      setEnded(false);
-      setUserPaused(false);
-      return;
-    }
     setUserPaused((paused) => !paused);
-  }, [ended, seek]);
+  }, []);
 
   const handleLoad = useCallback((data: OnLoadData): void => {
     setLoaded(true);
@@ -246,7 +246,10 @@ export default function VideoPlayer({
 
   const shownTime = preview ?? current;
   const progress = viewerProgress(shownTime, duration);
-  const playing = isActive && !userPaused && !ended;
+  // A gallery video loops on its own, so there is no ended state to recover from:
+  // the only things that stop it are leaving the page or the person pausing it
+  // (KNOT-020k-fix5).
+  const playing = isActive && !userPaused;
 
   return (
     <View style={[styles.container, { height, width }]}>
@@ -256,7 +259,7 @@ export default function VideoPlayer({
         style={styles.video}
         paused={!playing}
         muted={muted}
-        repeat={false}
+        repeat={true}
         resizeMode="contain"
         progressUpdateInterval={250}
         onLoad={handleLoad}
@@ -264,10 +267,6 @@ export default function VideoPlayer({
           if (!seeking.current) {
             setCurrent(data.currentTime);
           }
-        }}
-        onEnd={() => {
-          setEnded(true);
-          setCurrent(durationRef.current);
         }}
       />
 
