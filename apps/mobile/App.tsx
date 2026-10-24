@@ -15,7 +15,7 @@ import {
 import type { AuthResponse, User } from './src/api/client';
 import { conversationsApi } from './src/api/conversations';
 import { Notification, notificationsApi } from './src/api/notifications';
-import type { Story } from './src/api/stories';
+import { storiesApi, type Story } from './src/api/stories';
 import { versionsApi } from './src/api/versions';
 import { DEFAULT_LANGUAGE_CODE } from './src/config/language';
 import { isLanguageCode } from './src/data/languages';
@@ -26,6 +26,7 @@ import TabBar from './src/components/TabBar';
 import type { TabName } from './src/components/TabBar';
 import MediaGalleryModal from './src/components/MediaGalleryModal';
 import type { ViewerMedia, ViewerStory } from './src/components/MediaGalleryModal';
+import { toViewerMedia, viewerIndexByUrl } from './src/components/storyGallery';
 import {
   popAllOverlays,
   popOverlay,
@@ -212,22 +213,58 @@ function ThemedApp(): React.ReactElement {
   /**
    * Opens the viewer on one of `items`.
    *
-   * The index is clamped here as well as in the viewer, because a caller can
-   * hold a stale index after a list shrinks (KNOT-020k). The story context is
-   * optional so a caller can still open the theatre alone.
+   * Every surface ends up here with the story's WHOLE gallery. Story Detail and
+   * Version Detail already hold it; the Feed, Place Stories and the profile wall
+   * hold a single preview, so this reads the story first and opens on the item the
+   * preview showed. That is what makes the viewer consistent everywhere: the same
+   * pages, the same starting index, whether the tap came from the feed or from the
+   * story itself (KNOT-020k-fix4).
+   *
+   * The index is clamped here as well as in the viewer, because a caller can hold
+   * a stale index after a list shrinks (KNOT-020k).
    */
   const openMediaViewer = useCallback(
     (items: readonly ViewerMedia[], index: number, story?: ViewerStory | null): void => {
       if (items.length === 0) {
         return;
       }
-      setMediaViewer({
-        items,
-        index: Math.min(Math.max(Math.round(index), 0), items.length - 1),
-        story: story ?? null,
-      });
+
+      const show = (
+        gallery: readonly ViewerMedia[],
+        at: number,
+        context: ViewerStory | null | undefined,
+      ): void => {
+        setMediaViewer({
+          items: gallery,
+          index: Math.min(Math.max(Math.round(at), 0), gallery.length - 1),
+          story: context ?? null,
+        });
+      };
+
+      // A caller that already carries the gallery (or several items) opens at once.
+      if (story == null || story.media.length > 0 || items.length > 1) {
+        show(items, index, story);
+        return;
+      }
+
+      // A preview-only surface: read the story, then open on the tapped item.
+      void (async (): Promise<void> => {
+        try {
+          const result = await storiesApi.getStory(story.storyId, session?.accessToken);
+          const gallery = toViewerMedia(result.story.media);
+          if (gallery.length === 0) {
+            show(items, index, story);
+            return;
+          }
+          const at = viewerIndexByUrl(gallery, items[0].url);
+          show(gallery, at >= 0 ? at : 0, { ...story, media: gallery });
+        } catch {
+          // A tap on media must never be dead: fall back to the preview it showed.
+          show(items, index, story);
+        }
+      })();
     },
-    [],
+    [session],
   );
 
   /**

@@ -273,8 +273,9 @@ export default function StoryVersionScreen({
   // The inherited presentation: a future server may repeat these on the version,
   // and the current one does not, so the parent story is the fallback (KNOT-026).
   const media = version?.media ?? story?.media ?? [];
-  // The viewer's overlay: the adaptation's own content and author. "Read more..."
-  // opens the story the version adapts (KNOT-020k-fix3).
+  // The viewer's overlay: the adaptation's own content and author, with the story's
+  // gallery it is showing. "Read more..." opens the story the version adapts
+  // (KNOT-020k-fix4).
   const viewerStory: ViewerStory | undefined =
     version === undefined
       ? undefined
@@ -282,9 +283,9 @@ export default function StoryVersionScreen({
           storyId: version.story_id,
           title: version.title,
           body: version.body,
+          media,
           authorDisplayName: version.author_display_name,
           authorAvatarUrl: version.author_avatar_url,
-          authorRooted: version.author_rooted ?? null,
           createdAt: version.created_at,
         };
   const pillar = version?.pillar ?? story?.pillar;

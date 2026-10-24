@@ -345,15 +345,16 @@ export default function FeedEntry({
   const isVersion = variant === 'version';
 
   // The viewer's overlay draws the same story content this card does (author,
-  // title, opening lines) and nothing else, so the projection carries exactly
-  // those fields (KNOT-020k-fix3).
+  // title, opening lines) and nothing else. `media` is empty on purpose: a feed
+  // entry holds one preview, so `App` reads the story's whole gallery before it
+  // opens the viewer (KNOT-020k-fix4).
   const viewerStory: ViewerStory = {
     storyId: story.storyId ?? story.id,
     title: story.title,
     body: story.preview,
+    media: [],
     authorDisplayName: story.author_display_name,
     authorAvatarUrl: story.author_avatar_url,
-    authorRooted: story.author_rooted ?? null,
     createdAt: story.created_at,
   };
   // The people the row credits are the LINEAGE, not the poster: the author of the

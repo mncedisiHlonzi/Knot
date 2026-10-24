@@ -268,8 +268,9 @@ export default function StoryDetailScreen({
   const stripRef = useRef<ScrollView>(null);
 
   const media = story?.media ?? [];
-  // The viewer's overlay: this story's own content and author, so the theatre
-  // never loses the story it is showing (KNOT-020k-fix3).
+  // The viewer's overlay: this story's own content and author, and the gallery it
+  // already holds, so the theatre never loses the story it is showing
+  // (KNOT-020k-fix4).
   const viewerStory: ViewerStory | undefined =
     story === undefined
       ? undefined
@@ -277,9 +278,9 @@ export default function StoryDetailScreen({
           storyId: story.id,
           title: story.title,
           body: story.body,
+          media,
           authorDisplayName: story.author_display_name,
           authorAvatarUrl: story.author_avatar_url,
-          authorRooted: story.author_rooted ?? null,
           createdAt: story.created_at,
         };
   const safeIndex = media.length === 0 ? 0 : Math.min(activeIndex, media.length - 1);

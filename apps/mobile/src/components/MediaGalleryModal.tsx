@@ -16,10 +16,12 @@ import {
   type NativeSyntheticEvent,
 } from 'react-native';
 import { X } from 'phosphor-react-native';
+import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 
 import { API_BASE_URL } from '../config/api';
 import { setNavigationBarColor } from '../native/systemBars';
 import {
+  fontWeights,
   layout,
   mediaOverlayText,
   motion,
@@ -31,14 +33,15 @@ import {
   useThemedStyles,
 } from '../theme';
 import type { ThemeColors } from '../theme';
+import { formatRelativeTimeShort } from '../utils/time';
 import {
   activeViewableKey,
   VIEWABILITY_CONFIG,
   type ViewableItemsInfo,
 } from '../utils/viewability';
-import AuthorLine, { type AuthorRootedSummary } from './AuthorLine';
+import Avatar from './Avatar';
 import { clampViewerIndex, viewerIndexForId, viewerSnippet } from './mediaViewer';
-import VideoPlayer from './VideoPlayer';
+import VideoPlayer, { VIDEO_CONTROLS_HEIGHT } from './VideoPlayer';
 /** One item the viewer can show. Story media satisfies this shape directly. */
 export type ViewerMedia = {
   readonly id: string;
@@ -66,9 +69,17 @@ export type ViewerStory = {
   readonly title: string;
   /** The body the overlay quotes three lines of. */
   readonly body: string;
+  /**
+   * Every item the story has, in display order.
+   *
+   * The pager works from this array alone, so a surface that can only describe the
+   * item it was showing would give the reader a one-page gallery. `App` resolves
+   * the full array before opening the viewer when a caller holds a preview only
+   * (KNOT-020k-fix4).
+   */
+  readonly media: readonly ViewerMedia[];
   readonly authorDisplayName?: string | null;
   readonly authorAvatarUrl?: string | null;
-  readonly authorRooted?: AuthorRootedSummary | null;
   readonly createdAt?: string | null;
 };
 
@@ -331,15 +342,15 @@ type MediaGalleryModalProps = {
  *
  * A black room, the media edge to edge behind the status bar, and two floating
  * pieces of chrome: a top bar (page counter on the left, close on the right) and
- * — when it was given a story — a transparent overlay at the bottom carrying the
- * author, the title, three lines of the body and a bold "Read more..." link
- * (KNOT-020k, KNOT-020k-fix3).
+ * — when it was given a story — a gradient scrim at the bottom carrying one bold
+ * author line, the title, three lines of the body and a bold "Read more..." link
+ * (KNOT-020k, KNOT-020k-fix4).
  *
- * The overlay is deliberately **not a surface**: nothing is filled behind it, so
- * the picture runs to the bottom of the screen and the words sit on it. Its ink
- * is the media ink (white plus a shadow) rather than the canvas ink, which is
- * what keeps it legible over a dark photograph. The one tappable thing in it is
- * the link, which closes the viewer and opens the story.
+ * The overlay is deliberately **not a surface**: nothing is filled or rounded
+ * behind it. A black-to-transparent gradient dims the bottom of the frame so the
+ * white text reads over any photograph, and the picture still runs to the screen
+ * edge underneath. The one tappable thing in it is the link, which closes the
+ * viewer and opens the story.
  *
  * ## Gestures
  *
@@ -435,6 +446,7 @@ function ViewerStage({
   const styles = useThemedStyles(createStyles);
   const { width, height } = useWindowDimensions();
   const translateY = useRef(new Animated.Value(0)).current;
+  const listRef = useRef<FlatList<ViewerMedia>>(null);
 
   // The page on screen. Seeding it from `initialIndex` — rather than from zero —
   // is the fix for a video that would not play when the viewer was opened on it:
@@ -450,8 +462,9 @@ function ViewerStage({
   const [chromeVisible, setChromeVisible] = useState(true);
   const chromeOpacity = useRef(new Animated.Value(1)).current;
 
-  // The overlay's own height, measured so a video's control bar floats above it
-  // instead of landing behind the text (KNOT-020k-fix3).
+  // The overlay's own height, measured so the gradient behind it can end exactly
+  // above the author line instead of guessing a share of the window
+  // (KNOT-020k-fix4).
   const [contextHeight, setContextHeight] = useState(0);
 
   const safeIndex = clampViewerIndex(activeIndex, media.length);
@@ -459,8 +472,20 @@ function ViewerStage({
   const videoPage = currentItem !== undefined && currentItem.media_type === 'video';
   const counter = media.length > 1 ? `${safeIndex + 1} / ${media.length}` : null;
   const snippet = viewerSnippet(story?.body ?? '');
-  const hasStory = story != null;
-  const bottomInset = hasStory ? contextHeight + spacing.md : spacing.xl;
+
+  // The overlay's author line is one bold statement, so the fields are resolved
+  // once here rather than inside the JSX (KNOT-020k-fix4).
+  const authorName =
+    typeof story?.authorDisplayName === 'string' ? story.authorDisplayName.trim() : '';
+  const avatarPath = typeof story?.authorAvatarUrl === 'string' ? story.authorAvatarUrl.trim() : '';
+  const avatarUri = avatarPath === '' ? undefined : `${API_BASE_URL}${avatarPath}`;
+  const timestamp =
+    typeof story?.createdAt === 'string' && story.createdAt !== ''
+      ? formatRelativeTimeShort(story.createdAt)
+      : '';
+  // The page the viewer was opened on. It is fixed for the life of the stage: the
+  // pager starts here and the reader's swipes take over (KNOT-020k-fix4).
+  const initialPage = useRef(clampViewerIndex(initialIndex, media.length)).current;
 
   // A freshly mounted list also reports what it is showing once, and that report
   // can arrive before the initial offset has settled. The seeded page is already
@@ -492,6 +517,15 @@ function ViewerStage({
       setActiveIndex(next);
     }
   }).current;
+
+  // `initialScrollIndex` is read once, when the list mounts, and on a freshly
+  // mounted pager it occasionally does not take — leaving the viewer on page one
+  // while `activeIndex` claimed the tapped page, so a video there never received
+  // `isActive` (KNOT-020k-fix4). Asking for the page once, after mount, is the
+  // belt to that brace; `getItemLayout` makes the request exact.
+  useEffect(() => {
+    listRef.current?.scrollToIndex({ index: initialPage, animated: false });
+  }, [initialPage]);
 
   // An image has nothing to toggle, so its chrome stays up; a video's follows the
   // tap. The fade runs on the native driver (KNOT-020k-fix2).
@@ -605,12 +639,16 @@ function ViewerStage({
             the theatre. */}
         <View style={styles.media} {...dismissResponder.panHandlers}>
           <FlatList
+            ref={listRef}
             data={media}
             keyExtractor={(item) => item.id}
             horizontal
             pagingEnabled
             showsHorizontalScrollIndicator={false}
-            initialScrollIndex={safeIndex}
+            // The tapped page, on the first frame and after mount. Enough pages
+            // render that the video there exists before it is scrolled to.
+            initialScrollIndex={initialPage}
+            initialNumToRender={initialPage + 1}
             extraData={safeIndex}
             getItemLayout={(_data, i) => ({
               length: width,
@@ -630,7 +668,6 @@ function ViewerStage({
                   durationMs={item.duration_ms}
                   chromeVisible={chromeVisible}
                   onToggleChrome={() => setChromeVisible((shown) => !shown)}
-                  bottomInset={bottomInset}
                 />
               ) : (
                 <ZoomableImage uri={resolveUri(item.url)} width={width} height={height} />
@@ -665,47 +702,78 @@ function ViewerStage({
           </Animated.View>
         </View>
 
-        {/* The context overlay: no fill, no card, no handle — the story's
-            attribution and its opening words sit straight on the picture, with
-            one bold link out. `onLayout` publishes its height so a video's
-            control bar floats above it rather than behind the text
-            (KNOT-020k-fix3). */}
+        {/* The story context, as one unit: a gradient that dims the bottom of the
+            frame and fades to nothing above the author line, and the text sitting
+            on it. Nothing is filled or rounded, so the picture still runs edge to
+            edge; the dim is what makes white type readable over any frame
+            (KNOT-020k-fix4). */}
         {story != null ? (
-          <Animated.View
-            style={[styles.context, { opacity: chromeOpacity }]}
-            pointerEvents={chromeVisible || !videoPage ? 'box-none' : 'none'}
-            onLayout={(event) => setContextHeight(event.nativeEvent.layout.height)}
-          >
-            <AuthorLine
-              displayName={story.authorDisplayName}
-              avatarUrl={story.authorAvatarUrl}
-              createdAt={story.createdAt}
-              rooted={story.authorRooted ?? null}
-              size="medium"
-              timeFormat="short"
-              tone="media"
-            />
-
-            <Text style={[typeScale.h3, styles.contextTitle]} numberOfLines={2}>
-              {story.title}
-            </Text>
-
-            {snippet.text === '' ? null : (
-              <Text style={[typeScale.body, styles.contextBody]} numberOfLines={CONTEXT_BODY_LINES}>
-                {snippet.text}
-              </Text>
-            )}
-
-            <Pressable
-              style={styles.readMore}
-              onPress={handleReadMore}
-              hitSlop={spacing.sm}
-              accessibilityRole="link"
-              accessibilityLabel={`Read more of ${story.title}`}
+          <>
+            <Animated.View
+              style={[styles.scrim, { height: contextHeight + spacing.md, opacity: chromeOpacity }]}
+              pointerEvents="none"
             >
-              <Text style={[typeScale.button, styles.readMoreText]}>Read more...</Text>
-            </Pressable>
-          </Animated.View>
+              <Svg width="100%" height="100%">
+                <Defs>
+                  <LinearGradient id="knotViewerScrim" x1="0" y1="0" x2="0" y2="1">
+                    <Stop offset="0" stopColor={colors.bg.theater} stopOpacity={0} />
+                    <Stop offset="1" stopColor={colors.bg.theater} stopOpacity={0.9} />
+                  </LinearGradient>
+                </Defs>
+                <Rect width="100%" height="100%" fill="url(#knotViewerScrim)" />
+              </Svg>
+            </Animated.View>
+
+            <Animated.View
+              style={[
+                styles.context,
+                videoPage ? styles.contextAboveControls : null,
+                { opacity: chromeOpacity },
+              ]}
+              pointerEvents={chromeVisible || !videoPage ? 'box-none' : 'none'}
+              onLayout={(event) => setContextHeight(event.nativeEvent.layout.height)}
+            >
+              <View style={styles.authorRow}>
+                <Avatar
+                  uri={avatarUri}
+                  displayName={authorName}
+                  size="sm"
+                  accessibilityLabel={
+                    authorName === '' ? 'Author profile picture' : `${authorName}'s profile picture`
+                  }
+                />
+                {authorName === '' ? null : (
+                  <Text style={[typeScale.body, styles.authorText]} numberOfLines={1}>
+                    <Text style={styles.authorName}>{authorName}</Text>
+                    {timestamp === '' ? null : ` · ${timestamp}`}
+                  </Text>
+                )}
+              </View>
+
+              <Text style={[typeScale.h3, styles.contextTitle]} numberOfLines={2}>
+                {story.title}
+              </Text>
+
+              {snippet.text === '' ? null : (
+                <Text
+                  style={[typeScale.body, styles.contextBody]}
+                  numberOfLines={CONTEXT_BODY_LINES}
+                >
+                  {snippet.text}
+                </Text>
+              )}
+
+              <Pressable
+                style={styles.readMore}
+                onPress={handleReadMore}
+                hitSlop={spacing.sm}
+                accessibilityRole="link"
+                accessibilityLabel={`Read more of ${story.title}`}
+              >
+                <Text style={[typeScale.button, styles.readMoreText]}>Read more...</Text>
+              </Pressable>
+            </Animated.View>
+          </>
         ) : null}
       </Animated.View>
     </>
@@ -756,8 +824,8 @@ const createStyles = (colors: ThemeColors) =>
       height: '100%',
       width: '100%',
     },
-    // The context overlay: no surface at all. It sits on the media, so its ink is
-    // the media ink and the picture runs behind the words (KNOT-020k-fix3).
+    // The context overlay: no surface of its own. The gradient below supplies the
+    // dim; the text is media ink and the picture runs behind it (KNOT-020k-fix4).
     context: {
       bottom: 0,
       gap: spacing.xs,
@@ -766,6 +834,29 @@ const createStyles = (colors: ThemeColors) =>
       paddingHorizontal: layout.screenPaddingFeed,
       position: 'absolute',
       right: 0,
+    },
+    // On a video the text clears the transport, which is anchored to the bottom of
+    // the page; on an image there is nothing to clear (KNOT-020k-fix4).
+    contextAboveControls: {
+      paddingBottom: VIDEO_CONTROLS_HEIGHT + spacing.xs,
+    },
+    // Between the gradient's dim and the video under it.
+    scrim: {
+      bottom: 0,
+      left: 0,
+      position: 'absolute',
+      right: 0,
+    },
+    // One bold line: `[avatar] [name] · [time]`, and nothing else — the Rooted
+    // badge stays on the surfaces that have room to explain it (KNOT-020k-fix4).
+    authorRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    authorText: mediaOverlayText(colors),
+    authorName: {
+      fontWeight: fontWeights.bold,
     },
     contextBody: mediaOverlayText(colors),
     contextTitle: mediaOverlayText(colors),

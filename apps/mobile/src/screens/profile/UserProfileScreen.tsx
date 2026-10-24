@@ -176,7 +176,7 @@ function CardMedia({
   readonly card: ProfileCard;
   /** The activity's id, used as the viewer item's key. */
   readonly mediaId: string;
-  /** The story context the viewer's sheet presents (KNOT-020k-fix2). */
+  /** The story context the viewer's overlay presents. */
   readonly viewerStory: ViewerStory;
   readonly isVisible: boolean;
   readonly isMuted: boolean;
@@ -742,17 +742,17 @@ export default function UserProfileScreen({
             return null;
           }
 
-          // The viewer's contextual sheet presents the card's own content and its
-          // author, who on a wall is the person whose profile this is. The profile
-          // payload carries no signal counts, so the sheet's bar starts empty and
-          // works against the story the card belongs to (KNOT-020k-fix2).
+          // The viewer's overlay presents the card's own content and its author,
+          // who on a wall is the person whose profile this is. `media` is empty on
+          // purpose: a card carries one preview, so `App` reads the story's whole
+          // gallery before opening the viewer (KNOT-020k-fix4).
           const viewerStory: ViewerStory = {
             storyId: item.kind === 'version' ? item.payload.story_id : item.id,
             title: card.title,
             body: card.preview,
+            media: [],
             authorDisplayName: profile?.display_name,
             authorAvatarUrl: profile?.avatar_url ?? null,
-            authorRooted: profile?.rooted ?? null,
             createdAt: item.created_at,
           };
 

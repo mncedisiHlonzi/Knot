@@ -9,7 +9,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { Pause, Play, SpeakerHigh, SpeakerSlash } from 'phosphor-react-native';
+import { SpeakerHigh, SpeakerSlash } from 'phosphor-react-native';
 import Video, { type OnLoadData } from 'react-native-video';
 
 import {
@@ -27,21 +27,12 @@ import { scrubSeconds, viewerProgress, viewerTimeLabel } from './mediaViewer';
 /**
  * Whether a video starts muted.
  *
- * The app's rule for a video that starts itself is that it must never make a
- * sound (FeedVideo). A viewer opened on purpose is a different context — the
- * person chose to watch — but the tap that opened it did not ask for audio, so
- * it starts muted and the unmute control is the right-hand toggle of the control
- * bar (KNOT-020k). Flip this one constant to start with sound.
+ * The viewer is opened deliberately — the person tapped the media to watch it —
+ * so its video starts with sound (KNOT-020k-fix4). Mute stays one tap away in the
+ * control bar, and the Feed's in-place previews keep their own always-muted rule
+ * (`FeedVideo`).
  */
-const START_MUTED = true;
-
-/** The pause disc drawn mid-picture while the video is not running. */
-const CENTRE_DISC_SIZE = 68;
-const CENTRE_ICON_SIZE = 30;
-
-/** The control bar's own play/pause target. */
-const PLAY_BUTTON_SIZE = 40;
-const PLAY_ICON_SIZE = 22;
+const START_MUTED = false;
 
 /** The mute control's disc and glyph. */
 const MUTE_DISC_SIZE = 36;
@@ -55,8 +46,19 @@ const THUMB_ACTIVE_SIZE = 16;
 /** The touch band around the scrub track, so a 3pt line is still grabbable. */
 const TRACK_TOUCH_HEIGHT = 32;
 
-/** The control bar's inset from the page's sides. */
-const BAR_INSET = spacing.md;
+/** The gap between the scrub line and the transport row. */
+const CONTROLS_GAP = spacing.xs;
+
+/** The bar's own bottom padding, and its distance from the page's bottom edge. */
+const CONTROLS_PADDING = spacing.sm;
+const BAR_BOTTOM = spacing.sm;
+
+/**
+ * The transport stack's total height, exported so the viewer can keep the story
+ * text clear of it instead of guessing (KNOT-020k-fix4).
+ */
+export const VIDEO_CONTROLS_HEIGHT =
+  TRACK_TOUCH_HEIGHT + CONTROLS_GAP + MUTE_DISC_SIZE + CONTROLS_PADDING + BAR_BOTTOM;
 
 type VideoPlayerProps = {
   /** The resolved, absolute URL of the video. */
@@ -80,36 +82,37 @@ type VideoPlayerProps = {
   /** The duration the payload knows, in milliseconds, to seed the total time. */
   readonly durationMs?: number | null;
   /**
-   * Whether the viewer's chrome — its top bar and this control bar — is showing.
+   * Whether the viewer's chrome — its top bar and this transport bar — is showing.
    *
    * The viewer owns this, because a tap on the picture must hide both bars at
    * once; the player only draws and fades what the viewer decides
    * (KNOT-020k-fix2).
    */
   readonly chromeVisible: boolean;
-  /** Called when the picture itself is tapped, to show or hide that chrome. */
-  readonly onToggleChrome: () => void;
   /**
-   * How far the control bar floats above the page's bottom edge, in points. The
-   * viewer passes the context overlay's measured height so the bar is never
-   * covered by it (KNOT-020k-fix2).
+   * Called when the picture itself is tapped. The viewer hides or shows its chrome
+   * from this, and the player toggles playback with it — the picture is the
+   * play/pause control (KNOT-020k-fix4).
    */
-  readonly bottomInset?: number;
+  readonly onToggleChrome: () => void;
 };
 
 /**
- * The media viewer's video page: a full-bleed player with its own controls.
+ * The media viewer's video page: a full-bleed player with its own transport.
  *
  * The platform controls are deliberately unused — they are a light, stock sheet
- * that breaks the theatre — so this draws a modern floating bar: a thin scrub
- * line that swells into a grabbable handle while a finger is on it, and beneath
- * it the play/pause control, the running time (`0:12 / 0:45`) and the mute
- * toggle. While the picture is still, a single pause disc sits over it; a
- * playing video is left clean (KNOT-020k-fix2).
+ * that breaks the theatre — and so is any persistent button: the picture itself is
+ * the play/pause control, and a tap on it also hides or shows the chrome. What is
+ * drawn is only a transparent strip along the bottom: a thin scrub line that
+ * swells into a grabbable handle under the finger, the running time
+ * (`0:12 / 0:45`), and the mute toggle. Nothing is filled behind it, so the frame
+ * runs behind the controls and only the viewer's gradient scrim dims them
+ * (KNOT-020k-fix4).
  *
  * Chrome visibility belongs to the viewer: tapping the picture calls
- * `onToggleChrome`, so the top bar and this bar hide and return together, and
- * the tap never closes the viewer — that is the gallery's swipe-down gesture.
+ * `onToggleChrome` and `togglePlayback` together, so the top bar, the transport
+ * and the story overlay hide and return as one, and the tap never closes the
+ * viewer — that is the gallery's swipe-down gesture.
  *
  * The chrome fades with `Animated` on the native driver. The scrub bar is a
  * `PanResponder`: a touch anywhere on its band seeks there on release, and a drag
@@ -124,7 +127,6 @@ export default function VideoPlayer({
   durationMs,
   chromeVisible,
   onToggleChrome,
-  bottomInset = spacing.xl,
 }: VideoPlayerProps): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -271,12 +273,15 @@ export default function VideoPlayer({
 
       {loaded ? null : <ActivityIndicator style={styles.loader} color={colors.text.onMedia} />}
 
-      {/* The tap layer spans the whole picture and sits under the controls, so a
-          tap on the video toggles the viewer's chrome while a tap on a control
-          still reaches that control (KNOT-020k-fix2). */}
+      {/* The picture is the control: a tap shows or hides the chrome and starts or
+          pauses playback (KNOT-020k-fix4). The controls sit above this layer, so
+          their own taps still reach them. */}
       <Pressable
         style={StyleSheet.absoluteFill}
-        onPress={onToggleChrome}
+        onPress={() => {
+          onToggleChrome();
+          togglePlayback();
+        }}
         accessibilityRole="button"
         accessibilityLabel={chromeVisible ? 'Hide video controls' : 'Show video controls'}
       />
@@ -285,25 +290,7 @@ export default function VideoPlayer({
         style={[styles.overlay, { opacity: chromeOpacity }]}
         pointerEvents={chromeVisible ? 'box-none' : 'none'}
       >
-        {/* The pause disc is drawn only while the picture is still: a playing
-            video is a clean image with one quiet bar under it. */}
-        {playing ? null : (
-          <Pressable
-            style={[
-              styles.centreDisc,
-              // Centred in the picture the sheet leaves visible, not in the whole
-              // window, so the disc never hides behind the sheet.
-              { top: (height - bottomInset) / 2 - CENTRE_DISC_SIZE / 2 },
-            ]}
-            onPress={togglePlayback}
-            accessibilityRole="button"
-            accessibilityLabel={ended ? 'Replay video' : 'Play video'}
-          >
-            <Play color={colors.text.onMedia} size={CENTRE_ICON_SIZE} weight="fill" />
-          </Pressable>
-        )}
-
-        <View style={[styles.controlBar, { bottom: bottomInset }]}>
+        <View style={styles.controlBar}>
           <View
             style={styles.trackTouch}
             onLayout={(event) => {
@@ -326,19 +313,6 @@ export default function VideoPlayer({
           </View>
 
           <View style={styles.buttonRow}>
-            <Pressable
-              style={styles.playButton}
-              onPress={togglePlayback}
-              accessibilityRole="button"
-              accessibilityLabel={playing ? 'Pause video' : 'Play video'}
-            >
-              {playing ? (
-                <Pause color={colors.text.onMedia} size={PLAY_ICON_SIZE} weight="fill" />
-              ) : (
-                <Play color={colors.text.onMedia} size={PLAY_ICON_SIZE} weight="fill" />
-              )}
-            </Pressable>
-
             <Text style={[typeScale.label, tabularNums, styles.time]}>
               {`${viewerTimeLabel(shownTime)} / ${viewerTimeLabel(duration)}`}
             </Text>
@@ -370,34 +344,20 @@ const createStyles = (colors: ThemeColors) =>
       alignItems: 'center',
       flexDirection: 'row',
       gap: spacing.md,
-      marginTop: spacing.xs,
-    },
-    // The pause disc: a scrim disc behind the glyph, because the frame behind it
-    // may be any brightness. Its `top` is supplied inline, from the visible area.
-    centreDisc: {
-      alignItems: 'center',
-      alignSelf: 'center',
-      backgroundColor: colors.scrim.overlay,
-      borderRadius: radius.pill,
-      height: CENTRE_DISC_SIZE,
-      justifyContent: 'center',
-      position: 'absolute',
-      width: CENTRE_DISC_SIZE,
+      marginTop: CONTROLS_GAP,
     },
     container: {
       backgroundColor: colors.bg.theater,
     },
-    // The floating bar: one translucent card that holds the scrub line and, under
-    // it, the transport row. It rides above the contextual sheet rather than
-    // behind it (KNOT-020k-fix2).
+    // A transparent strip, not a card: the only thing that dims the transport is
+    // the viewer's gradient behind it, so the frame is never boxed in
+    // (KNOT-020k-fix4). Its width matches the story text's column.
     controlBar: {
-      backgroundColor: colors.scrim.overlay,
-      borderRadius: radius.xl,
-      left: BAR_INSET,
-      paddingHorizontal: spacing.lg,
-      paddingVertical: spacing.sm,
+      bottom: BAR_BOTTOM,
+      left: spacing.lg,
+      paddingBottom: CONTROLS_PADDING,
       position: 'absolute',
-      right: BAR_INSET,
+      right: spacing.lg,
     },
     loader: {
       ...StyleSheet.absoluteFillObject,
@@ -412,12 +372,6 @@ const createStyles = (colors: ThemeColors) =>
     },
     overlay: {
       ...StyleSheet.absoluteFillObject,
-    },
-    playButton: {
-      alignItems: 'center',
-      height: PLAY_BUTTON_SIZE,
-      justifyContent: 'center',
-      width: PLAY_BUTTON_SIZE,
     },
     spacer: {
       flex: 1,
