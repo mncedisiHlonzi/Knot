@@ -718,7 +718,10 @@ const createStyles = (colors: ThemeColors) =>
       flexShrink: 1,
     },
     // The language-tree row: a bordered, intrinsic-width button whose left side
-    // names the language and whose right side counts the versions (KNOT-025).
+    // names the language and whose right side counts the versions (KNOT-025). It is
+    // the detail screen's counts row, and its air is symmetric above and below the
+    // 48pt control (`marginVertical`) — the balance the Feed's and Profile's meta rows
+    // carry (KNOT-020k-fix21).
     languageRow: {
       alignItems: 'center',
       backgroundColor: colors.bg.paper,
@@ -728,8 +731,7 @@ const createStyles = (colors: ThemeColors) =>
       flexDirection: 'row',
       height: 48,
       justifyContent: 'space-between',
-      marginBottom: spacing.lg,
-      marginTop: spacing.lg,
+      marginVertical: spacing.lg,
       paddingHorizontal: spacing.md,
     },
     page: {

@@ -1065,3 +1065,74 @@ describe('FeedEntry hide control', () => {
     expect(bareStyle[1]).toBeNull();
   });
 });
+
+/**
+ * The first element carrying a test identifier, depth-first — the direct-call
+ * equivalent of `getByTestId` (KNOT-020k-fix21).
+ */
+function findByTestID(
+  node: unknown,
+  testID: string,
+): { props?: Record<string, unknown> } | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findByTestID(child, testID);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+  if (node === null || node === undefined || typeof node !== 'object') {
+    return undefined;
+  }
+
+  const element = node as { props?: { children?: unknown; testID?: unknown } };
+  if (element.props?.testID === testID) {
+    return element as { props?: Record<string, unknown> };
+  }
+  if (element.props !== undefined) {
+    return findByTestID(element.props.children, testID);
+  }
+  return undefined;
+}
+
+describe('the meta row', () => {
+  it('carries symmetric vertical padding, so the counts sit level', () => {
+    const element = FeedEntry({ story, onPress: () => undefined });
+    const row = findByTestID(element, 'feed-meta-row');
+    const style = row?.props?.style as Record<string, unknown> | undefined;
+
+    expect(row).toBeDefined();
+    expect(style?.paddingVertical).toBe(spacing.md);
+    // No one-sided margin: the step above and below the text is the same.
+    expect(style?.marginTop).toBeUndefined();
+    expect(style?.marginBottom).toBeUndefined();
+  });
+
+  it('hands the Feed band a card with no trailing inset, so the band sits flush', () => {
+    // The row owns the bottom space, so the card must not add a second inset under
+    // it — otherwise the counts look low in the card (KNOT-020k-fix21).
+    const element = FeedEntry({
+      story,
+      onPress: () => undefined,
+      showBottomHairline: false,
+    });
+    const style = element.props.style as readonly Record<string, unknown>[];
+
+    expect(style[2]).toEqual({ paddingBottom: 0 });
+  });
+
+  it('keeps the card inset when an entry has no counts to show', () => {
+    const noCounts = { ...story, version_count: 0, comment_count: 0, reactions: undefined };
+    const element = FeedEntry({
+      story: noCounts,
+      onPress: () => undefined,
+      showBottomHairline: false,
+    });
+    const style = element.props.style as readonly Record<string, unknown>[];
+
+    expect(findByTestID(element, 'feed-meta-row')).toBeUndefined();
+    expect(style[2]).toEqual({ paddingBottom: spacing.lg });
+  });
+});

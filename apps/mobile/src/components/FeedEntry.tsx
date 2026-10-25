@@ -438,7 +438,10 @@ export default function FeedEntry({
       style={[
         styles.entry,
         showSocialProof ? styles.entryWithSocialProof : null,
-        showBottomHairline ? null : styles.entryCard,
+        // A card that ends in a meta row hands its bottom inset to that row, so the
+        // counts sit symmetrically and the Feed's band sits flush under them
+        // (KNOT-020k-fix21).
+        showBottomHairline ? null : metaLine === '' ? styles.entryCard : styles.entryCardWithMeta,
       ]}
       onPress={onPress}
       accessibilityRole="button"
@@ -592,11 +595,15 @@ export default function FeedEntry({
       ) : null}
 
       <View style={styles.padded}>
-        {metaLine !== '' ? (
-          <Text style={[typeScale.label, tabularNums, styles.metaText]}>{metaLine}</Text>
-        ) : null}
+        {metaLine === '' ? null : (
+          <View style={styles.metaRow} testID="feed-meta-row">
+            <Text style={[typeScale.label, tabularNums, styles.metaText]}>{metaLine}</Text>
+          </View>
+        )}
 
-        {showBottomHairline ? <View style={styles.hairline} /> : null}
+        {showBottomHairline ? (
+          <View style={[styles.hairline, metaLine === '' ? styles.hairlineNoMeta : null]} />
+        ) : null}
       </View>
     </Pressable>
   );
@@ -666,11 +673,24 @@ const createStyles = (colors: ThemeColors) =>
     entryCard: {
       paddingBottom: spacing.lg,
     },
+    // ...and with a meta row that inset moves INTO the row, so the counts sit level
+    // between the media above and the band below instead of hugging the media
+    // (KNOT-020k-fix21).
+    entryCardWithMeta: {
+      paddingBottom: 0,
+    },
     // One step darker than the hairline, so a rule between entries is clearly
-    // visible rather than dissolving into the canvas (KNOT-031).
+    // visible rather than dissolving into the canvas (KNOT-031). The meta row already
+    // contributes `spacing.md` below its text, so the rule only adds the remainder of
+    // the old 16pt gap (KNOT-020k-fix21).
     hairline: {
       backgroundColor: colors.border.divider,
       height: 1,
+      marginTop: spacing.xs,
+    },
+    // An entry with no counts at all draws no meta row, so the rule takes the whole
+    // gap itself (KNOT-020k-fix21).
+    hairlineNoMeta: {
       marginTop: spacing.lg,
     },
     media: {
@@ -697,10 +717,18 @@ const createStyles = (colors: ThemeColors) =>
       width: '100%',
     },
     // The stats row carries real counts, so it reads in the secondary ink and the
-    // bolder label voice rather than as a caption (KNOT-031).
+    // bolder label voice rather than as a caption (KNOT-031). Its vertical padding is
+    // symmetric — `spacing.md` above and below the text — and the card adds no bottom
+    // inset of its own, so the line sits level between the media and the band
+    // (KNOT-020k-fix21).
+    metaRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      paddingVertical: spacing.md,
+    },
     metaText: {
       color: colors.text.secondary,
-      marginTop: spacing.md,
+      flexShrink: 1,
     },
     // The text column keeps the feed inset; only the media leaves it.
     padded: {

@@ -759,7 +759,10 @@ export default function UserProfileScreen({
 
           return (
             <Pressable
-              style={styles.card}
+              // A card that ends in a meta row hands its bottom inset to that row, so
+              // the counts sit symmetrically between the media and the card's hairline
+              // (KNOT-020k-fix21).
+              style={[styles.card, card.meta === '' ? null : styles.cardWithMeta]}
               onPress={() => handleOpenActivity(item)}
               accessibilityRole="button"
               accessibilityLabel={card.title}
@@ -951,19 +954,27 @@ const createStyles = (colors: ThemeColors) =>
     cardAuthor: {
       marginBottom: spacing.md,
     },
+    // A card whose last child is the meta row gives its bottom inset to that row
+    // (see `cardMetaRow`), so the counts are not pushed down towards the hairline
+    // (KNOT-020k-fix21).
+    cardWithMeta: {
+      paddingBottom: 0,
+    },
     // The card's stats line, in the Feed's voice: the bolder `label` size in the
-    // secondary ink, with the same 12pt gap under the media the Feed uses. The row
-    // it sits in centres it vertically, so it reads as a band under the media
-    // rather than as text hugging the media's bottom edge (KNOT-020j-fix).
+    // secondary ink. It is centred vertically in its row, so it reads as a band under
+    // the media rather than as text hugging the media's bottom edge (KNOT-020j-fix).
     cardMeta: {
       color: colors.text.secondary,
       flexShrink: 1,
     },
+    // The row's vertical padding is symmetric — `spacing.md` above and below the text
+    // — and the card adds no bottom inset of its own, so the counts sit level between
+    // the media and the card's hairline (KNOT-020k-fix21).
     cardMetaRow: {
       alignItems: 'center',
       flexDirection: 'row',
-      marginTop: spacing.md,
       minHeight: 20,
+      paddingVertical: spacing.md,
     },
     // The card's media preview: full-bleed, full-width, and never a player — a
     // still image, or a video's first frame (KNOT-020g-fix3, KNOT-020g-fix5). Its
