@@ -123,7 +123,7 @@ func rootedSignal() rooted.Signal {
 func newRouterWithRooted(t *testing.T, logger *slog.Logger, enricher testEnricher, storiesService StoriesService, versionsService VersionsService, conversationsService ConversationsService) http.Handler {
 	t.Helper()
 
-	authHandler, err := NewAuthHandler(&fakeAuthService{}, logger)
+	authHandler, err := NewAuthHandler(&fakeAuthService{}, newTestLimiter(t), logger)
 	if err != nil {
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
@@ -150,7 +150,7 @@ func newRouterWithRooted(t *testing.T, logger *slog.Logger, enricher testEnriche
 
 	discoveryHandler := newTestDiscoveryHandler(t, logger, fakeDiscoveryService{})
 
-	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID}, logger)
+	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID, sessionID: testSessionID}, logger)
 	if err != nil {
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}

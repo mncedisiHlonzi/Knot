@@ -17,7 +17,7 @@ const uniqueViolation = "23505"
 
 // userColumns is the canonical SELECT/RETURNING column list. It is a constant so
 // every query in this file stays consistent with scanUser.
-const userColumns = `id, email, phone, password_hash, display_name, role, preferred_languages, approximate_location, avatar_url, created_at, updated_at`
+const userColumns = `id, email, phone, password_hash, display_name, role, preferred_languages, approximate_location, avatar_url, created_at, updated_at, email_verified_at`
 
 // PostgresStore is the pgx-backed implementation of UserStore.
 //
@@ -51,7 +51,7 @@ func (s *PostgresStore) CreateUser(ctx context.Context, user *User) (*User, erro
 	row := s.pool.QueryRow(
 		ctx,
 		query,
-		normalizeEmail(user.Email),
+		NormalizeEmail(user.Email),
 		nullIfEmpty(user.Phone),
 		user.PasswordHash,
 		user.DisplayName,
@@ -76,7 +76,7 @@ func (s *PostgresStore) CreateUser(ctx context.Context, user *User) (*User, erro
 func (s *PostgresStore) FindUserByEmail(ctx context.Context, email string) (*User, error) {
 	const query = `SELECT ` + userColumns + ` FROM users WHERE lower(email) = lower($1)`
 
-	user, err := scanUser(s.pool.QueryRow(ctx, query, normalizeEmail(email)))
+	user, err := scanUser(s.pool.QueryRow(ctx, query, NormalizeEmail(email)))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrUserNotFound
@@ -104,6 +104,46 @@ func (s *PostgresStore) FindUserByID(ctx context.Context, id string) (*User, err
 			return nil, ErrUserNotFound
 		}
 		return nil, fmt.Errorf("identity: find user by id: %w", err)
+	}
+
+	return user, nil
+}
+
+// FindActiveUserByEmail returns a user that is not inside its deletion window.
+//
+// The deletion filter lives in SQL rather than in Go so a deleted account is
+// indistinguishable from an absent one at every layer above the store, which is
+// what keeps sign-in from confirming that an account exists but is closing
+// (KNOT-ADR-081).
+func (s *PostgresStore) FindActiveUserByEmail(ctx context.Context, email string) (*User, error) {
+	const query = `SELECT ` + userColumns + ` FROM users
+		WHERE lower(email) = lower($1) AND deleted_at IS NULL`
+
+	user, err := scanUser(s.pool.QueryRow(ctx, query, NormalizeEmail(email)))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("identity: find active user by email: %w", err)
+	}
+
+	return user, nil
+}
+
+// FindActiveUserByID returns a user that is not inside its deletion window.
+func (s *PostgresStore) FindActiveUserByID(ctx context.Context, id string) (*User, error) {
+	if !isUUID(id) {
+		return nil, ErrUserNotFound
+	}
+
+	const query = `SELECT ` + userColumns + ` FROM users WHERE id = $1 AND deleted_at IS NULL`
+
+	user, err := scanUser(s.pool.QueryRow(ctx, query, id))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("identity: find active user by id: %w", err)
 	}
 
 	return user, nil
@@ -138,8 +178,7 @@ func (s *PostgresStore) UpdateAvatarURL(ctx context.Context, userID, avatarURL s
 
 // FindUsersByID returns the users with the given ids. Malformed ids and ids that
 // match no row are simply absent from the result, and the order is not
-// guaranteed.
-//
+// guaranteed.//
 // It exists so a page of notifications can resolve every distinct actor with one
 // query instead of one query per notification. Duplicates are removed here as
 // well as in the service so the parameter list can never grow past the caller's
@@ -191,6 +230,63 @@ func (s *PostgresStore) FindUsersByID(ctx context.Context, ids []string) ([]*Use
 	return users, nil
 }
 
+// MarkEmailVerified records that the user's address was proven and returns the
+// stored row.
+//
+// The original timestamp is kept on a second verification: `COALESCE` makes the
+// write idempotent, so a replayed verification link cannot move the moment the
+// account became trustworthy. A malformed id and an id with no row are both
+// ErrUserNotFound, for the same reason as FindUserByID.
+func (s *PostgresStore) MarkEmailVerified(ctx context.Context, userID string) (*User, error) {
+	if !isUUID(userID) {
+		return nil, ErrUserNotFound
+	}
+
+	const query = `
+		UPDATE users
+		SET email_verified_at = COALESCE(email_verified_at, now()), updated_at = now()
+		WHERE id = $1
+		RETURNING ` + userColumns
+
+	verified, err := scanUser(s.pool.QueryRow(ctx, query, userID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("identity: mark email verified: %w", err)
+	}
+
+	return verified, nil
+}
+
+// UpdatePasswordHash replaces the stored password credential and returns the
+// updated row.
+//
+// `users.password_hash` is the deprecated home of the password secret
+// (KNOT-ADR-079); a reset writes it here and the auth service refreshes the
+// matching `credentials` row, so both stay in step until the column is retired.
+func (s *PostgresStore) UpdatePasswordHash(ctx context.Context, userID, passwordHash string) (*User, error) {
+	if !isUUID(userID) {
+		return nil, ErrUserNotFound
+	}
+
+	const query = `
+		UPDATE users
+		SET password_hash = $2, updated_at = now()
+		WHERE id = $1
+		RETURNING ` + userColumns
+
+	updated, err := scanUser(s.pool.QueryRow(ctx, query, userID, passwordHash))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("identity: update password hash: %w", err)
+	}
+
+	return updated, nil
+}
+
 // rowScanner is the subset of pgx.Row and pgx.Rows that scanUser needs.
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -219,6 +315,7 @@ func scanUser(row rowScanner) (*User, error) {
 		&avatarURL,
 		&user.CreatedAt,
 		&user.UpdatedAt,
+		&user.EmailVerifiedAt,
 	)
 	if err != nil {
 		return nil, err

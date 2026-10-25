@@ -38,6 +38,15 @@ var (
 	// ErrInvalidToken is returned when a JWT is malformed, expired, signed with
 	// the wrong key, or of the wrong token type.
 	ErrInvalidToken = errors.New("identity: invalid token")
+	// ErrEmailNotVerified is returned when sign-in is attempted on an account
+	// whose address has never been proven. It is reported separately from
+	// ErrInvalidCredentials because the remedy is different — check the inbox —
+	// and because the caller has already proved the password, so naming the state
+	// reveals nothing they did not know (KNOT-ADR-083).
+	ErrEmailNotVerified = errors.New("identity: email not verified")
+	// ErrAccountDeleted is returned when an account is inside its deletion window.
+	// The row still exists; it is not a person any more (KNOT-ADR-081).
+	ErrAccountDeleted = errors.New("identity: account deleted")
 )
 
 // ValidationError describes a rejected field on a request. Handlers expose the
@@ -78,6 +87,11 @@ type User struct {
 	AvatarURL string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	// EmailVerifiedAt is when the address was proven to belong to this account,
+	// or nil while it has not been. Sign-in requires it to be set (KNOT-ADR-083),
+	// and the zero value of a freshly registered account is nil, which is why it is
+	// a pointer rather than a time.Time: "never verified" is not a moment.
+	EmailVerifiedAt *time.Time
 }
 
 // TokenType values carried in the "typ" claim so an access token can never be

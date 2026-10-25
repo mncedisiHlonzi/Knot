@@ -36,6 +36,29 @@ func withUserID(ctx context.Context, userID string) context.Context {
 	return context.WithValue(ctx, userIDContextKey{}, userID)
 }
 
+// sessionIDContextKey is the context key under which the access token's session
+// claim is stored. Like userIDContextKey it is a private struct type, so no other
+// package can collide with it.
+type sessionIDContextKey struct{}
+
+// SessionIDFromContext returns the session the presented access token belongs to.
+//
+// The second result is false for a token minted without a session claim — an
+// older token, or one issued for a flow that has no device session. Handlers must
+// treat false as "no session to act on" rather than as an empty id.
+func SessionIDFromContext(ctx context.Context) (string, bool) {
+	sessionID, ok := ctx.Value(sessionIDContextKey{}).(string)
+	if !ok || sessionID == "" {
+		return "", false
+	}
+	return sessionID, true
+}
+
+// withSessionID returns ctx carrying the access token's session claim.
+func withSessionID(ctx context.Context, sessionID string) context.Context {
+	return context.WithValue(ctx, sessionIDContextKey{}, sessionID)
+}
+
 // AccessTokenParser is the slice of identity.TokenIssuer that the middleware
 // needs. Depending on an interface (rather than the concrete issuer) keeps
 // middleware tests free of real JWT signing material.
@@ -121,7 +144,7 @@ func (m *AuthMiddleware) Require(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		next(w, r.WithContext(m.withBlocks(withUserID(r.Context(), claims.Subject), claims.Subject)))
+		next(w, r.WithContext(m.withBlocks(authenticatedContext(r, claims), claims.Subject)))
 	}
 }
 
@@ -149,8 +172,22 @@ func (m *AuthMiddleware) Optional(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		next(w, r.WithContext(m.withBlocks(withUserID(r.Context(), claims.Subject), claims.Subject)))
+		next(w, r.WithContext(m.withBlocks(authenticatedContext(r, claims), claims.Subject)))
 	}
+}
+
+// authenticatedContext returns the request context carrying the token's subject
+// and, when the token names one, its session.
+//
+// The session claim is what lets `POST /auth/logout` and `GET /auth/sessions` act
+// on the caller's own session without trusting an id from the request body.
+func authenticatedContext(r *http.Request, claims *identity.Claims) context.Context {
+	ctx := withUserID(r.Context(), claims.Subject)
+	if claims.SessionID != "" {
+		ctx = withSessionID(ctx, claims.SessionID)
+	}
+
+	return ctx
 }
 
 // withBlocks attaches the viewer's mutual block set to ctx, so the content stores

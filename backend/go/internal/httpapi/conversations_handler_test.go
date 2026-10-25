@@ -256,7 +256,7 @@ func newConversationsHandlerWithService(t *testing.T, service ConversationsServi
 func newConversationsRouter(t *testing.T, logger *slog.Logger, service ConversationsService) http.Handler {
 	t.Helper()
 
-	authHandler, err := NewAuthHandler(&fakeAuthService{}, logger)
+	authHandler, err := NewAuthHandler(&fakeAuthService{}, newTestLimiter(t), logger)
 	if err != nil {
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
@@ -283,7 +283,7 @@ func newConversationsRouter(t *testing.T, logger *slog.Logger, service Conversat
 
 	discoveryHandler := newTestDiscoveryHandler(t, logger, fakeDiscoveryService{})
 
-	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID}, logger)
+	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID, sessionID: testSessionID}, logger)
 	if err != nil {
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}

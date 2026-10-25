@@ -333,7 +333,7 @@ func newAvatarTestRouter(t *testing.T, env *avatarTestEnv) http.Handler {
 
 	logger := discardLogger()
 
-	authHandler, err := NewAuthHandler(&fakeAuthService{}, logger)
+	authHandler, err := NewAuthHandler(&fakeAuthService{}, newTestLimiter(t), logger)
 	if err != nil {
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}

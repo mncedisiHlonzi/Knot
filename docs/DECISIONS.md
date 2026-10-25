@@ -2844,3 +2844,171 @@ it (`infrastructure/docker/docker-compose.yml`), and production now needs a mana
 instance. The compensating benefit is that the backend has one place to look for every
 ephemeral concern, and the cache can be unavailable without the API failing to start —
 `NewRedisCache` dials lazily, and `Ping` is the caller's decision about readiness.
+
+## KNOT-ADR-083 — An account cannot sign in until its address is verified
+
+**Context.** KNOT-030 built the storage for verification but nothing used it. An account
+could sign in the moment it existed, on whatever address was typed into the form. That is
+how an account is taken over before its owner ever sees it: register someone else's email,
+and the address that would receive a password reset is yours to control. It is also how a
+notification system ends up mailing strangers.
+
+**Decision.**
+
+- **Registration returns no tokens.** `POST /auth/register` answers 201 with the user and
+  nothing else. Handing out a session and then refusing the first real request would be a
+  contradiction, not a safeguard.
+- **`users.email_verified_at` (migration `0022`) is the gate.** `NULL` means "never
+  proven"; sign-in requires a timestamp. The column is nullable with no default because an
+  account starts unproven, and `MarkEmailVerified` uses `COALESCE` so a replayed link
+  cannot move the moment the account became trustworthy.
+- **The token is stored as a hash, expires in 24 hours, and is single use.** It lives in
+  `verification_tokens`, so a database dump is not a set of usable links.
+- **`403 email_not_verified` is only returned after the password has been checked**, and
+  it is a distinct code rather than `401` so the client can offer "resend the link" instead
+  of "check your password". Naming the state reveals nothing to a caller who has just
+  proved they know the password.
+- **The link is written to the server console** until a provider exists (KNOT-ADR-088).
+
+**Consequences.** Every existing development account became unusable until it verifies,
+which the local workflow in `docs/DEVELOPMENT.md` covers. In exchange, an address is only
+ever on an account that proved it owns it, which is the precondition for every later
+security feature: reset, notification, and account recovery all assume it.
+
+## KNOT-ADR-084 — A user may hold at most five live sessions
+
+**Context.** Sessions are now rows, so they accumulate: every app reinstall, every laptop,
+every emulator is another live refresh token with a 30-day life. Nothing bounded that, and
+an unbounded list is both a security surface (a forgotten token on a lost device) and a
+product problem (a device screen nobody can read).
+
+**Decision.**
+
+- **Five live sessions per account.** After a sign-in writes its session, if the account is
+  over the cap the **oldest** is revoked until it is not. Oldest is the right casualty: it
+  is the one the user is least likely to be holding right now.
+- **The cap is enforced by the service, not the database.** No trigger, no constraint: the
+  rule needs a list and a decision, and the decision belongs where the rest of the policy
+  lives.
+- **A failure to enforce is logged, never raised.** The sign-in itself succeeded; refusing
+  a correct password because an old session could not be closed would turn housekeeping
+  into a lockout. The next sign-in retries.
+- **`ListForUser` is the enumeration**, ordered newest first, so the cap is a slice of its
+  tail rather than a second query with its own ordering rule.
+
+**Consequences.** Five is a product number, not a technical limit: it is a constant
+(`auth.MaxActiveSessions`) so raising it is one line, and the device list is short enough
+to read on a phone. The cost is that a genuinely sixth device silently signs the first one
+out, which is the behaviour every consumer app has trained people to expect.
+
+## KNOT-ADR-085 — Refresh tokens rotate, and a replayed one revokes every session
+
+**Context.** A long-lived refresh token is the most valuable secret Knot issues: it can
+mint access tokens for a month. If it is copied, nothing reveals the copy — both parties
+hold a valid token and the server cannot tell them apart. Rotation is the only mechanism
+that turns a stolen token into evidence.
+
+**Decision.**
+
+- **Every refresh returns a new refresh token and invalidates the old one.** Rotation is a
+  single conditional `UPDATE … WHERE id = $1 AND refresh_token_hash = $2 AND revoked_at IS
+  NULL`, so the check and the swap cannot be separated by a concurrent request: two clients
+  racing with the same token cannot both win.
+- **A refresh token names its session.** It is `<session-uuid>.<secret>` — opaque to the
+  client, but not to the server. Without the session id a replayed token would look
+  identical to a random string: both are simply unknown hashes. The prefix is what makes
+  *reuse* detectable, and the secret is still verified against a stored hash.
+- **Reuse means the token is in two hands, so the account is contained.** Presenting a
+  rotated token revokes **every** session on the account and answers `401`. There is no way
+  to tell the owner from the thief, so the safe answer is to end everything and make both
+  sign in again. The event is logged at warning level with the user and session ids.
+- **A revoked session is not reuse.** Presenting a token for a session that is already dead
+  (signed out, or killed by a previous detection) is answered with `401` and no escalation:
+  there is nothing left to contain, and escalating would let one stale client sign a user
+  out of every device.
+- **Access tokens carry the session id** in a `sid` claim, so logout and the device list act
+  on the caller's own session without trusting an id from the request body.
+
+**Consequences.** Rotation makes the refresh endpoint stateful in a way the client must
+respect: a client that loses the response to a refresh has lost the session and must sign
+in again. That is the price of the property, and it is why the mobile client refreshes
+proactively and treats a failed refresh as a sign-out. The escalation is two statements
+(revoke the session, then revoke all sessions), so a crash between them leaves the
+compromised session revoked and the others alive — the safe direction.
+
+## KNOT-ADR-086 — The password policy is a length plus a letter plus a number
+
+**Context.** KNOT-003 accepted any password of eight characters or more, which permits
+`password` and `11111111`. A policy is needed before verification and reset make passwords
+the only way back into an account.
+
+**Decision.**
+
+- **At least 8 characters, at most 1024 bytes, and at least one letter and one digit.**
+  Length carries the real strength; the composition rule exists to reject the passwords
+  people type in a hurry, not to turn the field into a puzzle.
+- **One implementation, `identity.ValidatePassword`.** Registration, the legacy identity
+  service, and password reset all call it. A policy that exists twice drifts, and the drift
+  is always found by a user who cannot reset a password the app told them was fine.
+- **Server-side only.** The client may mirror the rule for instant feedback, but the server
+  is the authority and the error is a `400 validation_error` naming the `password` field.
+- **The upper bound is bytes, not characters**, because it exists to bound hashing work and
+  prevent a denial of service, not to constrain the user.
+
+**Consequences.** Every test fixture and seed password with no digit had to change, and any
+account created before this task still holds a password that would not pass today's policy
+— which is correct: the policy governs new secrets, and a login is not a password change.
+
+## KNOT-ADR-087 — Password reset is a short-lived Redis token that revokes every session
+
+**Context.** Reset is the flow an attacker uses when they cannot guess a password, and the
+flow a user uses when they have lost one. It needs a credential that is short-lived,
+single-use, and cheap to invalidate, and it has to leave the account in a known state.
+
+**Decision.**
+
+- **The reset token lives in Redis, keyed by its own hash**, with a 30-minute TTL: the
+  shortest life that is still usable by a person who has to find the link. A reset is an
+  emergency, unlike verification, so its window is a twentieth of the verification window.
+- **`POST /auth/forgot-password` always answers `200 { "success": true }`**, for a
+  registered address, an unregistered one, and a malformed one alike. Anything else turns
+  the endpoint into an account enumerator. It is rate limited per address (3 per hour).
+- **Resetting revokes every session.** A password change that left a stolen session alive
+  would not be a reset. The order is password, then revocation, then token deletion: if
+  revocation fails the token is still valid, so the client can retry, and the account never
+  ends up with a new password and sessions authorised by the old one.
+- **The token is deleted after use**, which is what makes it single use. A failure to delete
+  is logged rather than returned: the password has already changed and telling the user
+  otherwise would be untrue; the token expires on its own within the window.
+- **`verification_tokens` still accepts a `password_reset` type but nothing writes it.** The
+  approved design put resets in Redis; consolidating the two is a later decision, recorded
+  here so the duplication is not mistaken for an oversight.
+
+**Consequences.** Redis becomes part of the account-recovery path: if it is unavailable,
+resets fail while sign-in and refresh keep working (the limiter fails open, the reset lookup
+does not). That asymmetry is deliberate and is recorded in `docs/SECURITY.md`.
+
+## KNOT-ADR-088 — Until a provider exists, verification and reset links are logged to the console
+
+**Context.** Email delivery is a whole subsystem — a provider, templates, bounces, a
+sending domain, and a queue — and blocking the identity upgrade on it would leave the
+verification gate unbuildable. The gate is the security property; the delivery channel is
+plumbing.
+
+**Decision.**
+
+- **The service logs the link at `info` level**, with the recipient address, the expiry, and
+  a URL that carries the token: `knot://auth/verify-email?token=…` and
+  `knot://auth/reset-password?token=…`.
+- **The link prefix is configurable** (`WithVerificationLink`, `WithPasswordResetLink`), so
+  a deployment can point it at a web origin without changing the service.
+- **The token is in the log and nowhere else.** It is never returned by an API response:
+  that would make verification a formality and reset an open door.
+- **A real provider is KNOT-031a.** Nothing else in the flow changes when it lands: the
+  service already produces the recipient, the token, and the expiry.
+
+**Consequences.** The MVP is testable end to end today by reading the API's stdout, which
+also means **the API's console output is a credential store during development**: anyone
+who can read the logs can verify an address or reset a password. That is acceptable only
+because there is no real user data yet, and it is the first thing to change before
+production.

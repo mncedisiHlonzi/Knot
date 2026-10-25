@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/mail"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/knot/backend/internal/language"
@@ -86,26 +87,26 @@ func NewService(store UserStore, tokens *TokenIssuer) (*Service, error) {
 // It returns a *ValidationError for bad input and ErrEmailTaken when the email is
 // already registered.
 func (s *Service) Register(ctx context.Context, in RegisterInput) (*AuthResult, error) {
-	email, err := validateEmail(in.Email)
+	email, err := ValidateEmail(in.Email)
 	if err != nil {
 		return nil, err
 	}
-	if err := validatePassword(in.Password); err != nil {
+	if err := ValidatePassword(in.Password); err != nil {
 		return nil, err
 	}
-	displayName, err := validateDisplayName(in.DisplayName)
+	displayName, err := ValidateDisplayName(in.DisplayName)
 	if err != nil {
 		return nil, err
 	}
-	languages, err := validateLanguages(in.PreferredLanguages)
+	languages, err := ValidateLanguages(in.PreferredLanguages)
 	if err != nil {
 		return nil, err
 	}
-	phone, err := validateOptional(in.Phone, "phone", maxPhoneLength)
+	phone, err := ValidateOptional(in.Phone, "phone", maxPhoneLength)
 	if err != nil {
 		return nil, err
 	}
-	location, err := validateOptional(in.ApproximateLocation, "approximate_location", maxLocationLength)
+	location, err := ValidateOptional(in.ApproximateLocation, "approximate_location", maxLocationLength)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +144,7 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*AuthResult, 
 // An unknown email and a wrong password both return ErrInvalidCredentials, with
 // the same work performed, so the endpoint does not leak which accounts exist.
 func (s *Service) Login(ctx context.Context, in LoginInput) (*AuthResult, error) {
-	email := normalizeEmail(in.Email)
+	email := NormalizeEmail(in.Email)
 	if email == "" || in.Password == "" {
 		return nil, ErrInvalidCredentials
 	}
@@ -303,15 +304,15 @@ func (s *Service) issueTokens(userID string) (TokenPair, error) {
 	}, nil
 }
 
-// normalizeEmail trims and lower-cases an address so that lookups and the unique
+// NormalizeEmail trims and lower-cases an address so that lookups and the unique
 // constraint agree on a single canonical form.
-func normalizeEmail(raw string) string {
+func NormalizeEmail(raw string) string {
 	return strings.ToLower(strings.TrimSpace(raw))
 }
 
-// validateEmail normalises and validates an address, returning the canonical form.
-func validateEmail(raw string) (string, error) {
-	email := normalizeEmail(raw)
+// ValidateEmail normalises and validates an address, returning the canonical form.
+func ValidateEmail(raw string) (string, error) {
+	email := NormalizeEmail(raw)
 	if email == "" {
 		return "", &ValidationError{Field: "email", Message: "is required"}
 	}
@@ -328,19 +329,47 @@ func validateEmail(raw string) (string, error) {
 	return email, nil
 }
 
-// validatePassword enforces the minimum length and the upper work bound.
-func validatePassword(password string) error {
+// ValidatePassword enforces the account password policy (KNOT-ADR-086): at least
+// MinPasswordLength characters, at most maxPasswordBytes bytes, and at least one
+// letter and one digit.
+//
+// It is exported because two callers must apply exactly the same rule: this
+// package's registration and the authentication service's registration and
+// password reset. A policy that exists twice drifts, and the drift is always
+// discovered by a user who cannot reset a password the app told them was fine.
+func ValidatePassword(password string) error {
 	if len(password) > maxPasswordBytes {
 		return &ValidationError{Field: "password", Message: fmt.Sprintf("must be at most %d bytes", maxPasswordBytes)}
 	}
 	if utf8.RuneCountInString(password) < MinPasswordLength {
 		return &ValidationError{Field: "password", Message: fmt.Sprintf("must be at least %d characters", MinPasswordLength)}
 	}
+
+	// The composition rule is deliberately weak: length carries most of the
+	// strength, and a letter plus a digit is enough to reject the passwords that
+	// are actually typed in a hurry without turning the field into a puzzle.
+	var hasLetter, hasDigit bool
+	for _, r := range password {
+		switch {
+		case unicode.IsLetter(r):
+			hasLetter = true
+		case unicode.IsDigit(r):
+			hasDigit = true
+		}
+		if hasLetter && hasDigit {
+			break
+		}
+	}
+
+	if !hasLetter || !hasDigit {
+		return &ValidationError{Field: "password", Message: "must contain at least one letter and one number"}
+	}
+
 	return nil
 }
 
-// validateDisplayName enforces 1-80 characters after trimming.
-func validateDisplayName(raw string) (string, error) {
+// ValidateDisplayName enforces 1-80 characters after trimming.
+func ValidateDisplayName(raw string) (string, error) {
 	name := strings.TrimSpace(raw)
 	length := utf8.RuneCountInString(name)
 	if length < minDisplayNameLen {
@@ -352,9 +381,9 @@ func validateDisplayName(raw string) (string, error) {
 	return name, nil
 }
 
-// validateLanguages trims the entries, drops blanks, and requires every remaining
+// ValidateLanguages trims the entries, drops blanks, and requires every remaining
 // entry to be a canonical ISO 639-3 code.
-func validateLanguages(raw []string) ([]string, error) {
+func ValidateLanguages(raw []string) ([]string, error) {
 	if len(raw) > maxLanguages {
 		return nil, &ValidationError{Field: "preferred_languages", Message: fmt.Sprintf("must contain at most %d entries", maxLanguages)}
 	}
@@ -374,8 +403,8 @@ func validateLanguages(raw []string) ([]string, error) {
 	return valid, nil
 }
 
-// validateOptional trims an optional field and bounds its length.
-func validateOptional(raw, field string, maxLength int) (string, error) {
+// ValidateOptional trims an optional field and bounds its length.
+func ValidateOptional(raw, field string, maxLength int) (string, error) {
 	value := strings.TrimSpace(raw)
 	if value == "" {
 		return "", nil

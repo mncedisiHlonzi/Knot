@@ -63,7 +63,7 @@ func newProfileRouterWithMedia(t *testing.T, service ProfileService, rooted Root
 
 	logger := discardLogger()
 
-	authHandler, err := NewAuthHandler(&fakeAuthService{}, logger)
+	authHandler, err := NewAuthHandler(&fakeAuthService{}, newTestLimiter(t), logger)
 	if err != nil {
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
@@ -95,7 +95,7 @@ func newProfileRouterWithMedia(t *testing.T, service ProfileService, rooted Root
 		t.Fatalf("NewProfileHandler() error = %v, want nil", err)
 	}
 
-	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID}, logger)
+	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID, sessionID: testSessionID}, logger)
 	if err != nil {
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}

@@ -12,50 +12,133 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+
+	"github.com/knot/backend/internal/auth"
+	"github.com/knot/backend/internal/cache"
 	"github.com/knot/backend/internal/identity"
 )
 
 // fakeAuthService records the input it received and returns canned results, so
-// handler behaviour can be tested without a database.
+// handler behaviour can be tested without a database, a cache, or a clock.
 type fakeAuthService struct {
-	registerResult *identity.AuthResult
+	registerResult *identity.User
 	registerErr    error
-	loginResult    *identity.AuthResult
+	verifyEmailErr error
+	loginResult    *auth.TokenOutput
 	loginErr       error
+	refreshResult  *auth.TokenOutput
+	refreshErr     error
+	logoutErr      error
+	sessionsResult []*auth.Session
+	sessionsErr    error
+	revokeErr      error
+	forgotErr      error
+	resetErr       error
 
-	gotRegister identity.RegisterInput
-	gotLogin    identity.LoginInput
+	gotRegister    auth.RegisterInput
+	gotVerifyToken string
+	gotLogin       auth.LoginInput
+	gotRefresh     string
+	gotLogout      [2]string
+	gotListUser    string
+	gotRevoke      [2]string
+	gotForgot      string
+	gotReset       [2]string
 }
 
-func (f *fakeAuthService) Register(_ context.Context, in identity.RegisterInput) (*identity.AuthResult, error) {
+func (f *fakeAuthService) Register(_ context.Context, in auth.RegisterInput) (*identity.User, error) {
 	f.gotRegister = in
 	return f.registerResult, f.registerErr
 }
 
-func (f *fakeAuthService) Login(_ context.Context, in identity.LoginInput) (*identity.AuthResult, error) {
+func (f *fakeAuthService) VerifyEmail(_ context.Context, token string) error {
+	f.gotVerifyToken = token
+	return f.verifyEmailErr
+}
+
+func (f *fakeAuthService) Login(_ context.Context, in auth.LoginInput) (*auth.TokenOutput, error) {
 	f.gotLogin = in
 	return f.loginResult, f.loginErr
 }
 
-// sampleResult is a well-formed successful auth result.
-func sampleResult() *identity.AuthResult {
-	return &identity.AuthResult{
-		User: &identity.User{
-			ID:                  "11111111-1111-4111-8111-111111111111",
-			Email:               "ada@example.com",
-			DisplayName:         "Ada Lovelace",
-			PreferredLanguages:  []string{"eng", "fra"},
-			ApproximateLocation: "Cape Town",
-			Phone:               "+27000000000",
-			PasswordHash:        "$argon2id$v=19$m=65536,t=1,p=4$c2FsdA$c2VjcmV0",
-			CreatedAt:           time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC),
-		},
-		Tokens: identity.TokenPair{
-			AccessToken:  "access-token-value",
-			RefreshToken: "refresh-token-value",
-			ExpiresIn:    900,
-		},
+func (f *fakeAuthService) Refresh(_ context.Context, refreshToken string) (*auth.TokenOutput, error) {
+	f.gotRefresh = refreshToken
+	return f.refreshResult, f.refreshErr
+}
+
+func (f *fakeAuthService) Logout(_ context.Context, userID, sessionID string) error {
+	f.gotLogout = [2]string{userID, sessionID}
+	return f.logoutErr
+}
+
+func (f *fakeAuthService) ListSessions(_ context.Context, userID string) ([]*auth.Session, error) {
+	f.gotListUser = userID
+	return f.sessionsResult, f.sessionsErr
+}
+
+func (f *fakeAuthService) RevokeSession(_ context.Context, userID, sessionID string) error {
+	f.gotRevoke = [2]string{userID, sessionID}
+	return f.revokeErr
+}
+
+func (f *fakeAuthService) ForgotPassword(_ context.Context, email string) error {
+	f.gotForgot = email
+	return f.forgotErr
+}
+
+func (f *fakeAuthService) ResetPassword(_ context.Context, token, newPassword string) error {
+	f.gotReset = [2]string{token, newPassword}
+	return f.resetErr
+}
+
+// sampleUser is a well-formed account.
+func sampleUser() *identity.User {
+	verifiedAt := time.Date(2026, 10, 7, 12, 5, 0, 0, time.UTC)
+
+	return &identity.User{
+		ID:                  "11111111-1111-4111-8111-111111111111",
+		Email:               "ada@example.com",
+		DisplayName:         "Ada Lovelace",
+		PreferredLanguages:  []string{"eng", "fra"},
+		ApproximateLocation: "Cape Town",
+		Phone:               "+27000000000",
+		PasswordHash:        "$argon2id$v=19$m=65536,t=1,p=4$c2FsdA$c2VjcmV0",
+		CreatedAt:           time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC),
+		EmailVerifiedAt:     &verifiedAt,
 	}
+}
+
+// sampleTokenOutput is a well-formed successful sign-in.
+func sampleTokenOutput() *auth.TokenOutput {
+	return &auth.TokenOutput{
+		User:         sampleUser(),
+		AccessToken:  "access-token-value",
+		RefreshToken: "11111111-1111-4111-8111-111111111111.refresh-secret",
+		ExpiresIn:    900,
+		SessionID:    "11111111-1111-4111-8111-111111111111",
+	}
+}
+
+// newTestLimiter returns a rate limiter backed by an in-process Redis, so handler
+// tests exercise the real counting path without a container.
+func newTestLimiter(t *testing.T) *auth.Limiter {
+	t.Helper()
+
+	server := miniredis.RunT(t)
+
+	redisCache, err := cache.NewRedisCache(server.Addr(), "", 0)
+	if err != nil {
+		t.Fatalf("NewRedisCache() error = %v, want nil", err)
+	}
+	t.Cleanup(func() { _ = redisCache.Close() })
+
+	limiter, err := auth.NewLimiter(redisCache, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewLimiter() error = %v, want nil", err)
+	}
+
+	return limiter
 }
 
 func newTestHandler(t *testing.T, service AuthService) http.Handler {
@@ -63,7 +146,7 @@ func newTestHandler(t *testing.T, service AuthService) http.Handler {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	authHandler, err := NewAuthHandler(service, logger)
+	authHandler, err := NewAuthHandler(service, newTestLimiter(t), logger)
 	if err != nil {
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
@@ -103,7 +186,7 @@ func newTestRouter(t *testing.T, logger *slog.Logger, authHandler *AuthHandler) 
 
 	discoveryHandler := newTestDiscoveryHandler(t, logger, fakeDiscoveryService{})
 
-	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID}, logger)
+	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID, sessionID: testSessionID}, logger)
 	if err != nil {
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}
@@ -243,7 +326,11 @@ func TestLanguagesServesTheCanonicalList(t *testing.T) {
 }
 
 func TestRegisterHappyPath(t *testing.T) {
-	service := &fakeAuthService{registerResult: sampleResult()}
+	// A fresh account has never proven its address (KNOT-ADR-083).
+	registered := sampleUser()
+	registered.EmailVerifiedAt = nil
+
+	service := &fakeAuthService{registerResult: registered}
 	handler := newTestHandler(t, service)
 
 	recorder := doRequest(handler, http.MethodPost, "/auth/register", `{
@@ -259,7 +346,7 @@ func TestRegisterHappyPath(t *testing.T) {
 		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusCreated, recorder.Body.String())
 	}
 
-	var body authResponse
+	var body registerResponse
 	decodeBody(t, recorder, &body)
 
 	if body.User.Email != "ada@example.com" {
@@ -268,14 +355,15 @@ func TestRegisterHappyPath(t *testing.T) {
 	if body.User.DisplayName != "Ada Lovelace" {
 		t.Errorf("user.display_name = %q, want %q", body.User.DisplayName, "Ada Lovelace")
 	}
-	if body.AccessToken != "access-token-value" {
-		t.Errorf("access_token = %q, want the issued token", body.AccessToken)
+	if body.User.EmailVerifiedAt != nil {
+		t.Errorf("user.email_verified_at = %v, want null for a registration", body.User.EmailVerifiedAt)
 	}
-	if body.RefreshToken != "refresh-token-value" {
-		t.Errorf("refresh_token = %q, want the issued token", body.RefreshToken)
-	}
-	if body.ExpiresIn != 900 {
-		t.Errorf("expires_in = %d, want 900", body.ExpiresIn)
+
+	// Registration must not hand out a session: an unverified account cannot sign
+	// in, so issuing tokens here would contradict the rule (KNOT-ADR-083).
+	raw := recorder.Body.String()
+	if strings.Contains(raw, "access_token") || strings.Contains(raw, "refresh_token") {
+		t.Errorf("registration response contains tokens: %s", raw)
 	}
 
 	// The service must receive exactly what the client sent.
@@ -289,7 +377,7 @@ func TestRegisterHappyPath(t *testing.T) {
 
 // TestRegisterResponseNeverLeaksPasswordHash is the critical projection check.
 func TestRegisterResponseNeverLeaksPasswordHash(t *testing.T) {
-	handler := newTestHandler(t, &fakeAuthService{registerResult: sampleResult()})
+	handler := newTestHandler(t, &fakeAuthService{registerResult: sampleUser()})
 
 	recorder := doRequest(handler, http.MethodPost, "/auth/register", `{
 		"email": "ada@example.com",
@@ -311,9 +399,9 @@ func TestRegisterResponseNeverLeaksPasswordHash(t *testing.T) {
 }
 
 func TestRegisterEmitsEmptyLanguageArrayNotNull(t *testing.T) {
-	result := sampleResult()
-	result.User.PreferredLanguages = nil
-	handler := newTestHandler(t, &fakeAuthService{registerResult: result})
+	user := sampleUser()
+	user.PreferredLanguages = nil
+	handler := newTestHandler(t, &fakeAuthService{registerResult: user})
 
 	recorder := doRequest(handler, http.MethodPost, "/auth/register", `{
 		"email": "ada@example.com",
@@ -385,7 +473,7 @@ func TestRegisterUnexpectedFailureIsInternalError(t *testing.T) {
 }
 
 func TestRegisterRejectsUnknownJSONField(t *testing.T) {
-	handler := newTestHandler(t, &fakeAuthService{registerResult: sampleResult()})
+	handler := newTestHandler(t, &fakeAuthService{registerResult: sampleUser()})
 
 	recorder := doRequest(handler, http.MethodPost, "/auth/register", `{
 		"email": "ada@example.com",
@@ -403,7 +491,7 @@ func TestRegisterRejectsUnknownJSONField(t *testing.T) {
 }
 
 func TestRegisterRejectsMalformedJSON(t *testing.T) {
-	handler := newTestHandler(t, &fakeAuthService{registerResult: sampleResult()})
+	handler := newTestHandler(t, &fakeAuthService{registerResult: sampleUser()})
 
 	recorder := doRequest(handler, http.MethodPost, "/auth/register", `{"email": `)
 
@@ -416,7 +504,7 @@ func TestRegisterRejectsMalformedJSON(t *testing.T) {
 }
 
 func TestRegisterRejectsOversizedBody(t *testing.T) {
-	handler := newTestHandler(t, &fakeAuthService{registerResult: sampleResult()})
+	handler := newTestHandler(t, &fakeAuthService{registerResult: sampleUser()})
 
 	// One byte over the 1 MiB cap.
 	oversized := `{"email":"` + strings.Repeat("a", maxRequestBodyBytes) + `"}`
@@ -432,7 +520,7 @@ func TestRegisterRejectsOversizedBody(t *testing.T) {
 }
 
 func TestRegisterRejectsEmptyBody(t *testing.T) {
-	handler := newTestHandler(t, &fakeAuthService{registerResult: sampleResult()})
+	handler := newTestHandler(t, &fakeAuthService{registerResult: sampleUser()})
 
 	recorder := doRequest(handler, http.MethodPost, "/auth/register", "")
 
@@ -442,7 +530,7 @@ func TestRegisterRejectsEmptyBody(t *testing.T) {
 }
 
 func TestLoginHappyPath(t *testing.T) {
-	service := &fakeAuthService{loginResult: sampleResult()}
+	service := &fakeAuthService{loginResult: sampleTokenOutput()}
 	handler := newTestHandler(t, service)
 
 	recorder := doRequest(handler, http.MethodPost, "/auth/login", `{
@@ -454,7 +542,7 @@ func TestLoginHappyPath(t *testing.T) {
 		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
 
-	var body authResponse
+	var body tokenResponse
 	decodeBody(t, recorder, &body)
 
 	if body.User.ID != "11111111-1111-4111-8111-111111111111" {
@@ -493,7 +581,7 @@ func TestLoginInvalidCredentials(t *testing.T) {
 }
 
 func TestLoginRejectsUnknownJSONField(t *testing.T) {
-	handler := newTestHandler(t, &fakeAuthService{loginResult: sampleResult()})
+	handler := newTestHandler(t, &fakeAuthService{loginResult: sampleTokenOutput()})
 
 	recorder := doRequest(handler, http.MethodPost, "/auth/login", `{
 		"email": "ada@example.com",
@@ -555,19 +643,23 @@ func TestWrongMethodIsMethodNotAllowed(t *testing.T) {
 
 func TestNewAuthHandlerRejectsMissingDependencies(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	limiter := newTestLimiter(t)
 
-	if _, err := NewAuthHandler(nil, logger); err == nil {
-		t.Error("NewAuthHandler(nil, logger) error = nil, want an error")
+	if _, err := NewAuthHandler(nil, limiter, logger); err == nil {
+		t.Error("NewAuthHandler(nil, limiter, logger) error = nil, want an error")
 	}
-	if _, err := NewAuthHandler(&fakeAuthService{}, nil); err == nil {
-		t.Error("NewAuthHandler(service, nil) error = nil, want an error")
+	if _, err := NewAuthHandler(&fakeAuthService{}, nil, logger); err == nil {
+		t.Error("NewAuthHandler(service, nil, logger) error = nil, want an error")
+	}
+	if _, err := NewAuthHandler(&fakeAuthService{}, limiter, nil); err == nil {
+		t.Error("NewAuthHandler(service, limiter, nil) error = nil, want an error")
 	}
 }
 
 func TestNewRouterRejectsMissingDependencies(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	authHandler, err := NewAuthHandler(&fakeAuthService{}, logger)
+	authHandler, err := NewAuthHandler(&fakeAuthService{}, newTestLimiter(t), logger)
 	if err != nil {
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
@@ -595,7 +687,7 @@ func TestNewRouterRejectsMissingDependencies(t *testing.T) {
 	reactionsHandler := newTestReactionsRouterHandler(t, logger)
 	inquiriesHandler := newTestInquiriesHandler(t, logger)
 	moderationHandler := newTestModerationHandler(t, logger)
-	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID}, logger)
+	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID, sessionID: testSessionID}, logger)
 	if err != nil {
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}

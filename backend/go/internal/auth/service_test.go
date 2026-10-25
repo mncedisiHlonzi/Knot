@@ -1,0 +1,1150 @@
+package auth
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"sort"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+
+	"github.com/knot/backend/internal/cache"
+	"github.com/knot/backend/internal/identity"
+)
+
+// The fakes below implement the stores the service depends on. They are
+// deliberately simple and deterministic: they exist so every policy decision the
+// service makes — the session cap, rotation, reuse detection, the verification
+// window — can be tested without a database, while the real SQL is covered by the
+// store integration tests.
+
+// fakeUserStore is an in-memory identity.UserStore.
+type fakeUserStore struct {
+	mu       sync.Mutex
+	byID     map[string]*identity.User
+	byEmail  map[string]*identity.User
+	deleted  map[string]bool
+	seq      int
+	createFn func(*identity.User) error
+}
+
+func newFakeUserStore() *fakeUserStore {
+	return &fakeUserStore{
+		byID:    map[string]*identity.User{},
+		byEmail: map[string]*identity.User{},
+		deleted: map[string]bool{},
+	}
+}
+
+func (s *fakeUserStore) CreateUser(_ context.Context, user *identity.User) (*identity.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.createFn != nil {
+		if err := s.createFn(user); err != nil {
+			return nil, err
+		}
+	}
+
+	email := identity.NormalizeEmail(user.Email)
+	if _, exists := s.byEmail[email]; exists {
+		return nil, identity.ErrEmailTaken
+	}
+
+	s.seq++
+	stored := *user
+	stored.ID = fmt.Sprintf("11111111-1111-4111-8111-%012d", s.seq)
+	stored.Email = email
+	stored.CreatedAt = time.Now().UTC()
+	stored.UpdatedAt = stored.CreatedAt
+	if stored.PreferredLanguages == nil {
+		stored.PreferredLanguages = []string{}
+	}
+
+	s.byID[stored.ID] = &stored
+	s.byEmail[email] = &stored
+
+	return &stored, nil
+}
+
+func (s *fakeUserStore) FindUserByEmail(_ context.Context, email string) (*identity.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.byEmail[identity.NormalizeEmail(email)]
+	if !ok || s.deleted[user.ID] {
+		return nil, identity.ErrUserNotFound
+	}
+
+	return user, nil
+}
+
+func (s *fakeUserStore) FindUserByID(_ context.Context, id string) (*identity.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.byID[id]
+	if !ok || s.deleted[id] {
+		return nil, identity.ErrUserNotFound
+	}
+
+	return user, nil
+}
+
+func (s *fakeUserStore) FindActiveUserByEmail(ctx context.Context, email string) (*identity.User, error) {
+	return s.FindUserByEmail(ctx, email)
+}
+
+func (s *fakeUserStore) FindActiveUserByID(ctx context.Context, id string) (*identity.User, error) {
+	return s.FindUserByID(ctx, id)
+}
+
+func (s *fakeUserStore) FindUsersByID(_ context.Context, ids []string) ([]*identity.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	found := make([]*identity.User, 0, len(ids))
+	for _, id := range ids {
+		if user, ok := s.byID[id]; ok {
+			found = append(found, user)
+		}
+	}
+
+	return found, nil
+}
+
+func (s *fakeUserStore) UpdateAvatarURL(_ context.Context, userID, avatarURL string) (*identity.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.byID[userID]
+	if !ok {
+		return nil, identity.ErrUserNotFound
+	}
+	user.AvatarURL = avatarURL
+
+	return user, nil
+}
+
+func (s *fakeUserStore) MarkEmailVerified(_ context.Context, userID string) (*identity.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.byID[userID]
+	if !ok || s.deleted[userID] {
+		return nil, identity.ErrUserNotFound
+	}
+	if user.EmailVerifiedAt == nil {
+		verifiedAt := time.Now().UTC()
+		user.EmailVerifiedAt = &verifiedAt
+	}
+
+	return user, nil
+}
+
+func (s *fakeUserStore) UpdatePasswordHash(_ context.Context, userID, passwordHash string) (*identity.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.byID[userID]
+	if !ok || s.deleted[userID] {
+		return nil, identity.ErrUserNotFound
+	}
+	user.PasswordHash = passwordHash
+
+	return user, nil
+}
+
+// liveSessions returns the user's sessions the way the SQL does: live only,
+// newest first.
+func (s *fakeUserStore) markVerified(t *testing.T, userID string) {
+	t.Helper()
+
+	if _, err := s.MarkEmailVerified(context.Background(), userID); err != nil {
+		t.Fatalf("MarkEmailVerified() error = %v, want nil", err)
+	}
+}
+
+// fakeSessionStore is an in-memory SessionStore with the same semantics as the
+// SQL: a conditional rotation, revoke that keeps the first timestamp, and a live
+// list ordered newest first.
+type fakeSessionStore struct {
+	mu      sync.Mutex
+	byID    map[string]*Session
+	seq     int
+	revoked []string
+}
+
+func newFakeSessionStore() *fakeSessionStore {
+	return &fakeSessionStore{byID: map[string]*Session{}}
+}
+
+func (s *fakeSessionStore) Create(_ context.Context, session *Session) (*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if session == nil {
+		return nil, errors.New("create: nil session")
+	}
+
+	stored := *session
+	if stored.ID == "" {
+		s.seq++
+		stored.ID = fmt.Sprintf("22222222-2222-4222-8222-%012d", s.seq)
+	}
+	stored.LastUsedAt = time.Now().UTC()
+	stored.CreatedAt = time.Now().UTC().Add(time.Duration(len(s.byID)) * time.Millisecond)
+	if stored.DeviceInfo == nil {
+		stored.DeviceInfo = map[string]any{}
+	}
+
+	s.byID[stored.ID] = &stored
+
+	return &stored, nil
+}
+
+func (s *fakeSessionStore) FindByRefreshTokenHash(_ context.Context, hash string) (*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, session := range s.byID {
+		if session.RefreshTokenHash == hash {
+			return session, nil
+		}
+	}
+
+	return nil, ErrSessionNotFound
+}
+
+func (s *fakeSessionStore) FindByID(_ context.Context, sessionID string) (*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	session, ok := s.byID[sessionID]
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+
+	return session, nil
+}
+
+func (s *fakeSessionStore) Revoke(_ context.Context, sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	session, ok := s.byID[sessionID]
+	if !ok {
+		return ErrSessionNotFound
+	}
+	if session.RevokedAt == nil {
+		revokedAt := time.Now().UTC()
+		session.RevokedAt = &revokedAt
+		s.revoked = append(s.revoked, sessionID)
+	}
+
+	return nil
+}
+
+func (s *fakeSessionStore) ListForUser(_ context.Context, userID string) ([]*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	live := make([]*Session, 0, len(s.byID))
+	for _, session := range s.byID {
+		if session.UserID == userID && session.Active() {
+			live = append(live, session)
+		}
+	}
+
+	sort.Slice(live, func(i, j int) bool { return live[i].CreatedAt.After(live[j].CreatedAt) })
+
+	return live, nil
+}
+
+func (s *fakeSessionStore) RevokeAllForUser(_ context.Context, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, session := range s.byID {
+		if session.UserID == userID && session.RevokedAt == nil {
+			revokedAt := time.Now().UTC()
+			session.RevokedAt = &revokedAt
+			s.revoked = append(s.revoked, session.ID)
+		}
+	}
+
+	return nil
+}
+
+func (s *fakeSessionStore) RotateRefreshToken(_ context.Context, sessionID, expectedHash, newHash string) (*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	session, ok := s.byID[sessionID]
+	if !ok {
+		return nil, ErrSessionNotFound
+	}
+	if !session.Active() {
+		return nil, ErrSessionNotFound
+	}
+	if session.RefreshTokenHash != expectedHash {
+		return nil, ErrSessionRefreshTokenMismatch
+	}
+
+	session.RefreshTokenHash = newHash
+	session.LastUsedAt = time.Now().UTC()
+
+	return session, nil
+}
+
+func (s *fakeSessionStore) countActive(userID string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	count := 0
+	for _, session := range s.byID {
+		if session.UserID == userID && session.Active() {
+			count++
+		}
+	}
+
+	return count
+}
+
+// fakeCredentialStore is an in-memory CredentialStore.
+type fakeCredentialStore struct {
+	mu   sync.Mutex
+	byID map[string]*Credential
+	seq  int
+}
+
+func newFakeCredentialStore() *fakeCredentialStore {
+	return &fakeCredentialStore{byID: map[string]*Credential{}}
+}
+
+func (s *fakeCredentialStore) Create(_ context.Context, credential *Credential) (*Credential, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, existing := range s.byID {
+		if existing.UserID == credential.UserID && existing.CredentialType == credential.CredentialType {
+			return nil, ErrCredentialExists
+		}
+	}
+
+	s.seq++
+	stored := *credential
+	stored.ID = fmt.Sprintf("33333333-3333-4333-8333-%012d", s.seq)
+	s.byID[stored.ID] = &stored
+
+	return &stored, nil
+}
+
+func (s *fakeCredentialStore) FindByUserIDAndType(_ context.Context, userID, credentialType string) (*Credential, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, credential := range s.byID {
+		if credential.UserID == userID && credential.CredentialType == credentialType {
+			return credential, nil
+		}
+	}
+
+	return nil, ErrCredentialNotFound
+}
+
+func (s *fakeCredentialStore) Update(_ context.Context, credential *Credential) (*Credential, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	stored, ok := s.byID[credential.ID]
+	if !ok {
+		return nil, ErrCredentialNotFound
+	}
+	stored.CredentialData = credential.CredentialData
+
+	return stored, nil
+}
+
+// fakeVerificationStore is an in-memory VerificationTokenStore.
+type fakeVerificationStore struct {
+	mu     sync.Mutex
+	byHash map[string]*VerificationToken
+	seq    int
+}
+
+func newFakeVerificationStore() *fakeVerificationStore {
+	return &fakeVerificationStore{byHash: map[string]*VerificationToken{}}
+}
+
+func (s *fakeVerificationStore) Create(_ context.Context, token *VerificationToken) (*VerificationToken, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.seq++
+	stored := *token
+	stored.ID = fmt.Sprintf("44444444-4444-4444-8444-%012d", s.seq)
+	stored.CreatedAt = time.Now().UTC()
+	s.byHash[stored.TokenHash] = &stored
+
+	return &stored, nil
+}
+
+func (s *fakeVerificationStore) FindByTokenHash(_ context.Context, hash string) (*VerificationToken, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	token, ok := s.byHash[hash]
+	if !ok {
+		return nil, ErrVerificationTokenNotFound
+	}
+
+	return token, nil
+}
+
+func (s *fakeVerificationStore) Consume(_ context.Context, tokenID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for _, token := range s.byHash {
+		if token.ID != tokenID {
+			continue
+		}
+		if token.ConsumedAt != nil {
+			return ErrVerificationTokenConsumed
+		}
+		consumedAt := time.Now().UTC()
+		token.ConsumedAt = &consumedAt
+
+		return nil
+	}
+
+	return ErrVerificationTokenNotFound
+}
+
+// testHarness bundles everything a service test needs.
+type testHarness struct {
+	service       *Service
+	users         *fakeUserStore
+	sessions      *fakeSessionStore
+	credentials   *fakeCredentialStore
+	verifications *fakeVerificationStore
+	cache         cache.Cache
+	redis         *miniredis.Miniredis
+	logs          *bytes.Buffer
+}
+
+func newTestHarness(t *testing.T, opts ...Option) *testHarness {
+	t.Helper()
+
+	users := newFakeUserStore()
+	sessions := newFakeSessionStore()
+	credentials := newFakeCredentialStore()
+	verifications := newFakeVerificationStore()
+
+	redis := miniredis.RunT(t)
+	redisCache, err := cache.NewRedisCache(redis.Addr(), "", 0)
+	if err != nil {
+		t.Fatalf("NewRedisCache() error = %v, want nil", err)
+	}
+	t.Cleanup(func() { _ = redisCache.Close() })
+
+	logs := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	issuer, err := identity.NewTokenIssuer("test-secret-that-is-at-least-32-bytes-long")
+	if err != nil {
+		t.Fatalf("NewTokenIssuer() error = %v, want nil", err)
+	}
+
+	service, err := NewService(Deps{
+		Users:         users,
+		Sessions:      sessions,
+		Credentials:   credentials,
+		Verifications: verifications,
+		Tokens:        issuer,
+		Cache:         redisCache,
+		Logger:        logger,
+	}, opts...)
+	if err != nil {
+		t.Fatalf("NewService() error = %v, want nil", err)
+	}
+
+	return &testHarness{
+		service:       service,
+		users:         users,
+		sessions:      sessions,
+		credentials:   credentials,
+		verifications: verifications,
+		cache:         redisCache,
+		redis:         redis,
+		logs:          logs,
+	}
+}
+
+// registerAndVerify creates an account and proves its address, returning it.
+func (h *testHarness) registerAndVerify(t *testing.T) *identity.User {
+	t.Helper()
+
+	user, err := h.service.Register(context.Background(), RegisterInput{
+		Email:       "ada@example.com",
+		Password:    "correct horse 7",
+		DisplayName: "Ada Lovelace",
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v, want nil", err)
+	}
+
+	token := extractToken(t, h.logs.String(), defaultVerificationLinkBase)
+	if err := h.service.VerifyEmail(context.Background(), token); err != nil {
+		t.Fatalf("VerifyEmail() error = %v, want nil", err)
+	}
+
+	return user
+}
+
+// extractToken pulls the token out of the most recent console-logged link.
+func extractToken(t *testing.T, logs, base string) string {
+	t.Helper()
+
+	index := strings.LastIndex(logs, base)
+	if index < 0 {
+		t.Fatalf("no link starting with %q was logged; logs:\n%s", base, logs)
+	}
+
+	rest := logs[index+len(base):]
+	end := strings.IndexAny(rest, " \n\"")
+	if end < 0 {
+		end = len(rest)
+	}
+
+	return rest[:end]
+}
+
+func TestNewServiceRejectsMissingDependencies(t *testing.T) {
+	t.Parallel()
+
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	redis := miniredis.RunT(t)
+	redisCache, err := cache.NewRedisCache(redis.Addr(), "", 0)
+	if err != nil {
+		t.Fatalf("NewRedisCache() error = %v, want nil", err)
+	}
+	t.Cleanup(func() { _ = redisCache.Close() })
+
+	complete := Deps{
+		Users:         newFakeUserStore(),
+		Sessions:      newFakeSessionStore(),
+		Credentials:   newFakeCredentialStore(),
+		Verifications: newFakeVerificationStore(),
+		Tokens:        &fakeIssuer{},
+		Cache:         redisCache,
+		Logger:        logger,
+	}
+
+	if _, err := NewService(complete); err != nil {
+		t.Fatalf("NewService(complete) error = %v, want nil", err)
+	}
+
+	tests := map[string]func(*Deps){
+		"users":         func(d *Deps) { d.Users = nil },
+		"sessions":      func(d *Deps) { d.Sessions = nil },
+		"credentials":   func(d *Deps) { d.Credentials = nil },
+		"verifications": func(d *Deps) { d.Verifications = nil },
+		"tokens":        func(d *Deps) { d.Tokens = nil },
+		"cache":         func(d *Deps) { d.Cache = nil },
+		"logger":        func(d *Deps) { d.Logger = nil },
+	}
+
+	for name, breakDep := range tests {
+		t.Run(name, func(t *testing.T) {
+			deps := complete
+			breakDep(&deps)
+
+			if _, err := NewService(deps); err == nil {
+				t.Fatalf("NewService() with a nil %s error = nil, want an error", name)
+			}
+		})
+	}
+}
+
+// fakeIssuer is a TokenIssuer that never touches a key.
+type fakeIssuer struct{}
+
+func (f *fakeIssuer) IssueAccessTokenForSession(userID, sessionID string) (string, error) {
+	return "access:" + userID + ":" + sessionID, nil
+}
+
+func (f *fakeIssuer) ParseAccessToken(string) (*identity.Claims, error) {
+	return nil, identity.ErrInvalidToken
+}
+
+func TestRegisterCreatesAnUnverifiedAccount(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+
+	user, err := h.service.Register(context.Background(), RegisterInput{
+		Email:              "Ada@Example.COM",
+		Password:           "correct horse 7",
+		DisplayName:        "Ada Lovelace",
+		PreferredLanguages: []string{"eng"},
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v, want nil", err)
+	}
+
+	if user.Email != "ada@example.com" {
+		t.Errorf("email = %q, want the normalised address", user.Email)
+	}
+	if user.EmailVerifiedAt != nil {
+		t.Errorf("email_verified_at = %v, want nil", user.EmailVerifiedAt)
+	}
+	if ok, _ := identity.VerifyPassword(user.PasswordHash, "correct horse 7"); !ok {
+		t.Error("stored hash does not verify the password")
+	}
+
+	// The password credential is mirrored into `credentials` (KNOT-ADR-079).
+	credential, err := h.credentials.FindByUserIDAndType(context.Background(), user.ID, CredentialTypePassword)
+	if err != nil {
+		t.Fatalf("FindByUserIDAndType() error = %v, want nil", err)
+	}
+	if credential.CredentialData != user.PasswordHash {
+		t.Error("credential data does not match the stored password hash")
+	}
+
+	// The verification link is logged, because there is no email provider yet.
+	if !strings.Contains(h.logs.String(), defaultVerificationLinkBase) {
+		t.Errorf("no verification link was logged; logs:\n%s", h.logs.String())
+	}
+}
+
+func TestRegisterRejectsWeakPasswords(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+
+	for _, password := range []string{"short1", "nodigitsatall", "12345678"} {
+		_, err := h.service.Register(context.Background(), RegisterInput{
+			Email:       "ada@example.com",
+			Password:    password,
+			DisplayName: "Ada Lovelace",
+		})
+
+		var validation *identity.ValidationError
+		if !errors.As(err, &validation) || validation.Field != "password" {
+			t.Fatalf("Register(%q) error = %v, want a password ValidationError", password, err)
+		}
+	}
+}
+
+func TestRegisterRejectsDuplicateEmail(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+
+	if _, err := h.service.Register(context.Background(), RegisterInput{
+		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+	}); err != nil {
+		t.Fatalf("Register() error = %v, want nil", err)
+	}
+
+	_, err := h.service.Register(context.Background(), RegisterInput{
+		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+	})
+	if !errors.Is(err, identity.ErrEmailTaken) {
+		t.Fatalf("second Register() error = %v, want ErrEmailTaken", err)
+	}
+}
+
+func TestVerifyEmail(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+
+	user, err := h.service.Register(context.Background(), RegisterInput{
+		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v, want nil", err)
+	}
+
+	token := extractToken(t, h.logs.String(), defaultVerificationLinkBase)
+
+	if err := h.service.VerifyEmail(context.Background(), token); err != nil {
+		t.Fatalf("VerifyEmail() error = %v, want nil", err)
+	}
+
+	verified, _ := h.users.FindUserByID(context.Background(), user.ID)
+	if verified.EmailVerifiedAt == nil {
+		t.Fatal("email_verified_at is still nil after verification")
+	}
+
+	// A verification link is single use.
+	if err := h.service.VerifyEmail(context.Background(), token); !errors.Is(err, ErrInvalidVerificationToken) {
+		t.Fatalf("second VerifyEmail() error = %v, want ErrInvalidVerificationToken", err)
+	}
+
+	if err := h.service.VerifyEmail(context.Background(), "not-a-token"); !errors.Is(err, ErrInvalidVerificationToken) {
+		t.Fatalf("VerifyEmail(unknown) error = %v, want ErrInvalidVerificationToken", err)
+	}
+}
+
+func TestVerifyEmailRejectsAnExpiredToken(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	h := newTestHarness(t, WithClock(func() time.Time { return now }))
+
+	if _, err := h.service.Register(context.Background(), RegisterInput{
+		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+	}); err != nil {
+		t.Fatalf("Register() error = %v, want nil", err)
+	}
+
+	token := extractToken(t, h.logs.String(), defaultVerificationLinkBase)
+
+	// Move the service's clock past the token's expiry.
+	h.service.now = func() time.Time { return now.Add(EmailVerificationTTL + time.Minute) }
+
+	if err := h.service.VerifyEmail(context.Background(), token); !errors.Is(err, ErrInvalidVerificationToken) {
+		t.Fatalf("VerifyEmail(expired) error = %v, want ErrInvalidVerificationToken", err)
+	}
+}
+
+func TestLoginRefusesAnUnverifiedAccount(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+
+	if _, err := h.service.Register(context.Background(), RegisterInput{
+		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+	}); err != nil {
+		t.Fatalf("Register() error = %v, want nil", err)
+	}
+
+	_, err := h.service.Login(context.Background(), LoginInput{
+		Email: "ada@example.com", Password: "correct horse 7", IPAddress: "203.0.113.7",
+	})
+	if !errors.Is(err, identity.ErrEmailNotVerified) {
+		t.Fatalf("Login() error = %v, want ErrEmailNotVerified", err)
+	}
+}
+
+func TestLoginIssuesASession(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	h.registerAndVerify(t)
+
+	out, err := h.service.Login(context.Background(), LoginInput{
+		Email:      "ada@example.com",
+		Password:   "correct horse 7",
+		DeviceInfo: map[string]any{"platform": "ios"},
+		IPAddress:  "203.0.113.7",
+	})
+	if err != nil {
+		t.Fatalf("Login() error = %v, want nil", err)
+	}
+
+	if out.AccessToken == "" || out.RefreshToken == "" {
+		t.Fatal("Login() returned an empty token")
+	}
+	if out.ExpiresIn != int(identity.AccessTokenTTL.Seconds()) {
+		t.Errorf("expires_in = %d, want %d", out.ExpiresIn, int(identity.AccessTokenTTL.Seconds()))
+	}
+
+	session, err := h.sessions.FindByID(context.Background(), out.SessionID)
+	if err != nil {
+		t.Fatalf("FindByID() error = %v, want nil", err)
+	}
+	if session.IPAddress != "203.0.113.7" {
+		t.Errorf("ip_address = %q, want %q", session.IPAddress, "203.0.113.7")
+	}
+	if session.DeviceInfo["platform"] != "ios" {
+		t.Errorf("device_info = %v, want platform ios", session.DeviceInfo)
+	}
+
+	// The stored hash is of the secret, never the token itself.
+	sessionID, ok := SplitRefreshToken(out.RefreshToken)
+	if !ok || sessionID != out.SessionID {
+		t.Fatalf("refresh token does not name its session: %q", out.RefreshToken)
+	}
+	if strings.Contains(session.RefreshTokenHash, ".") {
+		t.Error("the stored refresh token hash looks like a token, not a digest")
+	}
+}
+
+func TestLoginRejectsBadCredentials(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	h.registerAndVerify(t)
+
+	tests := map[string]LoginInput{
+		"wrong password": {Email: "ada@example.com", Password: "wrong horse 7"},
+		"unknown email":  {Email: "nobody@example.com", Password: "correct horse 7"},
+		"empty password": {Email: "ada@example.com", Password: ""},
+	}
+
+	for name, in := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := h.service.Login(context.Background(), in); !errors.Is(err, identity.ErrInvalidCredentials) {
+				t.Fatalf("Login() error = %v, want ErrInvalidCredentials", err)
+			}
+		})
+	}
+}
+
+func TestLoginRefusesADeletedAccount(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	user := h.registerAndVerify(t)
+
+	// A soft-deleted account is invisible to the active lookup (KNOT-ADR-081).
+	h.users.mu.Lock()
+	h.users.deleted[user.ID] = true
+	h.users.mu.Unlock()
+
+	_, err := h.service.Login(context.Background(), LoginInput{
+		Email: "ada@example.com", Password: "correct horse 7",
+	})
+	if !errors.Is(err, identity.ErrInvalidCredentials) {
+		t.Fatalf("Login() error = %v, want ErrInvalidCredentials", err)
+	}
+}
+
+func TestLoginEnforcesTheSessionCap(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	user := h.registerAndVerify(t)
+
+	ctx := context.Background()
+	issued := make([]string, 0, MaxActiveSessions+1)
+
+	for i := 0; i < MaxActiveSessions+1; i++ {
+		out, err := h.service.Login(ctx, LoginInput{
+			Email: "ada@example.com", Password: "correct horse 7",
+		})
+		if err != nil {
+			t.Fatalf("Login() #%d error = %v, want nil", i+1, err)
+		}
+		issued = append(issued, out.SessionID)
+	}
+
+	if got := h.sessions.countActive(user.ID); got != MaxActiveSessions {
+		t.Fatalf("active sessions = %d, want %d", got, MaxActiveSessions)
+	}
+
+	// The oldest session is the one that was ended, and the newest survives.
+	oldest, err := h.sessions.FindByID(ctx, issued[0])
+	if err != nil {
+		t.Fatalf("FindByID(oldest) error = %v, want nil", err)
+	}
+	if oldest.Active() {
+		t.Error("the oldest session is still active after the cap was exceeded")
+	}
+
+	newest, err := h.sessions.FindByID(ctx, issued[len(issued)-1])
+	if err != nil {
+		t.Fatalf("FindByID(newest) error = %v, want nil", err)
+	}
+	if !newest.Active() {
+		t.Error("the newest session was revoked by the cap")
+	}
+}
+
+func TestRefreshRotatesTheToken(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	h.registerAndVerify(t)
+
+	ctx := context.Background()
+
+	first, err := h.service.Login(ctx, LoginInput{Email: "ada@example.com", Password: "correct horse 7"})
+	if err != nil {
+		t.Fatalf("Login() error = %v, want nil", err)
+	}
+
+	second, err := h.service.Refresh(ctx, first.RefreshToken)
+	if err != nil {
+		t.Fatalf("Refresh() error = %v, want nil", err)
+	}
+
+	if second.RefreshToken == first.RefreshToken {
+		t.Fatal("Refresh() returned the same refresh token")
+	}
+	if second.SessionID != first.SessionID {
+		t.Errorf("session id = %q, want the same session %q", second.SessionID, first.SessionID)
+	}
+
+	// The new token works and the old one is now reuse.
+	if _, err := h.service.Refresh(ctx, second.RefreshToken); err != nil {
+		t.Fatalf("Refresh() with the new token error = %v, want nil", err)
+	}
+}
+
+func TestRefreshDetectsReuseAndRevokesEverySession(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	user := h.registerAndVerify(t)
+
+	ctx := context.Background()
+
+	// Two devices, so "every session" is more than one.
+	first, err := h.service.Login(ctx, LoginInput{Email: "ada@example.com", Password: "correct horse 7"})
+	if err != nil {
+		t.Fatalf("Login() error = %v, want nil", err)
+	}
+	if _, err := h.service.Login(ctx, LoginInput{Email: "ada@example.com", Password: "correct horse 7"}); err != nil {
+		t.Fatalf("second Login() error = %v, want nil", err)
+	}
+
+	if _, err := h.service.Refresh(ctx, first.RefreshToken); err != nil {
+		t.Fatalf("Refresh() error = %v, want nil", err)
+	}
+
+	// Replaying the rotated token is reuse.
+	if _, err := h.service.Refresh(ctx, first.RefreshToken); !errors.Is(err, ErrRefreshTokenReused) {
+		t.Fatalf("replayed Refresh() error = %v, want ErrRefreshTokenReused", err)
+	}
+
+	if got := h.sessions.countActive(user.ID); got != 0 {
+		t.Fatalf("active sessions after reuse = %d, want 0", got)
+	}
+
+	if !strings.Contains(h.logs.String(), "reuse detected") {
+		t.Errorf("reuse was not logged; logs:\n%s", h.logs.String())
+	}
+}
+
+func TestRefreshRejectsUnknownAndRevokedSessions(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	h.registerAndVerify(t)
+
+	ctx := context.Background()
+
+	out, err := h.service.Login(ctx, LoginInput{Email: "ada@example.com", Password: "correct horse 7"})
+	if err != nil {
+		t.Fatalf("Login() error = %v, want nil", err)
+	}
+
+	if _, err := h.service.Refresh(ctx, "not-a-token"); !errors.Is(err, ErrInvalidRefreshToken) {
+		t.Errorf("Refresh(garbage) error = %v, want ErrInvalidRefreshToken", err)
+	}
+	if _, err := h.service.Refresh(ctx, "00000000-0000-4000-8000-000000000000.secret"); !errors.Is(err, ErrInvalidRefreshToken) {
+		t.Errorf("Refresh(unknown session) error = %v, want ErrInvalidRefreshToken", err)
+	}
+
+	if err := h.service.Logout(ctx, out.User.ID, out.SessionID); err != nil {
+		t.Fatalf("Logout() error = %v, want nil", err)
+	}
+
+	if _, err := h.service.Refresh(ctx, out.RefreshToken); !errors.Is(err, ErrInvalidRefreshToken) {
+		t.Errorf("Refresh(revoked session) error = %v, want ErrInvalidRefreshToken", err)
+	}
+}
+
+func TestLogoutIsScopedAndIdempotent(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	h.registerAndVerify(t)
+
+	ctx := context.Background()
+
+	first, err := h.service.Login(ctx, LoginInput{Email: "ada@example.com", Password: "correct horse 7"})
+	if err != nil {
+		t.Fatalf("Login() error = %v, want nil", err)
+	}
+	second, err := h.service.Login(ctx, LoginInput{Email: "ada@example.com", Password: "correct horse 7"})
+	if err != nil {
+		t.Fatalf("second Login() error = %v, want nil", err)
+	}
+
+	if err := h.service.Logout(ctx, first.User.ID, first.SessionID); err != nil {
+		t.Fatalf("Logout() error = %v, want nil", err)
+	}
+
+	session, _ := h.sessions.FindByID(ctx, first.SessionID)
+	if session.Active() {
+		t.Error("the session is still active after Logout()")
+	}
+
+	// Signing out again is not an error: the intent is already satisfied.
+	if err := h.service.Logout(ctx, first.User.ID, first.SessionID); err != nil {
+		t.Fatalf("second Logout() error = %v, want nil", err)
+	}
+
+	// Another user cannot end this session, and is not told that it exists.
+	if err := h.service.Logout(ctx, "99999999-9999-4999-8999-999999999999", second.SessionID); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("Logout(other user) error = %v, want ErrSessionNotFound", err)
+	}
+}
+
+func TestListAndRevokeSessions(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	h.registerAndVerify(t)
+
+	ctx := context.Background()
+
+	first, err := h.service.Login(ctx, LoginInput{Email: "ada@example.com", Password: "correct horse 7"})
+	if err != nil {
+		t.Fatalf("Login() error = %v, want nil", err)
+	}
+	if _, err := h.service.Login(ctx, LoginInput{Email: "ada@example.com", Password: "correct horse 7"}); err != nil {
+		t.Fatalf("second Login() error = %v, want nil", err)
+	}
+
+	sessions, err := h.service.ListSessions(ctx, first.User.ID)
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v, want nil", err)
+	}
+	if len(sessions) != 2 {
+		t.Fatalf("ListSessions() = %d sessions, want 2", len(sessions))
+	}
+
+	if err := h.service.RevokeSession(ctx, first.User.ID, first.SessionID); err != nil {
+		t.Fatalf("RevokeSession() error = %v, want nil", err)
+	}
+
+	sessions, err = h.service.ListSessions(ctx, first.User.ID)
+	if err != nil {
+		t.Fatalf("ListSessions() error = %v, want nil", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("ListSessions() after revoke = %d sessions, want 1", len(sessions))
+	}
+
+	if err := h.service.RevokeSession(ctx, "99999999-9999-4999-8999-999999999999", first.SessionID); !errors.Is(err, ErrSessionNotFound) {
+		t.Fatalf("RevokeSession(other user) error = %v, want ErrSessionNotFound", err)
+	}
+}
+
+func TestForgotPasswordDoesNotRevealAccounts(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	h.registerAndVerify(t)
+
+	ctx := context.Background()
+
+	// An address that is not registered must look exactly like one that is.
+	if err := h.service.ForgotPassword(ctx, "nobody@example.com"); err != nil {
+		t.Fatalf("ForgotPassword(unknown) error = %v, want nil", err)
+	}
+	if strings.Contains(h.logs.String(), "nobody@example.com") {
+		t.Error("a reset link was produced for an unregistered address")
+	}
+
+	if err := h.service.ForgotPassword(ctx, "ada@example.com"); err != nil {
+		t.Fatalf("ForgotPassword() error = %v, want nil", err)
+	}
+	if !strings.Contains(h.logs.String(), defaultPasswordResetLinkBase) {
+		t.Errorf("no reset link was logged; logs:\n%s", h.logs.String())
+	}
+
+	// A malformed address is not an error either.
+	if err := h.service.ForgotPassword(ctx, "not-an-email"); err != nil {
+		t.Fatalf("ForgotPassword(malformed) error = %v, want nil", err)
+	}
+}
+
+func TestResetPasswordChangesTheSecretAndSignsOutEverywhere(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	user := h.registerAndVerify(t)
+
+	ctx := context.Background()
+
+	out, err := h.service.Login(ctx, LoginInput{Email: "ada@example.com", Password: "correct horse 7"})
+	if err != nil {
+		t.Fatalf("Login() error = %v, want nil", err)
+	}
+
+	if err := h.service.ForgotPassword(ctx, "ada@example.com"); err != nil {
+		t.Fatalf("ForgotPassword() error = %v, want nil", err)
+	}
+	token := extractToken(t, h.logs.String(), defaultPasswordResetLinkBase)
+
+	if err := h.service.ResetPassword(ctx, token, "a brand new 9"); err != nil {
+		t.Fatalf("ResetPassword() error = %v, want nil", err)
+	}
+
+	// Every session is gone (KNOT-ADR-087).
+	if got := h.sessions.countActive(user.ID); got != 0 {
+		t.Fatalf("active sessions after reset = %d, want 0", got)
+	}
+	if _, err := h.service.Refresh(ctx, out.RefreshToken); !errors.Is(err, ErrInvalidRefreshToken) {
+		t.Errorf("Refresh() after reset error = %v, want ErrInvalidRefreshToken", err)
+	}
+
+	// The new password works and the old one does not.
+	if _, err := h.service.Login(ctx, LoginInput{Email: "ada@example.com", Password: "a brand new 9"}); err != nil {
+		t.Fatalf("Login(new password) error = %v, want nil", err)
+	}
+	if _, err := h.service.Login(ctx, LoginInput{Email: "ada@example.com", Password: "correct horse 7"}); !errors.Is(err, identity.ErrInvalidCredentials) {
+		t.Errorf("Login(old password) error = %v, want ErrInvalidCredentials", err)
+	}
+
+	// The reset token is single use.
+	if err := h.service.ResetPassword(ctx, token, "another one 3"); !errors.Is(err, ErrInvalidPasswordResetToken) {
+		t.Fatalf("second ResetPassword() error = %v, want ErrInvalidPasswordResetToken", err)
+	}
+}
+
+func TestResetPasswordValidatesInput(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+
+	var validation *identity.ValidationError
+	if err := h.service.ResetPassword(context.Background(), "anything", "weak"); !errors.As(err, &validation) {
+		t.Fatalf("ResetPassword(weak) error = %v, want a ValidationError", err)
+	}
+
+	if err := h.service.ResetPassword(context.Background(), "", "a strong one 1"); !errors.Is(err, ErrInvalidPasswordResetToken) {
+		t.Fatalf("ResetPassword(no token) error = %v, want ErrInvalidPasswordResetToken", err)
+	}
+
+	if err := h.service.ResetPassword(context.Background(), "unknown-token", "a strong one 1"); !errors.Is(err, ErrInvalidPasswordResetToken) {
+		t.Fatalf("ResetPassword(unknown token) error = %v, want ErrInvalidPasswordResetToken", err)
+	}
+}
+
+func TestResetPasswordRejectsADeletedAccount(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	user := h.registerAndVerify(t)
+
+	ctx := context.Background()
+
+	if err := h.service.ForgotPassword(ctx, "ada@example.com"); err != nil {
+		t.Fatalf("ForgotPassword() error = %v, want nil", err)
+	}
+	token := extractToken(t, h.logs.String(), defaultPasswordResetLinkBase)
+
+	h.users.mu.Lock()
+	h.users.deleted[user.ID] = true
+	h.users.mu.Unlock()
+
+	if err := h.service.ResetPassword(ctx, token, "a strong one 1"); !errors.Is(err, ErrInvalidPasswordResetToken) {
+		t.Fatalf("ResetPassword() error = %v, want ErrInvalidPasswordResetToken", err)
+	}
+}

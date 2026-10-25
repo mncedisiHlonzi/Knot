@@ -342,7 +342,7 @@ func newStoryMediaTestEnv(t *testing.T) *storyMediaTestEnv {
 func (e *storyMediaTestEnv) router(t *testing.T, subject string) http.Handler {
 	t.Helper()
 
-	authHandler, err := NewAuthHandler(&fakeAuthService{}, e.logger)
+	authHandler, err := NewAuthHandler(&fakeAuthService{}, newTestLimiter(t), e.logger)
 	if err != nil {
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}

@@ -73,7 +73,7 @@ func newRankedFeedRouter(t *testing.T, service StoriesService, ranking FeedRanki
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	authHandler, err := NewAuthHandler(&fakeAuthService{}, logger)
+	authHandler, err := NewAuthHandler(&fakeAuthService{}, newTestLimiter(t), logger)
 	if err != nil {
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
@@ -110,7 +110,7 @@ func newRankedFeedRouter(t *testing.T, service StoriesService, ranking FeedRanki
 		t.Fatalf("NewRootedHandler() error = %v, want nil", err)
 	}
 
-	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID}, logger)
+	authMiddleware, err := NewAuthMiddleware(&fakeTokenParser{subject: testUserID, sessionID: testSessionID}, logger)
 	if err != nil {
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}

@@ -41,15 +41,20 @@ func NewPostgresSessionStore(pool *pgxpool.Pool) (*PostgresSessionStore, error) 
 
 // Create inserts a session and returns the stored row.
 //
-// The database supplies id, last_used_at and created_at, so a Session passed in
-// with those fields set has them overwritten: the row's timestamps are the
-// server's, not the caller's.
+// A session id supplied by the caller is used as given, and an empty one is left
+// to the database. The service mints its own id because the id has to appear
+// inside the refresh token that is handed to the client at the same moment the
+// row is written (see newSessionID); the column's default remains for anything
+// that inserts a session directly.
 func (s *PostgresSessionStore) Create(ctx context.Context, session *Session) (*Session, error) {
 	if session == nil {
 		return nil, fmt.Errorf("auth: create session: session must not be nil")
 	}
 	if !isUUID(session.UserID) {
 		return nil, wrapUUIDError("auth: create session", session.UserID)
+	}
+	if session.ID != "" && !isUUID(session.ID) {
+		return nil, fmt.Errorf("auth: create session: session id %q is not a UUID", session.ID)
 	}
 
 	deviceInfo, err := encodeDeviceInfo(session.DeviceInfo)
@@ -58,11 +63,12 @@ func (s *PostgresSessionStore) Create(ctx context.Context, session *Session) (*S
 	}
 
 	const query = `
-		INSERT INTO sessions (user_id, refresh_token_hash, device_info, ip_address)
-		VALUES ($1, $2, $3, NULLIF($4, '')::inet)
+		INSERT INTO sessions (id, user_id, refresh_token_hash, device_info, ip_address)
+		VALUES (COALESCE(NULLIF($1, '')::uuid, gen_random_uuid()), $2, $3, $4, NULLIF($5, '')::inet)
 		RETURNING ` + sessionColumns
 
 	created, err := scanSession(s.pool.QueryRow(ctx, query,
+		session.ID,
 		session.UserID,
 		session.RefreshTokenHash,
 		deviceInfo,
@@ -116,6 +122,68 @@ func (s *PostgresSessionStore) Revoke(ctx context.Context, sessionID string) err
 	}
 
 	return nil
+}
+
+// FindByID returns the session with the given id, revoked or not.
+func (s *PostgresSessionStore) FindByID(ctx context.Context, sessionID string) (*Session, error) {
+	if !isUUID(sessionID) {
+		return nil, ErrSessionNotFound
+	}
+
+	const query = `SELECT ` + sessionColumns + ` FROM sessions WHERE id = $1`
+
+	session, err := scanSession(s.pool.QueryRow(ctx, query, sessionID))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrSessionNotFound
+		}
+		return nil, fmt.Errorf("auth: find session by id: %w", err)
+	}
+
+	return session, nil
+}
+
+// RotateRefreshToken swaps the session's refresh token hash in one statement.
+//
+// The WHERE clause carries all three conditions — live, owned by this id, and
+// holding the expected hash — so the check and the write cannot be separated by a
+// concurrent refresh. When it matches nothing, the follow-up read says which
+// condition failed, because "the session is gone" and "this token was already
+// rotated" call for very different responses (KNOT-ADR-085).
+func (s *PostgresSessionStore) RotateRefreshToken(ctx context.Context, sessionID, expectedHash, newHash string) (*Session, error) {
+	if !isUUID(sessionID) {
+		return nil, ErrSessionNotFound
+	}
+	if expectedHash == "" || newHash == "" {
+		return nil, fmt.Errorf("auth: rotate refresh token: both hashes must be set")
+	}
+
+	const query = `
+		UPDATE sessions
+		SET refresh_token_hash = $3, last_used_at = now()
+		WHERE id = $1 AND refresh_token_hash = $2 AND revoked_at IS NULL
+		RETURNING ` + sessionColumns
+
+	rotated, err := scanSession(s.pool.QueryRow(ctx, query, sessionID, expectedHash, newHash))
+	if err == nil {
+		return rotated, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("auth: rotate refresh token: %w", err)
+	}
+
+	// Nothing matched. Distinguish a dead session from a stale token, so the
+	// service can contain a leaked token without signing the user out for the
+	// ordinary case of a request that lost a race with its own retry.
+	existing, findErr := s.FindByID(ctx, sessionID)
+	if findErr != nil {
+		return nil, findErr
+	}
+	if !existing.Active() {
+		return nil, ErrSessionNotFound
+	}
+
+	return nil, ErrSessionRefreshTokenMismatch
 }
 
 // ListForUser returns the user's live sessions, newest first.

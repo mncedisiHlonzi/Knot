@@ -134,8 +134,31 @@ func (r *Router) Handler() http.Handler {
 	// Method-qualified patterns are stdlib ServeMux features as of Go 1.22.
 	mux.HandleFunc("GET /health", r.handleHealth)
 	mux.HandleFunc("GET /languages", r.handleLanguages)
+
+	// Authentication (KNOT-031). Registration returns no tokens at all: an account
+	// cannot sign in until its address is verified (KNOT-ADR-083), so the session
+	// endpoints below are the only way to obtain one. The four endpoints that a
+	// stranger can reach without a credential are rate limited by the handler
+	// itself; the four that act on a session are protected here.
+	//
+	//	POST   /auth/register         create an account, send no tokens
+	//	POST   /auth/verify-email     redeem a verification token
+	//	POST   /auth/login            email + password -> a session
+	//	POST   /auth/refresh          rotate the refresh token, mint a new pair
+	//	POST   /auth/logout           revoke the caller's own session
+	//	GET    /auth/sessions         the caller's live devices
+	//	DELETE /auth/sessions/{id}    revoke one of the caller's devices
+	//	POST   /auth/forgot-password  always answers the same way
+	//	POST   /auth/reset-password   redeem a reset token, sign out everywhere
 	mux.HandleFunc("POST /auth/register", r.auth.Register)
+	mux.HandleFunc("POST /auth/verify-email", r.auth.VerifyEmail)
 	mux.HandleFunc("POST /auth/login", r.auth.Login)
+	mux.HandleFunc("POST /auth/refresh", r.auth.Refresh)
+	mux.HandleFunc("POST /auth/forgot-password", r.auth.ForgotPassword)
+	mux.HandleFunc("POST /auth/reset-password", r.auth.ResetPassword)
+	mux.HandleFunc("POST /auth/logout", r.authMiddleware.Require(r.auth.Logout))
+	mux.HandleFunc("GET /auth/sessions", r.authMiddleware.Require(r.auth.ListSessions))
+	mux.HandleFunc("DELETE /auth/sessions/{id}", r.authMiddleware.Require(r.auth.DeleteSession))
 
 	// Stories. Publishing requires an access token; reading is open. The reads use
 	// optional auth so a signed-in caller's reaction highlights can be attached.

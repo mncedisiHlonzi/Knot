@@ -32,7 +32,7 @@ func (s *fakeStore) CreateUser(_ context.Context, user *User) (*User, error) {
 		return nil, s.createErr
 	}
 
-	email := normalizeEmail(user.Email)
+	email := NormalizeEmail(user.Email)
 	if _, exists := s.byEmail[email]; exists {
 		return nil, ErrEmailTaken
 	}
@@ -56,7 +56,7 @@ func (s *fakeStore) FindUserByEmail(_ context.Context, email string) (*User, err
 		return nil, s.findErr
 	}
 
-	user, ok := s.byEmail[normalizeEmail(email)]
+	user, ok := s.byEmail[NormalizeEmail(email)]
 	if !ok {
 		return nil, ErrUserNotFound
 	}
@@ -108,6 +108,53 @@ func (s *fakeStore) UpdateAvatarURL(_ context.Context, userID, avatarURL string)
 	return user, nil
 }
 
+// FindActiveUserByEmail mirrors the store's deletion filter. The fake keeps no
+// deleted users, so it is the plain lookup.
+func (s *fakeStore) FindActiveUserByEmail(ctx context.Context, email string) (*User, error) {
+	return s.FindUserByEmail(ctx, email)
+}
+
+// FindActiveUserByID mirrors the store's deletion filter.
+func (s *fakeStore) FindActiveUserByID(ctx context.Context, id string) (*User, error) {
+	return s.FindUserByID(ctx, id)
+}
+
+// MarkEmailVerified mirrors the store's COALESCE: the first proof wins.
+func (s *fakeStore) MarkEmailVerified(_ context.Context, userID string) (*User, error) {
+	if s.findErr != nil {
+		return nil, s.findErr
+	}
+
+	user, ok := s.byID[userID]
+	if !ok {
+		return nil, ErrUserNotFound
+	}
+
+	if user.EmailVerifiedAt == nil {
+		verifiedAt := time.Now().UTC().Truncate(time.Microsecond)
+		user.EmailVerifiedAt = &verifiedAt
+	}
+
+	return user, nil
+}
+
+// UpdatePasswordHash replaces the stored hash, as the real store's UPDATE does.
+func (s *fakeStore) UpdatePasswordHash(_ context.Context, userID, passwordHash string) (*User, error) {
+	if s.findErr != nil {
+		return nil, s.findErr
+	}
+
+	user, ok := s.byID[userID]
+	if !ok {
+		return nil, ErrUserNotFound
+	}
+
+	user.PasswordHash = passwordHash
+	user.UpdatedAt = time.Now().UTC().Truncate(time.Microsecond)
+
+	return user, nil
+}
+
 func newTestService(t *testing.T, store UserStore) *Service {
 	t.Helper()
 
@@ -127,7 +174,7 @@ func newTestService(t *testing.T, store UserStore) *Service {
 func validRegisterInput() RegisterInput {
 	return RegisterInput{
 		Email:               "Ada@Example.COM",
-		Password:            "correct horse battery staple",
+		Password:            "correct horse battery staple 7",
 		DisplayName:         "Ada Lovelace",
 		PreferredLanguages:  []string{"eng", " fra "},
 		ApproximateLocation: "Cape Town",
@@ -356,7 +403,7 @@ func TestLoginRejectsUnknownEmail(t *testing.T) {
 
 	_, err := service.Login(context.Background(), LoginInput{
 		Email:    "nobody@example.com",
-		Password: "correct horse battery staple",
+		Password: "correct horse battery staple 7",
 	})
 	if !errors.Is(err, ErrInvalidCredentials) {
 		t.Errorf("Login() error = %v, want ErrInvalidCredentials", err)
@@ -401,7 +448,7 @@ func TestLoginRejectsEmptyInput(t *testing.T) {
 
 	for name, in := range map[string]LoginInput{
 		"empty":         {},
-		"missing email": {Password: "correct horse battery staple"},
+		"missing email": {Password: "correct horse battery staple 7"},
 		"missing pass":  {Email: "ada@example.com"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -498,7 +545,7 @@ func TestUsersByIDs(t *testing.T) {
 
 	second, err := service.Register(context.Background(), RegisterInput{
 		Email:       "grace@example.com",
-		Password:    "correct horse battery staple",
+		Password:    "correct horse battery staple 7",
 		DisplayName: "Grace Hopper",
 	})
 	if err != nil {

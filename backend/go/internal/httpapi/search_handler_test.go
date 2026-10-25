@@ -78,7 +78,7 @@ func newTestSearchHandler(t *testing.T, logger *slog.Logger) *SearchHandler {
 func newSearchRouter(t *testing.T, logger *slog.Logger, service SearchService, blocks BlockLookup) http.Handler {
 	t.Helper()
 
-	authHandler, err := NewAuthHandler(&fakeAuthService{}, logger)
+	authHandler, err := NewAuthHandler(&fakeAuthService{}, newTestLimiter(t), logger)
 	if err != nil {
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}

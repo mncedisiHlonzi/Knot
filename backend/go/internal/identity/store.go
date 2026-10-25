@@ -22,10 +22,35 @@ type UserStore interface {
 	// subject requires a way to resolve a user id, which the next task needs.
 	FindUserByID(ctx context.Context, id string) (*User, error)
 
+	// FindActiveUserByEmail is FindUserByEmail except that an account inside its
+	// deletion window is reported as ErrUserNotFound (KNOT-ADR-081).
+	//
+	// It exists so sign-in can refuse a deleted account without the User type
+	// carrying deletion state: the caller that must not see it — the login
+	// endpoint, which must not confirm a deletion to whoever is guessing — gets
+	// the same answer as for an address that was never registered.
+	FindActiveUserByEmail(ctx context.Context, email string) (*User, error)
+
+	// FindActiveUserByID is FindUserByID with the same deletion filter. It is what
+	// a token refresh uses: a session must not outlive the account it belongs to.
+	FindActiveUserByID(ctx context.Context, id string) (*User, error)
+
 	// UpdateAvatarURL stores the object key of the user's current avatar and
 	// returns the stored row, including the refreshed updated_at. Passing ""
 	// clears the avatar. It returns ErrUserNotFound when no such user exists.
 	UpdateAvatarURL(ctx context.Context, userID, avatarURL string) (*User, error)
+
+	// MarkEmailVerified records that the address was proven and returns the stored
+	// row. It is idempotent: verifying an already verified account keeps the
+	// original timestamp rather than moving it, because the first proof is the fact
+	// worth keeping (KNOT-ADR-083). A malformed id and an id with no row are both
+	// ErrUserNotFound.
+	MarkEmailVerified(ctx context.Context, userID string) (*User, error)
+
+	// UpdatePasswordHash replaces the stored password credential and returns the
+	// updated row. It is how a password reset takes effect; callers are responsible
+	// for revoking the sessions that were authorised by the old password.
+	UpdatePasswordHash(ctx context.Context, userID, passwordHash string) (*User, error)
 
 	// FindUsersByID returns the users with the given ids. A malformed id and an id
 	// that matches no row are both simply absent from the result, and the order is

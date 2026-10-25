@@ -17,6 +17,9 @@ import (
 type fakeTokenParser struct {
 	// subject is the user id reported for any accepted token.
 	subject string
+	// sessionID is the session claim reported for any accepted token. It is empty
+	// for a token that names no session.
+	sessionID string
 	// err, when set, is returned instead of claims.
 	err error
 
@@ -34,7 +37,10 @@ func (f *fakeTokenParser) ParseAccessToken(raw string) (*identity.Claims, error)
 		return nil, identity.ErrInvalidToken
 	}
 
-	return &identity.Claims{RegisteredClaims: jwt.RegisteredClaims{Subject: f.subject}}, nil
+	return &identity.Claims{
+		SessionID:        f.sessionID,
+		RegisteredClaims: jwt.RegisteredClaims{Subject: f.subject},
+	}, nil
 }
 
 // capturedUser records what a protected handler saw on the context.

@@ -105,14 +105,19 @@ registry.
 
 ## POST /auth/register
 
-Creates an account and returns a token pair.
+Creates an account. It returns **no tokens**: an account cannot sign in until its
+address is verified (KNOT-ADR-083), so a session is only obtainable from
+[`POST /auth/login`](#post-authlogin).
+
+A verification link is written to the server console instead of being emailed
+(KNOT-ADR-088); see [Testing Auth Locally](DEVELOPMENT.md#testing-auth-locally).
 
 **Request**
 
 ```json
 {
   "email": "ada@example.com",
-  "password": "at-least-8-characters",
+  "password": "at-least-8-characters-1",
   "display_name": "Ada Lovelace",
   "preferred_languages": ["eng", "fra"],
   "approximate_location": "Cape Town",
@@ -123,7 +128,7 @@ Creates an account and returns a token pair.
 | Field                  | Required | Rules                                                          |
 | ---------------------- | -------- | -------------------------------------------------------------- |
 | `email`                | yes      | Valid address, at most 254 characters, stored lower-cased        |
-| `password`             | yes      | At least 8 characters, at most 1024 bytes                        |
+| `password`             | yes      | At least 8 characters, at most 1024 bytes, and at least one letter and one number (KNOT-ADR-086) |
 | `display_name`         | yes      | 1-80 characters after trimming                                   |
 | `preferred_languages`  | no       | An array of at most 20 ISO 639-3 codes; blanks dropped. See [Languages](#languages) |
 | `approximate_location` | no       | At most 120 characters                                           |
@@ -141,15 +146,18 @@ Creates an account and returns a token pair.
     "approximate_location": "Cape Town",
     "phone": "+27000000000",
     "created_at": "2026-10-07T18:26:37.134182+02:00",
+    "email_verified_at": null,
     "avatar_url": ""
-  },
-  "access_token": "<jwt>",
-  "refresh_token": "<jwt>",
-  "expires_in": 900
+  }
 }
 ```
 
 The response never contains a password or a password hash.
+
+**Errors:** `400 validation_error`, `400 invalid_request`, `409 email_taken`,
+`413 request_too_large`, `429 rate_limited`, `500 internal_error`.
+
+The endpoint is limited to **5 attempts per hour per client address**.
 
 ### The user object
 
@@ -165,6 +173,7 @@ one profile shape to parse.
 | `approximate_location` | string          | `""` when unset                                                          |
 | `phone`                | string          | `""` when unset                                                          |
 | `created_at`           | string          | RFC3339                                                                  |
+| `email_verified_at`    | string \| null  | RFC3339 once the address is proven, `null` until then (KNOT-ADR-083)     |
 | `avatar_url`           | string          | Path on this API, or `""` when the user has no avatar. Never a link to object storage — see [Avatars](#avatars) |
 
 **Errors:** `400 validation_error`, `400 invalid_request`, `409 email_taken`,
@@ -172,27 +181,172 @@ one profile shape to parse.
 
 ## POST /auth/login
 
-Exchanges credentials for a token pair.
+Exchanges credentials for a session.
 
 **Request**
 
 ```json
-{ "email": "ada@example.com", "password": "at-least-8-characters" }
+{
+  "email": "ada@example.com",
+  "password": "at-least-8-characters-1",
+  "device_info": { "platform": "ios", "app_version": "0.1.0" }
+}
 ```
 
-**200** — the same shape as register.
+| Field         | Required | Rules                                                                 |
+| ------------- | -------- | --------------------------------------------------------------------- |
+| `email`       | yes      |                                                                       |
+| `password`    | yes      |                                                                       |
+| `device_info` | no       | Free-form JSON object, stored with the session and shown in the device list. Never used for an authorisation decision |
 
-**Errors:** `401 invalid_credentials`, `400 invalid_request`, `413 request_too_large`,
-`500 internal_error`.
+**200**
+
+```json
+{
+  "user": { "id": "7c0c1bfb-…", "email_verified_at": "2026-10-07T18:30:00Z" },
+  "access_token": "<jwt>",
+  "refresh_token": "<session-uuid>.<secret>",
+  "expires_in": 900
+}
+```
+
+`access_token` is a JWT valid for 15 minutes and carries the session id in its `sid`
+claim. `refresh_token` is an opaque string, valid for 30 days, and is **rotated on every
+use** (KNOT-ADR-085). A user may hold at most 5 live sessions; a sixth sign-in revokes the
+oldest (KNOT-ADR-084).
+
+**Errors:** `401 invalid_credentials`, `403 email_not_verified`, `400 invalid_request`,
+`413 request_too_large`, `429 rate_limited`, `500 internal_error`.
 
 A wrong password and an unknown email both return `401 invalid_credentials` with an
 identical message, so the endpoint cannot be used to discover which accounts exist.
+`403 email_not_verified` is only ever returned **after** the password has been checked.
+
+Limited to **10 attempts per 15 minutes per client address** and **5 per 15 minutes per
+account**.
+
+## POST /auth/verify-email
+
+Redeems the token from a verification link and unlocks sign-in.
+
+**Request**
+
+```json
+{ "token": "<token from the console-logged link>" }
+```
+
+**200** `{ "success": true }`
+
+**Errors:** `400 invalid_verification_token` (unknown, already used, expired, or of the
+wrong type), `400 invalid_request`, `429 rate_limited`.
+
+## POST /auth/refresh
+
+Rotates the refresh token and mints a new pair. The token that was sent stops working
+immediately.
+
+**Request**
+
+```json
+{ "refresh_token": "<session-uuid>.<secret>" }
+```
+
+**200** — the same shape as login.
+
+**Errors:** `401 invalid_refresh_token` (malformed, unknown, revoked — or reused, in
+which case **every session on the account is revoked**), `400 invalid_request`,
+`429 rate_limited`.
+
+Limited to **30 refreshes per 15 minutes per session**.
+
+## POST /auth/logout
+
+Revokes the session the presented access token belongs to. Protected.
+
+The session is read from the token's own `sid` claim, never from the request body, so a
+caller cannot sign out another device.
+
+**200** `{ "success": true }`
+
+**Errors:** `401 unauthorized`, `500 internal_error`. Signing out twice is not an error.
+
+## GET /auth/sessions
+
+Lists the caller's live sessions, newest first. Protected.
+
+**200**
+
+```json
+{
+  "sessions": [
+    {
+      "id": "7f9d4d3c-…",
+      "device_info": { "platform": "ios", "app_version": "0.1.0" },
+      "ip_address": "203.0.113.7",
+      "last_used_at": "2026-10-26T09:12:44Z",
+      "created_at": "2026-10-26T08:00:00Z",
+      "current": true
+    }
+  ]
+}
+```
+
+`device_info` is `{}` rather than `null` when the client sent none. `current` marks the
+session the request was made from.
+
+**Errors:** `401 unauthorized`, `500 internal_error`.
+
+## DELETE /auth/sessions/{id}
+
+Revokes one of the caller's own sessions. Protected.
+
+**200** `{ "success": true }`
+
+**Errors:** `404 session_not_found` (unknown id **or** another account's session — the
+API never confirms that an id exists on someone else's account), `401 unauthorized`.
+
+## POST /auth/forgot-password
+
+Starts a password reset. A reset link is written to the server console instead of being
+emailed (KNOT-ADR-088), and is valid for 30 minutes.
+
+**Request**
+
+```json
+{ "email": "ada@example.com" }
+```
+
+**200** `{ "success": true }` — **always**, whether or not the address has an account, so
+the endpoint cannot be used to enumerate accounts (KNOT-ADR-087).
+
+**Errors:** `400 invalid_request`, `429 rate_limited`.
+
+Limited to **3 requests per hour per address**.
+
+## POST /auth/reset-password
+
+Sets a new password from a reset token, then revokes **every** session on the account
+(KNOT-ADR-087).
+
+**Request**
+
+```json
+{ "token": "<token from the console-logged link>", "new_password": "another strong 1" }
+```
+
+**200** `{ "success": true }`
+
+The token is single use. The new password must satisfy the same policy as registration.
+
+**Errors:** `400 invalid_reset_token` (unknown or expired), `400 validation_error`,
+`429 rate_limited`.
 
 ## Authentication
 
 `POST /stories`, `POST /stories/{id}/adapt`, `POST /versions/{id}/comments`,
 `POST /users/me/rooted`, `GET /users/me/rooted`,
-`POST /users/me/avatar`, `POST /stories/{id}/media`, and `DELETE /stories/{id}/media/{mid}`
+`POST /users/me/avatar`, `POST /stories/{id}/media`, `DELETE /stories/{id}/media/{mid}`,
+`POST /auth/logout`, `GET /auth/sessions` and `DELETE /auth/sessions/{id}`
 are protected routes. Every other route is public and needs no credentials.
 
 A protected route requires an access token in the standard header:

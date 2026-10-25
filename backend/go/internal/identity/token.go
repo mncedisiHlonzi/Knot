@@ -28,6 +28,11 @@ type Claims struct {
 	// TokenType is "access" or "refresh". Checking it stops a refresh token from
 	// being replayed as an access token.
 	TokenType string `json:"typ"`
+	// SessionID is the `sessions` row the token was issued for. It is what lets a
+	// request name its own session — to list devices, to sign one out, or to rate
+	// limit a refresh — without the client sending an identifier it could tamper
+	// with. It is empty on a token issued for a user alone.
+	SessionID string `json:"sid,omitempty"`
 	jwt.RegisteredClaims
 }
 
@@ -51,14 +56,41 @@ func NewTokenIssuer(secret string) (*TokenIssuer, error) {
 
 // IssueAccessToken returns a signed access token for userID.
 func (i *TokenIssuer) IssueAccessToken(userID string) (string, error) {
-	return i.issue(userID, TokenTypeAccess, AccessTokenTTL)
+	return i.issue(userID, "", TokenTypeAccess, AccessTokenTTL)
 }
 
 // IssueRefreshToken returns a signed refresh token for userID. It carries a
 // random token id (the "jti" claim) so a future refresh endpoint can rotate and
 // revoke individual tokens.
 func (i *TokenIssuer) IssueRefreshToken(userID string) (string, error) {
-	return i.issue(userID, TokenTypeRefresh, RefreshTokenTTL)
+	return i.issue(userID, "", TokenTypeRefresh, RefreshTokenTTL)
+}
+
+// IssueAccessTokenForSession returns a signed access token that names both the
+// user and the session it was issued for.
+//
+// The session id is a claim rather than a request parameter because it must not
+// be something the caller can choose: a token that says which session it belongs
+// to lets `GET /auth/sessions`, `DELETE /auth/sessions/{id}` and logout act on
+// the caller's own session without trusting an id from the body.
+func (i *TokenIssuer) IssueAccessTokenForSession(userID, sessionID string) (string, error) {
+	if sessionID == "" {
+		return "", fmt.Errorf("identity: cannot issue a session access token without a session id")
+	}
+	return i.issue(userID, sessionID, TokenTypeAccess, AccessTokenTTL)
+}
+
+// IssueRefreshTokenForSession returns a signed refresh token that names both the
+// user and the session it was issued for.
+//
+// The authentication service issues opaque refresh tokens rather than JWTs
+// (KNOT-ADR-080), so this exists for callers that want a self-describing refresh
+// token; it is not used by the session-backed flow.
+func (i *TokenIssuer) IssueRefreshTokenForSession(userID, sessionID string) (string, error) {
+	if sessionID == "" {
+		return "", fmt.Errorf("identity: cannot issue a session refresh token without a session id")
+	}
+	return i.issue(userID, sessionID, TokenTypeRefresh, RefreshTokenTTL)
 }
 
 // ParseAccessToken verifies raw and returns its claims. It returns
@@ -73,7 +105,7 @@ func (i *TokenIssuer) ParseRefreshToken(raw string) (*Claims, error) {
 }
 
 // issue builds, signs, and returns a token of the given type.
-func (i *TokenIssuer) issue(userID, tokenType string, ttl time.Duration) (string, error) {
+func (i *TokenIssuer) issue(userID, sessionID, tokenType string, ttl time.Duration) (string, error) {
 	if userID == "" {
 		return "", fmt.Errorf("identity: cannot issue %s token without a user id", tokenType)
 	}
@@ -81,6 +113,7 @@ func (i *TokenIssuer) issue(userID, tokenType string, ttl time.Duration) (string
 	now := i.now()
 	claims := Claims{
 		TokenType: tokenType,
+		SessionID: sessionID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID,
 			IssuedAt:  jwt.NewNumericDate(now),

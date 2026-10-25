@@ -27,6 +27,7 @@ Migrations live in `backend/go/migrations/` and are applied with
 | `0012`  | `comment_replies` | The `comments.parent_comment_id` column, its index and foreign key, and the self-parent check constraint |
 | `0013`  | `reactions` | The `reactions` table and its indexes; the `notifications.reaction_type` column; and the widened notification event CHECK |
 | `0021`  | `identity_domain` | The `credentials`, `sessions` and `verification_tokens` tables; `users.deleted_at` and `users.deletion_scheduled_at`; and the partial `users_deleted_at_idx` |
+| `0022`  | `email_verified` | The `users.email_verified_at` column and the partial `users_email_verified_at_idx` |
 
 `0014`–`0020` are documented in the sections that introduced them — moderation, search, the
 profile wall, `user_interactions` and `entity_features` — rather than in this table.
@@ -72,6 +73,7 @@ nulled in either direction.
 | `updated_at`           | `timestamptz`            | no       | `now()`            | Set on insert, and refreshed by the avatar update. No trigger yet: updates are a later task |
 | `deleted_at`           | `timestamptz`            | yes      | `NULL`             | When the account was deleted, or `NULL` while it is live. Migration `0021`, KNOT-ADR-081. See below |
 | `deletion_scheduled_at`| `timestamptz`            | yes      | `NULL`             | When the 30-day recovery window closes and personal data is purged. Migration `0021` |
+| `email_verified_at`    | `timestamptz`            | yes      | `NULL`             | When the address was proven, or `NULL` while it has not been. Migration `0022`, KNOT-ADR-083. Sign-in requires it |
 
 ### Indexes and constraints
 
@@ -98,6 +100,24 @@ The object store itself is never addressed by a client. The API translates the k
 `/users/{id}/avatar?v=<object name>`, and only the backend reads the bytes back out
 (KNOT-ADR-028, KNOT-ADR-029). Replacing an avatar overwrites this one column; the previous
 object is deleted best-effort by the upload handler.
+
+### Email verification (migration `0022`)
+
+`email_verified_at` is the gate on sign-in (KNOT-ADR-083). It is `NULL` for a fresh
+account, set once by `MarkEmailVerified`, and never moved: the write is
+`COALESCE(email_verified_at, now())`, so a replayed verification link cannot rewrite when
+the account became trustworthy.
+
+The column is nullable with no default, because an account *starts* unproven and `NULL` is
+the honest representation of "never proven" — a sentinel timestamp would be a lie the
+service would have to remember to test for. The partial index `users_email_verified_at_idx`
+(`WHERE email_verified_at IS NULL`) exists for the opposite of the common case: it answers
+"who has not verified yet", which is the small, shrinking set a reminder job would scan.
+
+**Written by** `auth.Service.VerifyEmail`, which sets the column first and consumes the
+`verification_tokens` row second. A crash in between leaves a verified account and a
+still-redeemable token — a retry turns that into a no-op. The reverse order would consume
+the token and leave the account locked out with no way back in.
 
 ### Soft delete (migration `0021`)
 

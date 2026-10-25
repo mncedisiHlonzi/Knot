@@ -2632,3 +2632,80 @@ as a field (`featureUpsert`) so a test can simulate that failure and prove no st
 version survives it. `UpsertEntityFeature` is also available on the stories store for a
 standalone rebuild of one entity. No schema change: `entity_features` still has no foreign
 key, so content deletion (no such path today) would leave a derived row behind.
+
+## Testing Auth Locally
+
+Knot's authentication verifies addresses and resets passwords with links that are
+**written to the API's console** instead of being emailed. There is no mail provider yet
+(KNOT-ADR-088), so the console is the inbox.
+
+### The full round trip
+
+```bash
+# 1. Start the stack and the API, keeping the API's output.
+scripts/dev-up.sh
+cd backend/go && go run ./cmd/knot 2>&1 | tee /tmp/knot-api.log
+
+# 2. Register. The response has NO tokens: a new account cannot sign in yet.
+curl -sS -X POST localhost:8080/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"ada@example.com","password":"correct horse 7","display_name":"Ada Lovelace"}'
+
+# 3. Read the verification link out of the log.
+grep 'email verification' /tmp/knot-api.log
+#   … url=knot://auth/verify-email?token=<TOKEN>
+
+# 4. Verify. Sign-in is unlocked from this moment.
+curl -sS -X POST localhost:8080/auth/verify-email \
+  -H 'Content-Type: application/json' -d '{"token":"<TOKEN>"}'
+
+# 5. Sign in. This is the only way to obtain a session.
+curl -sS -X POST localhost:8080/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"ada@example.com","password":"correct horse 7","device_info":{"platform":"curl"}}'
+
+# 6. The rest of the session surface.
+curl -sS localhost:8080/auth/sessions -H "Authorization: Bearer <ACCESS_TOKEN>"
+curl -sS -X POST localhost:8080/auth/logout -H "Authorization: Bearer <ACCESS_TOKEN>"
+
+# 7. Password reset, same console-link pattern.
+curl -sS -X POST localhost:8080/auth/forgot-password \
+  -H 'Content-Type: application/json' -d '{"email":"ada@example.com"}'
+grep 'password reset' /tmp/knot-api.log
+#   … url=knot://auth/reset-password?token=<TOKEN>
+curl -sS -X POST localhost:8080/auth/reset-password \
+  -H 'Content-Type: application/json' \
+  -d '{"token":"<TOKEN>","new_password":"another strong 1"}'
+```
+
+### Things that will surprise you
+
+- **Every account created before KNOT-031 is unverified**, so it cannot sign in. Register
+  the address again (it is taken) — instead, verify it by inserting a token, or simply
+  create a new account.
+- **Signing in six times revokes the first session.** The cap is five (KNOT-ADR-084), so a
+  device list that keeps disappearing is working as designed.
+- **Replaying a refresh token signs you out everywhere.** Rotation is per use, and a replayed
+  token is treated as theft (KNOT-ADR-085). If you are testing refresh by hand, use the
+  token from the *latest* response.
+- **Rate limits are real and they are short.** Six rapid registrations from one address
+  answer `429` with `Retry-After: 3600`. To clear the counters without waiting, flush Redis:
+  ```bash
+  docker exec knot-redis redis-cli --scan --pattern 'knot:auth:*' | xargs -r docker exec -i knot-redis redis-cli del
+  ```
+- **The log is a credential store.** During development, anyone who can read
+  `/tmp/knot-api.log` can verify an address or reset a password. Do not post it in a review.
+
+### What the tests cover
+
+The backend tests use an in-process Redis (miniredis), so `go test ./...` needs Docker only
+for the PostgreSQL integration tests:
+
+```bash
+cd backend/go
+KNOT_POSTGRES_DSN='postgres://knot:knot_only_change_me@localhost:5433/knot?sslmode=disable' \
+  go test ./... -count=1
+```
+
+`internal/auth/service_test.go` exercises every policy decision — the session cap, rotation,
+reuse detection, the verification window — against fake stores and a real in-process cache.

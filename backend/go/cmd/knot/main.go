@@ -28,6 +28,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/knot/backend/internal/appinfo"
+	"github.com/knot/backend/internal/auth"
 	"github.com/knot/backend/internal/cache"
 	"github.com/knot/backend/internal/config"
 	"github.com/knot/backend/internal/conversations"
@@ -131,10 +132,10 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	defer pool.Close()
 
 	// Redis backs sessions, rate limiting, caching and token management
-	// (KNOT-ADR-082). The client is created here and deliberately unused: nothing
-	// reads or writes through it until the authentication service lands in
-	// KNOT-031. Building it now means a bad address or database number fails at
-	// startup instead of the first time someone signs in.
+	// (KNOT-ADR-082). The client is created here and handed to the authentication
+	// service, whose rate limiter counts every attempt in it, and which holds the
+	// short-lived password reset tokens (KNOT-ADR-087). A bad address or database
+	// number fails at startup rather than at the first sign-in.
 	redisCache, err := cache.NewRedisCache(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
 	if err != nil {
 		return err
@@ -155,12 +156,49 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
+	// identity.Service owns the user-facing reads the content handlers share
+	// (resolve a user, resolve a page of authors, set an avatar). Authentication
+	// itself moved to auth.Service in KNOT-031, which owns registration, sign-in,
+	// sessions and password reset.
 	service, err := identity.NewService(store, tokens)
 	if err != nil {
 		return err
 	}
 
-	authHandler, err := httpapi.NewAuthHandler(service, logger)
+	sessionStore, err := auth.NewPostgresSessionStore(pool)
+	if err != nil {
+		return err
+	}
+
+	credentialStore, err := auth.NewPostgresCredentialStore(pool)
+	if err != nil {
+		return err
+	}
+
+	verificationStore, err := auth.NewPostgresVerificationTokenStore(pool)
+	if err != nil {
+		return err
+	}
+
+	authService, err := auth.NewService(auth.Deps{
+		Users:         store,
+		Sessions:      sessionStore,
+		Credentials:   credentialStore,
+		Verifications: verificationStore,
+		Tokens:        tokens,
+		Cache:         redisCache,
+		Logger:        logger,
+	})
+	if err != nil {
+		return err
+	}
+
+	limiter, err := auth.NewLimiter(redisCache, logger)
+	if err != nil {
+		return err
+	}
+
+	authHandler, err := httpapi.NewAuthHandler(authService, limiter, logger)
 	if err != nil {
 		return err
 	}

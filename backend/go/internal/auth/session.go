@@ -10,6 +10,14 @@ import (
 // no row.
 var ErrSessionNotFound = errors.New("auth: session not found")
 
+// ErrSessionRefreshTokenMismatch is returned by RotateRefreshToken when the
+// session exists but does not hold the hash the caller presented.
+//
+// It is the signal rotation was designed to produce: a refresh token that was
+// already rotated away being presented again means somebody other than the
+// client that rotated it is holding a copy (KNOT-ADR-085).
+var ErrSessionRefreshTokenMismatch = errors.New("auth: refresh token does not match the stored session")
+
 // Session is one signed-in device.
 //
 // It is the row, not the token: the client holds an opaque refresh token whose
@@ -60,6 +68,23 @@ type SessionStore interface {
 	// whether or not it has been revoked: a caller that must reject a revoked
 	// session has to see it to say so.
 	FindByRefreshTokenHash(ctx context.Context, refreshTokenHash string) (*Session, error)
+
+	// FindByID returns the session with the given id, whether or not it has been
+	// revoked. It is how a request that presents a session id — from a token
+	// claim, never from a request body — proves the session exists and belongs to
+	// the caller before acting on it.
+	FindByID(ctx context.Context, sessionID string) (*Session, error)
+
+	// RotateRefreshToken replaces the session's refresh token hash with newHash,
+	// but only if it currently holds expectedHash and the session is live, and
+	// refreshes last_used_at in the same statement.
+	//
+	// It is one conditional UPDATE, so two clients racing with the same refresh
+	// token cannot both win: the row lock serialises them and the loser sees no
+	// rows matched. ErrSessionNotFound means the session is gone or already
+	// revoked; ErrSessionRefreshTokenMismatch means it exists and is live but holds
+	// a different hash, which is reuse of a rotated token (KNOT-ADR-085).
+	RotateRefreshToken(ctx context.Context, sessionID, expectedHash, newHash string) (*Session, error)
 
 	// Revoke ends a session. Revoking an already revoked session is not an
 	// error and does not move its revoked_at; an id that matches no row is
