@@ -314,11 +314,17 @@ export default function SettingsScreen({
             underneath (KNOT-020k-fix25). Nothing here is a control. */}
         {profile === undefined ? null : (
           <View style={styles.profileHeader}>
-            <Avatar
-              uri={avatarUri(profile.avatar_url)}
-              displayName={profile.display_name}
-              size="xl"
-            />
+            {/* `Avatar` pins itself left (`alignSelf: 'flex-start'`) so it never
+                stretches in a row; in this centred column that would defeat the
+                header's alignment, so it gets a centring wrapper — the same
+                device the Profile wall uses (KNOT-020k-fix26). */}
+            <View style={styles.profileAvatar}>
+              <Avatar
+                uri={avatarUri(profile.avatar_url)}
+                displayName={profile.display_name}
+                size="xl"
+              />
+            </View>
             <Text style={[typeScale.h2, styles.profileName]} numberOfLines={1}>
               {profile.display_name}
             </Text>
@@ -438,11 +444,19 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.text.tertiary,
     },
     // The header is a centred column, the shape the Profile wall opens with: an
-    // 88pt face, the name beneath it, then the Rooted summary (KNOT-020k-fix25).
+    // 88pt face, the name beneath it, then the Rooted summary (KNOT-020k-fix25,
+    // KNOT-020k-fix26).
     profileHeader: {
       alignItems: 'center',
       paddingHorizontal: layout.screenPaddingFeed,
       paddingVertical: spacing.lg,
+    },
+    // `Avatar` and `RootedBadge` both position themselves (`alignSelf:
+    // 'flex-start'`), so each needs a box that shrinks to its content and is then
+    // centred. A *stretched* wrapper would not help: the child's own `alignSelf`
+    // wins inside it and the face would hug the left edge again (KNOT-020k-fix26).
+    profileAvatar: {
+      alignSelf: 'center',
     },
     profileName: {
       color: colors.text.primary,
@@ -450,6 +464,7 @@ const createStyles = (colors: ThemeColors) =>
       textAlign: 'center',
     },
     profileRooted: {
+      alignSelf: 'center',
       marginTop: spacing.sm,
     },
     section: {

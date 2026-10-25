@@ -238,6 +238,34 @@ describe('SettingsScreen', () => {
     );
   });
 
+  // Every part of the block sits on one centre line: the header is a centred
+  // column, and the avatar — which pins itself left in its own style — is given a
+  // wrapper that centres it (KNOT-020k-fix26).
+  it('centres the whole header block, avatar included', () => {
+    let headerStyle: unknown;
+    let avatarWrapperStyle: unknown;
+
+    walk(renderScreen(), (candidate) => {
+      const raw = candidate.props?.children;
+      const children = (Array.isArray(raw) ? raw : [raw]) as readonly (
+        ElementLike | null | undefined
+      )[];
+
+      if (children.some((child) => child?.props?.children === mockProfile.display_name)) {
+        headerStyle = candidate.props?.style;
+      }
+      if (children.some((child) => child?.type === Avatar)) {
+        avatarWrapperStyle = candidate.props?.style;
+      }
+    });
+
+    expect(headerStyle).toMatchObject({ alignItems: 'center' });
+    // A column, never a row: a row would put the text beside the face again.
+    expect(headerStyle).not.toMatchObject({ flexDirection: 'row' });
+
+    expect(avatarWrapperStyle).toMatchObject({ alignSelf: 'center' });
+  });
+
   it('separates its rows with whitespace instead of rules', () => {
     // Expanding the rows hands back their real style objects, so the absence of a
     // drawn divider is provable rather than assumed (KNOT-020k-fix23).
