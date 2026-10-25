@@ -222,7 +222,7 @@ A wrong password and an unknown email both return `401 invalid_credentials` with
 identical message, so the endpoint cannot be used to discover which accounts exist.
 `403 email_not_verified` is only ever returned **after** the password has been checked.
 
-Limited to **10 attempts per 15 minutes per client address** and **5 per 15 minutes per
+Limited to **10 attempts per 15 minutes per client address** and **10 per 15 minutes per
 account**.
 
 ## POST /auth/verify-email

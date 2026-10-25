@@ -116,9 +116,13 @@ longest the caller can possibly need to wait.
 | --- | --- | --- |
 | `POST /auth/register` | client address | 5 per hour |
 | `POST /auth/login` | client address | 10 per 15 minutes |
-| `POST /auth/login` | normalised email | 5 per 15 minutes |
+| `POST /auth/login` | normalised email | 10 per 15 minutes |
 | `POST /auth/refresh` | session id | 30 per 15 minutes |
 | `POST /auth/forgot-password` | normalised email | 3 per hour |
+
+The per-account sign-in limit matches the per-address one at **10 per 15 minutes** so
+that the five-device session cap (KNOT-ADR-084) is actually reachable: at the previous
+five, the limiter refused the sixth sign-in before the cap could demonstrate itself.
 
 `verify-email` and `reset-password` are **not** rate limited: their tokens are already
 single use, unguessable, and expiring, and a limiter keyed on an address would let an
@@ -126,10 +130,13 @@ attacker lock a legitimate user out of redeeming their own link.
 
 **Two deliberate weaknesses, stated plainly:**
 
-1. **The limiter fails open.** If Redis is unavailable the check logs a warning and allows
-   the request. Failing closed would turn a cache outage into a total sign-in outage for
-   every user. The consequence is that whoever can take Redis down also removes the limits,
-   so Redis must be protected like any other security dependency.
+1. **The limiter fails open, by design.** If Redis is unavailable the check logs a warning
+   and allows the request. Failing closed would turn a cache outage into a total sign-in
+   outage for every user, so availability was chosen over enforcement. **This is an
+   accepted MVP decision**, not an oversight: the consequence is that whoever can take
+   Redis down also removes the limits, so Redis must be protected like any other security
+   dependency, and the decision should be revisited before Knot handles real personal
+   data at scale.
 2. **The address is the connection's, not a header's.** `clientIP` reads `RemoteAddr` and
    ignores `X-Forwarded-For`, because the API is not behind a proxy today and trusting that
    header would let any caller choose its own limiter key. When a proxy is introduced,

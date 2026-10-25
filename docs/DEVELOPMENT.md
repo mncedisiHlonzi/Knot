@@ -2678,6 +2678,30 @@ curl -sS -X POST localhost:8080/auth/reset-password \
   -d '{"token":"<TOKEN>","new_password":"another strong 1"}'
 ```
 
+### The same round trip in the app
+
+The mobile client follows the identical path, and since KNOT-031-mobile it is the only
+way a person signs in:
+
+1. **Register** on the Create account screen. The app does **not** sign you in: an account
+   cannot log in until its address is verified (KNOT-ADR-083).
+2. **Read the console.** The screen says "Check your email", and the link
+   (`knot://auth/verify-email?token=…`) is in the API's stdout.
+3. **Paste the token** into the Verify screen (reachable from the register confirmation and
+   from the login screen's "Enter verification token" button).
+4. **Sign in.** The app stores only the refresh token (AsyncStorage, `knot.session.v2`) and
+   keeps the 15-minute access token in memory. On the next launch it spends the refresh
+   token to restore the session, so a revoked session cannot come back.
+5. **Forgot password?** On the login screen. The reset link is again on the console, and
+   the Reset screen takes the token plus a new password; resetting signs out every device.
+
+`Settings → Sessions` lists the devices the account is signed in on, marks the current one,
+and revokes the others.
+
+Because the app refreshes the access token silently, a revoked session surfaces as a return
+to the login screen rather than as a stream of failed requests: the client refreshes once on
+a `401`, and signs out when the refresh itself is refused.
+
 ### Things that will surprise you
 
 - **Every account created before KNOT-031 is unverified**, so it cannot sign in. Register

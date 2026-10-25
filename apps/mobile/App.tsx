@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 
 import type { AuthResponse, User } from './src/api/client';
+import { logout } from './src/api/auth';
 import { conversationsApi } from './src/api/conversations';
 import { Notification, notificationsApi } from './src/api/notifications';
 import { storiesApi, type Story } from './src/api/stories';
@@ -36,9 +37,19 @@ import {
   topOverlay,
 } from './src/navigation/overlayStack';
 import { hasSeenOnboarding, markOnboardingSeen } from './src/session/onboarding';
-import { clearSession, loadSession, saveSession, Session } from './src/session/session';
+import {
+  clearSession,
+  loadSession,
+  saveSession,
+  Session,
+  subscribeToSessionExpiry,
+} from './src/session/session';
 import LoginScreen from './src/screens/auth/LoginScreen';
 import RegisterScreen from './src/screens/auth/RegisterScreen';
+import VerifyEmailScreen from './src/screens/auth/VerifyEmailScreen';
+import ForgotPasswordScreen from './src/screens/auth/ForgotPasswordScreen';
+import ResetPasswordScreen from './src/screens/auth/ResetPasswordScreen';
+import SessionsScreen from './src/screens/settings/SessionsScreen';
 import CommentThreadScreen from './src/screens/conversations/CommentThreadScreen';
 import DiscoveryMapScreen from './src/screens/discovery/DiscoveryMapScreen';
 import PlaceStoriesScreen from './src/screens/discovery/PlaceStoriesScreen';
@@ -132,10 +143,17 @@ type Overlay =
   | { readonly name: 'search' }
   | { readonly name: 'blockedUsers' }
   | { readonly name: 'settings' }
+  | { readonly name: 'sessions' }
   | { readonly name: 'userProfile'; readonly userId: string };
 
-/** The two auth screens, shown before there is a session. Login is the default. */
-type AuthMode = 'login' | 'register';
+/**
+ * The auth screens, shown before there is a session. Login is the default.
+ *
+ * `verifyEmail`, `forgotPassword` and `resetPassword` are reached from Login and
+ * Register rather than being part of the happy path: a person only lands on them
+ * when they have a token to paste (KNOT-ADR-088) or a password to recover.
+ */
+type AuthMode = 'login' | 'register' | 'verifyEmail' | 'forgotPassword' | 'resetPassword';
 
 /** The boot flow: the splash, the first-run onboarding, then the app proper. */
 type BootPhase = 'splash' | 'onboarding' | 'app';
@@ -443,6 +461,25 @@ function ThemedApp(): React.ReactElement {
     return () => subscription.remove();
   }, [handleBack, overlays.length]);
 
+  /**
+   * Leaves the app for the login screen when the session ends on its own.
+   *
+   * The event starts in the HTTP client: a request gets a `401`, the single refresh
+   * is refused, and the session is over. Nothing in a screen can be expected to
+   * notice that, so the app subscribes and routes as it would for a deliberate
+   * sign-out (KNOT-031-mobile).
+   */
+  useEffect(
+    () =>
+      subscribeToSessionExpiry(() => {
+        setSession(null);
+        setOverlays((current) => popAllOverlays(current));
+        setTab('feed');
+        setAuthMode('login');
+      }),
+    [],
+  );
+
   function handleAuthenticated(result: AuthResponse): void {
     const next: Session = {
       accessToken: result.access_token,
@@ -456,6 +493,13 @@ function ThemedApp(): React.ReactElement {
   }
 
   function handleSignOut(): void {
+    // Best effort: the session is cleared locally either way, and a sign-out that
+    // failed because the device is offline must still sign the person out here.
+    const accessToken = session?.accessToken;
+    if (accessToken !== undefined) {
+      void logout(accessToken).catch(() => undefined);
+    }
+
     void clearSession();
     setSession(null);
     setOverlays((current) => popAllOverlays(current));
@@ -838,9 +882,14 @@ function ThemedApp(): React.ReactElement {
             onOpenBlockedUsers={() =>
               setOverlays((stack) => pushOverlay(stack, { name: 'blockedUsers' }))
             }
+            onOpenSessions={() => setOverlays((stack) => pushOverlay(stack, { name: 'sessions' }))}
             onSignOut={handleSignOut}
           />
         );
+      case 'sessions':
+        // The device list (KNOT-ADR-084). It reads its own data and revokes rows in
+        // place, so it needs nothing but the access token.
+        return <SessionsScreen token={current.accessToken} onBack={handleBack} />;
       case 'userProfile':
         return (
           <UserProfileScreen
@@ -884,21 +933,51 @@ function ThemedApp(): React.ReactElement {
     );
   }
 
+  /**
+   * Renders the auth state machine's current screen.
+   *
+   * Every route back to login is explicit: a person who has just verified an
+   * address, reset a password, or given up on a registration is never left on a
+   * screen with no way forward.
+   */
+  function renderAuthScreen(): React.ReactElement {
+    switch (authMode) {
+      case 'register':
+        return (
+          <RegisterScreen
+            onSwitchToLogin={() => setAuthMode('login')}
+            onOpenVerifyEmail={() => setAuthMode('verifyEmail')}
+          />
+        );
+      case 'verifyEmail':
+        return <VerifyEmailScreen onBackToLogin={() => setAuthMode('login')} />;
+      case 'forgotPassword':
+        return (
+          <ForgotPasswordScreen
+            onBackToLogin={() => setAuthMode('login')}
+            onOpenResetPassword={() => setAuthMode('resetPassword')}
+          />
+        );
+      case 'resetPassword':
+        return <ResetPasswordScreen onBackToLogin={() => setAuthMode('login')} />;
+      case 'login':
+      default:
+        return (
+          <LoginScreen
+            onAuthenticated={handleAuthenticated}
+            onSwitchToRegister={() => setAuthMode('register')}
+            onForgotPassword={() => setAuthMode('forgotPassword')}
+            onOpenVerifyEmail={() => setAuthMode('verifyEmail')}
+          />
+        );
+    }
+  }
+
   if (session === null) {
     return (
       <SafeAreaView style={styles.authContainer}>
         <StatusBar {...STATUS_BAR} />
-        {authMode === 'login' ? (
-          <LoginScreen
-            onAuthenticated={handleAuthenticated}
-            onSwitchToRegister={() => setAuthMode('register')}
-          />
-        ) : (
-          <RegisterScreen
-            onAuthenticated={handleAuthenticated}
-            onSwitchToLogin={() => setAuthMode('login')}
-          />
-        )}
+        {renderAuthScreen()}
       </SafeAreaView>
     );
   }

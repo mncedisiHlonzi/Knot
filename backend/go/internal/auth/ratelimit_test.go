@@ -153,7 +153,7 @@ func TestLimitRulesMatchTheDocumentedNumbers(t *testing.T) {
 	}{
 		{limit: LimitRegister, attempts: 5, window: time.Hour},
 		{limit: LimitLoginByIP, attempts: 10, window: 15 * time.Minute},
-		{limit: LimitLoginByEmail, attempts: 5, window: 15 * time.Minute},
+		{limit: LimitLoginByEmail, attempts: 10, window: 15 * time.Minute},
 		{limit: LimitRefresh, attempts: 30, window: 15 * time.Minute},
 		{limit: LimitForgotPassword, attempts: 3, window: time.Hour},
 	}

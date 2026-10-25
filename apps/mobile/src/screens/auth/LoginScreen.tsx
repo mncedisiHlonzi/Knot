@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { api, AuthResponse, describeError } from '../../api/client';
+import { login } from '../../api/auth';
+import { AuthResponse, describeError, isEmailNotVerified } from '../../api/client';
+import { APP_VERSION } from '../../config/app';
 import Button from '../../components/Button';
 import Header from '../../components/Header';
 import Input from '../../components/Input';
 import Logomark from '../../components/Logomark';
 import { layout, spacing, typeScale, useThemedStyles, type ThemeColors } from '../../theme';
+import { validateEmail } from '../../utils/authForm';
 
 /** The logomark's size in the auth header, one step up from the Feed's 32. */
 const LOGOMARK_SIZE = 36;
@@ -25,61 +28,76 @@ type LoginScreenProps = {
   readonly onAuthenticated: (result: AuthResponse) => void;
   /** Called when the person needs an account instead. */
   readonly onSwitchToRegister: () => void;
+  /** Called when the person has forgotten their password. */
+  readonly onForgotPassword: () => void;
+  /** Called when an unverified account needs to redeem a link. */
+  readonly onOpenVerifyEmail: () => void;
 };
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 /**
- * Returns the first client-side validation problem, or undefined when the form is
- * acceptable. The server validates again and remains the source of truth.
+ * What the app tells the server about the device it is signing in from.
+ *
+ * It is free-form by design (the server stores it as JSONB and shows it back in the
+ * device list), so it carries only the two facts worth recognising a device by.
+ * There is nothing here that identifies the hardware: a device list does not need a
+ * fingerprint, and collecting one would be a privacy decision nobody has made.
  */
-function validateForm(email: string, password: string): string | undefined {
-  if (email.trim() === '') {
-    return 'Email is required.';
-  }
-  if (!EMAIL_PATTERN.test(email.trim())) {
-    return 'Email must look like name@example.com.';
-  }
-  if (password === '') {
-    return 'Password is required.';
-  }
-  return undefined;
+function deviceInfo(): Record<string, string> {
+  return { platform: Platform.OS, app_version: APP_VERSION };
 }
 
 /**
- * Login form. Tokens are handed to the caller and kept in memory only.
+ * Login form.
+ *
+ * A successful sign-in hands the tokens to the caller, which stores the refresh
+ * token and keeps the access token in memory. An account whose address is not
+ * verified is refused by the server with `403 email_not_verified`; the screen
+ * recognises that code specifically, because the remedy is different from a wrong
+ * password — the person needs the verification link, not another attempt.
  *
  * The screen is composed as the opening page of a book (KNOT-020j): the logomark
- * stands in the header where a running head would be, the headline is the
- * display face at `typeScale.h1`, a single sentence sets the tone beneath it, and
- * the form follows with generous air. Nothing is boxed or shaded — the page is
- * the canvas, and the only strong element is the one filled action.
+ * stands in the header where a running head would be, the headline is the display
+ * face at `typeScale.h1`, a single sentence sets the tone beneath it, and the form
+ * follows with generous air. Nothing is boxed or shaded — the page is the canvas,
+ * and the only strong element is the one filled action.
  */
 export default function LoginScreen({
   onAuthenticated,
   onSwitchToRegister,
+  onForgotPassword,
+  onOpenVerifyEmail,
 }: LoginScreenProps): React.ReactElement {
   const styles = useThemedStyles(createStyles);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | undefined>(undefined);
+  const [needsVerification, setNeedsVerification] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(): Promise<void> {
-    const problem = validateForm(email, password);
+    const problem = validateEmail(email);
     if (problem !== undefined) {
       setError(problem);
       return;
     }
+    if (password === '') {
+      setError('Password is required.');
+      return;
+    }
 
     setError(undefined);
+    setNeedsVerification(false);
     setSubmitting(true);
 
     try {
-      const result = await api.login({ email: email.trim(), password });
+      const result = await login(email.trim(), password, deviceInfo());
       onAuthenticated(result);
     } catch (caught) {
-      setError(describeError(caught));
+      if (isEmailNotVerified(caught)) {
+        setNeedsVerification(true);
+      } else {
+        setError(describeError(caught));
+      }
     } finally {
       setSubmitting(false);
     }
@@ -128,6 +146,22 @@ export default function LoginScreen({
           />
 
           {error !== undefined ? <Text style={[typeScale.body, styles.error]}>{error}</Text> : null}
+
+          {/* The verification notice is its own thing rather than an error line: the
+              password was right, the account is simply not open yet (KNOT-ADR-083). */}
+          {needsVerification ? (
+            <View style={styles.notice}>
+              <Text style={[typeScale.body, styles.noticeText]}>
+                Please verify your email. Check the server console for the link, then paste its
+                token here.
+              </Text>
+              <Button
+                variant="ghost"
+                label="Enter verification token"
+                onPress={onOpenVerifyEmail}
+              />
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.actions}>
@@ -143,6 +177,8 @@ export default function LoginScreen({
               void handleSubmit();
             }}
           />
+
+          <Button variant="ghost" fullWidth label="Forgot password?" onPress={onForgotPassword} />
 
           <Button
             variant="ghost"
@@ -182,6 +218,12 @@ const createStyles = (colors: ThemeColors) =>
     },
     logomark: {
       marginLeft: LOGOMARK_INSET,
+    },
+    notice: {
+      gap: spacing.sm,
+    },
+    noticeText: {
+      color: colors.text.secondary,
     },
     screen: {
       backgroundColor: colors.bg.canvas,

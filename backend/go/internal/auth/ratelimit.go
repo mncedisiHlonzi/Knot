@@ -44,9 +44,13 @@ var (
 	LimitRegister = Limit{Name: "register", Attempts: 5, Window: time.Hour}
 	// LimitLoginByIP is 10 sign-in attempts per 15 minutes per address.
 	LimitLoginByIP = Limit{Name: "login", Attempts: 10, Window: 15 * time.Minute}
-	// LimitLoginByEmail is 5 sign-in attempts per 15 minutes per account, so a
+	// LimitLoginByEmail is 10 sign-in attempts per 15 minutes per account, so a
 	// distributed attack cannot focus on one address.
-	LimitLoginByEmail = Limit{Name: "login_email", Attempts: 5, Window: 15 * time.Minute}
+	//
+	// It matches the per-address limit on purpose: a person on a sixth device must be
+	// able to sign in, and the session cap of five (KNOT-ADR-084) is unreachable if
+	// the limiter refuses the attempt that would demonstrate it.
+	LimitLoginByEmail = Limit{Name: "login_email", Attempts: 10, Window: 15 * time.Minute}
 	// LimitRefresh is 30 refreshes per 15 minutes per session. It is the loosest
 	// limit because a healthy client refreshes on a timer, and it is still low
 	// enough that a flood is stopped.

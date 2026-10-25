@@ -14,6 +14,7 @@ import {
   ArrowLeft,
   Camera,
   CaretRight,
+  Devices,
   FileText,
   Info,
   Moon,
@@ -71,6 +72,8 @@ type SettingsScreenProps = {
   readonly onSetRooted: () => void;
   /** Called when the owner wants to see and manage the people they have blocked. */
   readonly onOpenBlockedUsers: () => void;
+  /** Called when the owner wants to see the devices they are signed in on. */
+  readonly onOpenSessions: () => void;
   /** Called when the owner chooses to sign out. */
   readonly onSignOut: () => void;
 };
@@ -235,6 +238,7 @@ export default function SettingsScreen({
   onUserUpdated,
   onSetRooted,
   onOpenBlockedUsers,
+  onOpenSessions,
   onSignOut,
 }: SettingsScreenProps): React.ReactElement {
   const { colors } = useTheme();
@@ -351,6 +355,9 @@ export default function SettingsScreen({
           />
           <SettingRow icon={Plant} label="Set Rooted" onPress={onSetRooted} />
           <SettingRow icon={Prohibit} label="Blocked users" onPress={onOpenBlockedUsers} />
+          {/* The device list (KNOT-ADR-084): where a person reviews and ends the
+              sessions their account is signed in on. */}
+          <SettingRow icon={Devices} label="Sessions" onPress={onOpenSessions} />
         </Section>
 
         {avatarError === undefined ? null : (

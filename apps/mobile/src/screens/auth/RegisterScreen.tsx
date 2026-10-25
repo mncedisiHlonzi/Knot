@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 
-import { api, AuthResponse, describeError } from '../../api/client';
+import { register } from '../../api/auth';
+import { describeError } from '../../api/client';
 import Button from '../../components/Button';
 import Header from '../../components/Header';
 import Input from '../../components/Input';
 import LanguagePicker from '../../components/LanguagePicker';
 import Logomark from '../../components/Logomark';
 import { layout, spacing, typeScale, useThemedStyles, type ThemeColors } from '../../theme';
+import { MIN_PASSWORD_LENGTH, validateEmail, validatePassword } from '../../utils/authForm';
 
 /** The logomark's size in the auth header, one step up from the Feed's 32. */
 const LOGOMARK_SIZE = 36;
@@ -22,53 +24,60 @@ const LOGOMARK_SIZE = 36;
 const LOGOMARK_INSET = spacing.sm;
 
 type RegisterScreenProps = {
-  /** Called with the issued tokens and user once registration succeeds. */
-  readonly onAuthenticated: (result: AuthResponse) => void;
   /** Called when the person would rather sign in to an existing account. */
   readonly onSwitchToLogin: () => void;
+  /** Called when a freshly registered person wants to paste their verification token. */
+  readonly onOpenVerifyEmail: () => void;
 };
 
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const MIN_PASSWORD_LENGTH = 8;
 const MAX_DISPLAY_NAME_LENGTH = 80;
 const MAX_LOCATION_LENGTH = 120;
 const MAX_PHONE_LENGTH = 32;
 
 /**
  * Returns the first client-side validation problem, or undefined when the form is
- * acceptable. The server validates again and remains the source of truth.
+ * acceptable. The server validates again and remains the source of truth; this
+ * exists so an obvious mistake costs no round trip.
  */
 function validateForm(email: string, password: string, displayName: string): string | undefined {
-  if (email.trim() === '') {
-    return 'Email is required.';
+  const emailProblem = validateEmail(email);
+  if (emailProblem !== undefined) {
+    return emailProblem;
   }
-  if (!EMAIL_PATTERN.test(email.trim())) {
-    return 'Email must look like name@example.com.';
+
+  const passwordProblem = validatePassword(password);
+  if (passwordProblem !== undefined) {
+    return passwordProblem;
   }
-  if (password.length < MIN_PASSWORD_LENGTH) {
-    return `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`;
-  }
+
   if (displayName.trim() === '') {
     return 'Display name is required.';
   }
   if (displayName.trim().length > MAX_DISPLAY_NAME_LENGTH) {
     return `Display name must be at most ${MAX_DISPLAY_NAME_LENGTH} characters.`;
   }
+
   return undefined;
 }
 
 /**
- * Registration form. Tokens are handed to the caller and kept in memory only.
+ * Registration form, and the "check your email" state that follows it.
+ *
+ * Registration does **not** sign anyone in: an account cannot log in until its
+ * address is verified (KNOT-ADR-083), so the screen's job after a successful submit
+ * is to send the person to their inbox — which, until KNOT-031a, is the server
+ * console. The confirmation says so plainly rather than implying a message is on its
+ * way.
  *
  * It shares the Login screen's editorial frame (KNOT-020j): the logomark in the
  * header, the display headline and one sentence at the top, then the form in a
- * single 24pt column. The optional fields stay in the same list rather than
- * moving behind a disclosure — the page should read as one continuous form, the
- * way the register reference draws it.
+ * single 24pt column. The optional fields stay in the same list rather than moving
+ * behind a disclosure — the page should read as one continuous form, the way the
+ * register reference draws it.
  */
 export default function RegisterScreen({
-  onAuthenticated,
   onSwitchToLogin,
+  onOpenVerifyEmail,
 }: RegisterScreenProps): React.ReactElement {
   const styles = useThemedStyles(createStyles);
   const [email, setEmail] = useState('');
@@ -79,6 +88,7 @@ export default function RegisterScreen({
   const [phone, setPhone] = useState('');
   const [error, setError] = useState<string | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
+  const [registeredEmail, setRegisteredEmail] = useState<string | undefined>(undefined);
 
   async function handleSubmit(): Promise<void> {
     const problem = validateForm(email, password, displayName);
@@ -90,22 +100,66 @@ export default function RegisterScreen({
     setError(undefined);
     setSubmitting(true);
 
+    const trimmedEmail = email.trim();
+
     try {
       const preferredLanguages = languages;
-      const result = await api.register({
-        email: email.trim(),
+      await register({
+        email: trimmedEmail,
         password,
         display_name: displayName.trim(),
         ...(preferredLanguages.length > 0 ? { preferred_languages: preferredLanguages } : {}),
         ...(location.trim() === '' ? {} : { approximate_location: location.trim() }),
         ...(phone.trim() === '' ? {} : { phone: phone.trim() }),
       });
-      onAuthenticated(result);
+      setRegisteredEmail(trimmedEmail);
     } catch (caught) {
       setError(describeError(caught));
     } finally {
       setSubmitting(false);
     }
+  }
+
+  // The confirmation replaces the form rather than sitting beside it: the form's
+  // fields are no longer actionable once the account exists, and leaving them on
+  // screen invites a second submit that would answer `409 email_taken`.
+  if (registeredEmail !== undefined) {
+    return (
+      <View style={styles.screen}>
+        <Header
+          left={
+            <View style={styles.logomark}>
+              <Logomark size={LOGOMARK_SIZE} />
+            </View>
+          }
+        />
+
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.intro}>
+            <Text style={[typeScale.h1, styles.title]}>Check your email.</Text>
+            <Text style={[typeScale.body, styles.subtitle]}>
+              We sent a verification link to {registeredEmail}. Click it to activate your account.
+            </Text>
+          </View>
+
+          <View style={styles.confirmationNote}>
+            <Text style={[typeScale.bodyS, styles.note]}>
+              For now, the link is printed in the server console — there is no email delivery yet.
+            </Text>
+          </View>
+
+          <View style={styles.actions}>
+            <Button
+              variant="primary"
+              fullWidth
+              label="I have the token"
+              onPress={onOpenVerifyEmail}
+            />
+            <Button variant="ghost" fullWidth label="Back to Login" onPress={onSwitchToLogin} />
+          </View>
+        </ScrollView>
+      </View>
+    );
   }
 
   return (
@@ -148,7 +202,7 @@ export default function RegisterScreen({
             value={password}
             onChangeText={setPassword}
             secureTextEntry
-            placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
+            placeholder={`At least ${MIN_PASSWORD_LENGTH} characters, with a letter and a number`}
           />
 
           <Input
@@ -225,6 +279,9 @@ const createStyles = (colors: ThemeColors) =>
       gap: spacing.sm,
       marginTop: spacing.xl,
     },
+    confirmationNote: {
+      marginBottom: spacing.lg,
+    },
     content: {
       paddingBottom: spacing.xxxl,
       paddingHorizontal: layout.screenPaddingReading,
@@ -247,6 +304,9 @@ const createStyles = (colors: ThemeColors) =>
     },
     logomark: {
       marginLeft: LOGOMARK_INSET,
+    },
+    note: {
+      color: colors.text.tertiary,
     },
     screen: {
       backgroundColor: colors.bg.canvas,
