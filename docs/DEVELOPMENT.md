@@ -566,6 +566,31 @@ Gestures use `Animated` and `PanResponder` only: the app has no gesture library 
 viewer adds none (KNOT-ADR-037, KNOT-ADR-078). The navigation bar is painted black while
 the viewer is open and restored to the theme's canvas when it closes.
 
+**The status bar inside a modal (KNOT-020k-fix8).** `<StatusBar barStyle="light-content"`
+`backgroundColor="transparent" translucent />` is declared inside `MediaGalleryModal`, but
+that declaration alone cannot turn the icons white on Android: a `Modal` is a real
+`Dialog` with its own window, and `ReactModalHostView` copies the **Activity's**
+status-bar appearance into that window once, when the dialog is shown — before a
+component inside the modal can run, and carrying the light theme's dark icons. So
+`src/native/systemBars.ts` grew `setStatusBarIcons(lightContent)`, which the existing
+app-local `SystemBarsModule.kt` applies to the Activity **and to every open
+`ReactModalHostView` dialog** (the same window walk it already used for the navigation
+bar). The viewer forces `true` on open and passes `null` on close; `null` means “stop
+managing”, which hands the bar back to React Native's own status-bar stack so a screen
+that declares its own `StatusBar` (Story Detail's edge-to-edge media) gets its value
+back. **Do not replace this with a declarative `StatusBar` alone** — it cannot reach a
+dialog window. The manifest-mandated iOS path is unchanged: the modal is a view
+controller there and `StatusBar` already applies app-wide.
+
+**The feed video's timestamp (KNOT-020k-fix8).** `FeedVideo`'s badge used to be the clip
+length, learned on `onLoad`. It is now `formatProgress(current, duration)` from
+`feedVideoMeta.ts` — `0:15 / 1:16` — driven by the player's `onProgress` event. The
+subscription is handed to `<Video>` **only while `isVisible`**, so a paused or off-screen
+preview keeps the last position it reached instead of ticking unseen, and
+`formatProgress` returns `''` until the length is known (there is no badge to count
+against). The same badge is drawn by the Story Detail carousel, which passes
+`durationMs` and `durationPosition="bottom-left"`.
+
 ### Author attribution (`AuthorLine`)
 
 Every screen that shows user-generated content attributes it through one component,

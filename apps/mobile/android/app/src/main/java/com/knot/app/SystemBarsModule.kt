@@ -84,6 +84,44 @@ class SystemBarsModule(reactContext: ReactApplicationContext) :
     }
   }
 
+  /**
+   * Forces the status bar's icon contrast, on the Activity and on every open
+   * modal dialog.
+   *
+   * React Native's `StatusBar` reaches the Activity window only. A `Modal` is a
+   * real Android `Dialog` with its own window, and React Native copies the
+   * Activity's status-bar appearance into that window once, when the dialog is
+   * shown — so a `<StatusBar barStyle="light-content" />` declared inside a modal
+   * cannot turn the icons white on the dialog that is already up. The media
+   * viewer needs white icons over its black room whether the page is an image or
+   * a video, in either app theme (KNOT-020k-fix8).
+   *
+   * @param lightContent true for white icons on a dark surface, false for dark
+   *   icons on a light one.
+   */
+  @ReactMethod
+  fun setStatusBarIcons(lightContent: Boolean) {
+    lastStatusBarLightContent = lightContent
+
+    UiThreadUtil.runOnUiThread {
+      val activity = currentActivity ?: return@runOnUiThread
+      reapplyStatusBar(activity)
+    }
+  }
+
+  /**
+   * Hands the status bar back to React Native's `StatusBar`.
+   *
+   * It is a separate method rather than a null argument because the bridge
+   * cannot marshal a null into a `boolean` parameter (it would throw
+   * `UnexpectedNativeTypeException`), so "stop managing" needs its own entry
+   * point (KNOT-020k-fix8).
+   */
+  @ReactMethod
+  fun clearStatusBarIcons() {
+    lastStatusBarLightContent = null
+  }
+
   companion object {
     /**
      * The last colour JavaScript asked for. Held statically because the focus
@@ -94,6 +132,13 @@ class SystemBarsModule(reactContext: ReactApplicationContext) :
     private var lastLightIcons: Boolean = false
 
     /**
+     * The forced status-bar contrast, or null when React Native's `StatusBar`
+     * owns the bar again. Null is the resting state: only the media viewer forces
+     * white icons, and it hands the bar back when it closes (KNOT-020k-fix8).
+     */
+    private var lastStatusBarLightContent: Boolean? = null
+
+    /**
      * Repaints the Activity's window and every open modal dialog.
      *
      * Called from `setNavigationBar` and from `MainActivity.onWindowFocusChanged`,
@@ -102,11 +147,32 @@ class SystemBarsModule(reactContext: ReactApplicationContext) :
      * both callers already do.
      */
     fun reapply(activity: Activity) {
+      reapplyNavigationBar(activity)
+      reapplyStatusBar(activity)
+    }
+
+    /** Repaints the navigation bar on the Activity and on every open modal. */
+    private fun reapplyNavigationBar(activity: Activity) {
       val color = lastColor ?: return
       val decorView = activity.window?.decorView
 
       applyToWindow(activity.window, color, lastLightIcons)
       applyToOpenDialogs(decorView, color, lastLightIcons)
+    }
+
+    /**
+     * Forces the status bar's icon contrast while the media viewer owns it.
+     *
+     * The dialog pass matters because the viewer's window copied the Activity's
+     * appearance when it was created, before JavaScript's effect could run, so the
+     * Activity alone would leave dark icons over the black room (KNOT-020k-fix8).
+     */
+    private fun reapplyStatusBar(activity: Activity) {
+      val lightContent = lastStatusBarLightContent ?: return
+      val decorView = activity.window?.decorView
+
+      applyStatusBarToWindow(activity.window, lightContent)
+      applyStatusBarToOpenDialogs(decorView, lightContent)
     }
 
     /** Sets the bar colour, contrast enforcement, and icon appearance on one window. */
@@ -161,6 +227,54 @@ class SystemBarsModule(reactContext: ReactApplicationContext) :
       if (view is ViewGroup) {
         for (index in 0 until view.childCount) {
           applyToOpenDialogs(view.getChildAt(index), color, lightIcons)
+        }
+      }
+    }
+
+    /** Sets the status-bar icon appearance on one window. */
+    private fun applyStatusBarToWindow(window: Window?, lightContent: Boolean) {
+      if (window == null) {
+        return
+      }
+
+      // "Light content" is white icons, which is the OPPOSITE of Android's
+      // `APPEARANCE_LIGHT_STATUS_BARS` flag (that flag asks for dark icons on a
+      // light surface).
+      val darkIcons = !lightContent
+
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        // Null until a dialog window is added; the next focus change retries.
+        val controller = window.insetsController ?: return
+        val mask = WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS
+        controller.setSystemBarsAppearance(if (darkIcons) mask else 0, mask)
+      } else {
+        // API 24-29: the light-status-bar flag is available from API 23.
+        @Suppress("DEPRECATION")
+        val flags = window.decorView.systemUiVisibility
+        @Suppress("DEPRECATION")
+        window.decorView.systemUiVisibility =
+            if (darkIcons) {
+              flags or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+            } else {
+              flags and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv()
+            }
+      }
+    }
+
+    /** Applies the status-bar icon appearance to every modal dialog's window. */
+    private fun applyStatusBarToOpenDialogs(view: View?, lightContent: Boolean) {
+      if (view == null) {
+        return
+      }
+
+      if (view is ReactModalHostView) {
+        applyStatusBarToWindow(view.dialog?.window, lightContent)
+        return
+      }
+
+      if (view is ViewGroup) {
+        for (index in 0 until view.childCount) {
+          applyStatusBarToOpenDialogs(view.getChildAt(index), lightContent)
         }
       }
     }

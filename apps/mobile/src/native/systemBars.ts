@@ -13,6 +13,16 @@ import { NativeModules, Platform } from 'react-native';
 type SystemBarsNativeModule = {
   /** Paints the bar `color` (`#RRGGBB`) with dark icons when `lightIcons` is true. */
   readonly setNavigationBar: (color: string, lightIcons: boolean) => void;
+  /**
+   * Forces the status bar's icon contrast (`true` = white icons) on the Activity
+   * and on every open modal dialog.
+   *
+   * Optional because a JavaScript reload against a build that predates the method
+   * must not throw.
+   */
+  readonly setStatusBarIcons?: (lightContent: boolean) => void;
+  /** Hands the status bar back to React Native's own `StatusBar`. */
+  readonly clearStatusBarIcons?: () => void;
 };
 
 const nativeModule = NativeModules.KnotSystemBars as SystemBarsNativeModule | undefined;
@@ -31,4 +41,44 @@ export function setNavigationBarColor(color: string, lightIcons: boolean): void 
     return;
   }
   nativeModule.setNavigationBar(color, lightIcons);
+}
+
+/**
+ * Forces the status bar's icons to white (`true`) or dark (`false`), or gives the
+ * bar back to React Native's `StatusBar` (`null`).
+ *
+ * React Native's `StatusBar` reaches the Activity window only. A `Modal` is a real
+ * Android `Dialog` with its own window, and React Native copies the Activity's
+ * status-bar appearance into that window once, when the dialog is shown — so a
+ * `<StatusBar barStyle="light-content" />` declared *inside* a modal cannot turn
+ * the icons white on the dialog that is already up. The full-screen media viewer
+ * needs exactly that: white icons over its black room, whether the page is an
+ * image or a video, in either app theme (KNOT-020k-fix8).
+ *
+ * `null` is how the caller stops managing the bar: React Native's own status-bar
+ * stack is then the only owner again, which is what restores the correct value
+ * when the viewer closes over a screen that declares its own `StatusBar` (the
+ * Story Detail's edge-to-edge media, for instance).
+ *
+ * A no-op on iOS, where the modal is a view controller and `StatusBar` already
+ * applies app-wide, and on a build that predates the module.
+ */
+export function setStatusBarIcons(lightContent: boolean | null): void {
+  if (Platform.OS !== 'android' || nativeModule === undefined) {
+    return;
+  }
+
+  if (lightContent === null) {
+    const clear = nativeModule.clearStatusBarIcons;
+    if (typeof clear === 'function') {
+      clear();
+    }
+    return;
+  }
+
+  const setter = nativeModule.setStatusBarIcons;
+  if (typeof setter !== 'function') {
+    return;
+  }
+  setter(lightContent);
 }

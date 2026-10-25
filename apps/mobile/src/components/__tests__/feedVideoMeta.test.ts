@@ -1,4 +1,4 @@
-import { formatDuration } from '../feedVideoMeta';
+import { formatDuration, formatProgress } from '../feedVideoMeta';
 
 describe('formatDuration', () => {
   it('formats a clip under an hour as m:ss', () => {
@@ -28,5 +28,32 @@ describe('formatDuration', () => {
     expect(formatDuration(-1)).toBe('');
     expect(formatDuration(Number.NaN)).toBe('');
     expect(formatDuration(Number.POSITIVE_INFINITY)).toBe('');
+  });
+});
+
+describe('formatProgress', () => {
+  it('reads position over length', () => {
+    expect(formatProgress(15, 76)).toBe('0:15 / 1:16');
+    expect(formatProgress(5, 64)).toBe('0:05 / 1:04');
+  });
+
+  it('starts a known clip at zero', () => {
+    expect(formatProgress(0, 76)).toBe('0:00 / 1:16');
+  });
+
+  it('formats the position with the same rounding as the length', () => {
+    expect(formatProgress(15.4, 76.4)).toBe('0:15 / 1:16');
+    expect(formatProgress(15.6, 76.6)).toBe('0:16 / 1:17');
+  });
+
+  it('shows nothing until the length is known', () => {
+    expect(formatProgress(15, 0)).toBe('');
+    expect(formatProgress(0, Number.NaN)).toBe('');
+    expect(formatProgress(15, Number.POSITIVE_INFINITY)).toBe('');
+  });
+
+  it('never prints a broken position', () => {
+    expect(formatProgress(Number.NaN, 76)).toBe('0:00 / 1:16');
+    expect(formatProgress(-3, 76)).toBe('0:00 / 1:16');
   });
 });

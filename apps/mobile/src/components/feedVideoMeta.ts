@@ -40,3 +40,27 @@ export function formatDuration(seconds: number): string {
 
   return `${minutes}:${pad(secs)}`;
 }
+
+/**
+ * Formats the playback position against the clip's length: "0:15 / 1:16".
+ *
+ * The badge shows where the video has reached as well as how long it runs, so a
+ * preview that autoplays as it scrolls into view reads as playing rather than as
+ * a still with a length printed on it. The arithmetic is `formatDuration`'s, so
+ * both halves round the same way and the pair never disagrees by a second.
+ *
+ * The empty string means the clip's length is not known yet (or is nonsensical),
+ * so there is nothing to count against and no badge is drawn. A position of zero
+ * draws as "0:00" — `formatDuration` returns the empty string for it, because for
+ * a length that is the honest answer, while for a position the badge still needs
+ * a starting point.
+ */
+export function formatProgress(currentSeconds: number, durationSeconds: number): string {
+  const duration = formatDuration(durationSeconds);
+  if (duration === '') {
+    return '';
+  }
+
+  const position = currentSeconds > 0 ? formatDuration(currentSeconds) : '';
+  return `${position === '' ? '0:00' : position} / ${duration}`;
+}

@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SpeakerHigh, SpeakerSlash } from 'phosphor-react-native';
-import Video, { type OnLoadData } from 'react-native-video';
+import Video, { type OnLoadData, type OnProgressData } from 'react-native-video';
 
 import {
   mediaOverlayText,
@@ -13,7 +13,7 @@ import {
   useThemedStyles,
 } from '../theme';
 import type { ThemeColors } from '../theme';
-import { formatDuration } from './feedVideoMeta';
+import { formatProgress } from './feedVideoMeta';
 
 /**
  * The mute control's square tap target, exported so the entry can stack its
@@ -123,6 +123,12 @@ export default function FeedVideo({
       : 0,
   );
 
+  // Where playback has reached, in seconds — the left half of the badge. It only
+  // advances while this video is the visible entry, so a paused or off-screen
+  // preview keeps the last position it reached instead of ticking on unseen
+  // (KNOT-020k-fix8).
+  const [currentSeconds, setCurrentSeconds] = useState(0);
+
   // The duration and the natural size are both known only once the file's
   // metadata has loaded; before that the duration badge is simply absent and the
   // frame is still its placeholder shape.
@@ -147,8 +153,19 @@ export default function FeedVideo({
     [onLoadSize],
   );
 
+  // The player reports where it is a few times a second while it plays. A value
+  // that is not a real position (missing, `NaN`, negative) is ignored rather than
+  // written into the badge, so a broken report can never print "NaN:NaN".
+  const handleProgress = useCallback((data: OnProgressData): void => {
+    const position = data.currentTime;
+    if (typeof position !== 'number' || !Number.isFinite(position) || position < 0) {
+      return;
+    }
+    setCurrentSeconds(position);
+  }, []);
+
   const playing = isVisible;
-  const durationLabel = formatDuration(durationSeconds);
+  const progressLabel = formatProgress(currentSeconds, durationSeconds);
 
   return (
     <View style={styles.container} testID={testID}>
@@ -172,6 +189,11 @@ export default function FeedVideo({
           repeat
           resizeMode="cover"
           onLoad={handleLoad}
+          // Progress is only subscribed while this video is the visible entry:
+          // the timer that drives it is wasted work on a paused preview, and a
+          // late event could otherwise move a badge on a card that is off screen
+          // (KNOT-020k-fix8).
+          onProgress={playing ? handleProgress : undefined}
         />
       </View>
 
@@ -181,7 +203,7 @@ export default function FeedVideo({
         </View>
       ) : null}
 
-      {durationLabel !== '' ? (
+      {progressLabel !== '' ? (
         <View
           style={[
             styles.durationBadge,
@@ -190,9 +212,10 @@ export default function FeedVideo({
               : styles.durationTopRight,
           ]}
           pointerEvents="none"
+          testID="video-progress-badge"
         >
           <Text style={[typeScale.label, tabularNums, mediaOverlayText(colors)]}>
-            {durationLabel}
+            {progressLabel}
           </Text>
         </View>
       ) : null}

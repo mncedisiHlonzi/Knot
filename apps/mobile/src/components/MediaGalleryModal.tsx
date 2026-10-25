@@ -19,7 +19,7 @@ import {
 import { ArrowLeft } from 'phosphor-react-native';
 
 import { API_BASE_URL } from '../config/api';
-import { setNavigationBarColor } from '../native/systemBars';
+import { setNavigationBarColor, setStatusBarIcons } from '../native/systemBars';
 import {
   fontWeights,
   layout,
@@ -359,9 +359,8 @@ type MediaGalleryModalProps = {
  * The overlay draws no surface at all: no scrim, no gradient, no fill. The words
  * sit straight on the picture and every line carries a heavy black text shadow,
  * which is what keeps them legible over a bright frame. The theatre's black
- * ground is completed by the system navigation bar, which this component paints
- * `bg.theater` while open and restores to the theme's canvas on close
- * (KNOT-020k-fix7).
+ * ground is completed by the system bars, which this component paints while it is
+ * open and restores on close (KNOT-020k-fix7, KNOT-020k-fix8).
  *
  * The one tappable thing in the overlay is the story link, which closes the
  * viewer and opens the story.
@@ -405,12 +404,27 @@ export default function MediaGalleryModal({
   // viewer is open and returns to the theme's canvas when it closes. The overlay
   // itself stays transparent, so the black bar is what completes the room behind
   // the media (KNOT-020k, KNOT-020k-fix7).
+  //
+  // The status bar's ICONS are forced white for the same reason, and they have to
+  // be forced rather than only declared: on Android this modal is its own `Dialog`
+  // window, and React Native copies the Activity's status-bar appearance into it
+  // when the dialog is shown — which is before a `StatusBar` declared inside the
+  // modal can run, and which is the light theme's dark icons over a black room.
+  // The native module paints the Activity and every open dialog window, so the
+  // white icons hold for an image and a video alike, in either theme. Passing
+  // `null` on close hands the bar back to React Native's own status-bar stack, so
+  // a screen with its own `StatusBar` (the Story Detail's edge-to-edge media) gets
+  // its declaration back (KNOT-020k-fix8).
   useEffect(() => {
     if (!visible) {
       return undefined;
     }
     setNavigationBarColor(colors.bg.theater, false);
-    return () => setNavigationBarColor(colors.bg.canvas, theme === 'light');
+    setStatusBarIcons(true);
+    return () => {
+      setNavigationBarColor(colors.bg.canvas, theme === 'light');
+      setStatusBarIcons(null);
+    };
   }, [colors, theme, visible]);
 
   return (
@@ -422,7 +436,10 @@ export default function MediaGalleryModal({
       onRequestClose={onClose}
     >
       {/* The viewer is its own window: declare the light status icons for the
-          black room. Unmounting restores the app's own declaration. */}
+          black room, transparent so the theatre shows through. This is the iOS
+          path and the Activity's own declaration; on Android the native module
+          above also paints the modal's dialog window, which a component cannot
+          reach. Unmounting restores the app's own declaration. */}
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
       {/* A fresh stage per open, so every page index — including the active one —

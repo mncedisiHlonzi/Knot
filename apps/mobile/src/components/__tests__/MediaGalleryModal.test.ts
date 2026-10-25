@@ -1,4 +1,4 @@
-import { ViewerStage } from '../MediaGalleryModal';
+import MediaGalleryModal, { ViewerStage } from '../MediaGalleryModal';
 import type { ViewerMedia, ViewerStory } from '../MediaGalleryModal';
 
 /**
@@ -46,7 +46,14 @@ jest.mock('react-native', () => {
     PanResponder: { create: () => ({ panHandlers: {} }) },
     Platform: { OS: 'ios' },
     Pressable: 'Pressable',
-    StatusBar: { currentHeight: 24 },
+    // A function component so the modal shell can build a `<StatusBar>` element
+    // (an object as a JSX type throws), with the height the component reads at
+    // module scope.
+    StatusBar: (() => {
+      const StatusBarStub = (): null => null;
+      StatusBarStub.currentHeight = 24;
+      return StatusBarStub;
+    })(),
     StyleSheet: { absoluteFillObject: {}, create: (styles: unknown) => styles },
     Text: 'Text',
     View: 'View',
@@ -66,7 +73,10 @@ jest.mock('../VideoPlayer', () => ({
   VIDEO_CONTROLS_HEIGHT: 88,
 }));
 
-jest.mock('../../native/systemBars', () => ({ setNavigationBarColor: jest.fn() }));
+jest.mock('../../native/systemBars', () => ({
+  setNavigationBarColor: jest.fn(),
+  setStatusBarIcons: jest.fn(),
+}));
 
 jest.mock('../../config/api', () => ({ API_BASE_URL: 'http://localhost:8080' }));
 
@@ -126,6 +136,23 @@ function renderStage(overrides: StageOverrides = {}): {
 
   return { tree, onClose };
 }
+
+describe('MediaGalleryModal status bar', () => {
+  it('declares white icons over a transparent bar for the black room', () => {
+    const tree = MediaGalleryModal({
+      visible: true,
+      media: MEDIA,
+      initialIndex: 0,
+      story: STORY,
+      onClose: () => undefined,
+    });
+    const statusBar = elements(tree).find((element) => element.props?.barStyle !== undefined);
+
+    expect(statusBar?.props?.barStyle).toBe('light-content');
+    expect(statusBar?.props?.backgroundColor).toBe('transparent');
+    expect(statusBar?.props?.translucent).toBe(true);
+  });
+});
 
 describe('MediaGalleryModal header navigation', () => {
   it('draws the close control on the left with a back arrow', () => {
