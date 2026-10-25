@@ -71,7 +71,9 @@ returned object keeps its identity across renders. `useTheme()` also returns
   (`#2F3336`) — no blue, navy or violet cast in any surface (KNOT-020k-fix18).
   Purple is an **accent only** here — primary buttons, active icons and links —
   never a background; `brand.tint`/`brand.surface` are selected-state surfaces,
-  not page fills.
+  not page fills. Primary ink is pure `#FFFFFF` on that black canvas (and pure
+  `#000000` on the white one), so a story body reads at maximum contrast
+  (KNOT-020k-fix19).
 - **Default.** On first launch the app follows the system appearance
   (`Appearance.getColorScheme()`), falling back to light when it cannot be read.
   An explicit choice is stored under `knot.theme.v1` and wins from then on.
@@ -145,12 +147,17 @@ their readability:
 | `caption` | 500 | **600** |
 | `reading`, `body`, `bodyS` | 400 | 400 (unchanged) |
 
-`docs/design-reference/tokens.json` is a **static design snapshot** and is
-intentionally *not* edited; the divergence is declared here and enforced by
-the token parity test in `src/theme/__tests__/tokens.test.ts`, which derives the
-expected mobile weight from the reference spec (one step heavier, body-level
-excepted). The bundled Inter and Plus Jakarta Sans sets already include the 700 and
-800 weights, so no font asset is missing.
+The **weight** divergence is declared here rather than in the reference, which is
+why the parity test in `src/theme/__tests__/tokens.test.ts` derives the expected
+mobile weight from the reference spec (one step heavier, body-level excepted). A
+deliberate value change, by contrast, is made in the reference itself so the two
+layers stay locked: the dark palette (KNOT-020k-fix18) and the `reading` size
+(KNOT-020k-fix19) both landed in `docs/design-reference/tokens.json`. The bundled
+Inter and Plus Jakarta Sans sets already include the 700 and 800 weights, so no font
+asset is missing.
+
+`reading` is **16/26** (down from 17/28, KNOT-020k-fix19): the story body takes one
+step down so a long story reads tighter and more editorial at the same measure.
 
 **Tabular numerals.** Any number that can change in place — counts, timestamps,
 reaction tallies, progress — gets `tabularNums` so its digits stop jittering:

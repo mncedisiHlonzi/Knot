@@ -142,10 +142,9 @@ type FeedEntryProps = {
    */
   readonly attributionLine?: string;
   /**
-   * Whether the entry draws its own bottom hairline. The Feed separates its cards
-   * with a background gap instead, so it passes `false`; Place Stories keeps the
-   * default and its column stays hairline-separated (KNOT-023b, KNOT-031,
-   * KNOT-032).
+   * Whether the entry draws its own bottom hairline. The Feed closes each card with
+   * its own 1pt rule instead, so it passes `false`; Place Stories keeps the default
+   * and its column stays hairline-separated (KNOT-023b, KNOT-031, KNOT-020k-fix19).
    */
   readonly showBottomHairline?: boolean;
   /** Called when the entry is tapped. */
@@ -235,12 +234,12 @@ function lineageAvatarLabel(name: string): string {
 }
 
 /**
- * One story in the feed, as a white card on the feed's grey canvas.
+ * One story in the feed, as a card on the feed's canvas.
  *
  * The card is full-bleed horizontally — no side border, no shadow — and the Feed
- * separates one card from the next with its own background gap rather than with a
- * rule in the entry. (Place Stories, the other caller, keeps the entry's bottom
- * hairline.) Its order is the reading order: the author block, the pillar tag, the
+ * closes one card with a 1pt rule of its own rather than with a rule drawn inside
+ * the entry. (Place Stories, the other caller, keeps the entry's bottom hairline.)
+ * Its order is the reading order: the author block, the pillar tag, the
  * title, the opening lines, the media, then the meta line. The whole entry is one
  * tap target; the author identity inside it is a nested target that opens the
  * profile (KNOT-ADR-043), and so are the two quick actions the Feed supplies —
@@ -707,8 +706,11 @@ const createStyles = (colors: ThemeColors) =>
     padded: {
       paddingHorizontal: layout.screenPaddingFeed,
     },
+    // The opening lines are the story's own voice, so they take the primary ink —
+    // pure black in light, pure white in dark — rather than the supporting grey the
+    // meta row uses (KNOT-020k-fix19).
     preview: {
-      color: colors.text.secondary,
+      color: colors.text.primary,
       marginTop: spacing.xs,
     },
     // The "read more" affordance under a truncated preview: a text link in the brand

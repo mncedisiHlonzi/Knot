@@ -105,12 +105,13 @@ type FeedScreenProps = {
 };
 
 /**
- * The public story feed, newest first, as full-width white cards on a grey canvas.
+ * The public story feed, newest first, as full-width white cards on one continuous
+ * column.
  *
- * Each entry is a white card spanning the whole feed width, held apart from the
- * next by a compact band of the grey separator surface. The band, not a rule drawn
- * on white and not an inset card, is what separates two stories — the pattern a
- * mature social feed uses (KNOT-023b, KNOT-032, KNOT-032-fix1).
+ * Each entry spans the whole feed width and is closed by a single 1pt rule of the
+ * separator neutral. The rule, not a thick band and not an inset card, is what
+ * separates two stories — the continuous-column pattern a mature social feed uses
+ * (KNOT-023b, KNOT-032, KNOT-020k-fix19).
  *
  * The layout pins everything but the list: the header and the five text tabs are
  * fixed siblings ABOVE the FlatList, so only the feed entries scroll beneath them
@@ -370,8 +371,9 @@ export default function FeedScreen({
             underline rather than by weight, so the row stays confident and even
             (KNOT-020c-fix2). `For you` and `Latest` change the request; the
             pillar and place tabs are visual only (KNOT-027). The row itself draws
-            no rule: the separation below it is the feed's own separator band,
-            identical to the one between two stories (KNOT-020j-fix2). */}
+            no rule: the 1pt feed rule below it separates it from the first story,
+            identical to the one between two stories (KNOT-020j-fix2,
+            KNOT-020k-fix19). */}
         <View style={styles.tabs}>
           {FEED_TABS.map((label) => {
             const active = label === activeTab;
@@ -399,10 +401,9 @@ export default function FeedScreen({
         </View>
       </View>
 
-      {/* The first separator: the same full-bleed band that holds two stories
-          apart (`bg.separator`, 8pt), so tabs, the gap and the first story read as
-          one rhythm rather than an inset hairline over a grey band
-          (KNOT-020j-fix2). */}
+      {/* The first rule: the same full-bleed 1pt line that closes a story card
+          (`bg.separator`), so the tab row, every entry and the first story read as
+          one rhythm (KNOT-020j-fix2, KNOT-020k-fix19). */}
       <View style={styles.feedDivider} testID="feed-tabs-divider" />
 
       <FlatList
@@ -439,8 +440,8 @@ export default function FeedScreen({
         }}
         onEndReachedThreshold={0.5}
         renderItem={({ item }) => (
-          // The card: full width, white, set off by the grey band below it rather
-          // than by a rule or a horizontal inset (KNOT-023b, KNOT-032-fix1).
+          // The card: full width, on the canvas, closed by one 1pt rule rather than
+          // by a thick band or a horizontal inset (KNOT-023b, KNOT-020k-fix19).
           <View style={styles.card}>
             <FeedEntry
               story={{
@@ -488,8 +489,8 @@ export default function FeedScreen({
               variant={item.kind === 'version' ? 'version' : 'story'}
               versionNumber={item.kind === 'version' ? item.version_number : undefined}
               attributionLine={item.kind === 'version' ? item.attribution_line : undefined}
-              // The feed separates cards with its own grey band, so the entry draws
-              // no rule of its own (KNOT-023b, KNOT-032).
+              // The feed closes each card with its own 1pt rule, so the entry draws
+              // no rule of its own (KNOT-023b, KNOT-020k-fix19).
               showBottomHairline={false}
               isMuted={isMuted}
               isVisible={item.id === activeItemId}
@@ -671,29 +672,27 @@ const createStyles = (colors: ThemeColors) =>
       marginLeft: spacing.xs,
       marginRight: spacing.xs,
     },
-    // One feed card: a full-width white block held apart from the next by a band of
-    // the feed's separator surface. The band — not a rule drawn on the card, and not
-    // an inset that would turn the feed into floating cards — is what makes two
-    // adjacent entries read as separate things, the way a mature social feed does
-    // (KNOT-023b, KNOT-032, KNOT-032-fix1). It is deliberately 8pt and square-edged:
-    // enough grey to separate, not enough to open a gutter.
+    // One feed card: a full-width block on the canvas, closed by a single 1pt rule
+    // of the separator neutral. The rule — not a thick band and not a side inset —
+    // is what parts two entries, so the column stays continuous the way X's
+    // timeline does (KNOT-023b, KNOT-032-fix1, KNOT-020k-fix19).
     card: {
       backgroundColor: colors.bg.canvas,
-      marginBottom: spacing.sm,
+      borderBottomColor: colors.bg.separator,
+      borderBottomWidth: 1,
     },
-    // The page behind the cards. It is the same surface the inter-card band shows,
-    // so the band and the page never differ; `bg.sunken` was too close to white to
-    // read as a separator at 8pt (KNOT-032-fix1).
+    // The page behind the cards is the canvas: with every entry closed by its own
+    // rule there is no band left to paint, and a tinted page would show through
+    // below the last card and behind the footer (KNOT-020k-fix19).
     container: {
-      backgroundColor: colors.bg.separator,
+      backgroundColor: colors.bg.canvas,
       flex: 1,
     },
-    // The band between the tab row and the first story, and between every two
-    // stories: one surface, one height, full bleed. The top bar paints the canvas,
-    // so this band is visible against it exactly as it is against two cards.
+    // The rule under the tab row, the same 1pt neutral that closes a card: one
+    // surface, one thickness, full bleed (KNOT-020j-fix2, KNOT-020k-fix19).
     feedDivider: {
       backgroundColor: colors.bg.separator,
-      height: spacing.sm,
+      height: 1,
     },
     error: {
       color: colors.state.danger,
@@ -786,8 +785,8 @@ const createStyles = (colors: ThemeColors) =>
     },
     // One tab, one quarter of the row: the label is centred and single-lined, so it
     // cannot clip. The 2px underline sits below the label, over the row's hairline.
-    // The four-column tab. The row draws no rule of its own: the feed's separator
-    // band below it does that job (KNOT-020j-fix2).
+    // The four-column tab. The row draws no rule of its own: the feed's 1pt rule
+    // below it does that job (KNOT-020j-fix2, KNOT-020k-fix19).
     tab: {
       alignItems: 'center',
       flex: 1,

@@ -12,6 +12,10 @@
  * dark palette is defined here now so the token layer supports both, but dark
  * activation is deferred to KNOT-020i.
  *
+ * Primary text (`ink900`) is pure: `#000000` on the light canvas and `#FFFFFF` on
+ * the dark one, so a story body reads at maximum crispness the way X's does rather
+ * than as a softened ink (KNOT-020k-fix19).
+ *
  * Do not hard-code these hex values anywhere else; `palette.ts` is the one place
  * they are allowed to appear (enforced by the token parity test).
  */
@@ -21,7 +25,7 @@ export const palette = {
     paper: '#FAFAFB',
     sunken: '#F5F5F7',
     line: '#E8EAEE',
-    ink900: '#0F172A',
+    ink900: '#000000',
     ink700: '#334155',
     ink500: '#64748B',
     ink400: '#94A3B8',
@@ -57,7 +61,7 @@ export const palette = {
     sheet: '#22252A',
     sunken: '#1E2024',
     line: '#2F3336',
-    ink900: '#E7E9EA',
+    ink900: '#FFFFFF',
     ink700: '#71767B',
     ink500: '#536471',
     ink400: '#3F4448',

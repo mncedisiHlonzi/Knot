@@ -172,15 +172,15 @@ function buildColors(active: ActivePalette) {
       sheet: active.sheet,
       sunken: active.sunken,
       /**
-       * The band of page that shows between two full-width blocks — the feed's
-       * story-to-story separator (KNOT-032-fix1).
+       * The neutral that parts two full-width blocks — the feed's story-to-story
+       * rule and the rule under its tab row (KNOT-020k-fix19).
        *
-       * It is a SURFACE, not a rule, so it is not `border.hairline`'s role even
-       * though it paints that neutral's value: the separator has to be a visible
-       * band (about 8pt) rather than a 1px line, and `sunken` is too close to the
-       * white canvas to read at that size. The value therefore comes from the same
-       * palette swatch the hairline uses, so the two never drift apart, and dark
-       * parity comes for free when the palette flips (KNOT-020i).
+       * It paints the same palette swatch as `border.hairline`, so the feed's rules
+       * and the rest of the chrome can never drift apart, and dark parity comes for
+       * free when the palette flips (KNOT-020i). The role is kept apart from
+       * `border.hairline` because it names the feed's block rhythm rather than a
+       * border on one view: the first rule is a `borderBottom` on the card, the
+       * second a 1pt `View` under the tabs.
        */
       separator: active.line,
       /**

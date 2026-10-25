@@ -3,7 +3,7 @@ import Avatar from '../../../components/Avatar';
 import ConfirmSheet from '../../../components/ConfirmSheet';
 import FeedEntry from '../../../components/FeedEntry';
 import Header from '../../../components/Header';
-import { colors, spacing } from '../../../theme';
+import { colors } from '../../../theme';
 import FeedScreen from '../FeedScreen';
 
 /**
@@ -196,48 +196,45 @@ describe('FeedScreen card structure', () => {
     expect(style?.backgroundColor).toBe(colors.bg.canvas);
     // Full width: no horizontal inset, so no grey gutter runs down the sides.
     expect(style?.marginHorizontal).toBeUndefined();
-    // No rule on the card: the band between cards does the separating.
-    expect(style?.borderBottomWidth).toBeUndefined();
-    expect(style?.borderBottomColor).toBeUndefined();
   });
 
-  it('holds the cards apart with one compact band of the separator surface', () => {
+  // The thick grey band between posts is gone: each card is closed by one 1pt rule
+  // instead (KNOT-020k-fix19).
+  it('closes each card with a 1pt rule of the separator neutral', () => {
     const card = cardFor(renderScreen());
     const style = card?.props?.style as Record<string, unknown> | undefined;
 
-    // 8pt is the design system's compact step, inside the 6–8pt target: enough
-    // grey to separate two stories, not enough to open a gap.
-    expect(style?.marginBottom).toBe(spacing.sm);
-    expect(spacing.sm).toBeGreaterThanOrEqual(6);
-    expect(spacing.sm).toBeLessThanOrEqual(8);
+    expect(style?.borderBottomWidth).toBe(1);
+    expect(style?.borderBottomColor).toBe(colors.bg.separator);
+    // A rule, not a band: there is no gap between two cards at all.
+    expect(style?.marginBottom).toBeUndefined();
+    // The separator neutral IS the hairline neutral, so the feed's rules and the
+    // rest of the chrome's hairlines can never drift apart.
+    expect(colors.bg.separator).toBe(colors.border.hairline);
   });
 
-  it('paints the page with the separator surface, darker than the old grey', () => {
+  it('paints the page with the canvas, so the rules do the separating', () => {
     const container = findElementByType(renderScreen(), 'View');
     const style = container?.props?.style as Record<string, unknown> | undefined;
 
-    expect(style?.backgroundColor).toBe(colors.bg.separator);
-    // `bg.sunken` was too close to white to read at 8pt, and the canvas is white.
-    expect(colors.bg.separator).not.toBe(colors.bg.sunken);
-    expect(colors.bg.separator).not.toBe(colors.bg.canvas);
+    expect(style?.backgroundColor).toBe(colors.bg.canvas);
   });
 
-  it('leaves the entry rule off, so the band is the only separation', () => {
+  it('leaves the entry rule off, so the card rule is the only separation', () => {
     const entry = findElementByType(cardFor(renderScreen()), FeedEntry);
 
     expect(entry?.props?.showBottomHairline).toBe(false);
   });
 
-  // The tab row and the first story are parted by the same band that parts two
-  // stories, so the row's old inset 1px rule is gone and the rhythm is even
-  // (KNOT-020j-fix2).
-  it('parts the tab row from the first story with the feed separator band', () => {
+  // The tab row and the first story are parted by the same 1pt rule that closes a
+  // card, so the rhythm stays even (KNOT-020j-fix2, KNOT-020k-fix19).
+  it('parts the tab row from the first story with the same 1pt rule', () => {
     const divider = findByTestID(renderScreen(), 'feed-tabs-divider');
     const style = divider?.props?.style as Record<string, unknown> | undefined;
 
     expect(divider).toBeDefined();
     expect(style?.backgroundColor).toBe(colors.bg.separator);
-    expect(style?.height).toBe(spacing.sm);
+    expect(style?.height).toBe(1);
   });
 });
 

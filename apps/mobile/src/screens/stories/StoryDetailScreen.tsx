@@ -749,8 +749,11 @@ const createStyles = (colors: ThemeColors) =>
     status: {
       paddingHorizontal: layout.screenPaddingReading,
     },
+    // The story's own voice: primary ink (pure black in light, pure white in dark)
+    // so the body reads at full contrast instead of in the supporting grey
+    // (KNOT-020k-fix19).
     storyBody: {
-      color: colors.text.secondary,
+      color: colors.text.primary,
     },
     // The thumbnail strip lives outside the reading column, so it keeps the feed's
     // 16-point gutter while the text keeps the 24-point reading inset.

@@ -122,7 +122,7 @@ describe('the dark role set', () => {
   });
 
   it('inverts the inks so text stays readable', () => {
-    expect(dark.text.primary).toBe('#E7E9EA');
+    expect(dark.text.primary).toBe('#FFFFFF');
     expect(dark.text.secondary).toBe('#71767B');
     expect(dark.text.tertiary).toBe('#536471');
   });

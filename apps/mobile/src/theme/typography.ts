@@ -89,10 +89,12 @@ export const typeScale = {
     fontWeight: fontWeights.bold,
     letterSpacing: -0.085,
   },
+  // The story body. One step down from 17/28 (KNOT-020k-fix19): a long story reads
+  // tighter and more editorial at the same line length.
   reading: {
     fontFamily: fonts.ui,
-    fontSize: 17,
-    lineHeight: 28,
+    fontSize: 16,
+    lineHeight: 26,
     fontWeight: fontWeights.regular,
     letterSpacing: 0,
   },
