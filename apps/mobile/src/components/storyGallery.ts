@@ -2,11 +2,11 @@
  * Resolving a story's whole media gallery for the viewer (KNOT-020k-fix4).
  *
  * A surface that holds the story (Story Detail, Version Detail) already has its
- * media array and passes it straight through. A surface that only holds a card
- * preview (the Feed, Place Stories, the profile wall) has one item and no ids for
- * the rest, so `App` reads the story before opening the viewer and hands it the
- * full array — the tap then lands on the item it was made on, and swiping reaches
- * everything the story has.
+ * media array and passes it straight through, and a surface that holds a card
+ * preview supplies that one item so the viewer can open at once. A surface that
+ * hands over neither — an empty `media` array — has the story read before the
+ * viewer opens, and is then given the full array so swiping reaches everything the
+ * story has (KNOT-020k-fix4, KNOT-020k-fix11).
  *
  * The helpers here are pure and take plain data, so the mapping and the index
  * lookup are covered by the renderer-less tests. The request itself lives with the

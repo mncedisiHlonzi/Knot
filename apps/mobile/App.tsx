@@ -213,12 +213,14 @@ function ThemedApp(): React.ReactElement {
   /**
    * Opens the viewer on one of `items`.
    *
-   * Every surface ends up here with the story's WHOLE gallery. Story Detail and
-   * Version Detail already hold it; the Feed, Place Stories and the profile wall
-   * hold a single preview, so this reads the story first and opens on the item the
-   * preview showed. That is what makes the viewer consistent everywhere: the same
-   * pages, the same starting index, whether the tap came from the feed or from the
-   * story itself (KNOT-020k-fix4).
+   * A caller that already carries its media opens at once, in the same fixed
+   * layout: Story Detail and Version Detail hold the story's gallery, and
+   * `FeedEntry` supplies the tapped preview in `story.media`, so a tap from the
+   * Feed, a place page or a card lands on the viewer's first frame (KNOT-020k-fix11).
+   *
+   * A caller that hands over a bare preview — an empty `media` array — still has
+   * the story read first, and the viewer is then given the whole gallery with the
+   * tap landing on the item it was made on (the profile wall's path, KNOT-020k-fix4).
    *
    * The index is clamped here as well as in the viewer, because a caller can hold
    * a stale index after a list shrinks (KNOT-020k).

@@ -598,12 +598,27 @@ runs to the bottom edge of the screen and the black a viewer sees under the capt
 is the **system navigation bar** plus the room, never a panel drawn by the viewer.
 An earlier pass (fix9) put an opaque `bg.theater` band behind the text and had
 `VideoPlayer` paint a matching strip under its transport; that was a misreading of
-"black at the bottom" and both are gone. What fix9 did keep is the **geometry**: the
-caption holds one height on every page, because `contextAboveControls` lifts the
-block clear of a video's transport (`bottom: VIDEO_CONTROLS_HEIGHT`) and
-`contextBelowControls` reserves the same height as `paddingBottom` on an image. The
-overlay is rendered *after* the pager, so anything opaque there would cover a video's
-controls — keep it transparent and let the bars do the black.
+"black at the bottom" and both are gone. The overlay is rendered *after* the pager,
+so anything opaque there would cover a video's controls — keep it transparent and let
+the bars do the black.
+
+**Only a video reserves the bottom (`KNOT-020k-fix11`).** The inset is conditional:
+an image page keeps the base `spacing.lg` and its caption hugs the bottom edge,
+while a video page adds `VIDEO_CONTROLS_HEIGHT` so the text clears the scrub bar's
+invisible 32pt touch band (`contextAboveControls`, applied only when the current page
+is a video). The two page types therefore no longer share a caption height — that
+shared height was fix9's compensation for a band that no longer exists, and it left
+an empty strip under every photo.
+
+**Every entry point opens the viewer the same way (`KNOT-020k-fix11`).**
+`FeedEntry` hands `onOpenMedia` a complete `ViewerStory` — `storyId` plus the tapped
+item in `media` — matching what Story Detail passes. `App.openMediaViewer` opens at
+once when the context already carries media, so a tap on a Feed (or place/profile)
+image lands in the fixed, full-window layout on the first frame instead of waiting
+for `GET /stories/{id}`. The trade-off is deliberate: a preview-only surface now
+opens a one-item gallery rather than fetching the story's whole gallery first; if the
+multi-page Feed viewer is wanted back, add background enrichment that keeps the
+stage's identity (its `key` is `initialIndex:media.length`).
 
 ### Author attribution (`AuthorLine`)
 

@@ -345,14 +345,16 @@ export default function FeedEntry({
   const isVersion = variant === 'version';
 
   // The viewer's overlay draws the same story content this card does (author,
-  // title, opening lines) and nothing else. `media` is empty on purpose: a feed
-  // entry holds one preview, so `App` reads the story's whole gallery before it
-  // opens the viewer (KNOT-020k-fix4).
+  // title, opening lines). The media array carries the item that was tapped, so
+  // the viewer receives a complete `ViewerStory` — the same shape Story Detail
+  // hands it — and opens on the first frame instead of waiting for `App` to read
+  // the story first. A card holds one preview, so this is a one-item gallery
+  // (KNOT-020k-fix11).
   const viewerStory: ViewerStory = {
     storyId: story.storyId ?? story.id,
     title: story.title,
     body: story.preview,
-    media: [],
+    media: viewerItems,
     authorDisplayName: story.author_display_name,
     authorAvatarUrl: story.author_avatar_url,
     createdAt: story.created_at,

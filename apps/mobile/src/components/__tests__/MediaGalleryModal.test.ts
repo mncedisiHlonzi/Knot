@@ -1,5 +1,6 @@
 import MediaGalleryModal, { ViewerStage } from '../MediaGalleryModal';
 import type { ViewerMedia, ViewerStory } from '../MediaGalleryModal';
+import { spacing } from '../../theme';
 import { VIDEO_CONTROLS_HEIGHT } from '../VideoPlayer';
 
 /**
@@ -168,24 +169,13 @@ function bandStyle(media: readonly ViewerMedia[]): Record<string, unknown> | und
 }
 
 /**
- * A band metric after the page-specific layer has been applied: a video page
- * overrides `bottom`, an image page overrides `paddingBottom`, and each falls back
- * to the base style for the other.
+ * The overlay's bottom inset after the page-specific layer is applied: a video page
+ * adds the transport's height, an image page keeps the base inset.
  */
-function bandMetric(media: readonly ViewerMedia[], key: 'bottom' | 'paddingBottom'): number {
-  const layers = bandStyles(media);
-  const value = layers[1]?.[key] ?? layers[0]?.[key];
-  return typeof value === 'number' ? value : 0;
-}
-
-/** Where the band's bottom edge ends up. */
-function bandBottom(media: readonly ViewerMedia[]): number {
-  return bandMetric(media, 'bottom');
-}
-
-/** The caption's inset from the band's bottom edge. */
 function bandPadding(media: readonly ViewerMedia[]): number {
-  return bandMetric(media, 'paddingBottom');
+  const layers = bandStyles(media);
+  const value = layers[1]?.paddingBottom ?? layers[0]?.paddingBottom;
+  return typeof value === 'number' ? value : 0;
 }
 
 describe('MediaGalleryModal status bar', () => {
@@ -244,15 +234,14 @@ describe('MediaGalleryModal story overlay', () => {
     expect(bandStyle(VIDEO_MEDIA)?.backgroundColor).toBeUndefined();
   });
 
-  it('keeps the caption at the same height for both media types', () => {
-    expect(bandBottom(VIDEO_MEDIA) + bandPadding(VIDEO_MEDIA)).toBe(
-      bandBottom(MEDIA) + bandPadding(MEDIA),
-    );
+  it('hugs the bottom edge on an image page, with no room for controls', () => {
+    expect(bandStyle(MEDIA)?.bottom).toBe(0);
+    expect(bandPadding(MEDIA)).toBe(spacing.lg);
   });
 
-  it('lifts the band by the transport height on a video page only', () => {
-    expect(bandBottom(VIDEO_MEDIA)).toBe(VIDEO_CONTROLS_HEIGHT);
-    expect(bandBottom(MEDIA)).toBe(0);
+  it('reserves the transport height on a video page only', () => {
+    expect(bandPadding(VIDEO_MEDIA)).toBe(VIDEO_CONTROLS_HEIGHT + spacing.lg);
+    expect(bandPadding(VIDEO_MEDIA) - bandPadding(MEDIA)).toBe(VIDEO_CONTROLS_HEIGHT);
   });
 
   it('keeps the story text legible with its media shadow', () => {

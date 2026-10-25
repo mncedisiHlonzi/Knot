@@ -753,14 +753,14 @@ export function ViewerStage({
             line is media ink carrying its own shadow, so the picture runs to the
             bottom edge of the screen and the black under the words is the room
             and the system navigation bar (KNOT-020k-fix5, KNOT-020k-fix10).
-            The caption keeps one height on both pages: a video lifts this block
-            clear of its transport, and an image reserves the same space, so
-            paging between them never makes the text jump (KNOT-020k-fix9). */}
+            An image's caption hugs the bottom edge; a video's is raised by the
+            transport it has to clear — and only a video reserves that room
+            (KNOT-020k-fix11). */}
         {story != null ? (
           <Animated.View
             style={[
               styles.context,
-              videoPage ? styles.contextAboveControls : styles.contextBelowControls,
+              videoPage ? styles.contextAboveControls : null,
               { opacity: chromeOpacity },
             ]}
             pointerEvents={chromeVisible || !videoPage ? 'box-none' : 'none'}
@@ -872,29 +872,24 @@ const createStyles = (colors: ThemeColors) =>
     },
     // The story context: no surface of its own. The picture stays visible to the
     // bottom edge, and the shadowed ink is what keeps the words readable. The
-    // bottom inset is a layout reservation only — see the two variants below
-    // (KNOT-020k-fix5, KNOT-020k-fix10).
+    // inset is minimal, so an image's caption hugs the bottom of the screen —
+    // there is no transport under it to make room for (KNOT-020k-fix11).
     context: {
       bottom: 0,
       gap: spacing.xs,
       left: 0,
-      paddingBottom: spacing.xl,
+      paddingBottom: spacing.lg,
       paddingHorizontal: layout.screenPaddingFeed,
       position: 'absolute',
       right: 0,
     },
-    // On a video the block stops above the transport, so the caption clears the
-    // scrub bar's invisible 32pt touch band (otherwise a tap on "Read more" would
-    // seek instead of opening the story). Nothing is filled here — this is a
-    // position, not a panel (KNOT-020k-fix5).
+    // The only page that reserves room: a video, whose transport sits under the
+    // caption. The full transport height plus `lg` of air keeps the text clear of
+    // the scrub bar's invisible 32pt touch band — otherwise a tap on "Read more"
+    // would seek instead of opening the story. Nothing is filled here; it is an
+    // inset, not a panel (KNOT-020k-fix5, KNOT-020k-fix11).
     contextAboveControls: {
-      bottom: VIDEO_CONTROLS_HEIGHT,
-    },
-    // An image has no transport, so the same height is reserved as padding to keep
-    // the caption at exactly the height it holds on a video page — which is what
-    // makes paging between a photo and a clip keep the text still (KNOT-020k-fix9).
-    contextBelowControls: {
-      paddingBottom: VIDEO_CONTROLS_HEIGHT + spacing.xl,
+      paddingBottom: VIDEO_CONTROLS_HEIGHT + spacing.lg,
     },
     // One bold line: `[avatar] [name] · [time]`, and nothing else — the Rooted
     // badge stays on the surfaces that have room to explain it (KNOT-020k-fix4).

@@ -111,6 +111,39 @@ function findElementByType(
   return undefined;
 }
 
+/**
+ * The first element whose accessibility label matches, depth-first, so a nested
+ * tap target can be driven without a renderer.
+ */
+function findElementByLabel(
+  node: unknown,
+  label: string,
+): { props?: Record<string, unknown> } | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findElementByLabel(child, label);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+  if (node === null || node === undefined || typeof node !== 'object') {
+    return undefined;
+  }
+
+  const element = node as {
+    props?: { children?: unknown; accessibilityLabel?: unknown };
+  };
+  if (element.props?.accessibilityLabel === label) {
+    return element as { props?: Record<string, unknown> };
+  }
+  if (element.props !== undefined) {
+    return findElementByLabel(element.props.children, label);
+  }
+  return undefined;
+}
+
 /** The entry every assertion below is built from. */
 const story = {
   id: 'story-1',
@@ -170,6 +203,38 @@ describe('FeedEntry', () => {
         onPress: () => undefined,
       }),
     ).toBeTruthy();
+  });
+
+  it('hands the viewer a complete story, with the tapped media, on the first tap', () => {
+    const onOpenMedia = jest.fn();
+    const element = FeedEntry({
+      story: {
+        ...story,
+        first_media_type: 'image',
+        first_media_url: '/stories/x/media/y/content',
+      },
+      onPress: () => undefined,
+      onOpenMedia,
+    });
+    const mediaTarget = findElementByLabel(element, `Open media from ${story.title}`);
+
+    expect(mediaTarget).toBeDefined();
+    (mediaTarget?.props?.onPress as () => void)();
+
+    expect(onOpenMedia).toHaveBeenCalledTimes(1);
+    const [items, index, viewerStory] = onOpenMedia.mock.calls[0] as [
+      readonly { readonly url: string }[],
+      number,
+      { readonly storyId: string; readonly media: readonly { readonly url: string }[] },
+    ];
+    expect(items).toHaveLength(1);
+    expect(index).toBe(0);
+    // The viewer is handed a complete story — id and media — so it opens in the
+    // same fixed layout Story Detail opens, without waiting for a fetch
+    // (KNOT-020k-fix11).
+    expect(viewerStory.storyId).toBe('story-1');
+    expect(viewerStory.media).toHaveLength(1);
+    expect(viewerStory.media[0]?.url).toBe('/stories/x/media/y/content');
   });
 
   it('renders FeedVideo for a video and never for an image', () => {
