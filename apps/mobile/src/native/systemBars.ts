@@ -44,8 +44,7 @@ export function setNavigationBarColor(color: string, lightIcons: boolean): void 
 }
 
 /**
- * Forces the status bar's icons to white (`true`) or dark (`false`), or gives the
- * bar back to React Native's `StatusBar` (`null`).
+ * Forces the status bar's icons to white (`true`) or dark (`false`).
  *
  * React Native's `StatusBar` reaches the Activity window only. A `Modal` is a real
  * Android `Dialog` with its own window, and React Native copies the Activity's
@@ -55,30 +54,39 @@ export function setNavigationBarColor(color: string, lightIcons: boolean): void 
  * needs exactly that: white icons over its black room, whether the page is an
  * image or a video, in either app theme (KNOT-020k-fix8).
  *
- * `null` is how the caller stops managing the bar: React Native's own status-bar
- * stack is then the only owner again, which is what restores the correct value
- * when the viewer closes over a screen that declares its own `StatusBar` (the
- * Story Detail's edge-to-edge media, for instance).
- *
  * A no-op on iOS, where the modal is a view controller and `StatusBar` already
  * applies app-wide, and on a build that predates the module.
  */
-export function setStatusBarIcons(lightContent: boolean | null): void {
+export function setStatusBarIcons(lightContent: boolean): void {
   if (Platform.OS !== 'android' || nativeModule === undefined) {
     return;
   }
-
-  if (lightContent === null) {
-    const clear = nativeModule.clearStatusBarIcons;
-    if (typeof clear === 'function') {
-      clear();
-    }
-    return;
-  }
-
   const setter = nativeModule.setStatusBarIcons;
   if (typeof setter !== 'function') {
     return;
   }
   setter(lightContent);
+}
+
+/**
+ * Hands the status bar back to React Native's own `StatusBar`.
+ *
+ * This is what the media viewer calls on close: React Native's status-bar stack is
+ * then the only owner again, which restores the correct value over a screen that
+ * declares its own `StatusBar` (the Story Detail's edge-to-edge media, for
+ * instance). It is a separate call rather than a `null` argument because the
+ * bridge cannot marshal a null into the native `boolean` parameter
+ * (KNOT-020k-fix8, KNOT-020k-fix10).
+ *
+ * A no-op on iOS and on a build that predates the module.
+ */
+export function clearStatusBarIcons(): void {
+  if (Platform.OS !== 'android' || nativeModule === undefined) {
+    return;
+  }
+  const clear = nativeModule.clearStatusBarIcons;
+  if (typeof clear !== 'function') {
+    return;
+  }
+  clear();
 }

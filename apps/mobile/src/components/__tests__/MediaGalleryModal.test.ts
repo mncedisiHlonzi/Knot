@@ -1,6 +1,5 @@
 import MediaGalleryModal, { ViewerStage } from '../MediaGalleryModal';
 import type { ViewerMedia, ViewerStory } from '../MediaGalleryModal';
-import { lightTheme } from '../../theme/ThemeContext';
 import { VIDEO_CONTROLS_HEIGHT } from '../VideoPlayer';
 
 /**
@@ -76,6 +75,7 @@ jest.mock('../VideoPlayer', () => ({
 }));
 
 jest.mock('../../native/systemBars', () => ({
+  clearStatusBarIcons: jest.fn(),
   setNavigationBarColor: jest.fn(),
   setStatusBarIcons: jest.fn(),
 }));
@@ -236,12 +236,12 @@ describe('MediaGalleryModal header navigation', () => {
 });
 
 describe('MediaGalleryModal story overlay', () => {
-  it('draws the theatre black behind the story text for an image', () => {
-    expect(bandStyle(MEDIA)?.backgroundColor).toBe(lightTheme.colors.bg.theater);
+  it('draws no surface behind the story text on an image page', () => {
+    expect(bandStyle(MEDIA)?.backgroundColor).toBeUndefined();
   });
 
-  it('draws the same black band behind the story text for a video', () => {
-    expect(bandStyle(VIDEO_MEDIA)?.backgroundColor).toBe(lightTheme.colors.bg.theater);
+  it('draws no surface behind the story text on a video page', () => {
+    expect(bandStyle(VIDEO_MEDIA)?.backgroundColor).toBeUndefined();
   });
 
   it('keeps the caption at the same height for both media types', () => {

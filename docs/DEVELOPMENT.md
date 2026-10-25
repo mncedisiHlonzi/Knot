@@ -591,17 +591,19 @@ preview keeps the last position it reached instead of ticking unseen, and
 against). The same badge is drawn by the Story Detail carousel, which passes
 `durationMs` and `durationPosition="bottom-left"`.
 
-**One footer for every page (KNOT-020k-fix9).** The story band is **solid
-`bg.theater`**, drawn by `ViewerStage` for images and videos alike, and the caption
-sits at one fixed height (the footer reserves `VIDEO_CONTROLS_HEIGHT` in both cases).
-The band only ever changes **where its bottom edge is**: on a video page it is lifted
-by `VIDEO_CONTROLS_HEIGHT`, because `VideoPlayer` paints that strip itself in the same
-black (`styles.transportBand`) so the transport is drawn *inside* the footer instead of
-under an opaque band. On an image page the band carries the whole footer as
-`paddingBottom`. The trap: an opaque overlay rendered after the pager sits above the
-video page, so a full-height band would cover the transport — the lift is what keeps
-the controls usable, and duplicating the reserve as padding is what keeps the caption
-from jumping 88pt between a photo and a clip.
+**The story overlay is transparent — the black is the system chrome
+(KNOT-020k-fix10).** `styles.context` paints **no surface**: no band, no scrim, no
+gradient. Each line is media-white ink with a heavy black shadow, so the picture
+runs to the bottom edge of the screen and the black a viewer sees under the caption
+is the **system navigation bar** plus the room, never a panel drawn by the viewer.
+An earlier pass (fix9) put an opaque `bg.theater` band behind the text and had
+`VideoPlayer` paint a matching strip under its transport; that was a misreading of
+"black at the bottom" and both are gone. What fix9 did keep is the **geometry**: the
+caption holds one height on every page, because `contextAboveControls` lifts the
+block clear of a video's transport (`bottom: VIDEO_CONTROLS_HEIGHT`) and
+`contextBelowControls` reserves the same height as `paddingBottom` on an image. The
+overlay is rendered *after* the pager, so anything opaque there would cover a video's
+controls — keep it transparent and let the bars do the black.
 
 ### Author attribution (`AuthorLine`)
 
