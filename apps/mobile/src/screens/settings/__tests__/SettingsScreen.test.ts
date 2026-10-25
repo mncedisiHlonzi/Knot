@@ -1,22 +1,43 @@
 import { APP_VERSION } from '../../../config/app';
+import Avatar from '../../../components/Avatar';
 import Header from '../../../components/Header';
+import RootedBadge from '../../../components/RootedBadge';
 import SettingsScreen from '../SettingsScreen';
 
 /**
- * `SettingsScreen` is stateful (the avatar picker's visibility and its in-flight
- * state), so it cannot be called as a plain function without React's hook
- * primitives stubbed — the project has no renderer and must not add one. The
- * component is then built exactly as the app builds it, and the tree is walked
- * structurally to assert what the screen offers (KNOT-020k-fix22).
+ * `SettingsScreen` is stateful (the header's profile, the avatar picker's
+ * visibility and its in-flight state), so it cannot be called as a plain function
+ * without React's hook primitives stubbed — the project has no renderer and must
+ * not add one. The component is then built exactly as the app builds it, and the
+ * tree is walked structurally to assert what the screen offers
+ * (KNOT-020k-fix22, KNOT-020k-fix23).
  *
- * The picker is stubbed to a host component: importing the real one reaches
- * `react-native-image-picker`, which is a native module.
+ * The screen's first state slot is the header's profile, so `useState` hands that
+ * slot the fixture below — the read that would fill it is a network call the suite
+ * must not make. The picker is stubbed to a host component: importing the real one
+ * reaches `react-native-image-picker`, which is a native module.
  */
+const mockProfile = {
+  id: 'user-1',
+  display_name: 'Nomsa Khan',
+  avatar_url: '/users/user-1/avatar?v=1',
+  rooted: { place: 'Manguzi', duration_bucket: 'many_years' },
+  joined_at: '2026-01-01T00:00:00.000Z',
+};
+
+let mockStateIndex = 0;
+
 jest.mock('react', () => ({
   ...jest.requireActual('react'),
   useContext: () => jest.requireActual('../../../theme/ThemeContext').lightTheme,
   useCallback: (callback: unknown) => callback,
-  useState: (initial: unknown) => [initial, () => undefined],
+  // The screen reads its profile header on mount; the suite never performs I/O.
+  useEffect: () => undefined,
+  useState: (initial: unknown) => {
+    const index = mockStateIndex;
+    mockStateIndex += 1;
+    return [index === 0 ? mockProfile : initial, () => undefined];
+  },
 }));
 
 jest.mock('react-native', () => ({
@@ -129,6 +150,7 @@ function renderedText(element: unknown): string {
 }
 
 const PROPS = {
+  userId: 'user-1',
   token: 'token',
   onBack: () => undefined,
   onUserUpdated: () => undefined,
@@ -139,6 +161,8 @@ const PROPS = {
 
 /** One render of the screen, exactly as the app builds it. */
 function renderScreen(): ElementLike {
+  // Every render starts from the first state slot again.
+  mockStateIndex = 0;
   return SettingsScreen(PROPS) as unknown as ElementLike;
 }
 
@@ -169,6 +193,57 @@ describe('SettingsScreen', () => {
     expect(text).toContain('Account');
     expect(text).toContain('Preferences');
     expect(text).toContain('About');
+  });
+
+  it('opens with the signed-in person’s face, name and Rooted summary', () => {
+    const screen = renderScreen();
+    const byType = (type: unknown): ElementLike | undefined => {
+      let found: ElementLike | undefined;
+      walk(screen, (candidate) => {
+        if (candidate.type === type) {
+          found = candidate;
+        }
+      });
+      return found;
+    };
+
+    const avatar = byType(Avatar);
+    expect(avatar?.props?.displayName).toBe(mockProfile.display_name);
+    // The relative path is resolved against the API base before it reaches Avatar.
+    expect(avatar?.props?.uri).toBe(`http://localhost:8080${mockProfile.avatar_url}`);
+
+    const rooted = byType(RootedBadge);
+    expect(rooted?.props?.place).toBe(mockProfile.rooted.place);
+    expect(rooted?.props?.durationBucket).toBe(mockProfile.rooted.duration_bucket);
+
+    // The name is drawn as text by the screen itself.
+    expect(renderedText(expand(screen))).toContain(mockProfile.display_name);
+  });
+
+  it('separates its rows with whitespace instead of rules', () => {
+    // Expanding the rows hands back their real style objects, so the absence of a
+    // drawn divider is provable rather than assumed (KNOT-020k-fix23).
+    const expanded = renderExpanded();
+    const ruleKeys = ['borderTopWidth', 'borderBottomWidth'];
+    let ruled = 0;
+
+    walk(expanded, (candidate) => {
+      const style = candidate.props?.style;
+      const parts = Array.isArray(style) ? style : [style];
+      for (const part of parts) {
+        if (part === null || typeof part !== 'object') {
+          continue;
+        }
+        const record = part as Record<string, unknown>;
+        for (const key of ruleKeys) {
+          if (typeof record[key] === 'number' && record[key] !== 0) {
+            ruled += 1;
+          }
+        }
+      }
+    });
+
+    expect(ruled).toBe(0);
   });
 
   it('offers every account action the profile sheet used to hold', () => {

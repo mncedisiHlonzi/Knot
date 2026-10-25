@@ -825,10 +825,12 @@ function ThemedApp(): React.ReactElement {
       case 'blockedUsers':
         return <BlockedUsersScreen token={current.accessToken} onBack={handleBack} />;
       case 'settings':
-        // The account and preferences surface (KNOT-020k-fix22). Pushed over the
-        // profile it was opened from, so Back returns to the wall.
+        // The account and preferences surface (KNOT-020k-fix22), headed by the
+        // signed-in person's own profile (KNOT-020k-fix23). Pushed over the profile
+        // it was opened from, so Back returns to the wall.
         return (
           <SettingsScreen
+            userId={current.user.id}
             token={current.accessToken}
             onBack={handleBack}
             onUserUpdated={handleUserUpdated}

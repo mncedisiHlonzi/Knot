@@ -308,11 +308,13 @@ const createStyles = (colors: ThemeColors) =>
       paddingVertical: spacing.lg,
     },
     // One question: the overline, the title, up to two lines of the body, then the
-    // asker's attribution and the answer tally, closed by a full-bleed hairline.
-    // Flat rather than a card, per the design system's canvas rule.
+    // asker's attribution and the answer tally, closed by the Feed's 4pt separator
+    // band — the same rhythm Profile, Place Stories, Search and the Feed draw
+    // (KNOT-020k-fix23). Flat rather than a card, per the design system's canvas
+    // rule.
     row: {
-      borderBottomColor: colors.border.hairline,
-      borderBottomWidth: 1,
+      borderBottomColor: colors.bg.separator,
+      borderBottomWidth: 4,
       gap: spacing.sm,
       marginHorizontal: -layout.screenPaddingFeed,
       paddingHorizontal: layout.screenPaddingFeed,

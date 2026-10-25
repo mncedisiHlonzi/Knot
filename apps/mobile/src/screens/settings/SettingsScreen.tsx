@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -25,11 +25,15 @@ import {
 } from 'phosphor-react-native';
 
 import { User, describeError } from '../../api/client';
+import { type ProfileUser, profileApi } from '../../api/profile';
 import { uploadAvatar } from '../../api/users';
+import Avatar from '../../components/Avatar';
 import Header from '../../components/Header';
 import MediaPickerSheet, { type PickedMedia } from '../../components/MediaPickerSheet';
+import RootedBadge from '../../components/RootedBadge';
+import { API_BASE_URL } from '../../config/api';
 import { APP_VERSION } from '../../config/app';
-import { layout, spacing, typeScale, useTheme, useThemedStyles } from '../../theme';
+import { fontWeights, layout, spacing, typeScale, useTheme, useThemedStyles } from '../../theme';
 import type { ThemeColors } from '../../theme';
 
 /**
@@ -42,7 +46,21 @@ import type { ThemeColors } from '../../theme';
 const PRIVACY_URL = 'https://knot.example/privacy';
 const TERMS_URL = 'https://knot.example/terms';
 
+/**
+ * Resolves the profile's relative avatar path against the API base URL.
+ *
+ * The server sends `/users/{id}/avatar?v=…`, so it is joined to the base the way
+ * every other avatar in the app is. A missing or blank path resolves to
+ * `undefined`, which `Avatar` reads as "draw initials".
+ */
+function avatarUri(path: string | null | undefined): string | undefined {
+  const trimmed = typeof path === 'string' ? path.trim() : '';
+  return trimmed === '' ? undefined : `${API_BASE_URL}${trimmed}`;
+}
+
 type SettingsScreenProps = {
+  /** The signed-in user's id, used to read their own profile header. */
+  readonly userId: string;
   /** The signed-in user's access token, needed for the avatar upload. */
   readonly token: string;
   /** Called when the person returns to the profile. */
@@ -199,12 +217,19 @@ function Section({
  * writes the new user back to the session, so the wall behind this screen shows the
  * new face as soon as it is read again.
  *
- * The structure is the design system's: a canvas, full-bleed hairlines between rows,
- * `typeScale` composites, semantic colour roles and 44-point minimum touch targets.
- * No hex is written here, and no row is carded — the list is one continuous column
- * the way the feed's entries are.
+ * The structure is the design system's: a canvas, `typeScale` composites,
+ * semantic colour roles and 44-point minimum touch targets. No hex is written
+ * here, and no row is carded or ruled — the groups are set apart by whitespace and
+ * an overline heading, the way the rest of the app draws a quiet list
+ * (KNOT-020k-fix23).
+ *
+ * The block at the top is the signed-in person's own header — avatar, name and
+ * Rooted summary — read from the same profile endpoint the wall uses, so Settings
+ * opens with the face it belongs to. It is enrichment: if that read fails the
+ * screen still works, it just draws no header.
  */
 export default function SettingsScreen({
+  userId,
   token,
   onBack,
   onUserUpdated,
@@ -214,9 +239,32 @@ export default function SettingsScreen({
 }: SettingsScreenProps): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
+  // Declared first so the header's profile is the screen's first piece of state.
+  const [profile, setProfile] = useState<ProfileUser | undefined>(undefined);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
   const [avatarError, setAvatarError] = useState<string | undefined>(undefined);
+
+  /**
+   * Reads the signed-in person's profile for the header.
+   *
+   * One activity is asked for and never shown: the endpoint returns the user
+   * beside the wall, so the smallest possible page carries the header's three
+   * fields without a second route. A failure is swallowed on purpose — the header
+   * is decoration, and the settings below it do not depend on it.
+   */
+  const loadProfile = useCallback(async (): Promise<void> => {
+    try {
+      const page = await profileApi.getUserProfile(userId, undefined, 1, token);
+      setProfile(page.user);
+    } catch {
+      setProfile(undefined);
+    }
+  }, [token, userId]);
+
+  useEffect(() => {
+    void loadProfile();
+  }, [loadProfile]);
 
   const handleAvatarPicked = useCallback(
     async (media: PickedMedia): Promise<void> => {
@@ -225,13 +273,16 @@ export default function SettingsScreen({
       try {
         const updated = await uploadAvatar(media.uri, media.mimeType, token);
         onUserUpdated(updated);
+        // The header shows the same avatar, so it is re-read rather than left
+        // showing the face from before the upload (KNOT-020k-fix23).
+        void loadProfile();
       } catch (caught) {
         setAvatarError(describeError(caught));
       } finally {
         setUploadingAvatar(false);
       }
     },
-    [onUserUpdated, token],
+    [loadProfile, onUserUpdated, token],
   );
 
   /** Opens a legal page, reporting a link the device cannot follow. */
@@ -258,6 +309,30 @@ export default function SettingsScreen({
       />
 
       <ScrollView contentContainerStyle={styles.content}>
+        {/* The signed-in person's own header. Nothing here is a control: it says
+            whose settings these are, with the Rooted summary when they have one
+            (KNOT-020k-fix23). */}
+        {profile === undefined ? null : (
+          <View style={styles.profileHeader}>
+            <Avatar
+              uri={avatarUri(profile.avatar_url)}
+              displayName={profile.display_name}
+              size="xl"
+            />
+            <Text style={[typeScale.h2, styles.profileName]} numberOfLines={1}>
+              {profile.display_name}
+            </Text>
+            {profile.rooted === null ? null : (
+              <View style={styles.profileRooted}>
+                <RootedBadge
+                  place={profile.rooted.place}
+                  durationBucket={profile.rooted.duration_bucket}
+                />
+              </View>
+            )}
+          </View>
+        )}
+
         <Section title="Account">
           <SettingRow
             icon={Camera}
@@ -337,28 +412,44 @@ const createStyles = (colors: ThemeColors) =>
       width: 44,
     },
     // One row: a leading glyph, the label, an optional value, and the trailing
-    // control. Rows are told apart by a full-bleed hairline above each one, so a
-    // group reads as one continuous column with no carded boxes (the design
-    // system's list rule).
+    // control. Rows carry NO rule: the groups are told apart by whitespace and the
+    // overline heading above them, which is the quieter, more modern list the
+    // founder asked for (KNOT-020k-fix23).
     row: {
       alignItems: 'center',
-      borderTopColor: colors.border.hairline,
-      borderTopWidth: 1,
       flexDirection: 'row',
       gap: spacing.md,
       minHeight: 44,
       paddingHorizontal: layout.screenPaddingFeed,
       paddingVertical: spacing.md,
     },
+    // The label takes the body composite a half-step heavier: 600 is the weight the
+    // rest of the app's labels carry, so a settings row reads decisively without
+    // becoming a heading (KNOT-020k-fix23).
     rowLabel: {
       color: colors.text.primary,
       flex: 1,
+      fontWeight: fontWeights.semibold,
     },
     rowLabelDanger: {
       color: colors.state.danger,
     },
     rowValue: {
       color: colors.text.tertiary,
+    },
+    profileHeader: {
+      alignItems: 'center',
+      paddingBottom: spacing.lg,
+      paddingHorizontal: layout.screenPaddingFeed,
+      paddingTop: spacing.lg,
+    },
+    profileName: {
+      color: colors.text.primary,
+      marginTop: spacing.md,
+      textAlign: 'center',
+    },
+    profileRooted: {
+      marginTop: spacing.sm,
     },
     section: {
       marginTop: spacing.xl,
