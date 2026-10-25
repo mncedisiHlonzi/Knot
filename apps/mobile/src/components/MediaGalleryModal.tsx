@@ -44,6 +44,7 @@ import {
 } from '../utils/viewability';
 import Avatar from './Avatar';
 import { clampViewerIndex, viewerIndexForId, viewerSnippet } from './mediaViewer';
+import { viewerIndexByUrl } from './storyGallery';
 import VideoPlayer, { VIDEO_CONTROLS_HEIGHT } from './VideoPlayer';
 /** One item the viewer can show. Story media satisfies this shape directly. */
 export type ViewerMedia = {
@@ -395,6 +396,13 @@ type MediaGalleryModalProps = {
  * a video there starts playing immediately instead of waiting for a scroll event
  * that a freshly mounted list never emits (KNOT-020k-fix3).
  *
+ * The stage's key is the opening page and **nothing else**. It deliberately does
+ * not include the media's length: a preview-only caller opens the viewer on its
+ * one item and then hydrates the story's whole gallery in the background, and a
+ * key that changed with the array would remount the pager and throw the reader
+ * back to the start (KNOT-020k-fix16). `ViewerStage` re-anchors on the item
+ * instead — see the effect inside it.
+ *
  * It is an RN `Modal`, so it owns its window and renders above the tab bar and
  * every overlay; the app passes it the media, an index and the story context, and
  * it owns everything else.
@@ -466,10 +474,12 @@ export default function MediaGalleryModal({
 
       {/* A fresh stage per open, so every page index — including the active one —
           starts from `initialIndex` rather than from a state left over from the
-          last time the viewer was shown (KNOT-020k-fix3). */}
+          last time the viewer was shown (KNOT-020k-fix3). The key is the page,
+          not the array: a background hydration must not remount the pager
+          (KNOT-020k-fix16). */}
       {visible ? (
         <ViewerStage
-          key={`${initialIndex}:${media.length}`}
+          key={`${initialIndex}`}
           media={media}
           initialIndex={initialIndex}
           story={story}
@@ -550,10 +560,31 @@ export function ViewerStage({
   // the viewer opened on (KNOT-020k-fix3).
   const pagerMoved = useRef(false);
 
+  // The items on screen, readable from a callback that must keep its identity for
+  // the list's life. A preview-only caller replaces the array after opening, and a
+  // report must be resolved against the array it is actually reporting on
+  // (KNOT-020k-fix16).
+  const mediaRef = useRef(media);
+  useEffect(() => {
+    mediaRef.current = media;
+  }, [media]);
+
+  // The reader's place, held by identity as well as by index. A hydrated gallery
+  // shifts every index, so the *item* is what has to stay put (KNOT-020k-fix16).
+  const activeIndexNumber = useRef(clampViewerIndex(initialIndex, media.length));
+  const activeUrl = useRef(media[clampViewerIndex(initialIndex, media.length)]?.url);
+
+  /** Moves the stage to a page, remembering which item that page holds. */
+  const selectPage = useCallback((next: number): void => {
+    activeIndexNumber.current = next;
+    activeUrl.current = mediaRef.current[next]?.url;
+    setActiveIndex(next);
+  }, []);
+
   // The viewability config and its callback must keep their identity for the
   // list's life, or `FlatList` warns and stops reporting — the same rule the Feed
-  // follows (KNOT-020c-fix3). The stage is mounted per open with a fixed media
-  // list, so closing over it here is safe.
+  // follows (KNOT-020c-fix3). The items are read through `mediaRef`, so the
+  // callback never works from a stale gallery (KNOT-020k-fix16).
   const viewabilityConfig = useRef(VIEWABILITY_CONFIG).current;
   const onViewableItemsChanged = useRef((info: ViewableItemsInfo): void => {
     if (!pagerMoved.current) {
@@ -564,13 +595,13 @@ export function ViewerStage({
       return;
     }
     const next = viewerIndexForId(
-      media.map((item) => item.id),
+      mediaRef.current.map((item) => item.id),
       key,
     );
     // A report naming an item this viewer no longer holds is ignored rather than
     // read as "page one".
     if (next >= 0) {
-      setActiveIndex(next);
+      selectPage(next);
     }
   }).current;
 
@@ -582,6 +613,28 @@ export function ViewerStage({
   useEffect(() => {
     listRef.current?.scrollToIndex({ index: initialPage, animated: false });
   }, [initialPage]);
+
+  // Background hydration (KNOT-020k-fix16): a preview-only caller opens the viewer
+  // on its one item and then swaps in the story's whole gallery. Every index has
+  // moved, so the stage re-finds the item the reader is looking at and asks the
+  // pager to stay on it without animating — the reader neither jumps back to the
+  // start nor loses their place, and the new pages are immediately swipeable.
+  //
+  // The active page is read through refs on purpose: `media` is the only thing
+  // that should re-run this, or every swipe would try to re-anchor.
+  useEffect(() => {
+    const url = activeUrl.current;
+    if (url === undefined) {
+      return;
+    }
+    const next = viewerIndexByUrl(media, url);
+    if (next < 0 || next === activeIndexNumber.current) {
+      return;
+    }
+    activeIndexNumber.current = next;
+    setActiveIndex(next);
+    listRef.current?.scrollToIndex({ index: next, animated: false });
+  }, [media]);
 
   // An image has nothing to toggle, so its chrome stays up; a video's follows the
   // tap. The fade runs on the native driver (KNOT-020k-fix2).
@@ -681,8 +734,8 @@ export function ViewerStage({
     }
     pagerMoved.current = true;
     const next = clampViewerIndex(event.nativeEvent.contentOffset.x / width, media.length);
-    if (next !== activeIndex) {
-      setActiveIndex(next);
+    if (next !== activeIndexNumber.current) {
+      selectPage(next);
     }
   };
 

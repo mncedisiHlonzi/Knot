@@ -613,12 +613,29 @@ an empty strip under every photo.
 **Every entry point opens the viewer the same way (`KNOT-020k-fix11`).**
 `FeedEntry` hands `onOpenMedia` a complete `ViewerStory` — `storyId` plus the tapped
 item in `media` — matching what Story Detail passes. `App.openMediaViewer` opens at
-once when the context already carries media, so a tap on a Feed (or place/profile)
-image lands in the fixed, full-window layout on the first frame instead of waiting
-for `GET /stories/{id}`. The trade-off is deliberate: a preview-only surface now
-opens a one-item gallery rather than fetching the story's whole gallery first; if the
-multi-page Feed viewer is wanted back, add background enrichment that keeps the
-stage's identity (its `key` is `initialIndex:media.length`).
+once on what the caller holds, so a tap on a Feed (or place/profile) image lands in
+the fixed, full-window layout on the first frame instead of waiting for
+`GET /stories/{id}`.
+
+**Instant open, then the whole gallery (`KNOT-020k-fix16`).** Opening instantly with
+one item used to leave the Feed viewer single-page. `App.openMediaViewer` now sets the
+viewer state synchronously **and** starts a background read when the context held at
+most one item; `withHydratedGallery` (`components/mediaViewer.ts`) installs the answer
+only if the same story is still open, keeping the opening index. Two rules make it
+seamless:
+
+- **The stage's `key` is the opening page and nothing else.** Including the media
+  length — which the key used to do — remounts the pager when the array grows and
+  throws the reader back to the start.
+- **`ViewerStage` re-anchors on the item, not the index.** It tracks the active item's
+  url (a preview and the gallery share only the url — the ids differ), and when the
+  media array changes it finds that url, sets the index and `scrollToIndex` without
+  animation. Every index has shifted under the reader, so the item is the only stable
+  identity. Its viewability callback reads the items through a ref for the same reason:
+  the callback must keep its identity while the gallery is replaced underneath it.
+
+The system-bar paint from `KNOT-020k-fix15` is untouched by this: the chrome is applied
+when the modal opens, not when the media changes.
 
 **The viewer paints its own system bars — both of them, on every window
 (`KNOT-020k-fix15`).** Opening the viewer from the Feed used to leave the status and

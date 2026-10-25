@@ -26,7 +26,8 @@ import TabBar from './src/components/TabBar';
 import type { TabName } from './src/components/TabBar';
 import MediaGalleryModal from './src/components/MediaGalleryModal';
 import type { ViewerMedia, ViewerStory } from './src/components/MediaGalleryModal';
-import { toViewerMedia, viewerIndexByUrl } from './src/components/storyGallery';
+import { toViewerMedia } from './src/components/storyGallery';
+import { withHydratedGallery, type ViewerState } from './src/components/mediaViewer';
 import {
   popAllOverlays,
   popOverlay,
@@ -200,27 +201,21 @@ function ThemedApp(): React.ReactElement {
   // every screen — the Feed, a story, a version, a place, a profile — and because
   // a screen that opens it unmounts nothing: the viewer is a sibling of the app,
   // not a route (KNOT-020k).
-  const [mediaViewer, setMediaViewer] = useState<{
-    readonly items: readonly ViewerMedia[];
-    readonly index: number;
-    /**
-     * The story the media belongs to, which the viewer's contextual sheet
-     * presents. Null for a caller that has no story context (KNOT-020k-fix2).
-     */
-    readonly story: ViewerStory | null;
-  } | null>(null);
+  const [mediaViewer, setMediaViewer] = useState<ViewerState | null>(null);
 
   /**
-   * Opens the viewer on one of `items`.
+   * Opens the viewer on one of `items`, then fills in the story's gallery.
    *
-   * A caller that already carries its media opens at once, in the same fixed
-   * layout: Story Detail and Version Detail hold the story's gallery, and
-   * `FeedEntry` supplies the tapped preview in `story.media`, so a tap from the
-   * Feed, a place page or a card lands on the viewer's first frame (KNOT-020k-fix11).
+   * The viewer always opens **synchronously** on what the caller handed it, so a
+   * tap lands on the viewer's first frame whatever the screen was (KNOT-020k-fix11).
    *
-   * A caller that hands over a bare preview — an empty `media` array — still has
-   * the story read first, and the viewer is then given the whole gallery with the
-   * tap landing on the item it was made on (the profile wall's path, KNOT-020k-fix4).
+   * A caller that already carries the gallery — Story Detail, Version Detail — is
+   * finished there. A surface that holds only a card preview (the Feed, a place
+   * page, the profile wall) passes that one item, so this reads the story in the
+   * background and swaps the whole gallery in when it arrives: the reader can swipe
+   * to the story's other media a moment later, without the open having waited on a
+   * request (KNOT-020k-fix16). `withHydratedGallery` decides whether that late
+   * answer still applies, and keeps the opening page so the pager does not reset.
    *
    * The index is clamped here as well as in the viewer, because a caller can hold
    * a stale index after a list shrinks (KNOT-020k).
@@ -231,38 +226,26 @@ function ThemedApp(): React.ReactElement {
         return;
       }
 
-      const show = (
-        gallery: readonly ViewerMedia[],
-        at: number,
-        context: ViewerStory | null | undefined,
-      ): void => {
-        setMediaViewer({
-          items: gallery,
-          index: Math.min(Math.max(Math.round(at), 0), gallery.length - 1),
-          story: context ?? null,
-        });
-      };
+      setMediaViewer({
+        items,
+        index: Math.min(Math.max(Math.round(index), 0), items.length - 1),
+        story: story ?? null,
+      });
 
-      // A caller that already carries the gallery (or several items) opens at once.
-      if (story == null || story.media.length > 0 || items.length > 1) {
-        show(items, index, story);
+      // Only a preview-sized context has anything to read: one item it already
+      // showed (or none), and a story id to ask about.
+      if (story == null || story.storyId === '' || story.media.length > 1) {
         return;
       }
 
-      // A preview-only surface: read the story, then open on the tapped item.
+      const storyId = story.storyId;
       void (async (): Promise<void> => {
         try {
-          const result = await storiesApi.getStory(story.storyId, session?.accessToken);
+          const result = await storiesApi.getStory(storyId, session?.accessToken);
           const gallery = toViewerMedia(result.story.media);
-          if (gallery.length === 0) {
-            show(items, index, story);
-            return;
-          }
-          const at = viewerIndexByUrl(gallery, items[0].url);
-          show(gallery, at >= 0 ? at : 0, { ...story, media: gallery });
+          setMediaViewer((current) => withHydratedGallery(current, storyId, gallery));
         } catch {
-          // A tap on media must never be dead: fall back to the preview it showed.
-          show(items, index, story);
+          // A tap on media must never be dead: the tapped item stays on screen.
         }
       })();
     },

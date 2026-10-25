@@ -5,7 +5,10 @@ import {
   viewerProgress,
   viewerSnippet,
   viewerTimeLabel,
+  withHydratedGallery,
+  type ViewerState,
 } from '../mediaViewer';
+import type { ViewerMedia, ViewerStory } from '../MediaGalleryModal';
 
 describe('clampViewerIndex', () => {
   it('keeps an index inside the list', () => {
@@ -107,6 +110,53 @@ describe('viewerTimeLabel', () => {
 
   it('reads past an hour like the duration badge does', () => {
     expect(viewerTimeLabel(3725)).toBe('1:02:05');
+  });
+});
+
+describe('withHydratedGallery', () => {
+  const preview: ViewerMedia[] = [
+    { id: 'story-1', media_type: 'image', url: '/stories/story-1/media/a/content' },
+  ];
+  const gallery: ViewerMedia[] = [
+    { id: 'b', media_type: 'image', url: '/stories/story-1/media/b/content' },
+    { id: 'a', media_type: 'image', url: '/stories/story-1/media/a/content' },
+  ];
+  const story: ViewerStory = {
+    storyId: 'story-1',
+    title: 'A story',
+    body: 'The body.',
+    media: preview,
+  };
+  const open: ViewerState = { items: preview, index: 0, story };
+
+  it('swaps the gallery in and keeps the page the viewer opened on', () => {
+    const next = withHydratedGallery(open, 'story-1', gallery);
+
+    expect(next?.items).toBe(gallery);
+    // The index is the opening page, not the tapped item's new position: the stage
+    // re-anchors on the item, and a changed index would remount the pager
+    // (KNOT-020k-fix16).
+    expect(next?.index).toBe(0);
+    expect(next?.story?.media).toBe(gallery);
+    expect(next?.story?.title).toBe('A story');
+  });
+
+  it('never reopens a viewer that has been closed', () => {
+    expect(withHydratedGallery(null, 'story-1', gallery)).toBeNull();
+  });
+
+  it('ignores an answer for a story the viewer is no longer showing', () => {
+    expect(withHydratedGallery(open, 'story-2', gallery)).toBe(open);
+  });
+
+  it('keeps the tapped item when the read returns nothing usable', () => {
+    expect(withHydratedGallery(open, 'story-1', [])).toBe(open);
+  });
+
+  it('leaves a viewer without a story context alone', () => {
+    const bare: ViewerState = { items: preview, index: 0, story: null };
+
+    expect(withHydratedGallery(bare, 'story-1', gallery)).toBe(bare);
   });
 });
 

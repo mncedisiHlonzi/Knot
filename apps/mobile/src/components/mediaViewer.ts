@@ -6,6 +6,20 @@
  * Nothing in this module touches React or React Native.
  */
 import { formatDuration } from './feedVideoMeta';
+import type { ViewerMedia, ViewerStory } from './MediaGalleryModal';
+
+/**
+ * What the app holds while the full-screen viewer is open.
+ *
+ * It is the media actually being paged, the page it opened on, and the story the
+ * overlay presents — the whole of the viewer's input, so `App` can hand it to a
+ * pure function when a request answers late (KNOT-020k-fix16).
+ */
+export type ViewerState = {
+  readonly items: readonly ViewerMedia[];
+  readonly index: number;
+  readonly story: ViewerStory | null;
+};
 
 /**
  * How many characters of a story's body the contextual sheet quotes.
@@ -127,4 +141,42 @@ export function viewerIndexForId(ids: readonly string[], key: string): number {
     return -1;
   }
   return ids.indexOf(key);
+}
+
+/**
+ * Swaps a background-read gallery into an already open viewer.
+ *
+ * A surface that holds only a card preview (the Feed, a place page, the profile
+ * wall) opens the viewer at once on the item that was tapped and then reads the
+ * story, so swiping reaches the rest. This is the second half of that: it returns
+ * the state to install, or `current` untouched when the answer is no longer wanted.
+ *
+ * Two refusals matter. A viewer that has been **closed** (`current === null`) must
+ * stay closed — a late response must never reopen it. And a viewer that is showing
+ * a **different story** must not be overwritten, which is how a response for the
+ * last tap cannot land on the new one.
+ *
+ * The **index is deliberately preserved**: it is the page the viewer opened on, and
+ * `MediaGalleryModal` keys its stage on it. Recomputing it for the longer array
+ * would remount the pager and throw the reader back to the start; instead the stage
+ * re-anchors on the same item by url, which now sits at a different index
+ * (KNOT-020k-fix16).
+ */
+export function withHydratedGallery(
+  current: ViewerState | null,
+  storyId: string,
+  gallery: readonly ViewerMedia[],
+): ViewerState | null {
+  if (current === null || current.story === null || gallery.length === 0) {
+    return current;
+  }
+  if (storyId === '' || current.story.storyId !== storyId) {
+    return current;
+  }
+
+  return {
+    items: gallery,
+    index: current.index,
+    story: { ...current.story, media: gallery },
+  };
 }
