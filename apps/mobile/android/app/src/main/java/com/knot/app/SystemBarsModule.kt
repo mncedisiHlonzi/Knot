@@ -85,8 +85,8 @@ class SystemBarsModule(reactContext: ReactApplicationContext) :
   }
 
   /**
-   * Forces the status bar's icon contrast, on the Activity and on every open
-   * modal dialog.
+   * Forces the status bar's icon contrast and its background colour, on the
+   * Activity and on every open modal dialog.
    *
    * React Native's `StatusBar` reaches the Activity window only. A `Modal` is a
    * real Android `Dialog` with its own window, and React Native copies the
@@ -96,12 +96,30 @@ class SystemBarsModule(reactContext: ReactApplicationContext) :
    * viewer needs white icons over its black room whether the page is an image or
    * a video, in either app theme (KNOT-020k-fix8).
    *
+   * The background is painted here too, and that is the point of `background`: a
+   * dialog window does not inherit the Activity's status-bar colour, so forcing
+   * only the icons left the bar its theme colour — the app's canvas, white, on
+   * every screen that had not already declared a transparent bar. Painting both
+   * windows makes the viewer's chrome independent of the screen it opened from
+   * (KNOT-020k-fix15).
+   *
    * @param lightContent true for white icons on a dark surface, false for dark
    *   icons on a light one.
+   * @param background the bar's fill, `#RRGGBB` or `#AARRGGBB`.
    */
   @ReactMethod
-  fun setStatusBarIcons(lightContent: Boolean) {
+  fun setStatusBarIcons(lightContent: Boolean, background: String) {
+    val parsed: Int =
+        try {
+          Color.parseColor(background)
+        } catch (error: IllegalArgumentException) {
+          // A malformed colour is ignored rather than crashing the app; the bar
+          // keeps whatever the theme gave it.
+          return
+        }
+
     lastStatusBarLightContent = lightContent
+    lastStatusBarColor = parsed
 
     UiThreadUtil.runOnUiThread {
       val activity = currentActivity ?: return@runOnUiThread
@@ -115,11 +133,22 @@ class SystemBarsModule(reactContext: ReactApplicationContext) :
    * It is a separate method rather than a null argument because the bridge
    * cannot marshal a null into a `boolean` parameter (it would throw
    * `UnexpectedNativeTypeException`), so "stop managing" needs its own entry
-   * point (KNOT-020k-fix8).
+   * point (KNOT-020k-fix8). The Activity's status bar is repainted in the chrome
+   * colour JavaScript has already restored (the canvas), so the black does not
+   * outlive the viewer (KNOT-020k-fix15).
    */
   @ReactMethod
   fun clearStatusBarIcons() {
     lastStatusBarLightContent = null
+    lastStatusBarColor = null
+
+    UiThreadUtil.runOnUiThread {
+      val activity = currentActivity ?: return@runOnUiThread
+      // `setNavigationBar` is called immediately before this on close, so `lastColor`
+      // is the colour the app is returning to.
+      val chrome = lastColor ?: return@runOnUiThread
+      applyStatusBarBackground(activity.window, chrome)
+    }
   }
 
   companion object {
@@ -137,6 +166,13 @@ class SystemBarsModule(reactContext: ReactApplicationContext) :
      * white icons, and it hands the bar back when it closes (KNOT-020k-fix8).
      */
     private var lastStatusBarLightContent: Boolean? = null
+
+    /**
+     * The viewer's status-bar fill, or null when React Native owns the bar. The
+     * dialog window does not inherit the Activity's status-bar colour, so this has
+     * to be painted on both (KNOT-020k-fix15).
+     */
+    private var lastStatusBarColor: Int? = null
 
     /**
      * Repaints the Activity's window and every open modal dialog.
@@ -169,10 +205,11 @@ class SystemBarsModule(reactContext: ReactApplicationContext) :
      */
     private fun reapplyStatusBar(activity: Activity) {
       val lightContent = lastStatusBarLightContent ?: return
+      val color = lastStatusBarColor ?: return
       val decorView = activity.window?.decorView
 
-      applyStatusBarToWindow(activity.window, lightContent)
-      applyStatusBarToOpenDialogs(decorView, lightContent)
+      applyStatusBarToWindow(activity.window, lightContent, color)
+      applyStatusBarToOpenDialogs(decorView, lightContent, color)
     }
 
     /** Sets the bar colour, contrast enforcement, and icon appearance on one window. */
@@ -231,11 +268,29 @@ class SystemBarsModule(reactContext: ReactApplicationContext) :
       }
     }
 
-    /** Sets the status-bar icon appearance on one window. */
-    private fun applyStatusBarToWindow(window: Window?, lightContent: Boolean) {
+    /** Paints the status bar's fill on one window. */
+    private fun applyStatusBarBackground(window: Window?, color: Int) {
       if (window == null) {
         return
       }
+
+      @Suppress("DEPRECATION")
+      window.statusBarColor = color
+
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        // Otherwise Android paints its own translucent scrim over the colour on
+        // a bar that is not edge-to-edge.
+        window.isStatusBarContrastEnforced = false
+      }
+    }
+
+    /** Sets the status-bar fill and icon appearance on one window. */
+    private fun applyStatusBarToWindow(window: Window?, lightContent: Boolean, color: Int) {
+      if (window == null) {
+        return
+      }
+
+      applyStatusBarBackground(window, color)
 
       // "Light content" is white icons, which is the OPPOSITE of Android's
       // `APPEARANCE_LIGHT_STATUS_BARS` flag (that flag asks for dark icons on a
@@ -261,20 +316,20 @@ class SystemBarsModule(reactContext: ReactApplicationContext) :
       }
     }
 
-    /** Applies the status-bar icon appearance to every modal dialog's window. */
-    private fun applyStatusBarToOpenDialogs(view: View?, lightContent: Boolean) {
+    /** Applies the status-bar fill and icon appearance to every modal dialog's window. */
+    private fun applyStatusBarToOpenDialogs(view: View?, lightContent: Boolean, color: Int) {
       if (view == null) {
         return
       }
 
       if (view is ReactModalHostView) {
-        applyStatusBarToWindow(view.dialog?.window, lightContent)
+        applyStatusBarToWindow(view.dialog?.window, lightContent, color)
         return
       }
 
       if (view is ViewGroup) {
         for (index in 0 until view.childCount) {
-          applyStatusBarToOpenDialogs(view.getChildAt(index), lightContent)
+          applyStatusBarToOpenDialogs(view.getChildAt(index), lightContent, color)
         }
       }
     }

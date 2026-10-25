@@ -14,13 +14,13 @@ type SystemBarsNativeModule = {
   /** Paints the bar `color` (`#RRGGBB`) with dark icons when `lightIcons` is true. */
   readonly setNavigationBar: (color: string, lightIcons: boolean) => void;
   /**
-   * Forces the status bar's icon contrast (`true` = white icons) on the Activity
-   * and on every open modal dialog.
+   * Forces the status bar's icon contrast AND its background colour (`true` =
+   * white icons) on the Activity and on every open modal dialog.
    *
    * Optional because a JavaScript reload against a build that predates the method
    * must not throw.
    */
-  readonly setStatusBarIcons?: (lightContent: boolean) => void;
+  readonly setStatusBarIcons?: (lightContent: boolean, background: string) => void;
   /** Hands the status bar back to React Native's own `StatusBar`. */
   readonly clearStatusBarIcons?: () => void;
 };
@@ -44,7 +44,8 @@ export function setNavigationBarColor(color: string, lightIcons: boolean): void 
 }
 
 /**
- * Forces the status bar's icons to white (`true`) or dark (`false`).
+ * Forces the status bar's icons to white (`true`) or dark (`false`) **and** paints
+ * its background, on the Activity and on every open modal dialog.
  *
  * React Native's `StatusBar` reaches the Activity window only. A `Modal` is a real
  * Android `Dialog` with its own window, and React Native copies the Activity's
@@ -54,10 +55,16 @@ export function setNavigationBarColor(color: string, lightIcons: boolean): void 
  * needs exactly that: white icons over its black room, whether the page is an
  * image or a video, in either app theme (KNOT-020k-fix8).
  *
+ * The background matters just as much, and it is why this takes a colour: the
+ * viewer used to force only the icon appearance, leaving the bar's fill to the
+ * window's theme — `@color/knot_canvas` (white) on any screen that had not already
+ * declared a transparent status bar of its own. Painting the colour here makes the
+ * result independent of the screen the viewer was opened from (KNOT-020k-fix15).
+ *
  * A no-op on iOS, where the modal is a view controller and `StatusBar` already
  * applies app-wide, and on a build that predates the module.
  */
-export function setStatusBarIcons(lightContent: boolean): void {
+export function setStatusBarIcons(lightContent: boolean, background: string): void {
   if (Platform.OS !== 'android' || nativeModule === undefined) {
     return;
   }
@@ -65,18 +72,19 @@ export function setStatusBarIcons(lightContent: boolean): void {
   if (typeof setter !== 'function') {
     return;
   }
-  setter(lightContent);
+  setter(lightContent, background);
 }
 
 /**
  * Hands the status bar back to React Native's own `StatusBar`.
  *
- * This is what the media viewer calls on close: React Native's status-bar stack is
- * then the only owner again, which restores the correct value over a screen that
- * declares its own `StatusBar` (the Story Detail's edge-to-edge media, for
- * instance). It is a separate call rather than a `null` argument because the
- * bridge cannot marshal a null into the native `boolean` parameter
- * (KNOT-020k-fix8, KNOT-020k-fix10).
+ * This is what the media viewer calls on close: the icons become React Native's
+ * own again, and the module repaints the bar in the `canvas` colour JavaScript has
+ * already restored for the navigation bar — so nothing is left black behind the
+ * viewer (KNOT-020k-fix8, KNOT-020k-fix10, KNOT-020k-fix15).
+ *
+ * It is a separate call rather than a `null` argument because the bridge cannot
+ * marshal a null into the native `boolean` parameter.
  *
  * A no-op on iOS and on a build that predates the module.
  */

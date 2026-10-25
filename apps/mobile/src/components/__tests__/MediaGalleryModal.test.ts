@@ -1,6 +1,8 @@
 import MediaGalleryModal, { ViewerStage } from '../MediaGalleryModal';
 import type { ViewerMedia, ViewerStory } from '../MediaGalleryModal';
 import { spacing } from '../../theme';
+import { lightTheme } from '../../theme/ThemeContext';
+import { setNavigationBarColor, setStatusBarIcons } from '../../native/systemBars';
 import { VIDEO_CONTROLS_HEIGHT } from '../VideoPlayer';
 
 /**
@@ -192,6 +194,40 @@ describe('MediaGalleryModal status bar', () => {
     expect(statusBar?.props?.barStyle).toBe('light-content');
     expect(statusBar?.props?.backgroundColor).toBe('transparent');
     expect(statusBar?.props?.translucent).toBe(true);
+  });
+});
+
+describe('MediaGalleryModal system chrome', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  /**
+   * The regression this guards (KNOT-020k-fix15): the viewer's paint used to run
+   * only from a passive effect that fires in the commit which *builds* the dialog,
+   * and it only forced the status-bar icons — never the bar's fill. The dialog's
+   * own window is the one that paints the bars, so the paint is repeated when the
+   * dialog reports it is shown, and it carries the theatre black.
+   */
+  it('paints both system bars black when the dialog reports it is shown', () => {
+    const tree = MediaGalleryModal({
+      visible: true,
+      media: MEDIA,
+      initialIndex: 0,
+      story: STORY,
+      onClose: () => undefined,
+    });
+    const modal = elements(tree).find((element) => element.type === 'Modal');
+    const onShow = modal?.props?.onShow;
+
+    expect(typeof onShow).toBe('function');
+    (onShow as () => void)();
+
+    expect(setNavigationBarColor as jest.Mock).toHaveBeenCalledWith(
+      lightTheme.colors.bg.theater,
+      false,
+    );
+    expect(setStatusBarIcons as jest.Mock).toHaveBeenCalledWith(true, lightTheme.colors.bg.theater);
   });
 });
 

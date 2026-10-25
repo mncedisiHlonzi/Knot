@@ -620,6 +620,35 @@ opens a one-item gallery rather than fetching the story's whole gallery first; i
 multi-page Feed viewer is wanted back, add background enrichment that keeps the
 stage's identity (its `key` is `initialIndex:media.length`).
 
+**The viewer paints its own system bars — both of them, on every window
+(`KNOT-020k-fix15`).** Opening the viewer from the Feed used to leave the status and
+navigation bars in the app's canvas while every other entry point looked right.
+Two gaps caused it, and both are closed:
+
+1. **Only the status bar's *icons* were ever forced.** `setStatusBarIcons` now takes
+   the fill colour as well, and the native module applies it (plus contrast
+   enforcement off on API 29+) to the Activity **and** to every open
+   `ReactModalHostView` dialog, whose window does not inherit the Activity's
+   status-bar colour. The `<StatusBar backgroundColor="transparent" translucent />`
+   inside the modal reaches the Activity only — it can never colour the dialog that
+   is actually on top. The screens that looked right (Story Detail, Version Detail,
+   Place Stories, Discovery Map) all declare their own transparent `<StatusBar>`, so
+   the Activity bar was already transparent behind the dialog; **the Feed declares
+   none**, so it inherited App's opaque canvas bar and stayed white.
+2. **The paint was a one-shot passive effect fired in the commit that *builds* the
+   dialog.** The Feed's commit is the heaviest in the app (it mounts the whole
+   `ViewerStage` + pager + media on top of a live list), so the call could be
+   delivered before the dialog was attached and `applyToOpenDialogs` then found
+   nothing. The same paint now runs again from the `Modal`'s **`onShow`**, which the
+   native dialog emits (`ReactModalHostView` sets it as the dialog's
+   `OnShowListener`) after the window exists and after React Native has copied the
+   Activity's appearance into it. Treat `onShow` as the authoritative moment for any
+   future system-bar work in a modal.
+
+On close the module repaints the Activity's status bar in the chrome colour
+JavaScript has already restored (the canvas) before handing the icons back to
+`StatusBar`, so no black survives the viewer.
+
 ### Author attribution (`AuthorLine`)
 
 Every screen that shows user-generated content attributes it through one component,

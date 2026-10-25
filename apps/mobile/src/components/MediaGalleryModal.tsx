@@ -411,33 +411,38 @@ export default function MediaGalleryModal({
 
   // A theatre's system chrome is dark: the **system** navigation bar goes black
   // while the viewer is open and returns to the theme's canvas when it closes, and
-  // the status bar's icons are forced white. Those two bars are what complete the
-  // room behind the media — the overlay itself draws nothing (KNOT-020k-fix7,
-  // KNOT-020k-fix8, KNOT-020k-fix10).
+  // the status bar is painted black with white icons. Those two bars are what
+  // complete the room behind the media — the overlay itself draws nothing
+  // (KNOT-020k-fix7, KNOT-020k-fix8, KNOT-020k-fix10).
   //
-  // The status bar's icons have to be forced rather than only declared: on Android
-  // this modal is its own `Dialog` window, and React Native copies the Activity's
-  // status-bar appearance into it when the dialog is shown — which is before a
-  // `StatusBar` declared inside the modal can run, and which is the light theme's
-  // dark icons over a black room. The native module paints the Activity and every
-  // open dialog window, so the white icons hold for an image and a video alike, in
-  // either theme. Clearing on close hands the bar back to React Native's own
-  // status-bar stack, so a screen with its own `StatusBar` (the Story Detail's
-  // edge-to-edge media) gets its declaration back.
+  // The paint has to reach the modal's own `Dialog` window as well as the Activity:
+  // React Native's `StatusBar` only ever reaches the Activity, and a dialog does
+  // not inherit the Activity's status-bar colour, so forcing the icons alone left
+  // the bar white on any screen that had not already declared a transparent bar —
+  // which is exactly the Feed, the one viewer entry point with no screen-level
+  // `<StatusBar>` of its own (KNOT-020k-fix15). The native module therefore takes
+  // the fill colour and paints both windows.
   //
-  // The effect is deliberately gated on `visible` alone — never on the media's
-  // type — so every entry point and every page gets the same chrome.
+  // `onShow` (below) runs the same paint again once the dialog is actually up:
+  // this effect fires in the commit that *builds* the dialog, so on the heaviest
+  // mount in the app — the Feed's, which also mounts the whole stage and its media
+  // — the one-shot call can arrive before the window is attached, and the walk
+  // that finds dialogs would then find none.
+  const applyTheaterChrome = useCallback((): void => {
+    setNavigationBarColor(colors.bg.theater, false);
+    setStatusBarIcons(true, colors.bg.theater);
+  }, [colors]);
+
   useEffect(() => {
     if (!visible) {
       return undefined;
     }
-    setNavigationBarColor(colors.bg.theater, false);
-    setStatusBarIcons(true);
+    applyTheaterChrome();
     return () => {
       setNavigationBarColor(colors.bg.canvas, theme === 'light');
       clearStatusBarIcons();
     };
-  }, [colors, theme, visible]);
+  }, [applyTheaterChrome, colors, theme, visible]);
 
   return (
     <Modal
@@ -445,6 +450,11 @@ export default function MediaGalleryModal({
       transparent
       animationType="fade"
       statusBarTranslucent
+      // The dialog's own window is the one that paints the bars while it is up, and
+      // it exists only after this callback fires. Re-applying there is what makes
+      // the chrome deterministic instead of dependent on commit ordering
+      // (KNOT-020k-fix15).
+      onShow={applyTheaterChrome}
       onRequestClose={onClose}
     >
       {/* The viewer is its own window: declare the light status icons for the
