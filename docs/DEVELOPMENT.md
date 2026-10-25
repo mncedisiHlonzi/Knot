@@ -591,6 +591,18 @@ preview keeps the last position it reached instead of ticking unseen, and
 against). The same badge is drawn by the Story Detail carousel, which passes
 `durationMs` and `durationPosition="bottom-left"`.
 
+**One footer for every page (KNOT-020k-fix9).** The story band is **solid
+`bg.theater`**, drawn by `ViewerStage` for images and videos alike, and the caption
+sits at one fixed height (the footer reserves `VIDEO_CONTROLS_HEIGHT` in both cases).
+The band only ever changes **where its bottom edge is**: on a video page it is lifted
+by `VIDEO_CONTROLS_HEIGHT`, because `VideoPlayer` paints that strip itself in the same
+black (`styles.transportBand`) so the transport is drawn *inside* the footer instead of
+under an opaque band. On an image page the band carries the whole footer as
+`paddingBottom`. The trap: an opaque overlay rendered after the pager sits above the
+video page, so a full-height band would cover the transport — the lift is what keeps
+the controls usable, and duplicating the reserve as padding is what keeps the caption
+from jumping 88pt between a photo and a clip.
+
 ### Author attribution (`AuthorLine`)
 
 Every screen that shows user-generated content attributes it through one component,

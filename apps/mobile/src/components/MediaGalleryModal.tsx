@@ -101,11 +101,9 @@ const CONTEXT_BODY_LINES = 3;
 /**
  * How far the overlay's text shadow spreads, in points.
  *
- * There is no scrim behind the type: the words sit straight on the picture, so the
- * shadow is what keeps them legible over a white shirt or a bright sky — the same
- * treatment TikTok and Instagram use (KNOT-020k-fix5). A radius of five is the
- * smallest that stays readable on pure white without turning the glyphs into
- * smudges.
+ * The band behind the words is solid `bg.theater` now, so the shadow is no longer
+ * what makes the type legible; it stays as a soft edge on the glyphs, which keeps
+ * the caption from looking pasted onto the black (KNOT-020k-fix9).
  */
 const TEXT_SHADOW_RADIUS = 5;
 
@@ -352,15 +350,17 @@ type MediaGalleryModalProps = {
  *
  * A black room, the media edge to edge behind the status bar, and two floating
  * pieces of chrome: a top bar (back on the left, page counter on the right) and
- * — when it was given a story — a transparent block at the bottom carrying one
+ * — when it was given a story — an opaque black band at the bottom carrying one
  * bold author line, the title, three lines of the body and a bold "Read more"
- * link (KNOT-020k, KNOT-020k-fix4, KNOT-020k-fix5).
+ * link (KNOT-020k, KNOT-020k-fix4, KNOT-020k-fix5, KNOT-020k-fix9).
  *
- * The overlay draws no surface at all: no scrim, no gradient, no fill. The words
- * sit straight on the picture and every line carries a heavy black text shadow,
- * which is what keeps them legible over a bright frame. The theatre's black
- * ground is completed by the system bars, which this component paints while it is
- * open and restores on close (KNOT-020k-fix7, KNOT-020k-fix8).
+ * That band is the **same** on every page: an image and a video are shown by the
+ * same pager, under the same black footer, with the caption at the same height.
+ * A video's transport occupies the bottom of that footer, because the band stops
+ * exactly where the transport's own black strip begins — so the controls are not
+ * covered and there is no seam between them. The footer's reserved height is the
+ * same for both media types, which is what makes paging between a photo and a
+ * clip keep the text still (KNOT-020k-fix9).
  *
  * The one tappable thing in the overlay is the story link, which closes the
  * viewer and opens the story.
@@ -468,11 +468,11 @@ type ViewerStageProps = {
 };
 
 /**
- * The theatre itself: the room, the pager, the top bar and the context overlay.
+ * The theatre itself: the room, the pager, the top bar and the black story band.
  *
- * Exported so the chrome contract (back control on the left, transparent story
- * overlay) can be tested by calling it directly, which is the project's
- * renderer-less test pattern (KNOT-020k-fix6, KNOT-020k-fix7).
+ * Exported so the chrome contract (back control on the left, one black band for
+ * every media type) can be tested by calling it directly, which is the project's
+ * renderer-less test pattern (KNOT-020k-fix6, KNOT-020k-fix7, KNOT-020k-fix9).
  */
 export function ViewerStage({
   media,
@@ -737,16 +737,17 @@ export function ViewerStage({
           </Animated.View>
         </View>
 
-        {/* The story context: transparent, with nothing drawn behind it. Every
-            line is media ink carrying a heavy black shadow, so the type survives
-            a white photograph while the picture is never dimmed; the black
-            system navigation bar, not the overlay, completes the room
-            (KNOT-020k-fix5, KNOT-020k-fix7). */}
+        {/* The story context: one opaque black band for every media type, with
+            the caption at a fixed height above the bottom of the screen. A video
+            page lifts the band by the transport's height, because the player
+            paints that strip itself in the same black — so the controls sit
+            inside the footer rather than under it, and the two surfaces meet
+            without a seam (KNOT-020k-fix9). */}
         {story != null ? (
           <Animated.View
             style={[
               styles.context,
-              videoPage ? styles.contextAboveControls : null,
+              videoPage ? styles.contextAboveControls : styles.contextBelowControls,
               { opacity: chromeOpacity },
             ]}
             pointerEvents={chromeVisible || !videoPage ? 'box-none' : 'none'}
@@ -795,13 +796,13 @@ export function ViewerStage({
 }
 
 /**
- * The overlay's ink: media white with a heavy black shadow, drawn straight on the
- * picture.
+ * The overlay's ink: media white with a soft black shadow.
  *
- * The shadow — not a scrim — is what keeps a line readable over a white shirt or a
- * bright sky, and it is applied to every text node: RN does not pass
- * `textShadow*` down from a parent `Text` to the spans nested inside it, so the
- * author's name needs the same treatment as the line around it (KNOT-020k-fix5).
+ * The band behind it is solid `bg.theater`, so contrast no longer depends on the
+ * shadow — it is kept as a gentle edge, and it is applied to every text node
+ * because RN does not pass `textShadow*` down from a parent `Text` to the spans
+ * nested inside it, so the author's name needs the same treatment as the line
+ * around it (KNOT-020k-fix5, KNOT-020k-fix9).
  */
 function overlayText(colors: ThemeColors): TextStyle {
   return {
@@ -856,12 +857,13 @@ const createStyles = (colors: ThemeColors) =>
       height: '100%',
       width: '100%',
     },
-    // The context overlay: no surface of its own, and no scrim behind it. Each
-    // line is media ink carrying its own shadow, so the picture runs untouched
-    // behind the words and is never dimmed. The black room continuing below the
-    // media is the system navigation bar, not this view (KNOT-020k-fix5,
-    // KNOT-020k-fix7).
+    // The story band: solid theatre black, full width, for an image and a video
+    // alike. The caption keeps one inset from the band's bottom edge; what differs
+    // is where that edge is, which `contextAboveControls` and
+    // `contextBelowControls` settle below — the caption itself never moves
+    // (KNOT-020k-fix9).
     context: {
+      backgroundColor: colors.bg.theater,
       bottom: 0,
       gap: spacing.xs,
       left: 0,
@@ -870,14 +872,20 @@ const createStyles = (colors: ThemeColors) =>
       position: 'absolute',
       right: 0,
     },
-    // On a video the text has to clear the transport, which is anchored to the
-    // bottom of the page. The transport is `VIDEO_CONTROLS_HEIGHT` tall and its
-    // scrub bar answers touches across a full 32pt band, so a whole `lg` of air is
-    // added on top of it: otherwise the link's own hit slop reaches into that band
-    // and a tap on "Read more" seeks the video instead of opening the story
-    // (KNOT-020k-fix5). An image has no transport, so it keeps the resting inset.
+    // On a video the band stops exactly where the player's transport strip begins,
+    // so the controls are drawn on the same black instead of behind the band. The
+    // player paints that strip in `bg.theater` and it is `VIDEO_CONTROLS_HEIGHT`
+    // tall, which is why this is a `bottom` offset rather than extra padding
+    // (KNOT-020k-fix9).
     contextAboveControls: {
-      paddingBottom: VIDEO_CONTROLS_HEIGHT + spacing.lg,
+      bottom: VIDEO_CONTROLS_HEIGHT,
+    },
+    // An image has no transport to paint that strip, so the band carries the whole
+    // footer itself: the same reserved height is added as padding, which puts the
+    // caption at exactly the height it holds on a video page. That is what makes
+    // paging between a photo and a clip keep the text still (KNOT-020k-fix9).
+    contextBelowControls: {
+      paddingBottom: VIDEO_CONTROLS_HEIGHT + spacing.xl,
     },
     // One bold line: `[avatar] [name] · [time]`, and nothing else — the Rooted
     // badge stays on the surfaces that have room to explain it (KNOT-020k-fix4).
@@ -895,9 +903,8 @@ const createStyles = (colors: ThemeColors) =>
     readMore: {
       alignSelf: 'flex-start',
     },
-    // The one control in the overlay: bold, brand ink, carrying the same heavy
-    // shadow as the rest of the block so it reads over a bright frame without a
-    // scrim behind it (KNOT-020k-fix3, KNOT-020k-fix5).
+    // The one control in the overlay: bold, brand ink, on the black band the rest
+    // of the block sits on (KNOT-020k-fix3, KNOT-020k-fix5).
     readMoreText: {
       ...overlayText(colors),
       color: colors.brand.primary,

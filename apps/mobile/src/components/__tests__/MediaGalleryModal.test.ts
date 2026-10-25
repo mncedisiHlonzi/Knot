@@ -1,5 +1,7 @@
 import MediaGalleryModal, { ViewerStage } from '../MediaGalleryModal';
 import type { ViewerMedia, ViewerStory } from '../MediaGalleryModal';
+import { lightTheme } from '../../theme/ThemeContext';
+import { VIDEO_CONTROLS_HEIGHT } from '../VideoPlayer';
 
 /**
  * The viewer stage owns several hook primitives, and this project tests
@@ -137,6 +139,55 @@ function renderStage(overrides: StageOverrides = {}): {
   return { tree, onClose };
 }
 
+/** A single video page, so the same stage can be asked how it draws one. */
+const VIDEO_MEDIA: readonly ViewerMedia[] = [
+  { id: 'media-v', media_type: 'video', url: '/stories/story-1/media/media-v/content' },
+];
+
+/** The story band's style layers, for a stage showing `media`. */
+function bandStyles(
+  media: readonly ViewerMedia[],
+): ReadonlyArray<Record<string, unknown> | null | undefined> {
+  const { tree } = renderStage({ media });
+  const band = elements(tree).find((element) => {
+    const style = element.props?.style;
+    return (
+      Array.isArray(style) &&
+      (style[0] as { paddingHorizontal?: number } | undefined)?.paddingHorizontal !== undefined
+    );
+  });
+
+  return (
+    (band?.props?.style as Array<Record<string, unknown> | null | undefined> | undefined) ?? []
+  );
+}
+
+/** The band's own style object, before any page-specific override. */
+function bandStyle(media: readonly ViewerMedia[]): Record<string, unknown> | undefined {
+  return bandStyles(media)[0] ?? undefined;
+}
+
+/**
+ * A band metric after the page-specific layer has been applied: a video page
+ * overrides `bottom`, an image page overrides `paddingBottom`, and each falls back
+ * to the base style for the other.
+ */
+function bandMetric(media: readonly ViewerMedia[], key: 'bottom' | 'paddingBottom'): number {
+  const layers = bandStyles(media);
+  const value = layers[1]?.[key] ?? layers[0]?.[key];
+  return typeof value === 'number' ? value : 0;
+}
+
+/** Where the band's bottom edge ends up. */
+function bandBottom(media: readonly ViewerMedia[]): number {
+  return bandMetric(media, 'bottom');
+}
+
+/** The caption's inset from the band's bottom edge. */
+function bandPadding(media: readonly ViewerMedia[]): number {
+  return bandMetric(media, 'paddingBottom');
+}
+
 describe('MediaGalleryModal status bar', () => {
   it('declares white icons over a transparent bar for the black room', () => {
     const tree = MediaGalleryModal({
@@ -185,18 +236,23 @@ describe('MediaGalleryModal header navigation', () => {
 });
 
 describe('MediaGalleryModal story overlay', () => {
-  it('draws no surface behind the story text', () => {
-    const { tree } = renderStage();
-    const overlay = elements(tree).find((element) => {
-      const style = element.props?.style;
-      return (
-        Array.isArray(style) &&
-        (style[0] as { paddingHorizontal?: number } | undefined)?.paddingHorizontal !== undefined
-      );
-    });
-    const overlayStyle = (overlay?.props?.style as Array<Record<string, unknown>>)[0];
+  it('draws the theatre black behind the story text for an image', () => {
+    expect(bandStyle(MEDIA)?.backgroundColor).toBe(lightTheme.colors.bg.theater);
+  });
 
-    expect(overlayStyle?.backgroundColor).toBeUndefined();
+  it('draws the same black band behind the story text for a video', () => {
+    expect(bandStyle(VIDEO_MEDIA)?.backgroundColor).toBe(lightTheme.colors.bg.theater);
+  });
+
+  it('keeps the caption at the same height for both media types', () => {
+    expect(bandBottom(VIDEO_MEDIA) + bandPadding(VIDEO_MEDIA)).toBe(
+      bandBottom(MEDIA) + bandPadding(MEDIA),
+    );
+  });
+
+  it('lifts the band by the transport height on a video page only', () => {
+    expect(bandBottom(VIDEO_MEDIA)).toBe(VIDEO_CONTROLS_HEIGHT);
+    expect(bandBottom(MEDIA)).toBe(0);
   });
 
   it('keeps the story text legible with its media shadow', () => {

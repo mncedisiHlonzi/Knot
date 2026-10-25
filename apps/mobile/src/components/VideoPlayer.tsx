@@ -107,11 +107,12 @@ type VideoPlayerProps = {
  * The platform controls are deliberately unused — they are a light, stock sheet
  * that breaks the theatre — and so is any persistent button: the picture itself is
  * the play/pause control, and a tap on it also hides or shows the chrome. What is
- * drawn is only a transparent strip along the bottom: a thin scrub line that
- * swells into a grabbable handle under the finger, the running time
- * (`0:12 / 0:45`), and the mute toggle. Nothing is filled behind it and the viewer
- * draws no scrim, so the frame runs untouched behind the controls and the story
- * text sits above them (KNOT-020k-fix4, KNOT-020k-fix5).
+ * drawn is only a strip along the bottom: a thin scrub line that swells into a
+ * grabbable handle under the finger, the running time (`0:12 / 0:45`), and the
+ * mute toggle. The strip is painted the theatre's black (`bg.theater`) and is
+ * exactly `VIDEO_CONTROLS_HEIGHT` tall, so the viewer's story band can stop where
+ * it begins and the two read as one black footer on every page — the controls sit
+ * inside that footer rather than over the frame (KNOT-020k-fix9).
  *
  * The clip loops: the viewer is a place to watch something, not a page with an end,
  * so the player repeats by itself and never parks on its last frame. There is
@@ -289,6 +290,13 @@ export default function VideoPlayer({
         style={[styles.overlay, { opacity: chromeOpacity }]}
         pointerEvents={chromeVisible ? 'box-none' : 'none'}
       >
+        {/* The theatre's black under the transport. The viewer's story band ends
+            exactly here, so the caption and the controls form one footer on a
+            video page and match the black band an image page draws
+            (KNOT-020k-fix9). It fades with the chrome, like everything else on
+            this layer. */}
+        <View style={styles.transportBand} pointerEvents="none" />
+
         <View style={styles.controlBar}>
           <View
             style={styles.trackTouch}
@@ -348,9 +356,20 @@ const createStyles = (colors: ThemeColors) =>
     container: {
       backgroundColor: colors.bg.theater,
     },
-    // A transparent strip, not a card: the only thing that dims the transport is
-    // the viewer's gradient behind it, so the frame is never boxed in
-    // (KNOT-020k-fix4). Its width matches the story text's column.
+    // The transport's own ground: the same theatre black as the viewer's story
+    // band, and exactly as tall as the transport stack, so the two surfaces meet
+    // with no seam and the controls read as part of one footer
+    // (KNOT-020k-fix9).
+    transportBand: {
+      backgroundColor: colors.bg.theater,
+      bottom: 0,
+      height: VIDEO_CONTROLS_HEIGHT,
+      left: 0,
+      position: 'absolute',
+      right: 0,
+    },
+    // The transport's content, inset to the story text's column width. Its
+    // background is `transportBand` behind it, so this view stays transparent.
     controlBar: {
       bottom: BAR_BOTTOM,
       left: spacing.lg,
