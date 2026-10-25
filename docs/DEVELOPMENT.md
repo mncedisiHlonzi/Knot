@@ -637,6 +637,22 @@ seamless:
 The system-bar paint from `KNOT-020k-fix15` is untouched by this: the chrome is applied
 when the modal opens, not when the media changes.
 
+**Releasing the native video player (`KNOT-020k-fix17`).** A pager keeps its
+neighbouring pages mounted, so before this every visited clip held a live
+`ExoPlayer` — surface, decoders, buffers and audio track — until the whole viewer
+closed; a long session of opening, swiping and closing ran the process out of
+memory (`OutOfMemoryError` in `ExoPlayer:Playback`). `react-native-video` has **no
+`release()`**. What it does have is `setSource(source?)`: called with no argument it
+reaches the native side as an empty source, and `ReactExoplayerView.setSrc` answers
+that with `clearSrc()`, which stops the player and drops its media items. So
+`VideoPlayer` runs an effect on `[isActive, uri]`: when the page stops being the one
+on screen it calls `pause()` + `setSource()` and forgets the loaded state; when the
+reader swipes back it re-seats `setSource({ uri })` and the clip loads again. A
+`released` ref keeps a first mount from reloading its own source. The native **view**
+is still freed by unmounting — the viewer renders `ViewerStage` only while `visible`,
+so closing releases the rest. Do not "optimise" the clear away: an idle-but-mounted
+player is exactly what accumulates.
+
 **The viewer paints its own system bars — both of them, on every window
 (`KNOT-020k-fix15`).** Opening the viewer from the Feed used to leave the status and
 navigation bars in the app's canvas while every other entry point looked right.

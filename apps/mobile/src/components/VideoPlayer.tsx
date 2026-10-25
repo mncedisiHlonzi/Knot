@@ -124,6 +124,11 @@ type VideoPlayerProps = {
  * and the story overlay hide and return as one, and the tap never closes the
  * viewer — that is the gallery's swipe-down gesture.
  *
+ * Playback is also tied to `isActive` for memory's sake: a page that stops being
+ * the one on screen drops its native source (`setSource()` with no argument), so
+ * an idle page holds no decoder or buffer, and the viewer's stage unmounts on
+ * close so the native view itself is released (KNOT-020k-fix17).
+ *
  * The chrome fades with `Animated` on the native driver. The scrub bar is a
  * `PanResponder`: a touch anywhere on its band seeks there on release, and a drag
  * previews the target time before committing — so the bar follows the finger
@@ -168,6 +173,10 @@ export default function VideoPlayer({
   const seeking = useRef(false);
   const previewRef = useRef<number | null>(null);
   const [preview, setPreview] = useState<number | null>(null);
+  // True once this page's source has been dropped because the reader left it, so
+  // the effect below only re-seats a source it actually released
+  // (KNOT-020k-fix17).
+  const released = useRef(false);
 
   useEffect(() => {
     durationRef.current = duration;
@@ -181,6 +190,47 @@ export default function VideoPlayer({
       useNativeDriver: true,
     }).start();
   }, [chromeOpacity, chromeVisible]);
+
+  /**
+   * Releases the native player when this page stops being the one on screen, and
+   * loads it again when the reader comes back.
+   *
+   * `react-native-video` has no `release()`; what it does have is
+   * `setSource(source?)`. With no argument that reaches the native side as an
+   * empty source, and `ReactExoplayerView.setSrc` answers an empty source with
+   * `clearSrc()` — it stops the player and drops its media items, which is what
+   * frees the decoders, buffers and audio track a playing clip holds. The view
+   * itself is released when the page unmounts (the viewer's stage is mounted per
+   * open), so this covers the case that survives: a pager keeps its neighbouring
+   * pages mounted, and without this every one of them held a live player. A long
+   * session of opening, swiping and closing clips is what produced the
+   * `OutOfMemoryError` in `ExoPlayer:Playback` (KNOT-020k-fix17).
+   *
+   * The reader's own pause is deliberately not reset here: a page they paused
+   * comes back paused, and only the position restarts, because the media is gone.
+   */
+  useEffect(() => {
+    const player = videoRef.current;
+    if (player === null) {
+      return;
+    }
+
+    if (!isActive) {
+      player.pause();
+      player.setSource();
+      released.current = true;
+      // The clip has to load again on the next visit, so the transport must not
+      // claim the old position or pretend it is loaded.
+      setCurrent(0);
+      setLoaded(false);
+      return;
+    }
+
+    if (released.current) {
+      released.current = false;
+      player.setSource({ uri });
+    }
+  }, [isActive, uri]);
 
   const seek = useCallback((seconds: number): void => {
     videoRef.current?.seek(seconds);
