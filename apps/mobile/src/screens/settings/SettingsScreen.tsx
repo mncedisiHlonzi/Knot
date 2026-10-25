@@ -309,27 +309,30 @@ export default function SettingsScreen({
       />
 
       <ScrollView contentContainerStyle={styles.content}>
-        {/* The signed-in person's own header. Nothing here is a control: it says
-            whose settings these are, with the Rooted summary when they have one
-            (KNOT-020k-fix23). */}
+        {/* The signed-in person's own header, as a left-aligned profile row: the
+            face on the left, the name and the Rooted summary stacked beside it, so
+            the block reads as a card rather than as a centred badge over a list
+            (KNOT-020k-fix24). Nothing here is a control. */}
         {profile === undefined ? null : (
           <View style={styles.profileHeader}>
             <Avatar
               uri={avatarUri(profile.avatar_url)}
               displayName={profile.display_name}
-              size="xl"
+              size="lg"
             />
-            <Text style={[typeScale.h2, styles.profileName]} numberOfLines={1}>
-              {profile.display_name}
-            </Text>
-            {profile.rooted === null ? null : (
-              <View style={styles.profileRooted}>
-                <RootedBadge
-                  place={profile.rooted.place}
-                  durationBucket={profile.rooted.duration_bucket}
-                />
-              </View>
-            )}
+            <View style={styles.profileIdentity}>
+              <Text style={[typeScale.h2, styles.profileName]} numberOfLines={1}>
+                {profile.display_name}
+              </Text>
+              {profile.rooted === null ? null : (
+                <View style={styles.profileRooted}>
+                  <RootedBadge
+                    place={profile.rooted.place}
+                    durationBucket={profile.rooted.duration_bucket}
+                  />
+                </View>
+              )}
+            </View>
           </View>
         )}
 
@@ -423,13 +426,13 @@ const createStyles = (colors: ThemeColors) =>
       paddingHorizontal: layout.screenPaddingFeed,
       paddingVertical: spacing.md,
     },
-    // The label takes the body composite a half-step heavier: 600 is the weight the
-    // rest of the app's labels carry, so a settings row reads decisively without
-    // becoming a heading (KNOT-020k-fix23).
+    // The label takes the body composite at the bold weight: a settings row is a
+    // control, so it reads decisively without becoming a heading
+    // (KNOT-020k-fix24).
     rowLabel: {
       color: colors.text.primary,
       flex: 1,
-      fontWeight: fontWeights.semibold,
+      fontWeight: fontWeights.bold,
     },
     rowLabelDanger: {
       color: colors.state.danger,
@@ -437,19 +440,25 @@ const createStyles = (colors: ThemeColors) =>
     rowValue: {
       color: colors.text.tertiary,
     },
+    // The header is a left-aligned profile row: the face on the left, the name and
+    // the Rooted summary stacked beside it (KNOT-020k-fix24). A 48pt avatar keeps
+    // the row the height of two text lines instead of towering over them.
     profileHeader: {
       alignItems: 'center',
-      paddingBottom: spacing.lg,
+      flexDirection: 'row',
+      gap: spacing.md,
       paddingHorizontal: layout.screenPaddingFeed,
-      paddingTop: spacing.lg,
+      paddingVertical: spacing.lg,
+    },
+    profileIdentity: {
+      flexShrink: 1,
     },
     profileName: {
       color: colors.text.primary,
-      marginTop: spacing.md,
-      textAlign: 'center',
     },
     profileRooted: {
-      marginTop: spacing.sm,
+      alignSelf: 'flex-start',
+      marginTop: spacing.xs,
     },
     section: {
       marginTop: spacing.xl,

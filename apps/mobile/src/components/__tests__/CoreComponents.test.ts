@@ -6,6 +6,7 @@ import PillarTag from '../PillarTag';
 import RootedBadge from '../RootedBadge';
 import TabBar from '../TabBar';
 import { ChatsCircle } from 'phosphor-react-native';
+import { fontWeights } from '../../theme';
 import {
   attributionParts,
   attributionSegments,
@@ -174,6 +175,32 @@ describe('PillarTag', () => {
   });
 });
 
+/**
+ * The style array of every `Text` in a directly-called component's tree — enough
+ * to prove a weight rule without a renderer (KNOT-020k-fix24).
+ */
+function textStyles(node: unknown, found: unknown[] = []): unknown[] {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      textStyles(child, found);
+    }
+    return found;
+  }
+  if (node === null || node === undefined || typeof node !== 'object') {
+    return found;
+  }
+
+  const element = node as { type?: unknown; props?: { children?: unknown; style?: unknown } };
+  if (element.type === 'Text' && element.props?.style !== undefined) {
+    found.push(element.props.style);
+  }
+  if (element.props !== undefined) {
+    textStyles(element.props.children, found);
+  }
+
+  return found;
+}
+
 describe('RootedBadge', () => {
   it('renders a place and, in the full form, a duration', () => {
     expect(RootedBadge({ place: 'Oaxaca', durationBucket: 'many_years' })).toBeTruthy();
@@ -209,6 +236,38 @@ describe('RootedBadge', () => {
     expect(() =>
       RootedBadge({ place: 'Oaxaca', durationBucket: 7 as unknown as string }),
     ).not.toThrow();
+  });
+
+  // The pill is text only: the Rooted mark was removed so the label itself carries
+  // the emphasis (KNOT-020k-fix24).
+  it('draws no mark, and sets the label in the bold weight', () => {
+    const badge = RootedBadge({ place: 'Oaxaca', durationBucket: 'many_years' });
+
+    // One child — the text row — where the mark used to sit beside it.
+    expect(Array.isArray(badge?.props.children)).toBe(false);
+
+    const styles = textStyles(badge);
+    expect(styles.length).toBeGreaterThan(0);
+    for (const style of styles) {
+      expect(style).toEqual(
+        expect.arrayContaining([expect.objectContaining({ fontWeight: fontWeights.bold })]),
+      );
+    }
+  });
+
+  it('gives the quiet line the same bold weight', () => {
+    const line = RootedBadge({
+      place: 'Manguzi',
+      durationBucket: 'lifelong',
+      variant: 'quiet',
+      showDuration: false,
+    });
+    const styles = textStyles(line);
+
+    expect(styles).toHaveLength(1);
+    expect(styles[0]).toEqual(
+      expect.arrayContaining([expect.objectContaining({ fontWeight: fontWeights.bold })]),
+    );
   });
 });
 

@@ -1,12 +1,14 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import RootedMark from '../assets/brand/rooted-mark.svg';
-import { radius, spacing, typeScale, useThemedStyles, type ThemeColors } from '../theme';
-import SvgImage from './SvgImage';
-
-/** The Rooted mark's drawn size, per the design (KNOT-020b-fix). */
-const ROOTED_MARK_SIZE = 14;
+import {
+  fontWeights,
+  radius,
+  spacing,
+  typeScale,
+  useThemedStyles,
+  type ThemeColors,
+} from '../theme';
 
 /** Display labels for the duration buckets, keyed by the server's values. */
 const DURATION_LABELS: Readonly<Record<string, string>> = {
@@ -34,10 +36,10 @@ type RootedBadgeProps = {
    */
   readonly showDuration?: boolean;
   /**
-   * `badge` (the default) is the brand pill led by the Rooted mark, for an inline
-   * attribution beside a name. `quiet` is an indigo dot followed by tertiary text
-   * with no fill, for a second line under a name where the attribution is a detail
-   * rather than a highlight (KNOT-020c-fix2).
+   * `badge` (the default) is the brand pill, for an inline attribution beside a
+   * name. `quiet` is plain tertiary text with no fill, for a second line under a
+   * name where the attribution is a detail rather than a highlight
+   * (KNOT-020c-fix2).
    */
   readonly variant?: RootedBadgeVariant;
   /** Test identifier. */
@@ -46,8 +48,9 @@ type RootedBadgeProps = {
 
 /**
  * RootedBadge is the inline Rooted summary: a small pill showing where a person
- * is Rooted, plus a short duration label. It leads with the 14-point Rooted mark
- * (`rooted-mark.svg`, KNOT-020b-fix).
+ * is Rooted, plus a short duration label. It is text only — the Rooted mark that
+ * used to lead the pill was removed so the label itself carries the emphasis, set
+ * in the bold weight on the brand surface (KNOT-020k-fix24).
  *
  * It is the one place the Rooted attribution is drawn, on a brand surface fill in
  * the brand ink. It renders nothing when there is no place to show, so a caller
@@ -84,10 +87,12 @@ export default function RootedBadge({
   const accessibleLabel =
     label === undefined ? `Rooted in ${trimmedPlace}` : `Rooted in ${trimmedPlace}, ${label}`;
 
-  // The quiet presentation is a line of its own: plain tertiary text, with no
-  // dot, no surface fill, no border and no mark, exactly as the design reference
-  // draws it (KNOT-020c-fix3). The Feed asks for the place alone, so it reads
-  // "Rooted · {place}" (KNOT-020c-fix5).
+  // The quiet presentation is a line of its own: plain tertiary text with no
+  // surface fill and no border, exactly as the design reference draws it
+  // (KNOT-020c-fix3). The Feed asks for the place alone, so it reads
+  // "Rooted · {place}" (KNOT-020c-fix5). It takes the same bold weight as the
+  // pill so the attribution reads the same way wherever it is drawn
+  // (KNOT-020k-fix24).
   if (variant === 'quiet') {
     const spoken =
       durationLabel === undefined
@@ -114,7 +119,6 @@ export default function RootedBadge({
       testID={testID}
       accessibilityLabel={accessibleLabel}
     >
-      <SvgImage source={RootedMark} size={ROOTED_MARK_SIZE} decorative />
       <View style={styles.textRow}>
         <Text style={[typeScale.caption, styles.text]} numberOfLines={1}>
           Rooted ·{' '}
@@ -140,7 +144,6 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.brand.surface,
       borderRadius: radius.sm,
       flexDirection: 'row',
-      gap: spacing.xs,
       maxWidth: '100%',
       paddingHorizontal: spacing.sm,
       paddingVertical: spacing.xs,
@@ -158,9 +161,11 @@ const createStyles = (colors: ThemeColors) =>
     quietText: {
       color: colors.text.tertiary,
       flexShrink: 1,
+      fontWeight: fontWeights.bold,
     },
     text: {
       color: colors.brand.primary,
+      fontWeight: fontWeights.bold,
     },
     textRow: {
       alignItems: 'center',
