@@ -1,7 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Animated,
+  Easing,
   FlatList,
+  PanResponder,
   Pressable,
   RefreshControl,
   StatusBar,
@@ -24,6 +27,7 @@ import { PlaceCoordinate, coordinatesForPlace } from '../../data/placeCoordinate
 import {
   elevation,
   layout,
+  motion,
   radius,
   spacing,
   tabularNums,
@@ -32,7 +36,16 @@ import {
   useThemedStyles,
 } from '../../theme';
 import type { ThemeColors } from '../../theme';
-import { filterPlacesByQuery, placeTotalsLabel, storyCountLabel } from './discoveryFormat';
+import {
+  SHEET_SNAP_RATIOS,
+  adjacentSheetRatio,
+  filterPlacesByQuery,
+  placeTotalsLabel,
+  sheetRatioAfterDrag,
+  sheetRatioDuringDrag,
+  sheetSnapHeight,
+  storyCountLabel,
+} from './discoveryFormat';
 
 type DiscoveryMapScreenProps = {
   /**
@@ -74,6 +87,11 @@ const ICON_SIZE = 20;
 /** The magnifier inside the place search field. */
 const SEARCH_ICON_SIZE = 18;
 
+// Mapbox needs its access token before any map mounts. Setting it once, at module
+// load, keeps it out of the component and off every render. The token is public
+// (see `config/dev.ts`).
+void Mapbox.setAccessToken(KNOT_MAPBOX_TOKEN);
+
 /**
  * The map marker: one filled indigo pin per place.
  *
@@ -94,22 +112,7 @@ const MARKER_ICON_SIZE = 30;
 const MARKER_TOUCH_SIZE = 44;
 
 /**
- * The share of the screen height the bottom sheet occupies.
- *
- * The sheet carries the whole screen's chrome now — the headline, the pillar
- * filter and the place list — so it takes half the screen rather than the 44% it
- * held when a header and a tab row floated above it (KNOT-020g-fix10). The map
- * keeps the rest and still extends behind the sheet, so the sheet's own height is
- * the only thing this controls.
- */
-const SHEET_HEIGHT_RATIO = 0.5;
 
-// Mapbox needs its access token before any map mounts. Setting it once, at module
-// load, keeps it out of the component and off every render. The token is public
-// (see `config/dev.ts`).
-void Mapbox.setAccessToken(KNOT_MAPBOX_TOKEN);
-
-/**
  * Resolves a cluster to a point the map can plot.
  *
  * A story that carries a structured coordinate plots at exactly that point, so
@@ -179,8 +182,13 @@ function clusterKey(cluster: PlaceCluster): string {
  * filter returned. A server-side place search would be a follow-up. The
  * reference's *map* search control (a floating button over the map) and its
  * location button are still not built — the location button would need a
- * permission and a behaviour the app does not have — and the sheet's drag handle
- * is decorative for the MVP, with no drag-to-expand (KNOT-020g-fix12).
+ * permission and a behaviour the app does not have.
+ *
+ * The sheet is **draggable** (KNOT-020k-fix20). Its grabber moves it between three
+ * snap points — collapsed (half the screen), half, and expanded (nearly all of it) —
+ * and a release settles it on the nearest one. The grabber is the only drag target,
+ * so the search field, the chips and the place list keep their own gestures, and
+ * the list scrolls independently at every height.
  */
 export default function DiscoveryMapScreen({
   onOpenPlace,
@@ -196,7 +204,73 @@ export default function DiscoveryMapScreen({
   const [error, setError] = useState<string | undefined>(undefined);
 
   const { height } = useWindowDimensions();
-  const sheetHeight = Math.round(height * SHEET_HEIGHT_RATIO);
+
+  // The sheet's resting snap point, as a share of the window height. It is state,
+  // not a ref, because the map's attribution and logo clear the sheet's height and
+  // have to be repositioned when the sheet settles somewhere new (KNOT-020k-fix20).
+  const [sheetRatio, setSheetRatio] = useState<number>(SHEET_SNAP_RATIOS[0]);
+  // The height the map's ornaments must clear: the resting point, not the live drag
+  // height, so they never chase the finger.
+  const sheetHeight = sheetSnapHeight(sheetRatio, height);
+
+  // The live height. It is written imperatively while a finger is down, so a drag
+  // never re-renders the screen. Animating a height cannot use the native driver,
+  // so `useNativeDriver` is false everywhere below.
+  const sheetHeightAnim = useRef(
+    new Animated.Value(sheetSnapHeight(SHEET_SNAP_RATIOS[0], height)),
+  ).current;
+  // The ratio the sheet is resting at — a ref, so the gesture callbacks always read
+  // the latest resting point without being re-created mid-drag.
+  const ratioRef = useRef<number>(SHEET_SNAP_RATIOS[0]);
+  // The ratio the current drag started from, so the live height is absolute rather
+  // than cumulative.
+  const dragStartRatio = useRef<number>(SHEET_SNAP_RATIOS[0]);
+
+  // A rotation (or a split-screen resize) changes every snap height, so the sheet is
+  // re-seated on the ratio it was resting at.
+  useEffect(() => {
+    sheetHeightAnim.setValue(sheetSnapHeight(ratioRef.current, height));
+  }, [height, sheetHeightAnim]);
+
+  /** Settles the sheet on a snap point, animating to the height the design allows. */
+  const settleSheet = useCallback(
+    (ratio: number): void => {
+      ratioRef.current = ratio;
+      setSheetRatio(ratio);
+      Animated.timing(sheetHeightAnim, {
+        toValue: sheetSnapHeight(ratio, height),
+        duration: motion.durations.medium,
+        easing: Easing.bezier(...motion.easing.enter),
+        useNativeDriver: false,
+      }).start();
+    },
+    [height, sheetHeightAnim],
+  );
+
+  // The grabber's gesture: follow the finger, then settle on the nearest point when
+  // it lifts. A terminated gesture (something else claimed the touch) puts the sheet
+  // back where it started rather than leaving it mid-drag (KNOT-020k-fix20).
+  const sheetPan = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dy) > 2,
+        onPanResponderGrant: () => {
+          dragStartRatio.current = ratioRef.current;
+        },
+        onPanResponderMove: (_event, gesture) => {
+          const ratio = sheetRatioDuringDrag(dragStartRatio.current, gesture.dy, height);
+          sheetHeightAnim.setValue(sheetSnapHeight(ratio, height));
+        },
+        onPanResponderRelease: (_event, gesture) => {
+          settleSheet(sheetRatioAfterDrag(dragStartRatio.current, gesture.dy, height));
+        },
+        onPanResponderTerminate: () => {
+          settleSheet(ratioRef.current);
+        },
+      }),
+    [height, settleSheet, sheetHeightAnim],
+  );
 
   const load = useCallback(
     async (mode: 'initial' | 'refresh'): Promise<void> => {
@@ -339,13 +413,30 @@ export default function DiscoveryMapScreen({
         })}
       </MapView>
 
-      {/* Everything the screen offers, in one sheet over the map's lower half: the
-          drag handle, the headline, the pillar filter as a chip row, the aggregate
-          totals, then the scrollable place list. The sheet is opaque and rounded,
-          so the map reads as the backdrop rather than as a layer the content is
-          fighting (KNOT-020g-fix10). Its `zIndex` keeps it above the map. */}
-      <View style={[styles.sheet, { height: sheetHeight }]}>
-        <View style={styles.handle} />
+      {/* Everything the screen offers, in one sheet over the map: the drag handle,
+          the headline, the pillar filter as a chip row, the aggregate totals, then
+          the scrollable place list. The sheet is opaque, rounded and now a true
+          `bg.canvas` surface — black in dark mode, so it no longer reads a step
+          lighter than the rest of the app (KNOT-020k-fix20). Its height is animated
+          between three snap points, and its `zIndex` keeps it above the map. */}
+      <Animated.View style={[styles.sheet, { height: sheetHeightAnim }]}>
+        {/* The grabber. It is the only drag target, so the list, the search field
+            and the chips keep their own gestures; its accessibility actions move it
+            one snap point at a time for a reader who cannot drag (KNOT-020k-fix20). */}
+        <View
+          style={styles.handleZone}
+          {...sheetPan.panHandlers}
+          accessibilityRole="adjustable"
+          accessibilityLabel="Resize the places sheet"
+          accessibilityHint="Drag up or down to show more or fewer places"
+          accessibilityActions={[{ name: 'increment' }, { name: 'decrement' }]}
+          onAccessibilityAction={(event) => {
+            const direction = event.nativeEvent.actionName === 'increment' ? 1 : -1;
+            settleSheet(adjacentSheetRatio(ratioRef.current, direction));
+          }}
+        >
+          <View style={styles.handle} />
+        </View>
 
         <View style={styles.sheetHeader}>
           <Text style={[typeScale.h1, styles.headline]}>Discover places.</Text>
@@ -475,7 +566,7 @@ export default function DiscoveryMapScreen({
             ) : null
           }
         />
-      </View>
+      </Animated.View>
     </View>
   );
 }
@@ -502,16 +593,21 @@ const createStyles = (colors: ThemeColors) =>
       paddingVertical: spacing.md,
       textAlign: 'center',
     },
-    // The decorative drag handle: a 32x4 pill in the hairline colour. No gesture is
-    // attached — drag-to-expand is out of scope for the MVP (KNOT-020e-fix).
+    // The grabber's touch area: the pill is small, so the target around it is a
+    // 44-point-tall box — the design system's minimum — that is easy to catch while
+    // the pill itself stays a quiet mark (KNOT-020k-fix20).
+    handleZone: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 44,
+    },
+    // The grabber: a 48x4 pill in the hairline colour. It is a control now, so it is
+    // one step wider than the 32pt decorative mark it replaces (KNOT-020k-fix20).
     handle: {
-      alignSelf: 'center',
       backgroundColor: colors.border.hairline,
       borderRadius: radius.pill,
       height: 4,
-      marginBottom: spacing.lg,
-      marginTop: spacing.md,
-      width: 32,
+      width: 48,
     },
     // The sheet's headline: the screen's only large type now that the title bar is
     // gone, so it takes the display face at h1 (KNOT-020g-fix10).
@@ -598,15 +694,16 @@ const createStyles = (colors: ThemeColors) =>
     searchRow: {
       marginTop: spacing.lg,
     },
-    // The sheet: rounded top corners, the canvas surface, and the design's upward
-    // shadow (elevation Level 3, whose offset-Y is negative — exactly this use
-    // case). Pinned to the bottom so it overlaps the map's lower edge. No
-    // `overflow: hidden`, so the shadow is not clipped; the corners are above the
-    // list, which never reaches them (KNOT-020e-fix). `zIndex` keeps it above the
-    // map, which now has nothing else over it in this screen's stack
-    // (KNOT-020g-fix9, KNOT-020g-fix10).
+    // The sheet: rounded top corners, the **canvas** surface — black in dark mode, so
+    // it matches the rest of the app instead of floating a step lighter — and the
+    // design's upward shadow (elevation Level 3, whose offset-Y is negative —
+    // exactly this use case). Pinned to the bottom so it overlaps the map's lower
+    // edge. No `overflow: hidden`, so the shadow is not clipped; the corners are
+    // above the list, which never reaches them (KNOT-020e-fix, KNOT-020k-fix20).
+    // `zIndex` keeps it above the map, which now has nothing else over it in this
+    // screen's stack (KNOT-020g-fix9, KNOT-020g-fix10).
     sheet: {
-      backgroundColor: colors.bg.sheet,
+      backgroundColor: colors.bg.canvas,
       borderTopLeftRadius: radius.xxl,
       borderTopRightRadius: radius.xxl,
       bottom: 0,

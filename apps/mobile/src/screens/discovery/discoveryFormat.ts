@@ -217,3 +217,100 @@ export function filterPlacesByQuery<T extends { readonly place: string }>(
 
   return clusters.filter((cluster) => cluster.place.toLowerCase().includes(needle));
 }
+
+/**
+ * The three heights the Discovery Map's places sheet rests at, as a share of the
+ * window height: **collapsed** (half the screen), **half**, and **expanded** (nearly
+ * all of it). Ascending, so the array's two ends are the sheet's travel limits
+ * (KNOT-020k-fix20).
+ */
+export const SHEET_SNAP_RATIOS: readonly number[] = [0.5, 0.75, 0.95];
+
+/**
+ * The pixel height of a sheet ratio, rounded so the sheet lands on a whole point.
+ *
+ * A ratio or a window height that cannot describe a height — zero, negative, or not
+ * a number — reads as 0 rather than as an arbitrary band: a sheet with no measurable
+ * height is a layout that has not been measured yet, and the next frame will call
+ * again.
+ */
+export function sheetSnapHeight(ratio: number, windowHeight: number): number {
+  if (!Number.isFinite(ratio) || !Number.isFinite(windowHeight) || windowHeight <= 0) {
+    return 0;
+  }
+
+  return Math.round(ratio * windowHeight);
+}
+
+/**
+ * Holds a ratio inside the sheet's travel, between its collapsed and expanded
+ * points, so a long drag can never pull the sheet off either edge of the screen
+ * (KNOT-020k-fix20).
+ */
+export function clampSheetRatio(ratio: number): number {
+  const lowest = SHEET_SNAP_RATIOS[0];
+  const highest = SHEET_SNAP_RATIOS[SHEET_SNAP_RATIOS.length - 1];
+
+  if (!Number.isFinite(ratio)) {
+    return lowest;
+  }
+
+  return Math.min(highest, Math.max(lowest, ratio));
+}
+
+/**
+ * The snap point a release lands on: the nearest one.
+ *
+ * A tie keeps the **lower** (shorter) point, so a drag that stops exactly halfway
+ * between two points settles back rather than jumping the sheet taller than the
+ * finger asked for (KNOT-020k-fix20).
+ */
+export function nearestSheetRatio(ratio: number): number {
+  const target = clampSheetRatio(ratio);
+  let nearest = SHEET_SNAP_RATIOS[0];
+  let nearestDistance = Math.abs(target - nearest);
+
+  for (const candidate of SHEET_SNAP_RATIOS) {
+    const distance = Math.abs(target - candidate);
+    if (distance < nearestDistance) {
+      nearest = candidate;
+      nearestDistance = distance;
+    }
+  }
+
+  return nearest;
+}
+
+/**
+ * The **live** ratio while a finger is down: the resting ratio moved by `dy` points
+ * (negative is upward), clamped to the travel but not snapped — the sheet follows
+ * the finger, and only the release picks a point (KNOT-020k-fix20).
+ */
+export function sheetRatioDuringDrag(startRatio: number, dy: number, windowHeight: number): number {
+  if (!Number.isFinite(windowHeight) || windowHeight <= 0) {
+    return clampSheetRatio(startRatio);
+  }
+
+  return clampSheetRatio(startRatio - dy / windowHeight);
+}
+
+/**
+ * Where a released drag settles: the snap point nearest where the finger let go
+ * (KNOT-020k-fix20).
+ */
+export function sheetRatioAfterDrag(startRatio: number, dy: number, windowHeight: number): number {
+  return nearestSheetRatio(sheetRatioDuringDrag(startRatio, dy, windowHeight));
+}
+
+/**
+ * The snap point one step above (`1`) or below (`-1`) a ratio, for the handle's
+ * accessibility actions. A ratio that is not exactly on a point starts from the
+ * point nearest it, and either end of the travel stays put (KNOT-020k-fix20).
+ */
+export function adjacentSheetRatio(ratio: number, direction: -1 | 1): number {
+  const exact = SHEET_SNAP_RATIOS.indexOf(ratio);
+  const current = exact === -1 ? SHEET_SNAP_RATIOS.indexOf(nearestSheetRatio(ratio)) : exact;
+  const next = Math.min(Math.max(current + direction, 0), SHEET_SNAP_RATIOS.length - 1);
+
+  return SHEET_SNAP_RATIOS[next];
+}

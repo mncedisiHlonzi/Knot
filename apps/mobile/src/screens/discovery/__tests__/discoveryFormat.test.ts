@@ -1,12 +1,19 @@
 import {
   PILLAR_TABS,
+  SHEET_SNAP_RATIOS,
+  adjacentSheetRatio,
+  clampSheetRatio,
   filterPlacesByQuery,
   mapTopInset,
+  nearestSheetRatio,
   pillarEmptyHeadline,
   placeCountLabel,
   placeMapPoint,
   placeSummaryLabel,
   placeTotalsLabel,
+  sheetRatioAfterDrag,
+  sheetRatioDuringDrag,
+  sheetSnapHeight,
   storyCountLabel,
 } from '../discoveryFormat';
 
@@ -162,5 +169,58 @@ describe('filterPlacesByQuery', () => {
 
   it('returns nothing when no place matches, so the sheet can say so', () => {
     expect(filterPlacesByQuery(places, 'Atlantis')).toEqual([]);
+  });
+});
+
+describe('the places sheet snap points', () => {
+  it('offers three ascending points: collapsed, half and expanded', () => {
+    expect(SHEET_SNAP_RATIOS).toEqual([0.5, 0.75, 0.95]);
+  });
+
+  it('converts a ratio to a whole-point height', () => {
+    expect(sheetSnapHeight(0.5, 800)).toBe(400);
+    expect(sheetSnapHeight(0.75, 800)).toBe(600);
+    expect(sheetSnapHeight(0.95, 800)).toBe(760);
+    // A layout that has not been measured yet has no height to give.
+    expect(sheetSnapHeight(0.5, 0)).toBe(0);
+    expect(sheetSnapHeight(Number.NaN, 800)).toBe(0);
+  });
+
+  it('holds a dragged ratio inside the sheet travel', () => {
+    expect(clampSheetRatio(0.1)).toBe(0.5);
+    expect(clampSheetRatio(2)).toBe(0.95);
+    expect(clampSheetRatio(0.62)).toBe(0.62);
+    expect(clampSheetRatio(Number.NaN)).toBe(0.5);
+  });
+
+  it('snaps to the nearest point, keeping the lower point on a tie', () => {
+    expect(nearestSheetRatio(0.51)).toBe(0.5);
+    // 0.625 is exactly between collapsed and half; the sheet springs back.
+    expect(nearestSheetRatio(0.625)).toBe(0.5);
+    expect(nearestSheetRatio(0.63)).toBe(0.75);
+    expect(nearestSheetRatio(0.9)).toBe(0.95);
+    expect(nearestSheetRatio(3)).toBe(0.95);
+  });
+
+  it('follows the finger while dragging, then settles on the nearest point', () => {
+    // A quarter-screen drag up from collapsed lands exactly on half.
+    expect(sheetRatioDuringDrag(0.5, -200, 800)).toBe(0.75);
+    expect(sheetRatioAfterDrag(0.5, -200, 800)).toBe(0.75);
+    // A short drag that passes no midpoint springs back.
+    expect(sheetRatioAfterDrag(0.5, -40, 800)).toBe(0.5);
+    // A down drag from expanded settles on half.
+    expect(sheetRatioAfterDrag(0.95, 160, 800)).toBe(0.75);
+    // Dragging past the top pins at expanded rather than leaving the screen.
+    expect(sheetRatioDuringDrag(0.5, -1000, 800)).toBe(0.95);
+    expect(sheetRatioAfterDrag(0.5, -1000, 800)).toBe(0.95);
+  });
+
+  it('steps to an adjacent point and stays put at either end', () => {
+    expect(adjacentSheetRatio(0.5, 1)).toBe(0.75);
+    expect(adjacentSheetRatio(0.75, 1)).toBe(0.95);
+    expect(adjacentSheetRatio(0.95, 1)).toBe(0.95);
+    expect(adjacentSheetRatio(0.5, -1)).toBe(0.5);
+    // A ratio between points starts from the nearest one.
+    expect(adjacentSheetRatio(0.9, -1)).toBe(0.75);
   });
 });

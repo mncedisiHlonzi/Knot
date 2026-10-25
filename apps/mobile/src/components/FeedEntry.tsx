@@ -143,8 +143,8 @@ type FeedEntryProps = {
   readonly attributionLine?: string;
   /**
    * Whether the entry draws its own bottom hairline. The Feed closes each card with
-   * its own 1pt rule instead, so it passes `false`; Place Stories keeps the default
-   * and its column stays hairline-separated (KNOT-023b, KNOT-031, KNOT-020k-fix19).
+   * its own 4pt band instead, so it passes `false`; Place Stories keeps the default
+   * and its column stays hairline-separated (KNOT-023b, KNOT-031, KNOT-020k-fix20).
    */
   readonly showBottomHairline?: boolean;
   /** Called when the entry is tapped. */
@@ -237,7 +237,7 @@ function lineageAvatarLabel(name: string): string {
  * One story in the feed, as a card on the feed's canvas.
  *
  * The card is full-bleed horizontally — no side border, no shadow — and the Feed
- * closes one card with a 1pt rule of its own rather than with a rule drawn inside
+ * closes one card with a 4pt band of its own rather than with a rule drawn inside
  * the entry. (Place Stories, the other caller, keeps the entry's bottom hairline.)
  * Its order is the reading order: the author block, the pillar tag, the
  * title, the opening lines, the media, then the meta line. The whole entry is one

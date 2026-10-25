@@ -198,17 +198,17 @@ describe('FeedScreen card structure', () => {
     expect(style?.marginHorizontal).toBeUndefined();
   });
 
-  // The thick grey band between posts is gone: each card is closed by one 1pt rule
-  // instead (KNOT-020k-fix19).
-  it('closes each card with a 1pt rule of the separator neutral', () => {
+  // The separator is a band again, not a hairline: 4pt is noticeably thicker than a
+  // rule and nothing like the old 8pt gutter (KNOT-020k-fix20).
+  it('closes each card with a 4pt band of the separator neutral', () => {
     const card = cardFor(renderScreen());
     const style = card?.props?.style as Record<string, unknown> | undefined;
 
-    expect(style?.borderBottomWidth).toBe(1);
+    expect(style?.borderBottomWidth).toBe(4);
     expect(style?.borderBottomColor).toBe(colors.bg.separator);
-    // A rule, not a band: there is no gap between two cards at all.
+    // Drawn as the card's own border, so there is no gap between two cards.
     expect(style?.marginBottom).toBeUndefined();
-    // The separator neutral IS the hairline neutral, so the feed's rules and the
+    // The separator neutral IS the hairline neutral, so the feed's bands and the
     // rest of the chrome's hairlines can never drift apart.
     expect(colors.bg.separator).toBe(colors.border.hairline);
   });
@@ -226,15 +226,15 @@ describe('FeedScreen card structure', () => {
     expect(entry?.props?.showBottomHairline).toBe(false);
   });
 
-  // The tab row and the first story are parted by the same 1pt rule that closes a
-  // card, so the rhythm stays even (KNOT-020j-fix2, KNOT-020k-fix19).
-  it('parts the tab row from the first story with the same 1pt rule', () => {
+  // The tab row and the first story are parted by the same 4pt band that closes a
+  // card, so the rhythm stays even (KNOT-020j-fix2, KNOT-020k-fix20).
+  it('parts the tab row from the first story with the same 4pt band', () => {
     const divider = findByTestID(renderScreen(), 'feed-tabs-divider');
     const style = divider?.props?.style as Record<string, unknown> | undefined;
 
     expect(divider).toBeDefined();
     expect(style?.backgroundColor).toBe(colors.bg.separator);
-    expect(style?.height).toBe(1);
+    expect(style?.height).toBe(4);
   });
 });
 

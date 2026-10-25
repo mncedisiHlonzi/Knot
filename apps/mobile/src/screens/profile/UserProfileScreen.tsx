@@ -39,6 +39,7 @@ import {
   profileApi,
 } from '../../api/profile';
 import { uploadAvatar } from '../../api/users';
+import AuthorLine from '../../components/AuthorLine';
 import Avatar from '../../components/Avatar';
 import Button from '../../components/Button';
 import EmptyState from '../../components/EmptyState';
@@ -767,6 +768,23 @@ export default function UserProfileScreen({
                   the middle can be a plain full-width child — the structure
                   FeedEntry uses (KNOT-020g-fix8). */}
               <View style={styles.cardPadded}>
+                {/* The card's author line, at the top of every card: on a wall every
+                    activity is the owner's, so the identity comes from the profile
+                    header rather than from a per-activity field, and the timestamp
+                    is the activity's own (KNOT-020k-fix20). It is plain, not a tap
+                    target: the card already opens the activity. */}
+                <View style={styles.cardAuthor}>
+                  <AuthorLine
+                    displayName={profile?.display_name}
+                    avatarUrl={profile?.avatar_url ?? null}
+                    createdAt={item.created_at}
+                    rooted={null}
+                    size="medium"
+                    layout="stacked"
+                    timeFormat="short"
+                  />
+                </View>
+
                 {card.pillar === undefined ? (
                   card.overline === '' ? null : (
                     <Text style={[typeScale.overline, styles.cardOverline]} numberOfLines={1}>
@@ -784,7 +802,7 @@ export default function UserProfileScreen({
                 </Text>
 
                 {card.preview === '' ? null : (
-                  <Text style={[typeScale.bodyS, styles.cardPreview]} numberOfLines={2}>
+                  <Text style={[typeScale.body, styles.cardPreview]} numberOfLines={2}>
                     {card.preview}
                   </Text>
                 )}
@@ -914,17 +932,24 @@ const createStyles = (colors: ThemeColors) =>
       alignItems: 'center',
       justifyContent: 'center',
     },
-    // One activity card: the pillar tag or overline with the title and the body
-    // excerpt, then the media, then the meta line, closed by a full-bleed hairline
-    // (the design reference's tab content). The card has **no horizontal padding of
-    // its own** — the text blocks inside carry the gutter (`cardPadded`), which
-    // leaves the media frame a plain full-width child. The negative margin still
-    // cancels the list's gutter so the hairline spans the screen (KNOT-020g-fix8).
+    // One activity card: the author line, the pillar tag or overline with the title
+    // and the body excerpt, then the media, then the meta line, closed by a
+    // full-bleed hairline (the design reference's tab content). The card has **no
+    // horizontal padding of its own** — the text blocks inside carry the gutter
+    // (`cardPadded`), which leaves the media frame a plain full-width child. The
+    // negative margin still cancels the list's gutter so the hairline spans the
+    // screen (KNOT-020g-fix8, KNOT-020k-fix20).
     card: {
       borderBottomColor: colors.border.hairline,
       borderBottomWidth: 1,
       marginHorizontal: -layout.screenPaddingFeed,
       paddingVertical: spacing.lg,
+    },
+    // The author block that heads every card. It is the Feed's `medium` line (a
+    // 32pt avatar, name then time), set apart from the pillar and title below it by
+    // the same step the Feed uses above its tag row (KNOT-020k-fix20).
+    cardAuthor: {
+      marginBottom: spacing.md,
     },
     // The card's stats line, in the Feed's voice: the bolder `label` size in the
     // secondary ink, with the same 12pt gap under the media the Feed uses. The row
@@ -967,9 +992,11 @@ const createStyles = (colors: ThemeColors) =>
     cardPillar: {
       alignSelf: 'flex-start',
     },
-    // The card's body excerpt, under the title — the feed's reading order.
+    // The card's body excerpt, under the title — the feed's reading order, in the
+    // feed's own body size and primary ink (pure white in dark, pure black in
+    // light) so the two screens read as one product (KNOT-020k-fix20).
     cardPreview: {
-      color: colors.text.secondary,
+      color: colors.text.primary,
       marginTop: spacing.xs,
     },
     // The "read more" affordance under a truncated excerpt: a text link in the brand
