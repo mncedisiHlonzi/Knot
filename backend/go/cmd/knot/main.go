@@ -28,6 +28,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/knot/backend/internal/appinfo"
+	"github.com/knot/backend/internal/cache"
 	"github.com/knot/backend/internal/config"
 	"github.com/knot/backend/internal/conversations"
 	"github.com/knot/backend/internal/discovery"
@@ -128,6 +129,21 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 	defer pool.Close()
+
+	// Redis backs sessions, rate limiting, caching and token management
+	// (KNOT-ADR-082). The client is created here and deliberately unused: nothing
+	// reads or writes through it until the authentication service lands in
+	// KNOT-031. Building it now means a bad address or database number fails at
+	// startup instead of the first time someone signs in.
+	redisCache, err := cache.NewRedisCache(cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := redisCache.Close(); closeErr != nil {
+			logger.Warn("closing the redis client failed", slog.Any("error", closeErr))
+		}
+	}()
 
 	store, err := identity.NewPostgresStore(pool)
 	if err != nil {

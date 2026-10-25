@@ -26,17 +26,19 @@ const (
 
 // Environment variable names read by Load.
 const (
-	envKeyEnv         = "KNOT_ENV"
-	envKeyPostgresDSN = "KNOT_POSTGRES_DSN"
-	envKeyRedisAddr   = "KNOT_REDIS_ADDR"
-	envKeyHTTPPort    = "KNOT_HTTP_PORT"
-	envKeyJWTSecret   = "KNOT_JWT_SECRET"
-	envKeyLogLevel    = "KNOT_LOG_LEVEL"
-	envKeyS3Endpoint  = "KNOT_S3_ENDPOINT"
-	envKeyS3Region    = "KNOT_S3_REGION"
-	envKeyS3AccessKey = "KNOT_S3_ACCESS_KEY"
-	envKeyS3SecretKey = "KNOT_S3_SECRET_KEY"
-	envKeyS3Bucket    = "KNOT_S3_BUCKET"
+	envKeyEnv           = "KNOT_ENV"
+	envKeyPostgresDSN   = "KNOT_POSTGRES_DSN"
+	envKeyRedisAddr     = "KNOT_REDIS_ADDR"
+	envKeyRedisPassword = "KNOT_REDIS_PASSWORD"
+	envKeyRedisDB       = "KNOT_REDIS_DB"
+	envKeyHTTPPort      = "KNOT_HTTP_PORT"
+	envKeyJWTSecret     = "KNOT_JWT_SECRET"
+	envKeyLogLevel      = "KNOT_LOG_LEVEL"
+	envKeyS3Endpoint    = "KNOT_S3_ENDPOINT"
+	envKeyS3Region      = "KNOT_S3_REGION"
+	envKeyS3AccessKey   = "KNOT_S3_ACCESS_KEY"
+	envKeyS3SecretKey   = "KNOT_S3_SECRET_KEY"
+	envKeyS3Bucket      = "KNOT_S3_BUCKET"
 )
 
 // Safe local defaults. These are placeholders that match .env.example and the
@@ -45,9 +47,11 @@ const (
 	defaultEnv         = EnvLocal
 	defaultPostgresDSN = "postgres://knot:knot_local_only_change_me@localhost:5433/knot?sslmode=disable"
 	defaultRedisAddr   = "localhost:6379"
-	defaultHTTPPort    = 8080
-	defaultLogLevel    = LogLevelInfo
-
+	// defaultRedisDB is Redis's own default database. A local stack that is not
+	// shared with anything else has no reason to use another.
+	defaultRedisDB  = 0
+	defaultHTTPPort = 8080
+	defaultLogLevel = LogLevelInfo
 	// Local object storage: the MinIO container's published S3 port and its
 	// placeholder credentials (KNOT-ADR-028). These are local-only, exactly like
 	// the Postgres and Redis defaults above.
@@ -84,9 +88,18 @@ type Config struct {
 	Env string
 	// PostgresDSN is the PostgreSQL connection string.
 	PostgresDSN string
-	// RedisAddr is the host:port of the Redis server. Nothing uses it yet: no
-	// Redis client exists in the backend.
+	// RedisAddr is the host:port of the Redis server, which backs sessions, rate
+	// limiting, caching and token management (KNOT-ADR-082).
 	RedisAddr string
+	// RedisPassword is the Redis password, or "" when the server requires none —
+	// which is how the local docker-compose stack is configured. It is read
+	// verbatim rather than trimmed, because a Redis password is opaque bytes and a
+	// leading or trailing space may be part of it. Like every other secret here it
+	// is never logged (Config has no String method).
+	RedisPassword string
+	// RedisDB is the logical Redis database to select. It is 0 unless a deployment
+	// deliberately shares one server between environments.
+	RedisDB int
 	// HTTPPort is the TCP port the API server listens on.
 	HTTPPort int
 	// JWTSecret is the HS256 signing key for access and refresh tokens.
@@ -124,6 +137,10 @@ type Config struct {
 //     and KNOT_S3_SECRET_KEY are required too: outside local there is no default
 //     object store to fall back to. Load fails fast, naming every problem.
 //   - KNOT_HTTP_PORT and KNOT_LOG_LEVEL must be valid when set.
+//   - KNOT_REDIS_PASSWORD is optional in every environment and is read verbatim:
+//     an empty value means the server requires no password, which is how the
+//     local docker-compose stack runs.
+//   - KNOT_REDIS_DB must be a non-negative integer and defaults to 0 when unset.
 //
 // Load performs no I/O beyond reading environment variables.
 func Load() (Config, error) {
@@ -137,18 +154,25 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	redisDB, err := parseRedisDB(os.Getenv(envKeyRedisDB))
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
-		Env:         resolveEnv(os.Getenv(envKeyEnv)),
-		PostgresDSN: strings.TrimSpace(os.Getenv(envKeyPostgresDSN)),
-		RedisAddr:   strings.TrimSpace(os.Getenv(envKeyRedisAddr)),
-		HTTPPort:    httpPort,
-		JWTSecret:   strings.TrimSpace(os.Getenv(envKeyJWTSecret)),
-		LogLevel:    logLevel,
-		S3Endpoint:  strings.TrimSpace(os.Getenv(envKeyS3Endpoint)),
-		S3Region:    strings.TrimSpace(os.Getenv(envKeyS3Region)),
-		S3AccessKey: strings.TrimSpace(os.Getenv(envKeyS3AccessKey)),
-		S3SecretKey: strings.TrimSpace(os.Getenv(envKeyS3SecretKey)),
-		S3Bucket:    strings.TrimSpace(os.Getenv(envKeyS3Bucket)),
+		Env:           resolveEnv(os.Getenv(envKeyEnv)),
+		PostgresDSN:   strings.TrimSpace(os.Getenv(envKeyPostgresDSN)),
+		RedisAddr:     strings.TrimSpace(os.Getenv(envKeyRedisAddr)),
+		RedisPassword: os.Getenv(envKeyRedisPassword),
+		RedisDB:       redisDB,
+		HTTPPort:      httpPort,
+		JWTSecret:     strings.TrimSpace(os.Getenv(envKeyJWTSecret)),
+		LogLevel:      logLevel,
+		S3Endpoint:    strings.TrimSpace(os.Getenv(envKeyS3Endpoint)),
+		S3Region:      strings.TrimSpace(os.Getenv(envKeyS3Region)),
+		S3AccessKey:   strings.TrimSpace(os.Getenv(envKeyS3AccessKey)),
+		S3SecretKey:   strings.TrimSpace(os.Getenv(envKeyS3SecretKey)),
+		S3Bucket:      strings.TrimSpace(os.Getenv(envKeyS3Bucket)),
 	}
 
 	if cfg.Env == EnvLocal {
@@ -264,6 +288,27 @@ func parseLogLevel(raw string) (string, error) {
 			envKeyLogLevel, LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError, raw,
 		)
 	}
+}
+
+// parseRedisDB resolves KNOT_REDIS_DB, defaulting to 0 when unset.
+//
+// A typo in the number is caught here rather than at the first command that
+// reaches Redis, where it would look like a connection problem.
+func parseRedisDB(raw string) (int, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return defaultRedisDB, nil
+	}
+
+	db, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return 0, fmt.Errorf("config: %s must be a number: %w", envKeyRedisDB, err)
+	}
+	if db < 0 {
+		return 0, fmt.Errorf("config: %s must not be negative (got %d)", envKeyRedisDB, db)
+	}
+
+	return db, nil
 }
 
 // resolveEnv normalises KNOT_ENV, falling back to the local default.

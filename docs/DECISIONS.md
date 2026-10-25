@@ -2711,3 +2711,136 @@ no dependency. The known gaps are that video starts muted, the feed opens a sing
 because its payload carries one preview, and the modal's status-bar handling is
 declared per view rather than by a safe-area library.
 
+
+## KNOT-ADR-079 — The account is a domain model of sessions, credentials and verification tokens, not one password hash per row
+
+**Context.** Identity today is a single `users` row with an argon2id hash in
+`users.password_hash` and a stateless JWT. That is the smallest thing that can work, and
+it cannot grow: there is nowhere to put a second way to sign in, no record of a device, no
+way to prove an address belongs to its owner, and no way to end one sign-in without ending
+all of them. Every one of those is a later feature that would otherwise each bolt a column
+onto `users`.
+
+**Decision.**
+
+- **Four tables, one per concept.** `users` stays the account itself; `sessions`,
+  `credentials` and `verification_tokens` (migration `0021`) hold the things an account can
+  have many of. Each is keyed by `gen_random_uuid()` and cascades from `users`, so deleting
+  a user still means deleting a user.
+- **A credential is one row per method.** `credential_type` is a closed set — `password`,
+  `oauth_google`, `magic_link` — enforced by a CHECK constraint, unique per
+  `(user_id, credential_type)`. Adding a method is a migration and a constant, which is the
+  point: a method nobody has written policy for is not a method.
+- **`credential_data` is TEXT, not JSONB.** Each method stores exactly one opaque string: a
+  PHC hash for a password, a provider subject id for OAuth, a single-use secret for a magic
+  link. A JSON column would invite a second shape to be invented.
+- **`users.password_hash` is deprecated, not dropped.** It stays, still NOT NULL, while
+  sign-in still reads it. Moving the secret into `credentials` is a later task, and doing it
+  in a migration that also introduces the tables would make a rollback lose passwords.
+- **Verification is its own table with its own lifecycle.** A token has a type, an expiry
+  and a `consumed_at`, and the token itself is never stored, only its hash. "Already used"
+  and "never existed" are different answers to give a person opening a link twice.
+
+**Consequences.** Sign-in behaviour is unchanged: this is storage and boundaries only
+(KNOT-030). The cost is that identity now spans four tables, and every read that used to
+join `users` alone may need one more. In exchange, sessions can be listed and revoked per
+device, credentials can be added per method, and each of the later steps — verification
+email, OAuth, account recovery — has a place to live instead of a column on `users`.
+
+## KNOT-ADR-080 — Authentication is a short-lived JWT access token plus a long-lived opaque refresh token whose hash the server stores
+
+**Context.** A single long-lived JWT is convenient and impossible to revoke: it carries its
+own authority, so signing a user out everywhere means rotating the signing key for
+everyone. A single opaque database session is revocable, and makes every API request a
+database round trip. Knot needs a stateless fast path and a revocable slow path.
+
+**Decision.**
+
+- **The access token is a short-lived JWT.** It is verified from the signature alone, so a
+  request that only needs to know who is calling never touches the database or Redis.
+- **The refresh token is opaque and long-lived.** It is a random secret handed to the client
+  once. The server stores only its SHA-256 in `sessions.refresh_token_hash`, which is UNIQUE,
+  so a copy of the database cannot be replayed as a set of sessions and a stolen hash is not
+  a stolen token.
+- **A session is the refresh token's record, not the access token's.** `sessions` carries the
+  device, the address, `last_used_at` and `revoked_at`; `revoked_at` is what turns a live
+  session into an ended one, and it is never moved once set.
+- **Revocation is explicit and idempotent.** `SessionStore.Revoke` keeps the first
+  `revoked_at`; `RevokeAllForUser` ends every live session and succeeds when there are none,
+  so signing out everywhere is safe to repeat after a password change.
+- **The stores do not mint or hash tokens.** They store what they are given. Token generation,
+  hashing, rotation and reuse detection are policy, and KNOT-031 puts them in one service
+  rather than spreading them across three stores.
+
+**Consequences.** The API has a fast path that survives a Redis outage for the lifetime of
+an access token, and a revocable slow path for everything else. The client has to hold two
+tokens and refresh one of them, and the refresh exchange is where reuse detection will have
+to be added. Until KNOT-031 lands, none of this is wired to an endpoint: the tables and the
+stores exist and nothing calls them.
+
+## KNOT-ADR-081 — Account deletion is a soft delete with a 30-day recovery window
+
+**Context.** Deleting an account cannot mean deleting the row. A user's stories, comments,
+rooted signals and adaptations are read by other people; a hard delete either cascades them
+away — destroying someone else's reading history and the record of an adaptation they
+wrote — or is blocked by every foreign key in the schema. "Delete my account" in a social
+platform means "stop treating this as me", not "erase the conversation".
+
+**Decision.**
+
+- **`users.deleted_at` marks the account as gone.** Every read that resolves an account
+  filters on it, so a deleted user cannot sign in, cannot be addressed, and does not appear
+  in social surfaces.
+- **`users.deletion_scheduled_at` records when the window closes.** It is written as
+  `deleted_at + 30 days` and kept as its own column so the window can be shortened or
+  extended for one account without rewriting the deletion's history.
+- **The window exists because deletion is usually a decision made at a bad moment.** Thirty
+  days is long enough to change your mind and short enough to be a promise. Signing in
+  during the window cancels the deletion.
+- **After the window, personal data is purged and content is anonymised.** The account row
+  is reduced to what the content needs to stay coherent — display name replaced, contact
+  fields cleared, credentials and sessions deleted — and the content stays.
+- **A partial index, `users_deleted_at_idx`, carries the purge job.** Almost every row has
+  no deletion, so a full index would be nearly all NULL.
+
+**Consequences.** KNOT-030 adds the columns and nothing else: no deletion endpoint, no purge
+job, no sign-in check. That is deliberate — each of those is a decision about what "deleted"
+means to a surface, and they land with the service that owns them. The cost of soft delete
+is that every future query about users has to remember `deleted_at IS NULL`, which is a rule
+best enforced in one place per module rather than at each call site.
+
+## KNOT-ADR-082 — Redis is the backbone for sessions, rate limiting, caching and token management
+
+**Context.** Knot is moving from one server's memory to a platform that has to hold many
+users, and three separate needs arrive at the same time: a place for short-lived opaque
+tokens and rate-limit counters, a cache for expensive reads, and state that survives a
+process restart and is shared by every instance. PostgreSQL can do all three badly: a
+counter increment on a hot row serialises writers, and an expiring key is a table that has
+to be swept.
+
+**Decision.**
+
+- **Redis is the store for anything ephemeral.** Rate-limit counters, cached reads, and the
+  short-lived data around token refresh belong there, not in PostgreSQL. Anything that must
+  survive a flush, or that a report will query, belongs in PostgreSQL.
+- **The backend talks to Redis through one small interface.** `internal/cache` defines seven
+  operations — `Get`, `Set`, `SetEX`, `Delete`, `Incr`, `Ping`, `Close` — and nothing else.
+  No package reaches for a Redis client directly, so a test swaps in an in-process server
+  and a later store swap touches one file.
+- **A miss is distinguishable from a failure.** `Get` returns an error wrapping `ErrMiss` for
+  an absent key, and a different error when the connection is broken. A cache outage must
+  never look like every user having been signed out.
+- **Timeouts are short.** Three seconds for one operation, five for a dial, two retries. A
+  cache that cannot answer quickly is not slow, it is broken, and waiting longer turns one
+  stalled Redis into a stalled API.
+- **`Incr` arms its expiry when the counter is created.** That is a fixed window whose length
+  does not slide with every request, which is what a rate limit means.
+- **The client is constructed at startup and closed on shutdown.** `cmd/knot` builds it now,
+  before anything uses it, so a bad address or database number fails on boot rather than at
+  the first sign-in.
+
+**Consequences.** Redis becomes a dependency of the deployment: the local stack already runs
+it (`infrastructure/docker/docker-compose.yml`), and production now needs a managed
+instance. The compensating benefit is that the backend has one place to look for every
+ephemeral concern, and the cache can be unavailable without the API failing to start —
+`NewRedisCache` dials lazily, and `Ping` is the caller's decision about readiness.

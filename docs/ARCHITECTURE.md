@@ -44,9 +44,9 @@ introduced without an approved task:
 
 | Capability                          | Status  |
 | ----------------------------------- | ------- |
-| PostgreSQL schema & migrations      | Deferred |
-| Authentication / identity           | Deferred |
-| Redis, S3-compatible object storage | Deferred |
+| PostgreSQL schema & migrations      | Implemented (migrations `0001`–`0021`) |
+| Authentication / identity           | Foundation only (KNOT-030); the service is KNOT-031 |
+| Redis, S3-compatible object storage | Implemented (`internal/cache`, `internal/storage`) |
 | FCM / APNs push                     | Deferred |
 | WebSockets                          | Deferred (where justified) |
 | Docker / GitHub Actions deploys     | Deferred |
@@ -99,11 +99,58 @@ It is derived data: the migration backfills existing rows and
 it on write. Its primary key is the entity id, so a candidate can be enriched with one
 lookup.
 
+## Identity & Authentication (KNOT-030)
+
+Knot's identity layer is being rebuilt from "one password hash per row and a stateless JWT"
+into a domain model with sessions, credentials and verification tokens. KNOT-030 adds **the
+storage and the boundaries only**: no endpoint changes, no service, no token minting, no
+email. Registration and sign-in behave exactly as they did before it.
+
+**The model.** Four tables, three of them new in migration `0021`:
+
+| Table                 | Holds                                                        | Decided by    |
+| --------------------- | ------------------------------------------------------------ | ------------- |
+| `users`               | The account, plus the soft-delete columns `deleted_at` and `deletion_scheduled_at` | KNOT-ADR-079, KNOT-ADR-081 |
+| `credentials`         | One row per way a user can prove who they are — `password`, `oauth_google`, `magic_link` — unique per user and type | KNOT-ADR-079 |
+| `sessions`            | One row per signed-in device, keyed by the hash of an opaque refresh token, with `revoked_at` | KNOT-ADR-080 |
+| `verification_tokens` | Single-use, expiring proofs of address ownership, stored as hashes | KNOT-ADR-079 |
+
+**Secrets are hashes.** Neither a refresh token nor a verification token exists in the
+database: `sessions.refresh_token_hash` and `verification_tokens.token_hash` hold SHA-256
+digests, so a backup cannot be replayed. `users.password_hash` is deprecated but still
+present and still NOT NULL, because removing it in the same migration that introduces
+`credentials` would make a rollback lose every password.
+
+**Two packages, two jobs.** `internal/auth` owns the three store interfaces
+(`SessionStore`, `CredentialStore`, `VerificationTokenStore`) and their pgx implementations.
+It deliberately contains no service: minting, hashing, rotating and reuse detection are
+policy, and KNOT-031 puts them in one `AuthService` above these stores. Until then the
+interfaces exist and nothing calls them.
+
+`internal/cache` owns Redis. It exposes seven operations — `Get`, `Set`, `SetEX`, `Delete`,
+`Incr`, `Ping`, `Close` — behind one `Cache` interface, and is the only package that opens a
+socket to Redis (KNOT-ADR-082). A missing key is reported as an error wrapping `ErrMiss`, so
+a cache outage can never be mistaken for "the user has no session".
+
+**Where each store lives.**
+
+| State                                            | Store         | Why |
+| ------------------------------------------------ | ------------- | --- |
+| Accounts, credentials, sessions, verification tokens | PostgreSQL | Must survive a flush and be queryable |
+| Rate-limit counters, cached reads, refresh-token state | Redis     | Ephemeral, expiring, shared by instances |
+
+**Configuration.** `KNOT_REDIS_ADDR`, `KNOT_REDIS_PASSWORD` and `KNOT_REDIS_DB` are read by
+`internal/config`; the address has a local default, the password is optional (the local
+stack has none) and the database number defaults to 0. `cmd/knot` constructs the client at
+startup and closes it on shutdown without using it yet, so a bad address fails on boot
+rather than at the first sign-in.
+
 ## Boundaries summary
 
 ```
-apps/mobile  ──HTTP──▶  backend/go  ──▶  PostgreSQL (future)
-  (RN + TS)              (Go monolith)
+apps/mobile  ──HTTP──▶  backend/go  ──┬──▶  PostgreSQL
+  (RN + TS)              (Go monolith)└──▶  Redis (ephemeral)
 ```
 
-One client, one backend, one database. Anything more is a future, approved decision.
+One client, one backend, one database, and one cache for state that is allowed to disappear.
+Anything more is a future, approved decision.

@@ -1,8 +1,9 @@
 # Knot — Data Model
 
-**Status: MVP, subject to change.** Eight tables exist today: `users`, `stories`,
-`story_versions`, `comments`, `bridges` (**dormant** — see below), `rooted_signals`,
-`story_media`, and `notifications`.
+**Status: MVP, subject to change.** This document covers every table the product depends on:
+the eight the foundation started with — `users`, `stories`, `story_versions`, `comments`,
+`bridges` (**dormant** — see below), `rooted_signals`, `story_media`, `notifications` — plus
+every table added since, through the identity tables in migration `0021`.
 
 Migrations live in `backend/go/migrations/` and are applied with
 `go run ./cmd/knot migrate up`. See the "Migrations" section of
@@ -25,6 +26,10 @@ Migrations live in `backend/go/migrations/` and are applied with
 | `0011`  | `iso_639_3` | Rewrites every stored language from a two-letter ISO 639-1 code to its three-letter ISO 639-3 counterpart |
 | `0012`  | `comment_replies` | The `comments.parent_comment_id` column, its index and foreign key, and the self-parent check constraint |
 | `0013`  | `reactions` | The `reactions` table and its indexes; the `notifications.reaction_type` column; and the widened notification event CHECK |
+| `0021`  | `identity_domain` | The `credentials`, `sessions` and `verification_tokens` tables; `users.deleted_at` and `users.deletion_scheduled_at`; and the partial `users_deleted_at_idx` |
+
+`0014`–`0020` are documented in the sections that introduced them — moderation, search, the
+profile wall, `user_interactions` and `entity_features` — rather than in this table.
 
 Applied versions are recorded in the `schema_migrations` table, which the runner creates
 on first use.
@@ -65,6 +70,8 @@ nulled in either direction.
 | `avatar_url`           | `text`                   | yes      | `NULL`             | Object key of the avatar in the media bucket, **not** a public URL. See below |
 | `created_at`           | `timestamptz`            | no       | `now()`            |                                                  |
 | `updated_at`           | `timestamptz`            | no       | `now()`            | Set on insert, and refreshed by the avatar update. No trigger yet: updates are a later task |
+| `deleted_at`           | `timestamptz`            | yes      | `NULL`             | When the account was deleted, or `NULL` while it is live. Migration `0021`, KNOT-ADR-081. See below |
+| `deletion_scheduled_at`| `timestamptz`            | yes      | `NULL`             | When the 30-day recovery window closes and personal data is purged. Migration `0021` |
 
 ### Indexes and constraints
 
@@ -72,6 +79,7 @@ nulled in either direction.
 | ----------------- | -------------------------- | ------- | ----------------------------------------- |
 | `users_pkey`      | Primary key                | `id`    | Row identity                              |
 | `users_email_key` | Unique constraint (btree)  | `email` | Prevents duplicate accounts; named so operational tooling can refer to it |
+| `users_deleted_at_idx` | Partial index (btree)  | `deleted_at` | Only rows with a deletion, because almost every row has none. This is the index a purge job scans |
 
 The uniqueness rule is enforced in the database, not only in application code: a
 duplicate insert surfaces to the service as `identity.ErrEmailTaken`, which the API
@@ -91,12 +99,33 @@ The object store itself is never addressed by a client. The API translates the k
 (KNOT-ADR-028, KNOT-ADR-029). Replacing an avatar overwrites this one column; the previous
 object is deleted best-effort by the upload handler.
 
+### Soft delete (migration `0021`)
+
+Deleting an account does not delete the row, because a user's stories, comments and rooted
+signals are read by people who are not that user (KNOT-ADR-081). `deleted_at` is when the
+deletion was requested and `deletion_scheduled_at` is when the 30-day recovery window
+closes; both are `NULL` for a live account and neither is ever cleared by a trigger, so the
+history of a deletion is a fact the row keeps.
+
+The columns are **written by nothing yet**. KNOT-030 adds the storage; the deletion endpoint,
+the sign-in check and the purge job arrive with the service that owns them. The rule every
+future query has to follow is `deleted_at IS NULL`, and the partial index above exists so
+that rule stays cheap.
+
+### `password_hash` is deprecated (migration `0021`)
+
+`users.password_hash` is now the legacy home of the password secret. It is still NOT NULL
+and still what sign-in reads; migration `0021` deliberately did **not** drop it, because a
+rollback that dropped the column would lose every password in the system. The `credentials`
+table is its successor (KNOT-ADR-079), and moving the secret across is a later task.
+
 ### Deliberate omissions
 
 - **No `updated_at` trigger.** The avatar update sets `updated_at = now()` itself; a
 trigger would be the right move once several columns need it, and is a later task.
-- **No soft deletes, no roles, no email-verification flags.** None of them are needed by
-  the identity foundation, and each would be a decision to make on its own evidence.
+- **No roles, no email-verification flag.** `role` exists as a column, but nothing reads it
+yet, and address verification lives in `verification_tokens` rather than in a boolean here:
+proof of an address is an event with an expiry, not a flag.
 
 ## `stories`
 
@@ -1012,3 +1041,96 @@ pillar and place live on the story; a version's language is its own while its pi
 place belong to the story. The read model collapses that join once instead of on every
 ranking read (KNOT-026, KNOT-ADR-075).
 
+
+## `credentials` (migration `0021`)
+
+One row per way a user can prove who they are. It replaces the single
+`users.password_hash` with a set that can grow (KNOT-ADR-079).
+
+| Column            | Type          | Nullable | Notes |
+| ----------------- | ------------- | -------- | ----- |
+| `id`              | `uuid`        | no       | Primary key, `gen_random_uuid()`. |
+| `user_id`         | `uuid`        | no       | `REFERENCES users (id) ON DELETE CASCADE`. |
+| `credential_type` | `text`        | no       | Closed set: `password`, `oauth_google`, `magic_link`. |
+| `credential_data` | `text`        | no       | The method's opaque secret: an argon2id PHC string for a password, a provider subject id for OAuth, a single-use secret for a magic link. |
+| `created_at`      | `timestamptz` | no       | Defaults to `now()`. |
+| `updated_at`      | `timestamptz` | no       | Defaults to `now()`; `Update` refreshes it. |
+
+**Indexes and constraints.** `credentials_user_id_credential_type_key` is UNIQUE on
+`(user_id, credential_type)` — a user may hold several methods but only one of each — and
+`credentials_user_id_idx` serves "every method for this user". The type set is a CHECK
+constraint, so a method the Go constants do not know cannot be written.
+
+**`credential_data` is TEXT, not JSONB.** Each method stores exactly one opaque string, so
+the column has no shape to get wrong. A JSON column would invite a second shape to be
+invented for the next method.
+
+**Replacing a secret is `Update`, never `Create`.** `CredentialStore.Create` reports
+`ErrCredentialExists` for a duplicate `(user_id, credential_type)`, and `Update` changes only
+`credential_data`. The type and the owner are not updateable: changing which method a row
+represents is a delete and an insert, and moving a credential to another user would be an
+account takeover.
+
+## `sessions` (migration `0021`)
+
+One row per signed-in device. The row is the refresh token's record, not the token: only its
+SHA-256 is stored (KNOT-ADR-080).
+
+| Column               | Type          | Nullable | Notes |
+| -------------------- | ------------- | -------- | ----- |
+| `id`                 | `uuid`        | no       | Primary key, `gen_random_uuid()`. What `Revoke` takes. |
+| `user_id`            | `uuid`        | no       | `REFERENCES users (id) ON DELETE CASCADE`. |
+| `refresh_token_hash` | `text`        | no       | SHA-256 of the opaque refresh token, hex encoded. UNIQUE. |
+| `device_info`        | `jsonb`       | no       | Free-form, defaults to `'{}'`. Whatever the client said about itself. |
+| `ip_address`         | `inet`        | yes      | `NULL` when unknown. The stores read it back through `host()`, so Go sees a plain string or `""`. |
+| `last_used_at`       | `timestamptz` | no       | Defaults to `now()`. |
+| `revoked_at`         | `timestamptz` | yes      | `NULL` while the session is live. Set once; never moved by a second revoke. |
+| `created_at`         | `timestamptz` | no       | Defaults to `now()`. |
+
+**Indexes and constraints.** `sessions_refresh_token_hash_key` is UNIQUE on
+`refresh_token_hash`, which is what makes a refresh exchange a single indexed lookup and
+what makes a duplicated token impossible. `sessions_user_id_idx` serves "this user's
+devices". `sessions_refresh_token_hash_idx` is strictly redundant with the UNIQUE index; it
+was created because the approved schema listed it, and dropping it later is a one-line,
+zero-risk change.
+
+**Revocation is a timestamp, not a delete.** `revoked_at` is set with
+`COALESCE(revoked_at, now())`, so the first revocation is the fact worth keeping and a
+retried revoke cannot move it. `SessionStore.ListForUser` filters revoked rows out, because a
+"your devices" screen shows live ones; `FindByRefreshTokenHash` returns them, because a
+caller that must reject a revoked session has to be able to see it.
+
+**The plaintext token never reaches the database.** Nothing in this table can be replayed as
+a credential, so a dump or a backup is not a set of sessions an attacker can use.
+
+## `verification_tokens` (migration `0021`)
+
+Single-use, expiring proofs of address ownership — email verification and password reset.
+
+| Column        | Type          | Nullable | Notes |
+| ------------- | ------------- | -------- | ----- |
+| `id`          | `uuid`        | no       | Primary key, `gen_random_uuid()`. What `Consume` takes. |
+| `user_id`     | `uuid`        | no       | `REFERENCES users (id) ON DELETE CASCADE`. |
+| `token_hash`  | `text`        | no       | SHA-256 of the token, hex encoded. UNIQUE. |
+| `token_type`  | `text`        | no       | Closed set: `email_verification`, `password_reset`. |
+| `expires_at`  | `timestamptz` | no       | Set by the caller: how long a link lives is policy, not schema. |
+| `consumed_at` | `timestamptz` | yes      | `NULL` while unused. Set exactly once. |
+| `created_at`  | `timestamptz` | no       | Defaults to `now()`. |
+
+**Indexes and constraints.** `verification_tokens_token_hash_key` is UNIQUE, so redemption is
+one indexed lookup; `verification_tokens_user_id_idx` serves "every token issued to this
+user". (`verification_tokens_token_hash_idx` is redundant with the UNIQUE index and kept only
+because the approved schema listed it.)
+
+**Consumption is one conditional update.** `Consume` runs
+`UPDATE ... SET consumed_at = now() WHERE id = $1 AND consumed_at IS NULL RETURNING
+consumed_at`. Two concurrent redemptions of the same link are serialised by the row lock and
+only the first matches. When the update matches nothing, a second query says whether the
+token never existed (`ErrVerificationTokenNotFound`) or was already used
+(`ErrVerificationTokenConsumed`) — a person opening a link twice gets a different message to
+someone presenting a link that is not valid.
+
+**Expiry is not enforced in SQL.** `expires_at` is compared to the clock by
+`VerificationToken.Expired`, because enforcing it in the query would make an expired token
+indistinguishable from one that never existed. Tokens are never deleted: a consumed token is
+the record an investigation needs.

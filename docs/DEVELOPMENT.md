@@ -2333,6 +2333,8 @@ standard library only, and it stores values without connecting to anything.
 | `KNOT_ENV`          | No — defaults to `local`        | `local`, `ci`, or `test`                       |
 | `KNOT_POSTGRES_DSN` | Only when `ci` / `test`         | Has a safe local default                       |
 | `KNOT_REDIS_ADDR`   | Only when `ci` / `test`         | Has a safe local default                       |
+| `KNOT_REDIS_PASSWORD`| No                            | Read verbatim; empty means the server requires none (`local` does) |
+| `KNOT_REDIS_DB`     | No — defaults to `0`            | Must be a non-negative integer when set        |
 | `KNOT_HTTP_PORT`    | No — defaults to `8080`         | Must be 1-65535 when set                       |
 | `KNOT_LOG_LEVEL`    | No — defaults to `info`         | `debug`, `info`, `warn`, or `error`            |
 | `KNOT_JWT_SECRET`   | Only when `ci` / `test`         | Must be at least 32 bytes outside `local`      |
@@ -2376,7 +2378,8 @@ git ls-files --error-unmatch .env.example   # should succeed (file is tracked)
 ```
 
 - The active variables are the `KNOT_*` ones:
-  - `KNOT_ENV`, `KNOT_POSTGRES_DSN`, `KNOT_REDIS_ADDR`, `KNOT_HTTP_PORT`,
+  - `KNOT_ENV`, `KNOT_POSTGRES_DSN`, `KNOT_REDIS_ADDR`, `KNOT_REDIS_PASSWORD`,
+    `KNOT_REDIS_DB`, `KNOT_HTTP_PORT`,
     `KNOT_LOG_LEVEL`, `KNOT_JWT_SECRET`, `KNOT_S3_ENDPOINT`, `KNOT_S3_REGION`,
     `KNOT_S3_ACCESS_KEY`, `KNOT_S3_SECRET_KEY`, `KNOT_S3_BUCKET` — read by the Go
     backend.

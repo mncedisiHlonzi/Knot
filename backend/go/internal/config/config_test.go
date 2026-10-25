@@ -13,6 +13,8 @@ func clearEnv(t *testing.T) {
 		envKeyEnv,
 		envKeyPostgresDSN,
 		envKeyRedisAddr,
+		envKeyRedisPassword,
+		envKeyRedisDB,
 		envKeyHTTPPort,
 		envKeyJWTSecret,
 		envKeyLogLevel,
@@ -440,6 +442,66 @@ func TestUsingInsecureJWTSecret(t *testing.T) {
 			cfg := Config{JWTSecret: tt.secret}
 			if got := cfg.UsingInsecureJWTSecret(); got != tt.want {
 				t.Errorf("UsingInsecureJWTSecret() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestLoadRedisDefaults pins the Redis password and database defaults. The local
+// docker-compose server has no password and uses database 0, so a fresh checkout
+// must start without either being set.
+func TestLoadRedisDefaults(t *testing.T) {
+	clearEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error %v, want nil", err)
+	}
+
+	if cfg.RedisPassword != "" {
+		t.Errorf("RedisPassword = %q, want the empty string", cfg.RedisPassword)
+	}
+	if cfg.RedisDB != defaultRedisDB {
+		t.Errorf("RedisDB = %d, want default %d", cfg.RedisDB, defaultRedisDB)
+	}
+}
+
+// TestLoadRedisPasswordAndDB covers the overrides, including that the password is
+// read verbatim: a Redis password is opaque bytes and may contain spaces.
+func TestLoadRedisPasswordAndDB(t *testing.T) {
+	clearEnv(t)
+
+	const wantPassword = " space at both ends "
+	t.Setenv(envKeyRedisPassword, wantPassword)
+	t.Setenv(envKeyRedisDB, "3")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error %v, want nil", err)
+	}
+
+	if cfg.RedisPassword != wantPassword {
+		t.Errorf("RedisPassword = %q, want %q", cfg.RedisPassword, wantPassword)
+	}
+	if cfg.RedisDB != 3 {
+		t.Errorf("RedisDB = %d, want 3", cfg.RedisDB)
+	}
+}
+
+// TestLoadRejectsInvalidRedisDB proves a typo in KNOT_REDIS_DB fails at startup
+// rather than at the first command that reaches Redis.
+func TestLoadRejectsInvalidRedisDB(t *testing.T) {
+	for _, raw := range []string{"not-a-number", "-1", "1.5"} {
+		t.Run(raw, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv(envKeyRedisDB, raw)
+
+			cfg, err := Load()
+			if err == nil {
+				t.Fatalf("Load() returned a config (%+v) and nil error, want an error", cfg)
+			}
+			if !strings.Contains(err.Error(), envKeyRedisDB) {
+				t.Errorf("error %q does not name %q", err.Error(), envKeyRedisDB)
 			}
 		})
 	}
