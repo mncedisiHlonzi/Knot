@@ -1,35 +1,21 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Animated,
   FlatList,
   Image,
-  Modal,
-  PanResponder,
   Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   View,
   type ImageLoadEventData,
   type NativeSyntheticEvent,
 } from 'react-native';
-import {
-  ArrowLeft,
-  Camera,
-  CaretRight,
-  DotsThree,
-  Moon,
-  Plant,
-  Prohibit,
-  SignOut,
-  type Icon,
-} from 'phosphor-react-native';
+import { ArrowLeft, DotsThree } from 'phosphor-react-native';
 
-import { User, describeError } from '../../api/client';
+import { describeError } from '../../api/client';
 import { blocksApi, describeModerationError } from '../../api/moderation';
 import {
   Activity,
@@ -38,29 +24,17 @@ import {
   ProfileUser,
   profileApi,
 } from '../../api/profile';
-import { uploadAvatar } from '../../api/users';
 import AuthorLine from '../../components/AuthorLine';
 import Avatar from '../../components/Avatar';
 import Button from '../../components/Button';
 import EmptyState from '../../components/EmptyState';
 import FeedVideo from '../../components/FeedVideo';
 import Header from '../../components/Header';
-import MediaPickerSheet, { PickedMedia } from '../../components/MediaPickerSheet';
 import type { ViewerMedia, ViewerStory } from '../../components/MediaGalleryModal';
 import PillarTag from '../../components/PillarTag';
 import RootedBadge from '../../components/RootedBadge';
 import { API_BASE_URL } from '../../config/api';
-import {
-  elevation,
-  fontWeights,
-  layout,
-  radius,
-  spacing,
-  tabularNums,
-  typeScale,
-  useTheme,
-  useThemedStyles,
-} from '../../theme';
+import { layout, spacing, tabularNums, typeScale, useTheme, useThemedStyles } from '../../theme';
 import type { ThemeColors } from '../../theme';
 import { PLACEHOLDER_MEDIA_ASPECT_RATIO } from '../../utils/mediaFrame';
 import { useMediaAspectRatio } from '../../utils/useMediaAspectRatio';
@@ -97,20 +71,17 @@ type UserProfileScreenProps = {
    * inquiry_answer activity opens the question it answered.
    */
   readonly onOpenInquiry: (inquiryId: string) => void;
-  /** Called with the updated user after a successful avatar upload. */
-  readonly onUserUpdated: (user: User) => void;
-  /** Called when the owner wants to set or replace their Rooted signal. */
-  readonly onSetRooted: () => void;
-  /** Called when the owner wants to see and manage the people they have blocked. */
-  readonly onOpenBlockedUsers: () => void;
+  /**
+   * Called when the owner opens Settings — the account and preferences screen that
+   * replaced the options sheet (KNOT-020k-fix22).
+   */
+  readonly onOpenSettings: () => void;
   /** Called when a card's media is tapped, to open the full-screen viewer. */
   readonly onOpenMedia: (
     items: readonly ViewerMedia[],
     index: number,
     story?: ViewerStory | null,
   ) => void;
-  /** Called when the owner chooses to sign out. */
-  readonly onSignOut: () => void;
   /**
    * Called when the person returns to the previous screen.
    *
@@ -126,9 +97,6 @@ type UserProfileScreenProps = {
    */
   readonly showBackButton?: boolean;
 };
-
-/** How far the options sheet must be dragged down before it dismisses. */
-const SHEET_CLOSE_DISTANCE = 96;
 
 /** The empty-state illustration for one tab. Versions reuse the stories artwork. */
 function emptyIllustration(kind: ActivityKind): 'no-stories' | 'no-inquiries' {
@@ -247,109 +215,18 @@ function CardMedia({
 }
 
 /**
- * One row in the profile options sheet: a leading icon, a label, and a trailing
- * chevron — swapped for a spinner while the row's action is in flight.
- *
- * It is local to this file rather than a shared component, because the options
- * sheet is the only menu the profile draws (KNOT-020g-fix).
- */
-function OptionRow({
-  icon,
-  label,
-  danger = false,
-  busy = false,
-  onPress,
-}: {
-  readonly icon: Icon;
-  readonly label: string;
-  readonly danger?: boolean;
-  readonly busy?: boolean;
-  readonly onPress: () => void;
-}): React.ReactElement {
-  const { colors } = useTheme();
-  const styles = useThemedStyles(createStyles);
-  const IconComponent = icon;
-  return (
-    <Pressable
-      style={styles.option}
-      onPress={onPress}
-      disabled={busy}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ busy, disabled: busy }}
-    >
-      <IconComponent
-        color={danger ? colors.state.danger : colors.text.tertiary}
-        size={20}
-        weight="bold"
-      />
-      <Text
-        style={[typeScale.body, styles.optionLabel, danger ? styles.optionLabelDanger : null]}
-        numberOfLines={1}
-      >
-        {label}
-      </Text>
-      {busy ? (
-        <ActivityIndicator size="small" color={colors.text.tertiary} />
-      ) : (
-        <CaretRight color={colors.text.tertiary} size={20} weight="bold" />
-      )}
-    </Pressable>
-  );
-}
-
-/**
- * The theme row of the options sheet: an icon, a label, the theme's name, and a
- * switch.
- *
- * It is a row of its own rather than an `OptionRow`, because a switch states the
- * current value where a chevron only promises another screen — and a switch is
- * what a two-state preference should look like. The switch is the control (and
- * carries the accessible name and state); the row is not separately pressable,
- * so a tap on the label does nothing rather than doing something ambiguous.
- *
- * The choice is a device preference stored in AsyncStorage, not an account
- * setting, so it applies immediately and survives a restart (KNOT-ADR-077).
- */
-function ThemeRow(): React.ReactElement {
-  const { colors, theme, setTheme } = useTheme();
-  const styles = useThemedStyles(createStyles);
-  const isDark = theme === 'dark';
-  const valueLabel = isDark ? 'Dark' : 'Light';
-
-  return (
-    <View style={styles.option}>
-      <Moon color={colors.text.tertiary} size={20} weight="bold" />
-      <Text style={[typeScale.body, styles.optionLabel]} numberOfLines={1}>
-        Theme
-      </Text>
-      <Text style={[typeScale.caption, styles.optionValue]}>{valueLabel}</Text>
-      <Switch
-        value={isDark}
-        onValueChange={(next) => setTheme(next ? 'dark' : 'light')}
-        trackColor={{ false: colors.bg.sunken, true: colors.brand.primary }}
-        thumbColor={colors.bg.canvas}
-        ios_backgroundColor={colors.bg.sunken}
-        accessibilityRole="switch"
-        accessibilityLabel="Theme"
-        accessibilityValue={{ text: valueLabel }}
-      />
-    </View>
-  );
-}
-
-/**
  * One person's wall: who they are, and what they authored — the stories they
  * told, the adaptations they wrote, and the questions they asked — newest first.
  *
  * The header block is centred: avatar, name, the Rooted badge when there is one,
  * when they joined, and a stats line. The owner sees "Edit profile" and an
- * overflow control that opens a bottom-sheet menu — Edit avatar, Set Rooted,
- * Blocked users, and Sign out — while a visitor's opens Block user. Below the
- * block, three tabs (Stories, Versions, Inquiries) filter the wall, and each
- * entry is a card: an overline (or the story's pillar tag), the title, the story's
- * first media item when it has one, and a meta line, closed by a full-bleed
- * hairline — the design reference's tab content.
+ * overflow control that opens **Settings** — Edit avatar, Set Rooted, Blocked
+ * users, Theme, the About block and Sign out now live there (KNOT-020k-fix22) —
+ * while a visitor's overflow control confirms blocking them. Below the block,
+ * three tabs (Stories, Versions, Inquiries) filter the wall, and each entry is a
+ * card: the author line, an overline (or the story's pillar tag), the title, the
+ * story's first media item when it has one, and a meta line, closed by the
+ * feed's 4pt separator band.
  *
  * The wall shows only what the person authored themselves. Comments and replies
  * to questions still arrive on the stream (the API is unchanged) but are filtered
@@ -374,11 +251,8 @@ export default function UserProfileScreen({
   onOpenStory,
   onOpenComment,
   onOpenInquiry,
-  onUserUpdated,
-  onSetRooted,
-  onOpenBlockedUsers,
+  onOpenSettings,
   onOpenMedia,
-  onSignOut,
   onBack,
   showBackButton = true,
 }: UserProfileScreenProps): React.ReactElement {
@@ -392,7 +266,6 @@ export default function UserProfileScreen({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
   const [activeTab, setActiveTab] = useState<ActivityKind>(DEFAULT_PROFILE_TAB);
-  const [menuOpen, setMenuOpen] = useState(false);
   // The one card the wall judges to be on screen. Its video plays; every other
   // card's stays paused, so at most one video plays at a time (KNOT-020g-fix13).
   const [activeItemId, setActiveItemId] = useState<string | undefined>(undefined);
@@ -413,40 +286,8 @@ export default function UserProfileScreen({
     setIsMuted((current) => !current);
   }, []);
 
-  const [pickerVisible, setPickerVisible] = useState(false);
-  const [uploadingAvatar, setUploadingAvatar] = useState(false);
-  const [avatarError, setAvatarError] = useState<string | undefined>(undefined);
-
   const [blocking, setBlocking] = useState(false);
   const [blockError, setBlockError] = useState<string | undefined>(undefined);
-
-  // The options sheet. It dismisses on a downward drag of the handle, in addition
-  // to the backdrop tap and the Android hardware back button.
-  const dragY = useRef(new Animated.Value(0)).current;
-  const closeMenu = useCallback((): void => {
-    dragY.setValue(0);
-    setMenuOpen(false);
-  }, [dragY]);
-  const sheetPan = useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder: (_event, gesture) => gesture.dy > 2,
-        onPanResponderMove: (_event, gesture) => {
-          if (gesture.dy > 0) {
-            dragY.setValue(gesture.dy);
-          }
-        },
-        onPanResponderRelease: (_event, gesture) => {
-          if (gesture.dy > SHEET_CLOSE_DISTANCE || gesture.vy > 0.5) {
-            closeMenu();
-          } else {
-            Animated.spring(dragY, { toValue: 0, useNativeDriver: true }).start();
-          }
-        },
-      }),
-    [closeMenu, dragY],
-  );
 
   const loadFirstPage = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -504,22 +345,6 @@ export default function UserProfileScreen({
       setLoadingMore(false);
     }
   }, [loadingMore, nextCursor, token, userId]);
-
-  const handleAvatarPicked = useCallback(
-    async (media: PickedMedia): Promise<void> => {
-      setAvatarError(undefined);
-      setUploadingAvatar(true);
-      try {
-        const updated = await uploadAvatar(media.uri, media.mimeType, token);
-        onUserUpdated(updated);
-      } catch (caught) {
-        setAvatarError(describeError(caught));
-      } finally {
-        setUploadingAvatar(false);
-      }
-    },
-    [onUserUpdated, token],
-  );
 
   /**
    * Blocks the profile's owner after a confirmation, then returns to the previous
@@ -613,13 +438,21 @@ export default function UserProfileScreen({
           ) : undefined
         }
         right={
+          // On your own wall the overflow control opens Settings; on somebody
+          // else's it is the one action a visitor has — blocking them, confirmed
+          // first (KNOT-020k-fix22).
           <Pressable
             style={styles.iconButton}
-            onPress={() => setMenuOpen(true)}
+            onPress={isOwnProfile ? onOpenSettings : handleBlock}
+            disabled={!isOwnProfile && blocking}
             accessibilityRole="button"
-            accessibilityLabel="Profile options"
+            accessibilityLabel={isOwnProfile ? 'Settings' : 'Block this person'}
           >
-            <DotsThree color={colors.text.primary} size={24} weight="bold" />
+            {!isOwnProfile && blocking ? (
+              <ActivityIndicator size="small" color={colors.text.primary} />
+            ) : (
+              <DotsThree color={colors.text.primary} size={24} weight="bold" />
+            )}
           </Pressable>
         }
       />
@@ -677,31 +510,12 @@ export default function UserProfileScreen({
                       variant="secondary"
                       fullWidth
                       label="Edit profile"
-                      loading={uploadingAvatar}
-                      onPress={() => {
-                        setAvatarError(undefined);
-                        setPickerVisible(true);
-                      }}
+                      onPress={onOpenSettings}
                     />
                   </View>
                 ) : null}
 
                 {blockError !== undefined ? <Text style={styles.error}>{blockError}</Text> : null}
-                {avatarError !== undefined ? <Text style={styles.error}>{avatarError}</Text> : null}
-
-                <MediaPickerSheet
-                  visible={pickerVisible}
-                  allowVideo={false}
-                  onClose={() => setPickerVisible(false)}
-                  onPicked={(picked) => {
-                    // An avatar is a single image, so only the first is used.
-                    const first = picked[0];
-                    if (first !== undefined) {
-                      void handleAvatarPicked(first);
-                    }
-                  }}
-                  onError={setAvatarError}
-                />
               </View>
             ) : null}
 
@@ -857,74 +671,6 @@ export default function UserProfileScreen({
         }
         ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.spinner} /> : null}
       />
-
-      <Modal visible={menuOpen} transparent animationType="slide" onRequestClose={closeMenu}>
-        <Pressable
-          style={styles.sheetBackdrop}
-          onPress={closeMenu}
-          accessibilityRole="button"
-          accessibilityLabel="Close the options"
-        >
-          <Animated.View style={[styles.sheet, { transform: [{ translateY: dragY }] }]}>
-            {/* The handle is the drag target: a downward fling dismisses the
-                sheet, anything else springs it back. */}
-            <View style={styles.sheetHandleArea} {...sheetPan.panHandlers}>
-              <View style={styles.sheetHandle} />
-            </View>
-
-            <Pressable style={styles.sheetBody} onPress={() => undefined}>
-              {isOwnProfile ? (
-                <>
-                  <OptionRow
-                    icon={Camera}
-                    label="Edit avatar"
-                    onPress={() => {
-                      setMenuOpen(false);
-                      setAvatarError(undefined);
-                      setPickerVisible(true);
-                    }}
-                  />
-                  <OptionRow
-                    icon={Plant}
-                    label="Set Rooted"
-                    onPress={() => {
-                      setMenuOpen(false);
-                      onSetRooted();
-                    }}
-                  />
-                  <OptionRow
-                    icon={Prohibit}
-                    label="Blocked users"
-                    onPress={() => {
-                      setMenuOpen(false);
-                      onOpenBlockedUsers();
-                    }}
-                  />
-                  <OptionRow
-                    icon={SignOut}
-                    label="Sign out"
-                    danger
-                    onPress={() => {
-                      setMenuOpen(false);
-                      onSignOut();
-                    }}
-                  />
-                </>
-              ) : (
-                <OptionRow
-                  icon={Prohibit}
-                  label="Block user"
-                  busy={blocking}
-                  onPress={handleBlock}
-                />
-              )}
-              {/* The theme is a device preference, so it is offered whoever's
-                  profile this is — it changes nothing about the person shown. */}
-              <ThemeRow />
-            </Pressable>
-          </Animated.View>
-        </Pressable>
-      </Modal>
     </View>
   );
 }
@@ -936,15 +682,15 @@ const createStyles = (colors: ThemeColors) =>
       justifyContent: 'center',
     },
     // One activity card: the author line, the pillar tag or overline with the title
-    // and the body excerpt, then the media, then the meta line, closed by a
-    // full-bleed hairline (the design reference's tab content). The card has **no
-    // horizontal padding of its own** — the text blocks inside carry the gutter
-    // (`cardPadded`), which leaves the media frame a plain full-width child. The
-    // negative margin still cancels the list's gutter so the hairline spans the
-    // screen (KNOT-020g-fix8, KNOT-020k-fix20).
+    // and the body excerpt, then the media, then the meta line, closed by the feed's
+    // 4pt separator band — the same rhythm the Feed draws between its entries
+    // (KNOT-020g-fix8, KNOT-020k-fix22). The card has **no horizontal padding of its
+    // own** — the text blocks inside carry the gutter (`cardPadded`), which leaves
+    // the media frame a plain full-width child. The negative margin still cancels the
+    // list's gutter so the band spans the screen.
     card: {
-      borderBottomColor: colors.border.hairline,
-      borderBottomWidth: 1,
+      borderBottomColor: colors.bg.separator,
+      borderBottomWidth: 4,
       marginHorizontal: -layout.screenPaddingFeed,
       paddingVertical: spacing.lg,
     },
@@ -1055,64 +801,12 @@ const createStyles = (colors: ThemeColors) =>
       marginTop: spacing.lg,
       textAlign: 'center',
     },
-    // One row of the options sheet: a leading icon, the label, and a trailing
-    // chevron. Rows are separated by spacing alone — no drawn dividers
-    // (KNOT-020g-fix3).
-    option: {
-      alignItems: 'center',
-      flexDirection: 'row',
-      gap: spacing.md,
-      minHeight: 44,
-      paddingVertical: spacing.md,
-    },
-    // The theme row's current value, read before its switch (KNOT-020i).
-    optionValue: {
-      color: colors.text.tertiary,
-    },
-    optionLabel: {
-      color: colors.text.primary,
-      flex: 1,
-      // The brief asks for a heavier label than the body composite's 400; 700 is the
-      // weight every other label in the app carries (KNOT-020g-fix2).
-      fontWeight: fontWeights.bold,
-    },
-    optionLabelDanger: {
-      color: colors.state.danger,
-    },
     profileBlock: {
       alignItems: 'center',
       paddingTop: spacing.md,
     },
     rootedRow: {
       marginTop: spacing.sm,
-    },
-    // The options bottom sheet: rounded top corners, the canvas fill, and the
-    // floating-bar shadow (elevation 3, whose offset points up).
-    sheet: {
-      ...elevation[3],
-      backgroundColor: colors.bg.sheet,
-      borderTopLeftRadius: radius.xxl,
-      borderTopRightRadius: radius.xxl,
-      paddingBottom: spacing.xl,
-    },
-    sheetBackdrop: {
-      backgroundColor: colors.scrim.overlay,
-      flex: 1,
-      justifyContent: 'flex-end',
-    },
-    sheetBody: {
-      paddingHorizontal: spacing.lg,
-    },
-    sheetHandle: {
-      backgroundColor: colors.border.hairline,
-      borderRadius: radius.pill,
-      height: 4,
-      width: 32,
-    },
-    sheetHandleArea: {
-      alignItems: 'center',
-      paddingBottom: spacing.sm,
-      paddingTop: spacing.sm,
     },
     spinner: {
       marginVertical: spacing.xl,

@@ -51,6 +51,7 @@ import RootedSetupScreen from './src/screens/profile/RootedSetupScreen';
 import BlockedUsersScreen from './src/screens/profile/BlockedUsersScreen';
 import UserProfileScreen from './src/screens/profile/UserProfileScreen';
 import SearchScreen from './src/screens/search/SearchScreen';
+import SettingsScreen from './src/screens/settings/SettingsScreen';
 import SplashScreen from './src/screens/splash/SplashScreen';
 import { SPLASH_DURATION_MS, postSplashDestination } from './src/screens/splash/splash';
 import AdaptStoryScreen from './src/screens/stories/AdaptStoryScreen';
@@ -130,6 +131,7 @@ type Overlay =
   | { readonly name: 'askInquiry' }
   | { readonly name: 'search' }
   | { readonly name: 'blockedUsers' }
+  | { readonly name: 'settings' }
   | { readonly name: 'userProfile'; readonly userId: string };
 
 /** The two auth screens, shown before there is a session. Login is the default. */
@@ -822,6 +824,21 @@ function ThemedApp(): React.ReactElement {
         );
       case 'blockedUsers':
         return <BlockedUsersScreen token={current.accessToken} onBack={handleBack} />;
+      case 'settings':
+        // The account and preferences surface (KNOT-020k-fix22). Pushed over the
+        // profile it was opened from, so Back returns to the wall.
+        return (
+          <SettingsScreen
+            token={current.accessToken}
+            onBack={handleBack}
+            onUserUpdated={handleUserUpdated}
+            onSetRooted={() => setOverlays((stack) => pushOverlay(stack, { name: 'rootedSetup' }))}
+            onOpenBlockedUsers={() =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'blockedUsers' }))
+            }
+            onSignOut={handleSignOut}
+          />
+        );
       case 'userProfile':
         return (
           <UserProfileScreen
@@ -837,13 +854,8 @@ function ThemedApp(): React.ReactElement {
             onOpenInquiry={(inquiryId) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'inquiry', inquiryId }))
             }
-            onUserUpdated={handleUserUpdated}
-            onSetRooted={() => setOverlays((stack) => pushOverlay(stack, { name: 'rootedSetup' }))}
-            onOpenBlockedUsers={() =>
-              setOverlays((stack) => pushOverlay(stack, { name: 'blockedUsers' }))
-            }
+            onOpenSettings={() => setOverlays((stack) => pushOverlay(stack, { name: 'settings' }))}
             onOpenMedia={openMediaViewer}
-            onSignOut={handleSignOut}
             onBack={handleBack}
           />
         );

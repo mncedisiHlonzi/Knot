@@ -575,13 +575,13 @@ const createStyles = (colors: ThemeColors) =>
       marginTop: spacing.md,
     },
     // One result: the overline kind, the title, up to two lines of preview, the
-    // author line, and the pillar-and-place line, closed by a full-bleed hairline.
-    // Flat rather than a card, because the design system keeps a canvas free of
-    // cards; the negative inset lets the hairline run edge to edge while the text
-    // stays on the screen's padding.
+    // author line, and the pillar-and-place line, closed by the Feed's 4pt
+    // separator band. Flat rather than a card, because the design system keeps a
+    // canvas free of cards; the negative inset lets the band run edge to edge while
+    // the text stays on the screen's padding (KNOT-020k-fix22).
     result: {
-      borderBottomColor: colors.border.hairline,
-      borderBottomWidth: 1,
+      borderBottomColor: colors.bg.separator,
+      borderBottomWidth: 4,
       gap: spacing.xs,
       marginHorizontal: -layout.screenPaddingFeed,
       paddingHorizontal: layout.screenPaddingFeed,

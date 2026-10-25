@@ -381,6 +381,7 @@ export default function PlaceStoriesScreen({
         data={stories}
         keyExtractor={(story) => story.id}
         contentContainerStyle={styles.content}
+        ItemSeparatorComponent={StorySeparator}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -420,6 +421,10 @@ export default function PlaceStoriesScreen({
               title: item.title,
               version_count: item.version_count,
             }}
+            // The card draws no rule of its own: the list separates two entries
+            // with the Feed's 4pt band, and the meta row owns the space below it
+            // (KNOT-020k-fix22).
+            showBottomHairline={false}
             isVisible={item.id === activeItemId}
             isMuted={isMuted}
             onToggleMute={toggleMute}
@@ -452,6 +457,15 @@ export default function PlaceStoriesScreen({
   );
 }
 
+/**
+ * The band between two place stories: the Feed's 4pt separator, so a list of
+ * stories reads with one rhythm wherever it is drawn (KNOT-020k-fix22).
+ */
+function StorySeparator(): React.ReactElement {
+  const styles = useThemedStyles(createStyles);
+  return <View style={styles.separator} />;
+}
+
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
     // The pillar chip row, the same control the Discovery Map's sheet draws: a
@@ -474,6 +488,12 @@ const createStyles = (colors: ThemeColors) =>
     // (`FeedEntry` uses `layout.screenPaddingFeed`), so the list adds none.
     content: {
       paddingBottom: spacing.xxxl,
+    },
+    // The 4pt band between two entries — the same separator the Feed draws, so a
+    // place's stories read with the feed's rhythm (KNOT-020k-fix22).
+    separator: {
+      backgroundColor: colors.bg.separator,
+      height: 4,
     },
     error: {
       color: colors.state.danger,
