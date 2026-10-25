@@ -309,30 +309,27 @@ export default function SettingsScreen({
       />
 
       <ScrollView contentContainerStyle={styles.content}>
-        {/* The signed-in person's own header, as a left-aligned profile row: the
-            face on the left, the name and the Rooted summary stacked beside it, so
-            the block reads as a card rather than as a centred badge over a list
-            (KNOT-020k-fix24). Nothing here is a control. */}
+        {/* The signed-in person's own header, matching the top of the Profile
+            screen: the face on top, the name and the Rooted summary centred
+            underneath (KNOT-020k-fix25). Nothing here is a control. */}
         {profile === undefined ? null : (
           <View style={styles.profileHeader}>
             <Avatar
               uri={avatarUri(profile.avatar_url)}
               displayName={profile.display_name}
-              size="lg"
+              size="xl"
             />
-            <View style={styles.profileIdentity}>
-              <Text style={[typeScale.h2, styles.profileName]} numberOfLines={1}>
-                {profile.display_name}
-              </Text>
-              {profile.rooted === null ? null : (
-                <View style={styles.profileRooted}>
-                  <RootedBadge
-                    place={profile.rooted.place}
-                    durationBucket={profile.rooted.duration_bucket}
-                  />
-                </View>
-              )}
-            </View>
+            <Text style={[typeScale.h2, styles.profileName]} numberOfLines={1}>
+              {profile.display_name}
+            </Text>
+            {profile.rooted === null ? null : (
+              <View style={styles.profileRooted}>
+                <RootedBadge
+                  place={profile.rooted.place}
+                  durationBucket={profile.rooted.duration_bucket}
+                />
+              </View>
+            )}
           </View>
         )}
 
@@ -440,25 +437,20 @@ const createStyles = (colors: ThemeColors) =>
     rowValue: {
       color: colors.text.tertiary,
     },
-    // The header is a left-aligned profile row: the face on the left, the name and
-    // the Rooted summary stacked beside it (KNOT-020k-fix24). A 48pt avatar keeps
-    // the row the height of two text lines instead of towering over them.
+    // The header is a centred column, the shape the Profile wall opens with: an
+    // 88pt face, the name beneath it, then the Rooted summary (KNOT-020k-fix25).
     profileHeader: {
       alignItems: 'center',
-      flexDirection: 'row',
-      gap: spacing.md,
       paddingHorizontal: layout.screenPaddingFeed,
       paddingVertical: spacing.lg,
     },
-    profileIdentity: {
-      flexShrink: 1,
-    },
     profileName: {
       color: colors.text.primary,
+      marginTop: spacing.md,
+      textAlign: 'center',
     },
     profileRooted: {
-      alignSelf: 'flex-start',
-      marginTop: spacing.xs,
+      marginTop: spacing.sm,
     },
     section: {
       marginTop: spacing.xl,

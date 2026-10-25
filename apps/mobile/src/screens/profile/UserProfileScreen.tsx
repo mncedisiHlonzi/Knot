@@ -4,6 +4,7 @@ import {
   Alert,
   FlatList,
   Image,
+  Modal,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -34,7 +35,16 @@ import type { ViewerMedia, ViewerStory } from '../../components/MediaGalleryModa
 import PillarTag from '../../components/PillarTag';
 import RootedBadge from '../../components/RootedBadge';
 import { API_BASE_URL } from '../../config/api';
-import { layout, spacing, tabularNums, typeScale, useTheme, useThemedStyles } from '../../theme';
+import {
+  elevation,
+  layout,
+  radius,
+  spacing,
+  tabularNums,
+  typeScale,
+  useTheme,
+  useThemedStyles,
+} from '../../theme';
 import type { ThemeColors } from '../../theme';
 import { PLACEHOLDER_MEDIA_ASPECT_RATIO } from '../../utils/mediaFrame';
 import { useMediaAspectRatio } from '../../utils/useMediaAspectRatio';
@@ -289,6 +299,14 @@ export default function UserProfileScreen({
   const [blocking, setBlocking] = useState(false);
   const [blockError, setBlockError] = useState<string | undefined>(undefined);
 
+  // A visitor's overflow control opens a small action sheet rather than asking to
+  // block straight away: the menu is where the action belongs, and choosing it
+  // still runs the confirmation below (KNOT-020k-fix25).
+  const [visitorMenuOpen, setVisitorMenuOpen] = useState(false);
+  const closeVisitorMenu = useCallback((): void => {
+    setVisitorMenuOpen(false);
+  }, []);
+
   const loadFirstPage = useCallback(async (): Promise<void> => {
     setLoading(true);
     setError(undefined);
@@ -439,14 +457,14 @@ export default function UserProfileScreen({
         }
         right={
           // On your own wall the overflow control opens Settings; on somebody
-          // else's it is the one action a visitor has — blocking them, confirmed
-          // first (KNOT-020k-fix22).
+          // else's it opens a small action sheet, whose Block row then asks for
+          // confirmation (KNOT-020k-fix22, KNOT-020k-fix25).
           <Pressable
             style={styles.iconButton}
-            onPress={isOwnProfile ? onOpenSettings : handleBlock}
+            onPress={isOwnProfile ? onOpenSettings : () => setVisitorMenuOpen(true)}
             disabled={!isOwnProfile && blocking}
             accessibilityRole="button"
-            accessibilityLabel={isOwnProfile ? 'Settings' : 'Block this person'}
+            accessibilityLabel={isOwnProfile ? 'Settings' : 'Profile options'}
           >
             {!isOwnProfile && blocking ? (
               <ActivityIndicator size="small" color={colors.text.primary} />
@@ -671,6 +689,43 @@ export default function UserProfileScreen({
         }
         ListFooterComponent={loadingMore ? <ActivityIndicator style={styles.spinner} /> : null}
       />
+
+      {/* A visitor's action sheet. Choosing Block user closes the sheet and runs
+          the existing confirmation, so nothing destructive happens without a
+          second, explicit answer (KNOT-020k-fix25). */}
+      <Modal
+        visible={visitorMenuOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={closeVisitorMenu}
+      >
+        <Pressable
+          style={styles.sheetBackdrop}
+          onPress={closeVisitorMenu}
+          accessibilityRole="button"
+          accessibilityLabel="Close the profile options"
+        >
+          {/* The card swallows its own taps, so choosing an action never falls
+              through to the backdrop and closes the sheet first. */}
+          <Pressable style={styles.sheet} onPress={() => undefined}>
+            <View style={styles.sheetHandleArea}>
+              <View style={styles.sheetHandle} />
+            </View>
+            <View style={styles.sheetBody}>
+              <Button
+                variant="danger"
+                fullWidth
+                label="Block user"
+                onPress={() => {
+                  closeVisitorMenu();
+                  handleBlock();
+                }}
+              />
+              <Button variant="secondary" fullWidth label="Cancel" onPress={closeVisitorMenu} />
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -807,6 +862,36 @@ const createStyles = (colors: ThemeColors) =>
     },
     rootedRow: {
       marginTop: spacing.sm,
+    },
+    // The visitor's action sheet: the same treatment `ConfirmSheet` uses — scrim
+    // backdrop, canvas card with rounded top corners and the floating-bar shadow
+    // — so an option menu looks like the rest of the app (KNOT-020k-fix25).
+    sheet: {
+      ...elevation[3],
+      backgroundColor: colors.bg.canvas,
+      borderTopLeftRadius: radius.xxl,
+      borderTopRightRadius: radius.xxl,
+      paddingBottom: spacing.xl,
+    },
+    sheetBackdrop: {
+      backgroundColor: colors.scrim.overlay,
+      flex: 1,
+      justifyContent: 'flex-end',
+    },
+    sheetBody: {
+      gap: spacing.sm,
+      paddingHorizontal: spacing.lg,
+    },
+    sheetHandle: {
+      backgroundColor: colors.border.hairline,
+      borderRadius: radius.pill,
+      height: 4,
+      width: 32,
+    },
+    sheetHandleArea: {
+      alignItems: 'center',
+      paddingBottom: spacing.sm,
+      paddingTop: spacing.sm,
     },
     spinner: {
       marginVertical: spacing.xl,

@@ -211,6 +211,8 @@ describe('SettingsScreen', () => {
     expect(avatar?.props?.displayName).toBe(mockProfile.display_name);
     // The relative path is resolved against the API base before it reaches Avatar.
     expect(avatar?.props?.uri).toBe(`http://localhost:8080${mockProfile.avatar_url}`);
+    // The face is the large one, so the block reads like the top of a profile.
+    expect(avatar?.props?.size).toBe('xl');
 
     const rooted = byType(RootedBadge);
     expect(rooted?.props?.place).toBe(mockProfile.rooted.place);
@@ -218,6 +220,22 @@ describe('SettingsScreen', () => {
 
     // The name is drawn as text by the screen itself.
     expect(renderedText(expand(screen))).toContain(mockProfile.display_name);
+  });
+
+  // The header is a centred column: the name and the Rooted summary sit under the
+  // face rather than beside it (KNOT-020k-fix25).
+  it('centres the name under the avatar', () => {
+    let nameStyle: unknown;
+
+    walk(renderScreen(), (candidate) => {
+      if (candidate.type === 'Text' && candidate.props?.children === mockProfile.display_name) {
+        nameStyle = candidate.props.style;
+      }
+    });
+
+    expect(nameStyle).toEqual(
+      expect.arrayContaining([expect.objectContaining({ textAlign: 'center' })]),
+    );
   });
 
   it('separates its rows with whitespace instead of rules', () => {

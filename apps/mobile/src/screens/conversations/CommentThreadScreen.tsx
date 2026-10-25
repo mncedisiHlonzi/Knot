@@ -25,7 +25,6 @@ import Button from '../../components/Button';
 import EmptyState from '../../components/EmptyState';
 import Header from '../../components/Header';
 import LanguagePicker from '../../components/LanguagePicker';
-import ReportAction from '../../components/ReportAction';
 import { isLanguageCode } from '../../data/languages';
 import { layout, radius, spacing, typeScale, useTheme, useThemedStyles } from '../../theme';
 import type { ThemeColors } from '../../theme';
@@ -393,7 +392,6 @@ export default function CommentThreadScreen({
                     <Text style={[typeScale.button, styles.linkText]}>{linkLabel}</Text>
                   </Pressable>
                 ) : null}
-                <ReportAction token={token} entityType="comment" entityId={item.id} />
               </View>
 
               {visibleReplies.map((reply) => (
@@ -415,7 +413,6 @@ export default function CommentThreadScreen({
                     >
                       <Text style={[typeScale.button, styles.actionText]}>Reply</Text>
                     </Pressable>
-                    <ReportAction token={token} entityType="comment" entityId={reply.id} />
                   </View>
                 </View>
               ))}
