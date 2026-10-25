@@ -115,16 +115,16 @@ describe('the dark role set', () => {
   const light = getColors('light');
 
   it('paints the dark canvas, paper and sheet from the dark palette', () => {
-    expect(dark.bg.canvas).toBe('#0D0F16');
-    expect(dark.bg.paper).toBe('#14171F');
-    expect(dark.bg.sheet).toBe('#161A24');
+    expect(dark.bg.canvas).toBe('#000000');
+    expect(dark.bg.paper).toBe('#16181C');
+    expect(dark.bg.sheet).toBe('#22252A');
     expect(dark.bg.canvas).not.toBe(light.bg.canvas);
   });
 
   it('inverts the inks so text stays readable', () => {
-    expect(dark.text.primary).toBe('#F1F3F8');
-    expect(dark.text.secondary).toBe('#C5CBD8');
-    expect(dark.text.tertiary).toBe('#98A2B3');
+    expect(dark.text.primary).toBe('#E7E9EA');
+    expect(dark.text.secondary).toBe('#71767B');
+    expect(dark.text.tertiary).toBe('#536471');
   });
 
   it('resolves the brand accent from the dark palette names', () => {

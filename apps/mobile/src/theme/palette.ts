@@ -36,16 +36,31 @@ export const palette = {
     wonderFill: '#E8F3F6',
     danger: '#C2362B',
   },
+  /**
+   * Classic, neutral dark mode (KNOT-020k-fix18).
+   *
+   * Surfaces are pure or near-pure grey — black canvas, a lifted neutral panel,
+   * a recessed field tone, a neutral hairline — with no blue or violet cast. The
+   * previous ramp carried a navy cast in every surface, which is exactly what
+   * the founder asked to replace with the neutral dark theme of X/Twitter and
+   * LinkedIn.
+   *
+   * The accent roles are deliberately UNCHANGED (`indigoText` / `indigoFill` /
+   * `indigoOnTint`): the brand purple is an accent, not a surface, and in a dark
+   * theme it has to stay legible both as ink on black and as a fill under the
+   * black `text.onBrand` label. Light-mode `indigo600` (`#5B35E8`) is only about
+   * 3.1:1 against black, so it remains the light theme's fill.
+   */
   dark: {
-    canvas: '#0D0F16',
-    paper: '#14171F',
-    sheet: '#161A24',
-    sunken: '#1A1E29',
-    line: '#232733',
-    ink900: '#F1F3F8',
-    ink700: '#C5CBD8',
-    ink500: '#98A2B3',
-    ink400: '#6B7487',
+    canvas: '#000000',
+    paper: '#16181C',
+    sheet: '#22252A',
+    sunken: '#1E2024',
+    line: '#2F3336',
+    ink900: '#E7E9EA',
+    ink700: '#71767B',
+    ink500: '#536471',
+    ink400: '#3F4448',
     indigoText: '#9D8BFF',
     indigoFill: '#6D4DF0',
     indigoOnTint: '#B6A9FF',
@@ -55,6 +70,6 @@ export const palette = {
     heritageFill: '#2B1D16',
     wonderText: '#6BC4D8',
     wonderFill: '#12262C',
-    danger: '#F0786D',
+    danger: '#F4212E',
   },
 } as const;

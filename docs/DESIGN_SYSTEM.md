@@ -65,6 +65,13 @@ export default function Screen() {
 returned object keeps its identity across renders. `useTheme()` also returns
 `setTheme`/`toggleTheme`, which apply **and persist** the choice.
 
+- **Neutral, classic dark mode.** The dark palette is deliberately UNTINTED: a
+  pure-black canvas (`#000000`), a neutral panel grey (`#16181C`), a lifted sheet
+  grey (`#22252A`), a recessed field grey (`#1E2024`) and a neutral hairline
+  (`#2F3336`) — no blue, navy or violet cast in any surface (KNOT-020k-fix18).
+  Purple is an **accent only** here — primary buttons, active icons and links —
+  never a background; `brand.tint`/`brand.surface` are selected-state surfaces,
+  not page fills.
 - **Default.** On first launch the app follows the system appearance
   (`Appearance.getColorScheme()`), falling back to light when it cannot be read.
   An explicit choice is stored under `knot.theme.v1` and wins from then on.
@@ -84,7 +91,7 @@ returned object keeps its identity across renders. `useTheme()` also returns
   canvas colour in both themes. A pressed brand control **brightens** in dark
   (`indigoOnTint`) and darkens in light (`indigo700`).
 - **`border.divider`** has no swatch in the reference; the role owns both values
-  (light `#D5D9E0`, dark `#2E3442`) one step off the hairline in each theme.
+  (light `#D5D9E0`, dark `#35393D`) one step off the hairline in each theme.
 - **`text.onMedia`** is the ink for text and glyphs drawn over media, on a
   `scrim.overlay` chip or disc (a video timestamp, the "Video" tag, a media
   count, a play or mute glyph). It is white in **both** themes, because the scrim

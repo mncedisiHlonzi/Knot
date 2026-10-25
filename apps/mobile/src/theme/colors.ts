@@ -78,12 +78,13 @@ type ActivePalette = {
 /**
  * The `border.divider` role has no swatch in the design reference: the reference
  * draws the attribution rule with a colour it never names as a token. The light
- * value is the reference's field-border grey; the dark value is one step lighter
- * than the dark hairline, so the two rules stay distinguishable there too.
+ * value is the reference's field-border grey; the dark value is a neutral grey
+ * one step lighter than the dark hairline, so the two rules stay distinguishable
+ * there too without reintroducing the blue cast the old dark palette had.
  * Defining both here keeps the role owned by this layer, as it was before
  * (KNOT-023a).
  */
-const DIVIDER = { light: '#D5D9E0', dark: '#2E3442' } as const;
+const DIVIDER = { light: '#D5D9E0', dark: '#35393D' } as const;
 
 /**
  * The ink drawn over media, on a `scrim.overlay` chip or disc.
