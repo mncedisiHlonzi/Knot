@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv"
 
 	"github.com/knot/backend/internal/appinfo"
 	"github.com/knot/backend/internal/auth"
@@ -63,6 +64,14 @@ const (
 )
 
 func main() {
+	// Local development convenience: the repository root .env is loaded into the
+	// process environment before any config is read. The path is relative to the
+	// working directory, which is backend/go for the documented `go run ./cmd/knot`,
+	// and a missing file is not an error — production sets real environment
+	// variables, and godotenv never overrides one that is already set, so a value
+	// exported by the shell always wins over the file.
+	_ = godotenv.Load("../../.env")
+
 	if err := run(os.Args[1:]); err != nil {
 		// The logger is built inside run, so report failures on stderr.
 		fmt.Fprintf(os.Stderr, "%s: %v\n", appinfo.Name, err)

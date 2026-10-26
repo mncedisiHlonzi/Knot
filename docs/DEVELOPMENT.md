@@ -2649,6 +2649,10 @@ through Resend** (KNOT-ADR-090). How you read the link depends on whether
 that needs no verified domain. A deployment with its own domain sets it to that domain,
 because the sandbox address only delivers to the Resend account's own mailbox.
 
+Running `go run ./cmd/knot` from `backend/go` loads the repository-root `.env` automatically,
+so a value placed there needs no export. The file only fills in what is unset: a variable
+exported in the shell always wins, and a missing `.env` is not an error.
+
 ### The full round trip (no Resend account needed)
 
 ```bash
