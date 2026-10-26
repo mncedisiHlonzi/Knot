@@ -307,6 +307,13 @@ type TokenOutput struct {
 // (KNOT-ADR-083). The verification link is emailed best-effort: a delivery failure
 // is logged and the account remains, because the person can ask for another link
 // (KNOT-ADR-090).
+//
+// An address that already belongs to an **unverified** account is answered with
+// ErrEmailTaken exactly as before, but a fresh verification link is emailed first.
+// Without that, an account created before delivery was configured, or one whose
+// first message was lost, could never obtain another link from this endpoint: the
+// client has no resend action, so registering again was a permanent dead end
+// rather than a recovery (KNOT-031a-fix2). A verified account is left alone.
 func (s *Service) Register(ctx context.Context, in RegisterInput) (*identity.User, error) {
 	email, err := identity.ValidateEmail(in.Email)
 	if err != nil {
@@ -347,6 +354,10 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*identity.Use
 	})
 	if err != nil {
 		if errors.Is(err, identity.ErrEmailTaken) {
+			// The answer stays ErrEmailTaken, but an unverified account is given a
+			// fresh link first so a second registration attempt recovers instead of
+			// dead-ending (KNOT-031a-fix2).
+			s.reissueVerificationForUnverifiedAccount(ctx, email)
 			return nil, identity.ErrEmailTaken
 		}
 		return nil, fmt.Errorf("auth: register: %w", err)
@@ -392,6 +403,43 @@ func (s *Service) issueEmailVerification(ctx context.Context, user *identity.Use
 	return nil
 }
 
+// reissueVerificationForUnverifiedAccount gives an account that already exists a
+// fresh verification link when registration is attempted again with its address.
+//
+// It never changes the caller's answer: Register has already decided on
+// ErrEmailTaken, and this only makes that failure recoverable. The address is
+// resolved through the active-user lookup, so a deleted account is not emailed,
+// and an account that is already verified is left alone because there is nothing
+// left to verify.
+//
+// Every failure is logged rather than returned, for the same reason the first send
+// is best-effort: the response must not depend on the provider (KNOT-ADR-090). An
+// account that is not found is not logged, because that is the ordinary result of
+// losing a race with a purge.
+func (s *Service) reissueVerificationForUnverifiedAccount(ctx context.Context, address string) {
+	existing, err := s.users.FindActiveUserByEmail(ctx, address)
+	if err != nil {
+		if !errors.Is(err, identity.ErrUserNotFound) {
+			s.logger.WarnContext(ctx, "could not read the existing account to re-send verification",
+				slog.String("email", address),
+				slog.String("error", err.Error()),
+			)
+		}
+		return
+	}
+
+	if existing.EmailVerifiedAt != nil {
+		return
+	}
+
+	if err := s.issueEmailVerification(ctx, existing); err != nil {
+		s.logger.WarnContext(ctx, "could not re-send the verification email",
+			slog.String("email", address),
+			slog.String("error", err.Error()),
+		)
+	}
+}
+
 // verificationAction is the three views of one verification secret: the https link
 // the button points at, the deep link for a device with the app installed, and the
 // raw token shown underneath so the person can always paste it by hand
@@ -433,7 +481,16 @@ func (s *Service) sendVerificationEmail(ctx context.Context, user *identity.User
 			slog.String("expires_at", expiresAt.UTC().Format(time.RFC3339)),
 			slog.String("error", err.Error()),
 		)
+		return
 	}
+
+	// The success line is what makes a silent failure impossible to mistake for a
+	// delivery: a registration that produces neither this line nor the warning
+	// above never reached the send at all (KNOT-031a-fix2).
+	s.logger.InfoContext(ctx, "verification email accepted for delivery",
+		slog.String("email", user.Email),
+		slog.String("expires_at", expiresAt.UTC().Format(time.RFC3339)),
+	)
 }
 
 // VerifyEmail marks the account as verified and consumes the token.

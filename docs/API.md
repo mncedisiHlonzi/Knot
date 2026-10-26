@@ -115,6 +115,11 @@ for another link with
 [`POST /auth/resend-verification`](#post-authresend-verification). See
 [Testing Auth Locally](DEVELOPMENT.md#testing-auth-locally).
 
+Registering again with the address of an account that already exists is still `409
+email_taken`, but when that account is **not yet verified** a fresh verification link is
+emailed before the response (KNOT-031a-fix2). A second registration attempt is therefore a
+recovery rather than a dead end. An account that is already verified is not emailed again.
+
 **Request**
 
 ```json
@@ -344,8 +349,10 @@ Limited to **3 requests per hour per address**.
 ## POST /auth/resend-verification
 
 Emails a fresh verification link to an account whose address is not verified yet
-(KNOT-ADR-090). This is the way an existing unverified account recovers: registration only
-sends the first link.
+(KNOT-ADR-090). This is the quiet way an existing unverified account recovers — it answers
+the same way for every address, so it cannot be used to discover whether an account
+exists. Registration does not need it: repeating `POST /auth/register` with an unverified
+address re-sends the link as well (KNOT-031a-fix2).
 
 **Request**
 

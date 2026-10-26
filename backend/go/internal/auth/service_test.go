@@ -1485,6 +1485,107 @@ func TestRegisterSurvivesAFailedVerificationEmail(t *testing.T) {
 	}
 }
 
+// TestRegisterSendsTheVerificationEmail is the positive half of the contract: a
+// freshly registered account is emailed a link, addressed to the account, using
+// the verification subject, and the success is recorded in the log. Without a
+// success line a silent non-delivery is indistinguishable from a delivery.
+func TestRegisterSendsTheVerificationEmail(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+
+	if _, err := h.service.Register(context.Background(), RegisterInput{
+		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+	}); err != nil {
+		t.Fatalf("Register() error = %v, want nil", err)
+	}
+
+	messages := h.emails.messages()
+	if len(messages) != 1 {
+		t.Fatalf("emails sent = %d, want exactly 1", len(messages))
+	}
+
+	msg := messages[0]
+	if msg.To != "ada@example.com" {
+		t.Errorf("email sent to %q, want the registered address", msg.To)
+	}
+	if msg.Subject != email.VerificationSubject {
+		t.Errorf("subject = %q, want %q", msg.Subject, email.VerificationSubject)
+	}
+	if !strings.Contains(msg.Text, defaultVerificationLinkBase) {
+		t.Errorf("the verification email has no link; body:\n%s", msg.Text)
+	}
+
+	if !strings.Contains(h.logs.String(), "verification email accepted for delivery") {
+		t.Errorf("the accepted send was not logged; logs:\n%s", h.logs.String())
+	}
+}
+
+// TestRegisterResendsVerificationForAnUnverifiedAccount proves the dead end is
+// gone: registering again with an address that belongs to an unverified account
+// still answers ErrEmailTaken, but a fresh link is emailed first, because the
+// client has no other way to ask for one (KNOT-031a-fix2).
+func TestRegisterResendsVerificationForAnUnverifiedAccount(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	input := RegisterInput{
+		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+	}
+
+	if _, err := h.service.Register(context.Background(), input); err != nil {
+		t.Fatalf("first Register() error = %v, want nil", err)
+	}
+
+	firstMessages := h.emails.messages()
+	if len(firstMessages) != 1 {
+		t.Fatalf("emails after the first register = %d, want 1", len(firstMessages))
+	}
+	firstToken := h.latestEmailToken(t, defaultVerificationLinkBase)
+
+	if _, err := h.service.Register(context.Background(), input); !errors.Is(err, identity.ErrEmailTaken) {
+		t.Fatalf("second Register() error = %v, want ErrEmailTaken", err)
+	}
+
+	secondMessages := h.emails.messages()
+	if len(secondMessages) != 2 {
+		t.Fatalf("emails after the second register = %d, want 2", len(secondMessages))
+	}
+
+	secondToken := h.latestEmailToken(t, defaultVerificationLinkBase)
+	if secondToken == firstToken {
+		t.Error("the re-sent verification link reused the first token")
+	}
+
+	// The re-issued link is the one that works, so the recovery is real rather
+	// than a second undeliverable message.
+	if err := h.service.VerifyEmail(context.Background(), secondToken); err != nil {
+		t.Fatalf("VerifyEmail(re-issued token) error = %v, want nil", err)
+	}
+}
+
+// TestRegisterDoesNotResendVerificationForAVerifiedAccount keeps the re-issue
+// narrow: an address whose owner has already proved it has nothing to verify, so
+// a duplicate registration attempt must not generate mail.
+func TestRegisterDoesNotResendVerificationForAVerifiedAccount(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	h.registerAndVerify(t)
+
+	before := len(h.emails.messages())
+
+	if _, err := h.service.Register(context.Background(), RegisterInput{
+		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+	}); !errors.Is(err, identity.ErrEmailTaken) {
+		t.Fatalf("Register() error = %v, want ErrEmailTaken", err)
+	}
+
+	if after := len(h.emails.messages()); after != before {
+		t.Errorf("emails sent = %d, want %d: a verified account must not be emailed again", after, before)
+	}
+}
+
 // TestForgotPasswordSurvivesAFailedResetEmail is the same contract for the reset
 // message. The endpoint must answer the same way for every address, so a provider
 // failure can never surface as an error (KNOT-ADR-087, KNOT-ADR-090).
