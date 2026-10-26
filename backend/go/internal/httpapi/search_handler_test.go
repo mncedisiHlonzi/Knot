@@ -125,6 +125,7 @@ func newSearchRouter(t *testing.T, logger *slog.Logger, service SearchService, b
 		newTestInquiriesHandler(t, logger),
 		newTestModerationHandler(t, logger),
 		newSearchHandlerWith(t, logger, service, &fakeAuthorService{}, &fakeRootedService{}),
+		newTestAccountHandler(t, logger),
 		authMiddleware,
 		"0.1.0",
 		logger,

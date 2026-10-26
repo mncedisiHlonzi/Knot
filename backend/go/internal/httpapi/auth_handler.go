@@ -167,6 +167,10 @@ type tokenResponse struct {
 	AccessToken  string       `json:"access_token"`
 	RefreshToken string       `json:"refresh_token"`
 	ExpiresIn    int          `json:"expires_in"`
+	// Recovered is true when this sign-in cancelled a pending account deletion, so a
+	// client can welcome the person back instead of pretending nothing happened
+	// (KNOT-ADR-081). It is false on refresh, which never recovers anything.
+	Recovered bool `json:"recovered"`
 }
 
 // sessionResponse is one entry of GET /auth/sessions.
@@ -414,11 +418,18 @@ func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 
 // allow counts one attempt against limit and, when the limit is exceeded, writes
 // the 429 response with Retry-After and reports false.
+func (h *AuthHandler) allow(w http.ResponseWriter, r *http.Request, limit auth.Limit, key string) bool {
+	return allowAttempt(w, r, h.limiter, h.logger, limit, key)
+}
+
+// allowAttempt is the shared body of every rate-limit check in the API. It lives at
+// package level because the account handler needs the same behaviour on recovery,
+// which verifies a password and so must be counted like sign-in.
 //
 // Retry-After is the whole window: it is the longest the caller can possibly need
 // to wait, so a client that honours it is always correct.
-func (h *AuthHandler) allow(w http.ResponseWriter, r *http.Request, limit auth.Limit, key string) bool {
-	result := h.limiter.Allow(r.Context(), limit, key)
+func allowAttempt(w http.ResponseWriter, r *http.Request, limiter *auth.Limiter, logger *slog.Logger, limit auth.Limit, key string) bool {
+	result := limiter.Allow(r.Context(), limit, key)
 	if result.Allowed {
 		return true
 	}
@@ -429,7 +440,7 @@ func (h *AuthHandler) allow(w http.ResponseWriter, r *http.Request, limit auth.L
 	}
 	w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 
-	h.logger.WarnContext(r.Context(),
+	logger.WarnContext(r.Context(),
 		"rate limit exceeded",
 		slog.String("request_id", RequestIDFromContext(r.Context())),
 		slog.String("path", r.URL.Path),
@@ -459,6 +470,11 @@ func (h *AuthHandler) writeServiceError(w http.ResponseWriter, r *http.Request, 
 			"verify your email address before signing in")
 	case errors.Is(err, identity.ErrInvalidCredentials):
 		writeError(w, http.StatusUnauthorized, codeInvalidCreds, "invalid credentials")
+	case errors.Is(err, identity.ErrAccountDeleted):
+		writeError(w, http.StatusForbidden, codeAccountDeleted, "this account has been deleted")
+	case errors.Is(err, identity.ErrAccountPendingPurge):
+		writeError(w, http.StatusGone, codeAccountPendingPurge,
+			"this account has been deleted and can no longer be recovered")
 	case errors.Is(err, auth.ErrInvalidRefreshToken), errors.Is(err, auth.ErrRefreshTokenReused):
 		writeError(w, http.StatusUnauthorized, codeInvalidRefreshToken, "sign in again")
 	case errors.Is(err, auth.ErrInvalidVerificationToken):
@@ -510,6 +526,7 @@ func newTokenResponse(result *auth.TokenOutput) tokenResponse {
 		AccessToken:  result.AccessToken,
 		RefreshToken: result.RefreshToken,
 		ExpiresIn:    result.ExpiresIn,
+		Recovered:    result.Recovered,
 	}
 }
 

@@ -157,6 +157,7 @@ const PROPS = {
   onSetRooted: () => undefined,
   onOpenBlockedUsers: () => undefined,
   onOpenSessions: () => undefined,
+  onOpenDeleteAccount: () => undefined,
   onSignOut: () => undefined,
 };
 

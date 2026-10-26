@@ -51,13 +51,14 @@ type Router struct {
 	inquiries      *InquiriesHandler
 	moderation     *ModerationHandler
 	search         *SearchHandler
+	account        *AccountHandler
 	authMiddleware *AuthMiddleware
 	version        string
 	logger         *slog.Logger
 }
 
 // NewRouter returns the root handler for the API.
-func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, avatarHandler *AvatarHandler, storyMediaHandler *StoryMediaHandler, notificationsHandler *NotificationsHandler, profileHandler *ProfileHandler, reactionsHandler *ReactionsHandler, inquiriesHandler *InquiriesHandler, moderationHandler *ModerationHandler, searchHandler *SearchHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
+func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandler *VersionsHandler, conversationsHandler *ConversationsHandler, rootedHandler *RootedHandler, discoveryHandler *DiscoveryHandler, avatarHandler *AvatarHandler, storyMediaHandler *StoryMediaHandler, notificationsHandler *NotificationsHandler, profileHandler *ProfileHandler, reactionsHandler *ReactionsHandler, inquiriesHandler *InquiriesHandler, moderationHandler *ModerationHandler, searchHandler *SearchHandler, accountHandler *AccountHandler, authMiddleware *AuthMiddleware, version string, logger *slog.Logger) (*Router, error) {
 	if auth == nil {
 		return nil, errNilHandler("auth")
 	}
@@ -100,6 +101,9 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 	if searchHandler == nil {
 		return nil, errNilHandler("search")
 	}
+	if accountHandler == nil {
+		return nil, errNilHandler("account")
+	}
 	if authMiddleware == nil {
 		return nil, errNilHandler("auth middleware")
 	}
@@ -121,6 +125,7 @@ func NewRouter(auth *AuthHandler, storiesHandler *StoriesHandler, versionsHandle
 		inquiries:      inquiriesHandler,
 		moderation:     moderationHandler,
 		search:         searchHandler,
+		account:        accountHandler,
 		authMiddleware: authMiddleware,
 		version:        version,
 		logger:         logger,
@@ -159,6 +164,18 @@ func (r *Router) Handler() http.Handler {
 	mux.HandleFunc("POST /auth/logout", r.authMiddleware.Require(r.auth.Logout))
 	mux.HandleFunc("GET /auth/sessions", r.authMiddleware.Require(r.auth.ListSessions))
 	mux.HandleFunc("DELETE /auth/sessions/{id}", r.authMiddleware.Require(r.auth.DeleteSession))
+
+	// Account lifecycle (KNOT-034, KNOT-ADR-081). Deletion is soft: the account stops
+	// being usable and every session is expected to end, but the row and its content
+	// stay. Recovery is public because the person who needs it may not have a session
+	// anywhere; the email and password are the credential.
+	//
+	//	DELETE /users/me              soft-delete the caller's own account
+	//	POST   /users/me/recover      cancel a pending deletion with email + password
+	//	POST   /admin/purge-deleted   operator-only MVP purge trigger
+	mux.HandleFunc("DELETE /users/me", r.authMiddleware.Require(r.account.DeleteAccount))
+	mux.HandleFunc("POST /users/me/recover", r.account.RecoverAccount)
+	mux.HandleFunc("POST /admin/purge-deleted", r.account.PurgeDeletedUsers)
 
 	// Stories. Publishing requires an access token; reading is open. The reads use
 	// optional auth so a signed-in caller's reaction highlights can be attached.

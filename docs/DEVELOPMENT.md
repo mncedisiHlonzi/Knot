@@ -2678,6 +2678,60 @@ curl -sS -X POST localhost:8080/auth/reset-password \
   -d '{"token":"<TOKEN>","new_password":"another strong 1"}'
 ```
 
+### Deleting an account, recovering it, and purging it (KNOT-034)
+
+Deletion is a soft delete with a 30-day window (KNOT-ADR-081, KNOT-ADR-089). The purge
+that ends the window has **no scheduler yet** — KNOT-034a adds it — so locally you run it
+by hand.
+
+```bash
+# 1. Delete. The password is required, and every session dies as this returns —
+#    so keep the access token from step 5 in case you want to see that it is dead.
+curl -sS -X DELETE localhost:8080/users/me \
+  -H "Authorization: Bearer <ACCESS_TOKEN>" \
+  -H 'Content-Type: application/json' -d '{"password":"at least 8 characters 1"}'
+
+# The old token still verifies cryptographically for up to 15 minutes, but the
+# session behind it is gone: the next refresh answers 401 invalid_refresh_token.
+
+# 2. Sign in again inside the window. This *is* the recovery; the response says so.
+curl -sS -X POST localhost:8080/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"ada@example.com","password":"at least 8 characters 1"}'
+#   … "recovered":true
+
+# 3. Or cancel it explicitly, without a token, from anywhere.
+curl -sS -X POST localhost:8080/users/me/recover \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"ada@example.com","password":"at least 8 characters 1"}'
+
+# 4. To watch the purge without waiting 30 days, move an account's window into the past.
+#    (Delete it first with step 1.)
+docker exec -i knot-postgres psql -U knot -d knot -c \
+  "UPDATE users SET deletion_scheduled_at = now() - interval '1 day'
+     WHERE email = 'ada@example.com';"
+
+# 5. Sign-in now answers 410 account_pending_purge, with or without the right password.
+
+# 6. Purge. The secret is the local default from .env.example; without it the route
+#    answers 401 and the handler logs the refusal (not the secret).
+curl -sS -X POST localhost:8080/admin/purge-deleted \
+  -H "X-Knot-Admin-Secret: knot_local_admin_secret_change_me"
+#   … {"purged":1}
+
+# 7. Run it again: purged_at makes the job idempotent.
+#   … {"purged":0}
+
+# 8. Check the row. Content is untouched, the person is not.
+docker exec -i knot-postgres psql -U knot -d knot -c \
+  "SELECT id, email, display_name, phone, avatar_url, password_hash, purged_at
+     FROM users WHERE display_name = 'Deleted User';"
+```
+
+The API prints a warning at startup when `KNOT_ADMIN_SECRET` is still the local
+placeholder; outside `local` the service refuses to start without a real one, because
+that secret is the only thing standing between an operator and every due account.
+
 ### The same round trip in the app
 
 The mobile client follows the identical path, and since KNOT-031-mobile it is the only

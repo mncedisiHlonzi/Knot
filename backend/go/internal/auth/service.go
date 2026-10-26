@@ -78,6 +78,9 @@ type Deps struct {
 	Credentials CredentialStore
 	// Verifications is the single-use token store for address verification.
 	Verifications VerificationTokenStore
+	// Deletions cancels a pending account deletion when somebody signs in to a
+	// deleted account inside its recovery window (KNOT-ADR-081).
+	Deletions DeletionCanceller
 	// Tokens signs and parses access tokens.
 	Tokens TokenIssuer
 	// Cache is Redis: rate-limit counters and the short-lived password reset
@@ -97,6 +100,19 @@ type Deps struct {
 type TokenIssuer interface {
 	IssueAccessTokenForSession(userID, sessionID string) (string, error)
 	ParseAccessToken(raw string) (*identity.Claims, error)
+}
+
+// DeletionCanceller cancels a pending account deletion.
+//
+// It is a one-method interface rather than the whole identity service so the auth
+// service states exactly what it needs from the account lifecycle: sign-in can undo a
+// deletion, and nothing else (KNOT-ADR-081).
+//
+// It is safe to call for an account that was never deleted — the identity service
+// treats that as a successful no-op — which is what keeps a race between two devices
+// signing in at once harmless.
+type DeletionCanceller interface {
+	CancelDeletion(ctx context.Context, userID string) error
 }
 
 // Option configures a Service at construction time.
@@ -133,6 +149,7 @@ type Service struct {
 	sessions      SessionStore
 	credentials   CredentialStore
 	verifications VerificationTokenStore
+	deletions     DeletionCanceller
 	tokens        TokenIssuer
 	cache         cache.Cache
 	logger        *slog.Logger
@@ -163,6 +180,9 @@ func NewService(deps Deps, opts ...Option) (*Service, error) {
 	if deps.Verifications == nil {
 		return nil, fmt.Errorf("auth: service requires a verification token store")
 	}
+	if deps.Deletions == nil {
+		return nil, fmt.Errorf("auth: service requires an account deletion canceller")
+	}
 	if deps.Tokens == nil {
 		return nil, fmt.Errorf("auth: service requires a token issuer")
 	}
@@ -183,6 +203,7 @@ func NewService(deps Deps, opts ...Option) (*Service, error) {
 		sessions:              deps.Sessions,
 		credentials:           deps.Credentials,
 		verifications:         deps.Verifications,
+		deletions:             deps.Deletions,
 		tokens:                deps.Tokens,
 		cache:                 deps.Cache,
 		logger:                deps.Logger,
@@ -237,6 +258,9 @@ type TokenOutput struct {
 	// token as a claim; it is returned separately so a caller does not have to
 	// parse its own token.
 	SessionID string
+	// Recovered reports that this sign-in cancelled a pending account deletion, so
+	// the client can say so rather than silently pretending nothing happened.
+	Recovered bool
 }
 
 // Register creates an account, stores its password credential, and issues an
@@ -384,16 +408,24 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenOutput, error
 		return nil, identity.ErrInvalidCredentials
 	}
 
-	// A deleted account is not resolvable at all: the store's active lookup omits
-	// it, so sign-in reports the same invalid credentials as a wrong password and
-	// the deletion is never confirmed to whoever is guessing (KNOT-ADR-081).
-	user, err := s.users.FindActiveUserByEmail(ctx, email)
+	// The lookup deliberately includes deleted accounts: an account inside its
+	// recovery window must still be findable, because signing in is how somebody
+	// takes it back. The deletion state is then read from the row, and the password
+	// is checked before any of it is acted on.
+	user, err := s.users.FindUserByEmail(ctx, email)
 	if err != nil {
 		if errors.Is(err, identity.ErrUserNotFound) {
 			_, _ = identity.VerifyPassword(s.dummyHash, in.Password)
 			return nil, identity.ErrInvalidCredentials
 		}
 		return nil, fmt.Errorf("auth: login: %w", err)
+	}
+
+	// A purged account has been anonymised: there is no password left to match and
+	// no person to sign in as.
+	if user.PurgedAt != nil {
+		_, _ = identity.VerifyPassword(s.dummyHash, in.Password)
+		return nil, identity.ErrAccountPendingPurge
 	}
 
 	ok, err := identity.VerifyPassword(user.PasswordHash, in.Password)
@@ -404,11 +436,38 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (*TokenOutput, error
 		return nil, identity.ErrInvalidCredentials
 	}
 
+	// Deletion states, in the order the window makes them possible. Recovery happens
+	// here — before any token is minted — so a successful sign-in can never hand out
+	// a session for an account that is still deleted (KNOT-ADR-081).
+	recovered := false
+	if user.DeletedAt != nil {
+		switch {
+		case user.DeletionScheduledAt == nil:
+			// Deleted with no window recorded: there is nothing to recover into.
+			return nil, identity.ErrAccountDeleted
+		case !s.now().Before(*user.DeletionScheduledAt):
+			// The window has closed. The purge has not necessarily run yet, but the
+			// account is gone as far as its owner is concerned.
+			return nil, identity.ErrAccountPendingPurge
+		default:
+			if err := s.deletions.CancelDeletion(ctx, user.ID); err != nil {
+				return nil, fmt.Errorf("auth: login: cancel deletion: %w", err)
+			}
+			recovered = true
+		}
+	}
+
 	if user.EmailVerifiedAt == nil {
 		return nil, identity.ErrEmailNotVerified
 	}
 
-	return s.openSession(ctx, user, in.DeviceInfo, in.IPAddress)
+	output, err := s.openSession(ctx, user, in.DeviceInfo, in.IPAddress)
+	if err != nil {
+		return nil, err
+	}
+	output.Recovered = recovered
+
+	return output, nil
 }
 
 // openSession writes a session, enforces the device cap, and mints the pair.

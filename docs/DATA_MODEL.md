@@ -28,6 +28,7 @@ Migrations live in `backend/go/migrations/` and are applied with
 | `0013`  | `reactions` | The `reactions` table and its indexes; the `notifications.reaction_type` column; and the widened notification event CHECK |
 | `0021`  | `identity_domain` | The `credentials`, `sessions` and `verification_tokens` tables; `users.deleted_at` and `users.deletion_scheduled_at`; and the partial `users_deleted_at_idx` |
 | `0022`  | `email_verified` | The `users.email_verified_at` column and the partial `users_email_verified_at_idx` |
+| `0023`  | `account_purge` | The `users.purged_at` column and the partial `users_purged_at_idx` that the purge job scans |
 
 `0014`–`0020` are documented in the sections that introduced them — moderation, search, the
 profile wall, `user_interactions` and `entity_features` — rather than in this table.
@@ -74,6 +75,7 @@ nulled in either direction.
 | `deleted_at`           | `timestamptz`            | yes      | `NULL`             | When the account was deleted, or `NULL` while it is live. Migration `0021`, KNOT-ADR-081. See below |
 | `deletion_scheduled_at`| `timestamptz`            | yes      | `NULL`             | When the 30-day recovery window closes and personal data is purged. Migration `0021` |
 | `email_verified_at`    | `timestamptz`            | yes      | `NULL`             | When the address was proven, or `NULL` while it has not been. Migration `0022`, KNOT-ADR-083. Sign-in requires it |
+| `purged_at`            | `timestamptz`            | yes      | `NULL`             | When personal data was anonymised after the recovery window closed, or `NULL` while it has not been. Migration `0023`, KNOT-ADR-089. Makes the purge idempotent |
 
 ### Indexes and constraints
 
@@ -81,7 +83,8 @@ nulled in either direction.
 | ----------------- | -------------------------- | ------- | ----------------------------------------- |
 | `users_pkey`      | Primary key                | `id`    | Row identity                              |
 | `users_email_key` | Unique constraint (btree)  | `email` | Prevents duplicate accounts; named so operational tooling can refer to it |
-| `users_deleted_at_idx` | Partial index (btree)  | `deleted_at` | Only rows with a deletion, because almost every row has none. This is the index a purge job scans |
+| `users_deleted_at_idx` | Partial index (btree)  | `deleted_at` | Only rows with a deletion, because almost every row has none. Answers "is this account gone?" |
+| `users_purged_at_idx` | Partial index (btree)  | `deletion_scheduled_at` | `WHERE purged_at IS NULL AND deletion_scheduled_at IS NOT NULL`. Only unpurged accounts with a window, so it is as small as the set of pending deletions. Answers "which accounts are due?" in one range scan |
 
 The uniqueness rule is enforced in the database, not only in application code: a
 duplicate insert surfaces to the service as `identity.ErrEmailTaken`, which the API
@@ -119,7 +122,7 @@ service would have to remember to test for. The partial index `users_email_verif
 still-redeemable token — a retry turns that into a no-op. The reverse order would consume
 the token and leave the account locked out with no way back in.
 
-### Soft delete (migration `0021`)
+### Soft delete (migration `0021`) and the purge (migration `0023`)
 
 Deleting an account does not delete the row, because a user's stories, comments and rooted
 signals are read by people who are not that user (KNOT-ADR-081). `deleted_at` is when the
@@ -127,10 +130,24 @@ deletion was requested and `deletion_scheduled_at` is when the 30-day recovery w
 closes; both are `NULL` for a live account and neither is ever cleared by a trigger, so the
 history of a deletion is a fact the row keeps.
 
-The columns are **written by nothing yet**. KNOT-030 adds the storage; the deletion endpoint,
-the sign-in check and the purge job arrive with the service that owns them. The rule every
-future query has to follow is `deleted_at IS NULL`, and the partial index above exists so
-that rule stays cheap.
+**Written by** `identity.Service.RequestDeletion`, which revokes every session first and
+then marks the row (`COALESCE(deleted_at, now())` — a second request keeps the original
+timestamps rather than restarting the clock). `identity.Service.CancelDeletion` is the only
+thing that clears them, and it is called from two places: the explicit recovery endpoint and
+a successful sign-in inside the window.
+
+When the window closes, `identity.Service.PurgeDeletedUsers` anonymises the row and sets
+`purged_at` in the same transaction. The row is **kept**: `email` becomes
+`purged+<id>@deleted.invalid`, `display_name` becomes `Deleted User`, `phone`,
+`approximate_location` and `avatar_url` are nulled, `preferred_languages` is emptied, and
+`password_hash` becomes `!purged` — a value no argon2id comparison can produce. Rows in
+`credentials`, `sessions` and `verification_tokens` for that user are deleted outright.
+`purged_at` is what makes a second run a no-op, and the partial index above turns "who is
+due" into a range scan over `deletion_scheduled_at`.
+
+The rule every query about users has to follow is `deleted_at IS NULL`; a purged row keeps
+its `deleted_at`, so the same rule excludes it. The API never returns a purged account's
+identity: sign-in answers `410 account_pending_purge`.
 
 ### `password_hash` is deprecated (migration `0021`)
 

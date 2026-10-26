@@ -164,3 +164,33 @@ export function resetPassword(token: string, newPassword: string): Promise<Succe
     body: { token, new_password: newPassword },
   });
 }
+
+/**
+ * Soft-deletes the caller's account.
+ *
+ * The account stops working immediately and every session is expected to end, but the
+ * row and its content stay: Knot's deletion is a recovery window, not an erasure
+ * (KNOT-ADR-081). The password is required because this is one tap away in a settings
+ * list.
+ */
+export function deleteAccount(password: string, accessToken: string): Promise<SuccessResult> {
+  return request<SuccessResult>('/users/me', {
+    method: 'DELETE',
+    body: { password },
+    token: accessToken,
+  });
+}
+
+/**
+ * Cancels a pending account deletion.
+ *
+ * It needs no token — the whole point is that the person may not be signed in
+ * anywhere — so the email and password are the credential. Signing in during the
+ * window does the same thing without calling this.
+ */
+export function recoverAccount(email: string, password: string): Promise<SuccessResult> {
+  return request<SuccessResult>('/users/me/recover', {
+    method: 'POST',
+    body: { email, password },
+  });
+}

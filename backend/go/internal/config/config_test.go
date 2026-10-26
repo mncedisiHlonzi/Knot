@@ -17,6 +17,7 @@ func clearEnv(t *testing.T) {
 		envKeyRedisDB,
 		envKeyHTTPPort,
 		envKeyJWTSecret,
+		envKeyAdminSecret,
 		envKeyLogLevel,
 		envKeyS3Endpoint,
 		envKeyS3Region,
@@ -194,6 +195,7 @@ func TestLoadCIDoesNotApplyLocalDefaults(t *testing.T) {
 	t.Setenv(envKeyPostgresDSN, wantDSN)
 	t.Setenv(envKeyRedisAddr, wantRedis)
 	t.Setenv(envKeyJWTSecret, wantJWT)
+	t.Setenv(envKeyAdminSecret, "ci-admin-secret")
 	t.Setenv(envKeyS3Endpoint, wantS3Host)
 	t.Setenv(envKeyS3AccessKey, wantS3Key)
 	t.Setenv(envKeyS3SecretKey, wantS3Secrt)
@@ -397,6 +399,7 @@ func TestLoadNonLocalRejectsShortJWTSecret(t *testing.T) {
 	t.Setenv(envKeyS3AccessKey, "ci-access-key")
 	t.Setenv(envKeyS3SecretKey, "ci-secret-key")
 	t.Setenv(envKeyJWTSecret, "too-short")
+	t.Setenv(envKeyAdminSecret, "ci-admin-secret")
 
 	_, err := Load()
 	if err == nil {

@@ -2805,9 +2805,10 @@ platform means "stop treating this as me", not "erase the conversation".
 
 **Consequences.** KNOT-030 adds the columns and nothing else: no deletion endpoint, no purge
 job, no sign-in check. That is deliberate — each of those is a decision about what "deleted"
-means to a surface, and they land with the service that owns them. The cost of soft delete
-is that every future query about users has to remember `deleted_at IS NULL`, which is a rule
-best enforced in one place per module rather than at each call site.
+means to a surface, and they land with the service that owns them. KNOT-034 supplies all
+three (KNOT-ADR-089). The cost of soft delete is that every future query about users has
+to remember `deleted_at IS NULL`, which is a rule best enforced in one place per module
+rather than at each call site.
 
 ## KNOT-ADR-082 — Redis is the backbone for sessions, rate limiting, caching and token management
 
@@ -3012,3 +3013,69 @@ also means **the API's console output is a credential store during development**
 who can read the logs can verify an address or reset a password. That is acceptable only
 because there is no real user data yet, and it is the first thing to change before
 production.
+
+## KNOT-ADR-089 — The purge anonymises, marks itself done with `purged_at`, and runs on an operator's command
+
+**Context.** KNOT-ADR-081 decided that deletion is a soft delete and that data is purged
+after the window. It left three questions open, and all three are answered the moment a
+job actually runs: how the job knows it has already run, what an operator does in the
+absence of a scheduler, and what happens to a session that was alive when the account was
+deleted.
+
+**Decision.**
+
+- **The purge anonymises; it does not erase the account row.** `email` becomes
+  `purged+<id>@deleted.invalid`, `display_name` becomes `Deleted User`, contact fields and
+  the avatar are nulled, `preferred_languages` is emptied, and `password_hash` is set to
+  `!purged` — a value no hash comparison can produce. The row survives because a story's
+  authorship does, and a content table pointing at a missing user is a crash waiting for
+  its first reader.
+- **`purged_at` is the idempotency marker.** It is a new column (migration `0023`), set in
+  the same transaction that anonymises. A purged row is skipped, so running the job twice
+  is not an error and returns `purged: 0` the second time. `deleted_at` and
+  `deletion_scheduled_at` are left untouched: they are the history of the deletion, not its
+  state.
+- **`users_purged_at_idx` is partial on the *range*, not the flag.**
+  `ON users (deletion_scheduled_at) WHERE purged_at IS NULL AND deletion_scheduled_at IS
+  NOT NULL` makes "which accounts are due" an index range scan on the column the predicate
+  compares, and stays proportional to deleted accounts rather than to all of them. The
+  existing `users_deleted_at_idx` answers a different question ("is this account gone?").
+- **Due rows are claimed with `FOR UPDATE SKIP LOCKED` in one transaction.** Two operators
+  running the job at once is a realistic accident; skipping locked rows makes it a
+  non-event instead of a duplicate purge or a deadlock.
+- **There is no scheduler in the MVP.** The job is a route, `POST /admin/purge-deleted`,
+  guarded by a shared secret in `X-Knot-Admin-Secret` and compared in constant time. The
+  cron that calls it is KNOT-034a. Shipping the route first means the purge itself — the
+  part with the data-loss consequences — is exercised by hand before anything runs it
+  unattended.
+- **The admin secret is required configuration.** `KNOT_ADMIN_SECRET` has a local default
+  and must be set outside `local`; a handler without a secret would have to either refuse
+  every request or accept every request, so construction fails instead.
+- **Deletion revokes sessions, and does so before it marks the account.** The identity
+  service holds a one-method `SessionRevoker` interface satisfied by the auth session
+  store, and the order is revoke, then `MarkDeleted`: if revocation fails the deletion is
+  refused, so the client retries rather than being told an account is gone while every
+  session that could renew it is still alive. Refresh is what this closes —
+  `FindActiveUserByID` also filters deleted rows, so no device can mint another access
+  token. An access token already issued keeps verifying for up to its remaining fifteen
+  minutes, because the middleware is stateless (KNOT-ADR-080) and revocation has never
+  meant anything else in this system; "signed out of all devices immediately" is a promise
+  about sessions, not about tokens already in flight.
+- **`POST /users/me/recover` is public.** The caller has just been signed out of every
+  device, so requiring a token to undo the deletion would be asking for the credential
+  that the deletion just destroyed. Email plus password is the credential, and it is
+  checked with the same uniform `invalid_credentials` answer as sign-in so the route
+  cannot enumerate accounts.
+- **Signing in inside the window is the recovery.** There is no separate step: `Login`
+  resolves the account including deleted ones, and cancels the deletion before opening a
+  session, reporting `recovered: true` so the client can say so. A uniform response that
+  hid the recovery would leave a user believing their account was still scheduled to go.
+
+**Consequences.** Recovery is a reverse operation with no expiry of its own — it is
+available exactly as long as the row is unpurged, which means the window is enforced by
+one comparison in one place rather than by two clocks. Purging is irreversible and
+unauthenticated-by-user: the secret is the only control, so it is as sensitive as the
+database credential and is treated that way (never logged, constant-time compared,
+required outside local). Content attribution survives anonymisation as the literal string
+`Deleted User`, which is a design choice worth revisiting if profiles ever show a
+"deleted account" badge.

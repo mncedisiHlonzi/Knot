@@ -47,7 +47,21 @@ var (
 	// ErrAccountDeleted is returned when an account is inside its deletion window.
 	// The row still exists; it is not a person any more (KNOT-ADR-081).
 	ErrAccountDeleted = errors.New("identity: account deleted")
+	// ErrAccountPendingPurge is returned when an account's recovery window has
+	// closed but the purge job has not reached it yet. It is a different answer
+	// from ErrAccountDeleted because nothing can bring the account back: the only
+	// honest reply is that it is gone (KNOT-ADR-089).
+	ErrAccountPendingPurge = errors.New("identity: account pending purge")
 )
+
+// DeletionRecoveryWindow is how long a deleted account can be recovered before the
+// purge job anonymises it.
+//
+// It is a constant rather than a config value because it is a promise made to the
+// user in the deletion confirmation, and a promise that varies per deployment is
+// not a promise. Thirty days is long enough to change your mind and short enough to
+// mean something (KNOT-ADR-081).
+const DeletionRecoveryWindow = 30 * 24 * time.Hour
 
 // ValidationError describes a rejected field on a request. Handlers expose the
 // Field and Message so clients can highlight the offending input.
@@ -92,6 +106,19 @@ type User struct {
 	// and the zero value of a freshly registered account is nil, which is why it is
 	// a pointer rather than a time.Time: "never verified" is not a moment.
 	EmailVerifiedAt *time.Time
+	// DeletedAt is when the owner asked for the account to be deleted, or nil while
+	// it is live. A deleted account still exists: its content is read by other
+	// people, so the row stays and the person goes (KNOT-ADR-081).
+	DeletedAt *time.Time
+	// DeletionScheduledAt is when the recovery window closes and the purge job may
+	// anonymise the account. It is `DeletedAt + DeletionRecoveryWindow`, stored
+	// rather than derived so the window can be shortened or extended for one account
+	// without rewriting the history of its deletion.
+	DeletionScheduledAt *time.Time
+	// PurgedAt is when the account was anonymised, or nil while it has not been.
+	// It is what makes the purge idempotent: a purged row can never be due again
+	// (KNOT-ADR-089).
+	PurgedAt *time.Time
 }
 
 // TokenType values carried in the "typ" claim so an access token can never be

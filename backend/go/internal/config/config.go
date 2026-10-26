@@ -33,6 +33,7 @@ const (
 	envKeyRedisDB       = "KNOT_REDIS_DB"
 	envKeyHTTPPort      = "KNOT_HTTP_PORT"
 	envKeyJWTSecret     = "KNOT_JWT_SECRET"
+	envKeyAdminSecret   = "KNOT_ADMIN_SECRET"
 	envKeyLogLevel      = "KNOT_LOG_LEVEL"
 	envKeyS3Endpoint    = "KNOT_S3_ENDPOINT"
 	envKeyS3Region      = "KNOT_S3_REGION"
@@ -66,6 +67,13 @@ const (
 // accepted in local development so a fresh checkout can start, and it is
 // recognised so callers can warn about it.
 const LocalJWTSecretPlaceholder = "change_me_in_local_development_min_32_chars"
+
+// LocalAdminSecretPlaceholder is the documented local-only admin secret.
+//
+// It guards the MVP purge trigger (KNOT-034). It is a placeholder in exactly the
+// sense the JWT placeholder is: accepted locally so a fresh checkout can call the
+// endpoint, never acceptable outside local development.
+const LocalAdminSecretPlaceholder = "knot_local_admin_secret_change_me"
 
 // Log levels accepted in KNOT_LOG_LEVEL.
 const (
@@ -104,6 +112,11 @@ type Config struct {
 	HTTPPort int
 	// JWTSecret is the HS256 signing key for access and refresh tokens.
 	JWTSecret string
+	// AdminSecret guards the operator-only endpoints — today just the MVP account
+	// purge trigger (KNOT-034). It is a shared secret in a header rather than a user
+	// role because there is no admin UI and no admin account model yet, and inventing
+	// one for a single endpoint would be the tail wagging the dog.
+	AdminSecret string
 	// LogLevel is the minimum level the structured logger emits.
 	LogLevel string
 
@@ -141,6 +154,8 @@ type Config struct {
 //     an empty value means the server requires no password, which is how the
 //     local docker-compose stack runs.
 //   - KNOT_REDIS_DB must be a non-negative integer and defaults to 0 when unset.
+//   - In "local", a missing KNOT_ADMIN_SECRET becomes LocalAdminSecretPlaceholder;
+//     outside local it is required, like the JWT secret it sits beside.
 //
 // Load performs no I/O beyond reading environment variables.
 func Load() (Config, error) {
@@ -167,6 +182,7 @@ func Load() (Config, error) {
 		RedisDB:       redisDB,
 		HTTPPort:      httpPort,
 		JWTSecret:     strings.TrimSpace(os.Getenv(envKeyJWTSecret)),
+		AdminSecret:   strings.TrimSpace(os.Getenv(envKeyAdminSecret)),
 		LogLevel:      logLevel,
 		S3Endpoint:    strings.TrimSpace(os.Getenv(envKeyS3Endpoint)),
 		S3Region:      strings.TrimSpace(os.Getenv(envKeyS3Region)),
@@ -184,6 +200,9 @@ func Load() (Config, error) {
 		}
 		if cfg.JWTSecret == "" {
 			cfg.JWTSecret = LocalJWTSecretPlaceholder
+		}
+		if cfg.AdminSecret == "" {
+			cfg.AdminSecret = LocalAdminSecretPlaceholder
 		}
 		if cfg.S3Endpoint == "" {
 			cfg.S3Endpoint = defaultS3Endpoint
@@ -212,6 +231,12 @@ func Load() (Config, error) {
 	}
 	if cfg.JWTSecret == "" {
 		missing = append(missing, envKeyJWTSecret)
+	}
+	// The admin secret is required outside local for the same reason the JWT secret
+	// is: a default would be a published credential guarding an endpoint that
+	// anonymises accounts.
+	if cfg.AdminSecret == "" {
+		missing = append(missing, envKeyAdminSecret)
 	}
 	// Object storage has no default outside local: a ci or test run must be told
 	// exactly which store it is writing to and with which credentials. Region and

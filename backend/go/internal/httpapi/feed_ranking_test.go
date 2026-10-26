@@ -115,7 +115,7 @@ func newRankedFeedRouter(t *testing.T, service StoriesService, ranking FeedRanki
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}
 
-	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, newTestDiscoveryHandler(t, logger, fakeDiscoveryService{}), newTestAvatarHandler(t, logger), newTestStoryMediaHandler(t, logger), newTestNotificationsHandler(t, logger), newTestProfileHandler(t, logger), newTestReactionsRouterHandler(t, logger), newTestInquiriesHandler(t, logger), newTestModerationHandler(t, logger), newTestSearchHandler(t, logger), authMiddleware, "0.1.0", logger)
+	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, newTestDiscoveryHandler(t, logger, fakeDiscoveryService{}), newTestAvatarHandler(t, logger), newTestStoryMediaHandler(t, logger), newTestNotificationsHandler(t, logger), newTestProfileHandler(t, logger), newTestReactionsRouterHandler(t, logger), newTestInquiriesHandler(t, logger), newTestModerationHandler(t, logger), newTestSearchHandler(t, logger), newTestAccountHandler(t, logger), authMiddleware, "0.1.0", logger)
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v, want nil", err)
 	}

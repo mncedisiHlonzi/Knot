@@ -1,6 +1,9 @@
 package identity
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // UserStore is the persistence contract for users.
 //
@@ -51,6 +54,22 @@ type UserStore interface {
 	// updated row. It is how a password reset takes effect; callers are responsible
 	// for revoking the sessions that were authorised by the old password.
 	UpdatePasswordHash(ctx context.Context, userID, passwordHash string) (*User, error)
+
+	// MarkDeleted soft-deletes the user and records when the recovery window closes,
+	// returning the stored row. It is idempotent: a second call on an already deleted
+	// account keeps the original timestamps, because a double tap on a destructive
+	// button must not extend somebody's window.
+	MarkDeleted(ctx context.Context, userID string) (*User, error)
+
+	// ClearDeletion cancels a pending deletion and returns the row. It is a no-op for
+	// an account that was not deleted, so recovery can be retried and a login during
+	// the window always ends in a live account.
+	ClearDeletion(ctx context.Context, userID string) (*User, error)
+
+	// PurgeDueUsers anonymises every account whose recovery window has closed as of
+	// now, and returns how many it purged. An account that has already been purged is
+	// never touched again, which is what makes the job safe to re-run (KNOT-ADR-089).
+	PurgeDueUsers(ctx context.Context, now time.Time) (int, error)
 
 	// FindUsersByID returns the users with the given ids. A malformed id and an id
 	// that matches no row are both simply absent from the result, and the order is

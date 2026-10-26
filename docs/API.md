@@ -206,7 +206,8 @@ Exchanges credentials for a session.
   "user": { "id": "7c0c1bfb-…", "email_verified_at": "2026-10-07T18:30:00Z" },
   "access_token": "<jwt>",
   "refresh_token": "<session-uuid>.<secret>",
-  "expires_in": 900
+  "expires_in": 900,
+  "recovered": false
 }
 ```
 
@@ -215,8 +216,19 @@ claim. `refresh_token` is an opaque string, valid for 30 days, and is **rotated 
 use** (KNOT-ADR-085). A user may hold at most 5 live sessions; a sixth sign-in revokes the
 oldest (KNOT-ADR-084).
 
+`recovered` is `true` only when this sign-in cancelled a pending deletion — the account
+had been deleted but its 30-day recovery window was still open, and it is live again as
+of this request (KNOT-ADR-089). A client should tell the user, because they asked for the
+account to go away and it did not.
+
 **Errors:** `401 invalid_credentials`, `403 email_not_verified`, `400 invalid_request`,
-`413 request_too_large`, `429 rate_limited`, `500 internal_error`.
+`413 request_too_large`, `429 rate_limited`, `500 internal_error`. Two account-lifecycle
+failures sit on top of these:
+
+| Status | Code | When |
+| --- | --- | --- |
+| 410 | `account_pending_purge` | The account was deleted and its recovery window has closed, so sign-in no longer restores it. A **purged** account answers `401 invalid_credentials` instead, because its address no longer exists. |
+| 403 | `account_deleted` | The account is marked deleted but carries no recovery window — a state the API no longer creates. Records how a stray row is refused rather than silently recovered. |
 
 A wrong password and an unknown email both return `401 invalid_credentials` with an
 identical message, so the endpoint cannot be used to discover which accounts exist.
@@ -341,11 +353,89 @@ The token is single use. The new password must satisfy the same policy as regist
 **Errors:** `400 invalid_reset_token` (unknown or expired), `400 validation_error`,
 `429 rate_limited`.
 
+## Account deletion
+
+Deletion is reversible for 30 days, then anonymises the account (KNOT-ADR-089). Nothing
+is erased before that window closes, so signing in again is all a recovery needs.
+
+### DELETE /users/me
+
+Soft-deletes the caller's account. Protected.
+
+**Request**
+
+```json
+{ "password": "at-least-8-characters-1" }
+```
+
+The password is required even though the caller is authenticated: deleting an account
+from an unlocked phone should not be a two-tap accident.
+
+**200** `{ "success": true }`
+
+Every session is revoked **before** the account is marked deleted, so no device can renew a
+session once this returns: the next refresh answers `401 invalid_refresh_token`. A
+previously issued access token still verifies for up to its remaining 15 minutes, because
+access tokens are stateless and the middleware does not read the session row (KNOT-ADR-080)
+— a client signs out by discarding it.
+
+Deleting twice is not an error: the second call succeeds and leaves the original
+`deletion_scheduled_at` alone rather than restarting the 30-day clock. The response does
+not carry that date; a client knows the window is 30 days.
+
+**Errors:** `401 invalid_credentials` (wrong password), `401 unauthorized`,
+`410 account_pending_purge` (already past its window — nothing left to delete),
+`500 internal_error`.
+
+### POST /users/me/recover
+
+Cancels a pending deletion. Deliberately **public** — the caller has just been signed out
+of every device, so requiring a token would mean the only way back in was the sign-in they
+may not remember succeeded in recovering.
+
+**Request**
+
+```json
+{ "email": "ada@example.com", "password": "at-least-8-characters-1" }
+```
+
+**200** `{ "success": true }`
+
+Calling it on an account that was never deleted is also `200`, without revealing which
+case applied.
+
+**Errors:** `401 invalid_credentials` (wrong password **or** unknown address — identical
+responses, so the endpoint cannot enumerate accounts), `410 account_pending_purge` (the
+window has closed), `400 invalid_request`, `429 rate_limited`.
+
+Because this route checks a password without a session, it is counted against the **same
+two limits as sign-in** — 10 attempts per 15 minutes per address and 10 per 15 minutes per
+account — and shares their counters.
+
+### POST /admin/purge-deleted
+
+Anonymises every account whose window has closed. **Operator-only**: guarded by
+`X-Knot-Admin-Secret`, not by a user token, and it is not a route any client should know
+about.
+
+**200** `{ "purged": 3 }`
+
+Running it twice is safe — a purged account has `purged_at` set and is skipped, so the
+second run returns `"purged": 0`. It is also safe to run concurrently with itself: rows
+are claimed with `FOR UPDATE SKIP LOCKED`.
+
+There is **no scheduler** in the MVP (KNOT-034a adds the cron job), so this is invoked by
+an operator. See `docs/DEVELOPMENT.md` for the local curl.
+
+**Errors:** `401 unauthorized` (missing or wrong secret — the comparison is
+constant-time and the secret is never logged), `500 internal_error`.
+
 ## Authentication
 
 `POST /stories`, `POST /stories/{id}/adapt`, `POST /versions/{id}/comments`,
 `POST /users/me/rooted`, `GET /users/me/rooted`,
-`POST /users/me/avatar`, `POST /stories/{id}/media`, `DELETE /stories/{id}/media/{mid}`,
+`POST /users/me/avatar`, `DELETE /users/me`, `POST /stories/{id}/media`,
+`DELETE /stories/{id}/media/{mid}`,
 `POST /auth/logout`, `GET /auth/sessions` and `DELETE /auth/sessions/{id}`
 are protected routes. Every other route is public and needs no credentials.
 
@@ -2008,10 +2098,12 @@ Verified claims are checked for signature, algorithm (HS256 only), expiry, and t
 type, so a refresh token cannot be used as an access token. Send the access token in an
 `Authorization: Bearer` header to reach a protected route.
 
-**Not yet implemented:** a refresh endpoint, logout, and token revocation. Only issuance
-exists today. Removing `refresh_token`/`jti` rotation and revocation from scope was
-deliberate — see KNOT-ADR-005. Access tokens are not stored server-side, so a protected
-route trusts the signature and expiry and nothing else.
+**Sessions, not tokens, are what revoke access.** The access token is stateless and its
+`sid` claim names a row in `sessions`; rotation and revocation act on that row
+(KNOT-ADR-080, KNOT-ADR-085). An access token therefore stays valid on its own for up to
+fifteen minutes after its session is revoked — except after account deletion, which ends
+the sessions *before* the account goes away because the deletion path needs the token in
+its own hand to be dead on return.
 
 ## Moderation (KNOT-017a)
 

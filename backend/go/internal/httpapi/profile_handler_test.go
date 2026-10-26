@@ -100,7 +100,7 @@ func newProfileRouterWithMedia(t *testing.T, service ProfileService, rooted Root
 		t.Fatalf("NewAuthMiddleware() error = %v, want nil", err)
 	}
 
-	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, newTestAvatarHandler(t, logger), newTestStoryMediaHandler(t, logger), newTestNotificationsHandler(t, logger), profileHandler, newTestReactionsRouterHandler(t, logger), newTestInquiriesHandler(t, logger), newTestModerationHandler(t, logger), newTestSearchHandler(t, logger), authMiddleware, "0.1.0", logger)
+	router, err := NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, newTestAvatarHandler(t, logger), newTestStoryMediaHandler(t, logger), newTestNotificationsHandler(t, logger), profileHandler, newTestReactionsRouterHandler(t, logger), newTestInquiriesHandler(t, logger), newTestModerationHandler(t, logger), newTestSearchHandler(t, logger), newTestAccountHandler(t, logger), authMiddleware, "0.1.0", logger)
 	if err != nil {
 		t.Fatalf("NewRouter() error = %v, want nil", err)
 	}

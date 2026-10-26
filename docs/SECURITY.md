@@ -117,6 +117,8 @@ longest the caller can possibly need to wait.
 | `POST /auth/register` | client address | 5 per hour |
 | `POST /auth/login` | client address | 10 per 15 minutes |
 | `POST /auth/login` | normalised email | 10 per 15 minutes |
+| `POST /users/me/recover` | client address | 10 per 15 minutes (shared with the login counters) |
+| `POST /users/me/recover` | normalised email | 10 per 15 minutes (shared with the login counters) |
 | `POST /auth/refresh` | session id | 30 per 15 minutes |
 | `POST /auth/forgot-password` | normalised email | 3 per hour |
 
@@ -150,22 +152,82 @@ attacker lock a legitimate user out of redeeming their own link.
 | Unknown address, sign-in | `401 invalid_credentials` — identical to a wrong password |
 | Wrong password | `401 invalid_credentials` |
 | Correct password, unverified address | `403 email_not_verified` (they already knew the password) |
-| Deleted account, correct password | `401 invalid_credentials` |
+| Deleted account inside its window, correct password | `200` — the account is recovered, and the response says `recovered: true` |
+| Deleted account past its window, not yet purged | `410 account_pending_purge`, with or without the right password (the password is still checked first) |
+| A purged account | `401 invalid_credentials` — its address no longer exists, so there is nothing to enumerate |
 | `forgot-password`, any address | `200 { "success": true }` |
 | Replayed refresh token | `401 invalid_refresh_token` — the same answer as a garbage token |
 | Another account's session id | `404 session_not_found` |
 
-## 9. Soft deletion interacts with authentication
+## 9. Account deletion
 
-An account inside its 30-day window is invisible to authentication: `FindActiveUserByEmail`
-and `FindActiveUserByID` filter it out in SQL, so sign-in answers `401 invalid_credentials`
-and a refresh token cannot outlive the account it belongs to. The deletion columns and the
-purge job are KNOT-034; this task only guarantees that a deleted account cannot authenticate.
+Deletion is reversible for 30 days, then anonymises the account (KNOT-ADR-081,
+KNOT-ADR-089). The security-relevant consequences are these.
+
+**Deleting ends every session, before the account is marked.** `RequestDeletion` calls
+`SessionRevoker.RevokeAllForUser` and only then sets `deleted_at`. If revocation fails the
+deletion is refused, so the caller is never told an account is gone while a token for it is
+still honoured. Refresh tokens die with the row: `FindActiveUserByID` filters deleted
+accounts, so no device can renew a session after the deletion.
+
+**An access token already in flight survives up to fifteen minutes, and this is stated
+rather than papered over.** Access tokens are stateless (KNOT-ADR-080) and the middleware
+verifies signature, algorithm, expiry and type only — it does not read the session row —
+so revoking a session stops the *next* token, not the current one. A deleted account's
+access token therefore still opens protected routes until it expires, which is the same
+window every other revocation in the system has (logout, session revoke, password reset).
+Clients are what make sign-out feel immediate: the app drops its token on deletion. Closing
+the server-side gap means checking user or session state on every protected request, which
+is a decision about the token architecture as a whole, not one to take in the deletion
+path. Until then, "signed out of all devices immediately" means every session is revoked
+immediately — no device can obtain another token — not that a token already minted stops
+verifying.
+
+**The deletion request requires the password even though the caller is authenticated.**
+An unlocked phone in a settings list should not be able to destroy an account in two taps,
+and the password is the only second factor Knot has.
+
+**`POST /users/me/recover` is public, and that is deliberate.** Everyone who needs it has
+just been signed out of every device, so requiring a token would ask for the credential the
+deletion destroyed. Email plus password is the credential, and its failure answer is the
+same `401 invalid_credentials` that sign-in uses, so the route cannot be used to find out
+which addresses exist. Signing in is an equivalent path, so there is no way to "forget" the
+recovery endpoint and lose an account.
+
+**Purging is irreversible and is guarded by one shared secret.** `POST /admin/purge-deleted`
+is guarded by `X-Knot-Admin-Secret`, compared with `subtle.ConstantTimeCompare`, and never
+logged — not even on failure, because the failure path of a shared secret is where one
+leaks. `KNOT_ADMIN_SECRET` has a local default and is **required outside `local`**; a
+handler constructed without one refuses to exist rather than accepting every request. In
+effect the secret is as sensitive as the database credential: whoever holds it can purge
+every due account. There is no user-facing route to it and no scheduler yet (KNOT-034a).
+
+**What survives the purge, and why.** The account row, `deleted_at`,
+`deletion_scheduled_at`, and the content the person wrote. Attribution becomes the literal
+`Deleted User`. A hard delete would cascade through stories, comments, reactions and
+adaptations that other people are reading, so "delete my account" is implemented as "stop
+treating this as me", which is the honest description of what the platform can promise.
+
+**What does not survive.** `email` (replaced with `purged+<id>@deleted.invalid`),
+`display_name` (`Deleted User`), `phone`, `approximate_location`, `avatar_url`,
+`preferred_languages`, `password_hash` (`!purged`, which no argon2id comparison can match),
+and every row in `credentials`, `sessions` and `verification_tokens`. A purged account
+cannot authenticate by any route: its address no longer exists, so sign-in answers the
+ordinary `401 invalid_credentials`.
+
+**Deletion does not touch Redis rate-limit counters.** They expire on their own within
+their windows, and clearing them would be a way for an attacker to reset a limit by
+deleting an account.
 
 ## 10. What is deliberately not here yet
 
 - **No real email delivery** (KNOT-031a): links go to the console.
 - **No OAuth or magic links** beyond the closed `credentials` type set.
+- **No scheduled purge.** `POST /admin/purge-deleted` exists and anonymises correctly, but
+  nothing calls it on a timer; until KNOT-034a lands, an operator has to. A deployment
+  that never calls it leaves every deleted account inside its window forever.
+- **No GDPR-style hard delete.** Deletion anonymises the account row and keeps the content,
+  which is a product decision (KNOT-ADR-081), not an erasure implementation.
 - **No 2FA, no device fingerprinting, no impossible-travel detection.**
 - **AsyncStorage is not secure storage.** On mobile the refresh token is stored in plain
   AsyncStorage (KNOT-ADR-024), and a follow-up task moves it to Keychain/Keystore.

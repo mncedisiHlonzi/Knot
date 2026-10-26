@@ -4,9 +4,11 @@ import {
   Appearance,
   BackHandler,
   Easing,
+  Pressable,
   SafeAreaView,
   StatusBar,
   StyleSheet,
+  Text,
   View,
   useWindowDimensions,
   type StatusBarProps,
@@ -22,6 +24,7 @@ import { DEFAULT_LANGUAGE_CODE } from './src/config/language';
 import { isLanguageCode } from './src/data/languages';
 import { motion, ThemeProvider, useTheme, useThemedStyles } from './src/theme';
 import type { ThemeColors } from './src/theme';
+import { layout, spacing, typeScale } from './src/theme';
 import { setNavigationBarColor } from './src/native/systemBars';
 import TabBar from './src/components/TabBar';
 import type { TabName } from './src/components/TabBar';
@@ -50,6 +53,7 @@ import VerifyEmailScreen from './src/screens/auth/VerifyEmailScreen';
 import ForgotPasswordScreen from './src/screens/auth/ForgotPasswordScreen';
 import ResetPasswordScreen from './src/screens/auth/ResetPasswordScreen';
 import SessionsScreen from './src/screens/settings/SessionsScreen';
+import DeleteAccountScreen from './src/screens/settings/DeleteAccountScreen';
 import CommentThreadScreen from './src/screens/conversations/CommentThreadScreen';
 import DiscoveryMapScreen from './src/screens/discovery/DiscoveryMapScreen';
 import PlaceStoriesScreen from './src/screens/discovery/PlaceStoriesScreen';
@@ -144,6 +148,7 @@ type Overlay =
   | { readonly name: 'blockedUsers' }
   | { readonly name: 'settings' }
   | { readonly name: 'sessions' }
+  | { readonly name: 'deleteAccount' }
   | { readonly name: 'userProfile'; readonly userId: string };
 
 /**
@@ -209,6 +214,8 @@ function ThemedApp(): React.ReactElement {
   const STATUS_BAR = statusBarProps(colors, theme);
   const [session, setSession] = useState<Session | null>(null);
   const [authMode, setAuthMode] = useState<AuthMode>('login');
+  // True for one signed-in moment after a login cancelled a pending deletion.
+  const [recoveryNotice, setRecoveryNotice] = useState(false);
   const [tab, setTab] = useState<TabName>('feed');
   const [overlays, setOverlays] = useState<readonly Overlay[]>([]);
   // The unread notification count drawn on the bell tab. It is read here rather
@@ -488,6 +495,9 @@ function ThemedApp(): React.ReactElement {
     };
     void saveSession(next);
     setSession(next);
+    // A sign-in that cancelled a pending deletion is worth saying out loud: the person
+    // asked for something final and got their account back (KNOT-ADR-081).
+    setRecoveryNotice(result.recovered === true);
     setTab('feed');
     setOverlays((current) => popAllOverlays(current));
   }
@@ -501,6 +511,22 @@ function ThemedApp(): React.ReactElement {
     }
 
     void clearSession();
+    setSession(null);
+    setOverlays((current) => popAllOverlays(current));
+    setTab('feed');
+    setAuthMode('login');
+  }
+
+  /**
+   * Leaves the app for the login screen after an account has been deleted.
+   *
+   * The account is gone from the server's point of view, so there is nothing to sign
+   * out of — calling logout would only spend a request on a session that is already
+   * dead. The local session is dropped instead.
+   */
+  function handleAccountDeleted(): void {
+    void clearSession();
+    setRecoveryNotice(false);
     setSession(null);
     setOverlays((current) => popAllOverlays(current));
     setTab('feed');
@@ -883,7 +909,21 @@ function ThemedApp(): React.ReactElement {
               setOverlays((stack) => pushOverlay(stack, { name: 'blockedUsers' }))
             }
             onOpenSessions={() => setOverlays((stack) => pushOverlay(stack, { name: 'sessions' }))}
+            onOpenDeleteAccount={() =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'deleteAccount' }))
+            }
             onSignOut={handleSignOut}
+          />
+        );
+      case 'deleteAccount':
+        // The account is soft-deleted: the app signs itself out because the session is
+        // expected to be dead, and the person can come back by signing in during the
+        // recovery window (KNOT-ADR-081).
+        return (
+          <DeleteAccountScreen
+            token={current.accessToken}
+            onBack={handleBack}
+            onDeleted={handleAccountDeleted}
           />
         );
       case 'sessions':
@@ -985,6 +1025,23 @@ function ThemedApp(): React.ReactElement {
   return (
     <SafeAreaView style={styles.storyContainer}>
       <StatusBar {...STATUS_BAR} />
+
+      {/* A sign-in that cancelled a pending deletion says so once, inline, and then
+          gets out of the way: it is reassurance, not a state of the app
+          (KNOT-ADR-081). Tapping it dismisses it early. */}
+      {recoveryNotice ? (
+        <Pressable
+          style={styles.recoveryNotice}
+          onPress={() => setRecoveryNotice(false)}
+          accessibilityRole="button"
+          accessibilityLabel="Dismiss the recovery notice"
+        >
+          <Text style={[typeScale.bodyS, styles.recoveryNoticeText]}>
+            Welcome back! Your account has been recovered.
+          </Text>
+        </Pressable>
+      ) : null}
+
       <View style={styles.body}>
         <Animated.View style={[styles.screen, { transform: [{ translateX: screenOffset }] }]}>
           {renderOverlay(session)}
@@ -1026,6 +1083,14 @@ const createStyles = (colors: ThemeColors) =>
     bootContainer: {
       backgroundColor: colors.bg.canvas,
       flex: 1,
+    },
+    recoveryNotice: {
+      backgroundColor: colors.bg.surface,
+      paddingHorizontal: layout.screenPaddingReading,
+      paddingVertical: spacing.sm,
+    },
+    recoveryNoticeText: {
+      color: colors.text.secondary,
     },
     screen: {
       flex: 1,

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/mail"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -60,13 +61,35 @@ type LoginInput struct {
 type Service struct {
 	store  UserStore
 	tokens *TokenIssuer
+	// sessions ends every session a user has. It is optional because the identity
+	// domain does not own sessions — the auth domain does — but deletion is not
+	// deletion if a token minted a minute earlier still opens the account
+	// (KNOT-ADR-081). The composition root wires it with the session store.
+	sessions SessionRevoker
 	// dummyHash is verified when an email is unknown, so that a failed login
 	// costs the same as a real one and cannot be used to enumerate accounts.
 	dummyHash string
 }
 
+// SessionRevoker ends every session belonging to a user.
+//
+// It is a one-method interface so this package states what it needs from the session
+// domain without importing it: `auth` imports `identity`, never the other way round.
+type SessionRevoker interface {
+	RevokeAllForUser(ctx context.Context, userID string) error
+}
+
+// Option configures a Service at construction time.
+type Option func(*Service)
+
+// WithSessionRevoker gives the service a way to end a user's sessions, which it uses
+// when an account is deleted.
+func WithSessionRevoker(revoker SessionRevoker) Option {
+	return func(s *Service) { s.sessions = revoker }
+}
+
 // NewService wires a store and a token issuer together.
-func NewService(store UserStore, tokens *TokenIssuer) (*Service, error) {
+func NewService(store UserStore, tokens *TokenIssuer, opts ...Option) (*Service, error) {
 	if store == nil {
 		return nil, fmt.Errorf("identity: service requires a user store")
 	}
@@ -79,7 +102,12 @@ func NewService(store UserStore, tokens *TokenIssuer) (*Service, error) {
 		return nil, fmt.Errorf("identity: build timing-equalisation hash: %w", err)
 	}
 
-	return &Service{store: store, tokens: tokens, dummyHash: dummy}, nil
+	service := &Service{store: store, tokens: tokens, dummyHash: dummy}
+	for _, opt := range opts {
+		opt(service)
+	}
+
+	return service, nil
 }
 
 // Register validates the input, stores a new user, and issues a token pair.
@@ -302,6 +330,144 @@ func (s *Service) issueTokens(userID string) (TokenPair, error) {
 		RefreshToken: refresh,
 		ExpiresIn:    int(AccessTokenTTL.Seconds()),
 	}, nil
+}
+
+// RequestDeletion soft-deletes an account after verifying its owner's password.
+//
+// The password is required because deletion is destructive and is one tap away in a
+// settings list: a phone left unlocked should not be enough to end an account. The
+// account is not erased — its content stays readable and attributed — and the person
+// can come back for DeletionRecoveryWindow by signing in (KNOT-ADR-081).
+//
+// It is idempotent: deleting an account that is already deleted reports success and
+// leaves the original timestamps alone, so a retried request cannot extend somebody's
+// recovery window.
+func (s *Service) RequestDeletion(ctx context.Context, userID, password string) error {
+	user, err := s.store.FindUserByID(ctx, userID)
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("identity: request deletion: %w", err)
+	}
+
+	// A purged account has no password left to check and nothing to delete.
+	if user.PurgedAt != nil {
+		return ErrAccountPendingPurge
+	}
+
+	ok, err := VerifyPassword(user.PasswordHash, password)
+	if err != nil {
+		return fmt.Errorf("identity: request deletion: %w", err)
+	}
+	if !ok {
+		return ErrInvalidCredentials
+	}
+
+	if user.DeletedAt != nil {
+		return nil
+	}
+
+	// Sessions go first. If this fails nothing has been marked, so the request can be
+	// retried and the account is never left deleted with a live token still able to
+	// reach it.
+	if s.sessions != nil {
+		if err := s.sessions.RevokeAllForUser(ctx, user.ID); err != nil {
+			return fmt.Errorf("identity: request deletion: revoke sessions: %w", err)
+		}
+	}
+
+	if _, err := s.store.MarkDeleted(ctx, user.ID); err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("identity: request deletion: %w", err)
+	}
+
+	return nil
+}
+
+// CancelDeletion cancels a pending deletion and reports whether the account is live
+// again.
+//
+// It is safe to call for an account that was never deleted: the store treats it as a
+// successful no-op. That is what lets sign-in cancel unconditionally once it has seen
+// a deletion timestamp, so two devices signing in at once cannot produce a spurious
+// failure for one of them.
+func (s *Service) CancelDeletion(ctx context.Context, userID string) error {
+	if _, err := s.store.ClearDeletion(ctx, userID); err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("identity: cancel deletion: %w", err)
+	}
+
+	return nil
+}
+
+// RecoverAccount cancels a pending deletion for the account owning email, once the
+// caller has proved it with the password.
+//
+// It is the explicit counterpart to sign-in's automatic recovery, for a person who
+// would rather not sign in on the device that made the mistake. An unknown address
+// and a wrong password are indistinguishable, and the unknown-address path burns the
+// same hashing work so timing cannot tell them apart either.
+//
+// An account whose window has already closed reports ErrAccountPendingPurge: there is
+// nothing left to recover, and only the purge job can finish the job.
+func (s *Service) RecoverAccount(ctx context.Context, email, password string) error {
+	user, err := s.store.FindUserByEmail(ctx, NormalizeEmail(email))
+	if err != nil {
+		if errors.Is(err, ErrUserNotFound) {
+			_, _ = VerifyPassword(s.dummyHash, password)
+			return ErrInvalidCredentials
+		}
+		return fmt.Errorf("identity: recover account: %w", err)
+	}
+
+	if user.PurgedAt != nil {
+		return ErrAccountPendingPurge
+	}
+
+	ok, err := VerifyPassword(user.PasswordHash, password)
+	if err != nil {
+		return fmt.Errorf("identity: recover account: %w", err)
+	}
+	if !ok {
+		return ErrInvalidCredentials
+	}
+
+	if user.DeletedAt == nil {
+		// Nothing was pending: the account is already live, so the person's intent is
+		// satisfied and the endpoint has nothing to undo.
+		return nil
+	}
+
+	if user.DeletionScheduledAt != nil && !time.Now().Before(*user.DeletionScheduledAt) {
+		return ErrAccountPendingPurge
+	}
+
+	if err := s.CancelDeletion(ctx, user.ID); err != nil {
+		return fmt.Errorf("identity: recover account: %w", err)
+	}
+
+	return nil
+}
+
+// PurgeDeletedUsers anonymises every account whose recovery window has closed, and
+// returns how many it purged.
+//
+// It is the manual trigger for MVP (KNOT-034): the job is deliberately not started on
+// a timer, so nothing anonymises an account by surprise until a scheduled runner
+// exists (KNOT-034a). Running it twice is safe — an already purged row is never due
+// again (KNOT-ADR-089).
+func (s *Service) PurgeDeletedUsers(ctx context.Context) (int, error) {
+	purged, err := s.store.PurgeDueUsers(ctx, time.Now())
+	if err != nil {
+		return 0, fmt.Errorf("identity: purge deleted users: %w", err)
+	}
+
+	return purged, nil
 }
 
 // NormalizeEmail trims and lower-cases an address so that lookups and the unique

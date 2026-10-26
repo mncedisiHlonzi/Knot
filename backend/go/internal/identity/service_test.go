@@ -155,6 +155,65 @@ func (s *fakeStore) UpdatePasswordHash(_ context.Context, userID, passwordHash s
 	return user, nil
 }
 
+// MarkDeleted mirrors the store's COALESCE: the first request fixes the timestamps.
+func (s *fakeStore) MarkDeleted(_ context.Context, userID string) (*User, error) {
+	user, ok := s.byID[userID]
+	if !ok {
+		return nil, ErrUserNotFound
+	}
+
+	if user.DeletedAt == nil {
+		deletedAt := time.Now().UTC().Truncate(time.Microsecond)
+		scheduled := deletedAt.Add(DeletionRecoveryWindow)
+		user.DeletedAt = &deletedAt
+		user.DeletionScheduledAt = &scheduled
+	}
+
+	return user, nil
+}
+
+// ClearDeletion mirrors the store: clearing a live account is a no-op success.
+func (s *fakeStore) ClearDeletion(_ context.Context, userID string) (*User, error) {
+	user, ok := s.byID[userID]
+	if !ok {
+		return nil, ErrUserNotFound
+	}
+
+	user.DeletedAt = nil
+	user.DeletionScheduledAt = nil
+
+	return user, nil
+}
+
+// PurgeDueUsers mirrors the store's anonymisation, including the idempotency guard.
+func (s *fakeStore) PurgeDueUsers(_ context.Context, now time.Time) (int, error) {
+	purged := 0
+
+	for id, user := range s.byID {
+		if user.DeletedAt == nil || user.PurgedAt != nil || user.DeletionScheduledAt == nil {
+			continue
+		}
+		if now.Before(*user.DeletionScheduledAt) {
+			continue
+		}
+
+		delete(s.byEmail, NormalizeEmail(user.Email))
+		user.Email = "purged+" + id + purgeAnonymisedEmailDomain
+		user.DisplayName = "Deleted User"
+		user.Phone = ""
+		user.ApproximateLocation = ""
+		user.AvatarURL = ""
+		user.PreferredLanguages = []string{}
+		user.PasswordHash = "!purged"
+		purgedAt := now
+		user.PurgedAt = &purgedAt
+		s.byEmail[user.Email] = user
+		purged++
+	}
+
+	return purged, nil
+}
+
 func newTestService(t *testing.T, store UserStore) *Service {
 	t.Helper()
 
@@ -693,4 +752,327 @@ func TestAvatarKeyPrefix(t *testing.T) {
 	if got, want := AvatarKeyPrefix(userID), "avatars/"+userID+"/"; got != want {
 		t.Errorf("AvatarKeyPrefix() = %q, want %q", got, want)
 	}
+}
+
+// --- Account lifecycle (KNOT-034) -------------------------------------------
+
+// lifecycleFixture returns a service over a fake store with one live account.
+func lifecycleFixture(t *testing.T) (*Service, *fakeStore, *User) {
+	t.Helper()
+
+	store := newFakeStore()
+	service := newTestService(t, store)
+
+	hash, err := HashPassword("correct horse 7")
+	if err != nil {
+		t.Fatalf("HashPassword() error = %v, want nil", err)
+	}
+
+	user, err := store.CreateUser(context.Background(), &User{
+		Email:        "ada@example.com",
+		PasswordHash: hash,
+		DisplayName:  "Ada Lovelace",
+		Phone:        "+27000000000",
+	})
+	if err != nil {
+		t.Fatalf("CreateUser() error = %v, want nil", err)
+	}
+
+	return service, store, user
+}
+
+func TestRequestDeletionSoftDeletesTheAccount(t *testing.T) {
+	service, store, user := lifecycleFixture(t)
+	ctx := context.Background()
+
+	if err := service.RequestDeletion(ctx, user.ID, "correct horse 7"); err != nil {
+		t.Fatalf("RequestDeletion() error = %v, want nil", err)
+	}
+
+	stored, _ := store.FindUserByID(ctx, user.ID)
+	if stored.DeletedAt == nil {
+		t.Fatal("deleted_at is nil, want the account soft-deleted")
+	}
+	if stored.DeletionScheduledAt == nil {
+		t.Fatal("deletion_scheduled_at is nil, want the recovery window recorded")
+	}
+
+	window := stored.DeletionScheduledAt.Sub(*stored.DeletedAt)
+	if window != DeletionRecoveryWindow {
+		t.Errorf("recovery window = %s, want %s", window, DeletionRecoveryWindow)
+	}
+
+	// The row still exists: deletion is soft, and the content stays attributable.
+	if _, err := store.FindUserByID(ctx, user.ID); err != nil {
+		t.Errorf("FindUserByID() after deletion error = %v, want the row to remain", err)
+	}
+}
+
+func TestRequestDeletionRequiresThePassword(t *testing.T) {
+	service, store, user := lifecycleFixture(t)
+	ctx := context.Background()
+
+	if err := service.RequestDeletion(ctx, user.ID, "wrong horse 7"); !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("RequestDeletion() error = %v, want ErrInvalidCredentials", err)
+	}
+
+	stored, _ := store.FindUserByID(ctx, user.ID)
+	if stored.DeletedAt != nil {
+		t.Error("the account was deleted despite a wrong password")
+	}
+
+	if err := service.RequestDeletion(ctx, "99999999-9999-4999-8999-999999999999", "correct horse 7"); !errors.Is(err, ErrUserNotFound) {
+		t.Fatalf("RequestDeletion(unknown) error = %v, want ErrUserNotFound", err)
+	}
+}
+
+// TestRequestDeletionIsIdempotent proves a retry cannot extend the window.
+func TestRequestDeletionIsIdempotent(t *testing.T) {
+	service, store, user := lifecycleFixture(t)
+	ctx := context.Background()
+
+	if err := service.RequestDeletion(ctx, user.ID, "correct horse 7"); err != nil {
+		t.Fatalf("RequestDeletion() error = %v, want nil", err)
+	}
+	first, _ := store.FindUserByID(ctx, user.ID)
+
+	if err := service.RequestDeletion(ctx, user.ID, "correct horse 7"); err != nil {
+		t.Fatalf("second RequestDeletion() error = %v, want nil", err)
+	}
+	second, _ := store.FindUserByID(ctx, user.ID)
+
+	if !first.DeletionScheduledAt.Equal(*second.DeletionScheduledAt) {
+		t.Errorf("the window moved from %s to %s, want it unchanged", first.DeletionScheduledAt, second.DeletionScheduledAt)
+	}
+}
+
+func TestCancelDeletionRestoresTheAccount(t *testing.T) {
+	service, store, user := lifecycleFixture(t)
+	ctx := context.Background()
+
+	if err := service.RequestDeletion(ctx, user.ID, "correct horse 7"); err != nil {
+		t.Fatalf("RequestDeletion() error = %v, want nil", err)
+	}
+
+	if err := service.CancelDeletion(ctx, user.ID); err != nil {
+		t.Fatalf("CancelDeletion() error = %v, want nil", err)
+	}
+
+	stored, _ := store.FindUserByID(ctx, user.ID)
+	if stored.DeletedAt != nil || stored.DeletionScheduledAt != nil {
+		t.Errorf("deletion state = (%v, %v), want both cleared", stored.DeletedAt, stored.DeletionScheduledAt)
+	}
+
+	// Cancelling a live account is a harmless no-op.
+	if err := service.CancelDeletion(ctx, user.ID); err != nil {
+		t.Errorf("CancelDeletion(live) error = %v, want nil", err)
+	}
+}
+
+func TestRecoverAccount(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("inside the window", func(t *testing.T) {
+		service, store, user := lifecycleFixture(t)
+
+		if err := service.RequestDeletion(ctx, user.ID, "correct horse 7"); err != nil {
+			t.Fatalf("RequestDeletion() error = %v, want nil", err)
+		}
+
+		if err := service.RecoverAccount(ctx, "Ada@Example.com", "correct horse 7"); err != nil {
+			t.Fatalf("RecoverAccount() error = %v, want nil", err)
+		}
+
+		stored, _ := store.FindUserByID(ctx, user.ID)
+		if stored.DeletedAt != nil {
+			t.Error("the account is still deleted after recovery")
+		}
+	})
+
+	t.Run("wrong password", func(t *testing.T) {
+		service, store, user := lifecycleFixture(t)
+
+		if err := service.RequestDeletion(ctx, user.ID, "correct horse 7"); err != nil {
+			t.Fatalf("RequestDeletion() error = %v, want nil", err)
+		}
+
+		if err := service.RecoverAccount(ctx, "ada@example.com", "nope"); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("RecoverAccount() error = %v, want ErrInvalidCredentials", err)
+		}
+
+		stored, _ := store.FindUserByID(ctx, user.ID)
+		if stored.DeletedAt == nil {
+			t.Error("the account was recovered with a wrong password")
+		}
+	})
+
+	t.Run("past the window", func(t *testing.T) {
+		service, store, user := lifecycleFixture(t)
+
+		if err := service.RequestDeletion(ctx, user.ID, "correct horse 7"); err != nil {
+			t.Fatalf("RequestDeletion() error = %v, want nil", err)
+		}
+
+		past := time.Now().UTC().Add(-time.Hour)
+		store.byID[user.ID].DeletionScheduledAt = &past
+
+		if err := service.RecoverAccount(ctx, "ada@example.com", "correct horse 7"); !errors.Is(err, ErrAccountPendingPurge) {
+			t.Fatalf("RecoverAccount() error = %v, want ErrAccountPendingPurge", err)
+		}
+	})
+
+	t.Run("unknown address", func(t *testing.T) {
+		service, _, _ := lifecycleFixture(t)
+
+		if err := service.RecoverAccount(ctx, "nobody@example.com", "correct horse 7"); !errors.Is(err, ErrInvalidCredentials) {
+			t.Fatalf("RecoverAccount() error = %v, want ErrInvalidCredentials", err)
+		}
+	})
+
+	t.Run("live account", func(t *testing.T) {
+		service, _, _ := lifecycleFixture(t)
+
+		if err := service.RecoverAccount(ctx, "ada@example.com", "correct horse 7"); err != nil {
+			t.Fatalf("RecoverAccount(live) error = %v, want nil", err)
+		}
+	})
+}
+
+func TestPurgeDeletedUsersAnonymises(t *testing.T) {
+	service, store, user := lifecycleFixture(t)
+	ctx := context.Background()
+
+	// Captured before the purge, because the fake mutates the row in place.
+	originalHash := user.PasswordHash
+
+	if err := service.RequestDeletion(ctx, user.ID, "correct horse 7"); err != nil {
+		t.Fatalf("RequestDeletion() error = %v, want nil", err)
+	}
+
+	// Not yet due.
+	purged, err := service.PurgeDeletedUsers(ctx)
+	if err != nil {
+		t.Fatalf("PurgeDeletedUsers() error = %v, want nil", err)
+	}
+	if purged != 0 {
+		t.Fatalf("purged = %d, want 0 while the window is open", purged)
+	}
+
+	// Move the window into the past.
+	past := time.Now().UTC().Add(-time.Minute)
+	store.byID[user.ID].DeletionScheduledAt = &past
+
+	purged, err = service.PurgeDeletedUsers(ctx)
+	if err != nil {
+		t.Fatalf("PurgeDeletedUsers() error = %v, want nil", err)
+	}
+	if purged != 1 {
+		t.Fatalf("purged = %d, want 1", purged)
+	}
+
+	stored, _ := store.FindUserByID(ctx, user.ID)
+	if stored.PurgedAt == nil {
+		t.Fatal("purged_at is nil, want the account marked as purged")
+	}
+	if stored.Email == "ada@example.com" {
+		t.Error("the address survived the purge")
+	}
+	if stored.DisplayName != "Deleted User" {
+		t.Errorf("display name = %q, want %q", stored.DisplayName, "Deleted User")
+	}
+	if stored.Phone != "" || stored.ApproximateLocation != "" || stored.AvatarURL != "" {
+		t.Error("a contact field survived the purge")
+	}
+	if stored.PasswordHash == originalHash {
+		t.Error("the password hash survived the purge")
+	}
+
+	// Idempotent: a second run finds nothing to do.
+	purged, err = service.PurgeDeletedUsers(ctx)
+	if err != nil {
+		t.Fatalf("second PurgeDeletedUsers() error = %v, want nil", err)
+	}
+	if purged != 0 {
+		t.Fatalf("second purge = %d, want 0 (already purged)", purged)
+	}
+}
+
+// fakeRevoker records the users whose sessions were ended.
+type fakeRevoker struct {
+	userIDs []string
+	err     error
+}
+
+func (f *fakeRevoker) RevokeAllForUser(_ context.Context, userID string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.userIDs = append(f.userIDs, userID)
+
+	return nil
+}
+
+// TestRequestDeletionEndsEverySession proves a deleted account's tokens stop working
+// in the same request, rather than a quarter of an hour later.
+func TestRequestDeletionEndsEverySession(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("revokes", func(t *testing.T) {
+		store := newFakeStore()
+		revoker := &fakeRevoker{}
+
+		issuer, err := NewTokenIssuer("test-secret-that-is-at-least-32-bytes-long")
+		if err != nil {
+			t.Fatalf("NewTokenIssuer() error = %v, want nil", err)
+		}
+
+		service, err := NewService(store, issuer, WithSessionRevoker(revoker))
+		if err != nil {
+			t.Fatalf("NewService() error = %v, want nil", err)
+		}
+
+		hash, _ := HashPassword("correct horse 7")
+		user, err := store.CreateUser(ctx, &User{Email: "ada@example.com", PasswordHash: hash, DisplayName: "Ada"})
+		if err != nil {
+			t.Fatalf("CreateUser() error = %v, want nil", err)
+		}
+
+		if err := service.RequestDeletion(ctx, user.ID, "correct horse 7"); err != nil {
+			t.Fatalf("RequestDeletion() error = %v, want nil", err)
+		}
+
+		if len(revoker.userIDs) != 1 || revoker.userIDs[0] != user.ID {
+			t.Fatalf("revoked users = %v, want exactly %q", revoker.userIDs, user.ID)
+		}
+	})
+
+	t.Run("a failed revoke leaves the account alone", func(t *testing.T) {
+		store := newFakeStore()
+		revoker := &fakeRevoker{err: errors.New("session store down")}
+
+		issuer, err := NewTokenIssuer("test-secret-that-is-at-least-32-bytes-long")
+		if err != nil {
+			t.Fatalf("NewTokenIssuer() error = %v, want nil", err)
+		}
+
+		service, err := NewService(store, issuer, WithSessionRevoker(revoker))
+		if err != nil {
+			t.Fatalf("NewService() error = %v, want nil", err)
+		}
+
+		hash, _ := HashPassword("correct horse 7")
+		user, err := store.CreateUser(ctx, &User{Email: "ada@example.com", PasswordHash: hash, DisplayName: "Ada"})
+		if err != nil {
+			t.Fatalf("CreateUser() error = %v, want nil", err)
+		}
+
+		if err := service.RequestDeletion(ctx, user.ID, "correct horse 7"); err == nil {
+			t.Fatal("RequestDeletion() error = nil, want the revoke failure")
+		}
+
+		stored, _ := store.FindUserByID(ctx, user.ID)
+		if stored.DeletedAt != nil {
+			t.Error("the account was deleted even though its sessions could not be ended")
+		}
+	})
 }

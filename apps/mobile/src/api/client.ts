@@ -40,6 +40,12 @@ export type AuthResponse = {
   readonly access_token: string;
   readonly refresh_token: string;
   readonly expires_in: number;
+  /**
+   * True when the sign-in cancelled a pending account deletion, so the app can welcome
+   * the person back instead of pretending nothing happened (KNOT-ADR-081). Absent on a
+   * refresh, which never recovers anything.
+   */
+  readonly recovered?: boolean;
 };
 
 /** The body of GET /health. */

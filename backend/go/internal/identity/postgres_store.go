@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -17,7 +18,7 @@ const uniqueViolation = "23505"
 
 // userColumns is the canonical SELECT/RETURNING column list. It is a constant so
 // every query in this file stays consistent with scanUser.
-const userColumns = `id, email, phone, password_hash, display_name, role, preferred_languages, approximate_location, avatar_url, created_at, updated_at, email_verified_at`
+const userColumns = `id, email, phone, password_hash, display_name, role, preferred_languages, approximate_location, avatar_url, created_at, updated_at, email_verified_at, deleted_at, deletion_scheduled_at, purged_at`
 
 // PostgresStore is the pgx-backed implementation of UserStore.
 //
@@ -287,6 +288,163 @@ func (s *PostgresStore) UpdatePasswordHash(ctx context.Context, userID, password
 	return updated, nil
 }
 
+// MarkDeleted soft-deletes the account and returns the stored row.
+//
+// The timestamps are written once: `COALESCE` keeps an earlier `deleted_at` and
+// `deletion_scheduled_at`, so a second request cannot extend a recovery window that
+// is already running down. The window is computed in SQL from the same `now()` that
+// stamps the deletion, so the two can never disagree by a clock tick.
+func (s *PostgresStore) MarkDeleted(ctx context.Context, userID string) (*User, error) {
+	if !isUUID(userID) {
+		return nil, ErrUserNotFound
+	}
+
+	const query = `
+		UPDATE users
+		SET deleted_at = COALESCE(deleted_at, now()),
+			deletion_scheduled_at = COALESCE(deletion_scheduled_at, now() + make_interval(secs => $2)),
+			updated_at = now()
+		WHERE id = $1
+		RETURNING ` + userColumns
+
+	deleted, err := scanUser(s.pool.QueryRow(ctx, query, userID, int64(DeletionRecoveryWindow.Seconds())))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		return nil, fmt.Errorf("identity: mark deleted: %w", err)
+	}
+
+	return deleted, nil
+}
+
+// ClearDeletion cancels a pending deletion and returns the stored row.
+//
+// Clearing an account that was never deleted is a successful no-op, which is what
+// lets a login call it unconditionally once it has seen a deletion timestamp: the
+// race between two devices signing in at once then has one harmless loser instead of
+// an error.
+func (s *PostgresStore) ClearDeletion(ctx context.Context, userID string) (*User, error) {
+	if !isUUID(userID) {
+		return nil, ErrUserNotFound
+	}
+
+	const query = `
+		UPDATE users
+		SET deleted_at = NULL, deletion_scheduled_at = NULL, updated_at = now()
+		WHERE id = $1 AND deleted_at IS NOT NULL
+		RETURNING ` + userColumns
+
+	restored, err := scanUser(s.pool.QueryRow(ctx, query, userID))
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("identity: clear deletion: %w", err)
+		}
+
+		// Nothing to clear: either the account is live (fine) or it does not exist.
+		return s.FindUserByID(ctx, userID)
+	}
+
+	return restored, nil
+}
+
+// PurgeDueUsers anonymises every account whose recovery window has closed.
+//
+// Everything happens in one transaction, so a crash cannot leave an account with a
+// rewritten email and a live password. The due ids are selected `FOR UPDATE SKIP
+// LOCKED`: two purge runs at once therefore split the work instead of colliding, and
+// a row locked by another worker is simply left for it.
+//
+// The purge **anonymises, it does not erase** (ADR-089). The row and every story,
+// comment and signal it authored stay; what goes is anything that could identify the
+// person or log in as them: the address (replaced with an unroutable placeholder),
+// the display name, the contact fields, the avatar, the password hash, and every
+// credential, session and verification token.
+func (s *PostgresStore) PurgeDueUsers(ctx context.Context, now time.Time) (int, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("identity: purge: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	const dueQuery = `
+		SELECT id
+		FROM users
+		WHERE deleted_at IS NOT NULL
+			AND purged_at IS NULL
+			AND deletion_scheduled_at IS NOT NULL
+			AND deletion_scheduled_at <= $1
+		FOR UPDATE SKIP LOCKED`
+
+	rows, err := tx.Query(ctx, dueQuery, now)
+	if err != nil {
+		return 0, fmt.Errorf("identity: purge: select due users: %w", err)
+	}
+
+	due := make([]string, 0, 8)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("identity: purge: scan due user: %w", err)
+		}
+		due = append(due, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("identity: purge: iterate due users: %w", err)
+	}
+
+	for _, id := range due {
+		if err := purgeUser(ctx, tx, id); err != nil {
+			return 0, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("identity: purge: commit: %w", err)
+	}
+
+	return len(due), nil
+}
+
+// purgeAnonymisedEmailDomain is the reserved TLD the anonymised address uses.
+// RFC 2606 reserves `.invalid`, so an address there can never be delivered and can
+// never collide with a real person's address.
+const purgeAnonymisedEmailDomain = "@deleted.invalid"
+
+// purgeUser anonymises one account and removes everything that could log in as it.
+func purgeUser(ctx context.Context, tx pgx.Tx, userID string) error {
+	// `password_hash` is NOT NULL, so it is replaced rather than nulled. The value
+	// cannot be parsed as an argon2id PHC string, which means no password verifies
+	// against it even if the row were reachable — a fail-closed placeholder rather
+	// than an empty hash that a lenient verifier might accept.
+	const anonymise = `
+		UPDATE users
+		SET email = 'purged+' || id::text || $2,
+			display_name = 'Deleted User',
+			phone = NULL,
+			approximate_location = NULL,
+			avatar_url = NULL,
+			preferred_languages = '{}',
+			password_hash = '!purged',
+			purged_at = now(),
+			updated_at = now()
+		WHERE id = $1 AND purged_at IS NULL`
+
+	if _, err := tx.Exec(ctx, anonymise, userID, purgeAnonymisedEmailDomain); err != nil {
+		return fmt.Errorf("identity: purge: anonymise %s: %w", userID, err)
+	}
+
+	for _, table := range []string{"credentials", "sessions", "verification_tokens"} {
+		if _, err := tx.Exec(ctx, `DELETE FROM `+table+` WHERE user_id = $1`, userID); err != nil {
+			return fmt.Errorf("identity: purge: delete %s for %s: %w", table, userID, err)
+		}
+	}
+
+	return nil
+}
+
 // rowScanner is the subset of pgx.Row and pgx.Rows that scanUser needs.
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -316,6 +474,9 @@ func scanUser(row rowScanner) (*User, error) {
 		&user.CreatedAt,
 		&user.UpdatedAt,
 		&user.EmailVerifiedAt,
+		&user.DeletedAt,
+		&user.DeletionScheduledAt,
+		&user.PurgedAt,
 	)
 	if err != nil {
 		return nil, err

@@ -77,8 +77,11 @@ func (s *fakeUserStore) FindUserByEmail(_ context.Context, email string) (*ident
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Deleted accounts are still findable by email: signing in is how an account
+	// inside its recovery window is taken back (KNOT-ADR-081). The active lookup
+	// below is the one that hides them.
 	user, ok := s.byEmail[identity.NormalizeEmail(email)]
-	if !ok || s.deleted[user.ID] {
+	if !ok {
 		return nil, identity.ErrUserNotFound
 	}
 
@@ -98,11 +101,121 @@ func (s *fakeUserStore) FindUserByID(_ context.Context, id string) (*identity.Us
 }
 
 func (s *fakeUserStore) FindActiveUserByEmail(ctx context.Context, email string) (*identity.User, error) {
-	return s.FindUserByEmail(ctx, email)
+	user, err := s.FindUserByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	deleted := s.deleted[user.ID]
+	s.mu.Unlock()
+	if deleted {
+		return nil, identity.ErrUserNotFound
+	}
+
+	return user, nil
 }
 
 func (s *fakeUserStore) FindActiveUserByID(ctx context.Context, id string) (*identity.User, error) {
-	return s.FindUserByID(ctx, id)
+	user, err := s.FindUserByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	s.mu.Lock()
+	deleted := s.deleted[user.ID]
+	s.mu.Unlock()
+	if deleted {
+		return nil, identity.ErrUserNotFound
+	}
+
+	return user, nil
+}
+
+// CancelDeletion mirrors the identity service's cancellation: it clears the pending
+// deletion and is a no-op for a live account.
+func (s *fakeUserStore) CancelDeletion(_ context.Context, userID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.byID[userID]
+	if !ok {
+		return identity.ErrUserNotFound
+	}
+
+	user.DeletedAt = nil
+	user.DeletionScheduledAt = nil
+	delete(s.deleted, userID)
+
+	return nil
+}
+
+// MarkDeleted mirrors the identity store's COALESCE on the timestamps.
+func (s *fakeUserStore) MarkDeleted(_ context.Context, userID string) (*identity.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.byID[userID]
+	if !ok {
+		return nil, identity.ErrUserNotFound
+	}
+
+	if user.DeletedAt == nil {
+		deletedAt := time.Now().UTC()
+		scheduled := deletedAt.Add(identity.DeletionRecoveryWindow)
+		user.DeletedAt = &deletedAt
+		user.DeletionScheduledAt = &scheduled
+	}
+
+	return user, nil
+}
+
+// ClearDeletion mirrors the identity store: a no-op success for a live account.
+func (s *fakeUserStore) ClearDeletion(_ context.Context, userID string) (*identity.User, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, ok := s.byID[userID]
+	if !ok {
+		return nil, identity.ErrUserNotFound
+	}
+
+	user.DeletedAt = nil
+	user.DeletionScheduledAt = nil
+	delete(s.deleted, userID)
+
+	return user, nil
+}
+
+// PurgeDueUsers mirrors the anonymising purge, including its idempotency guard.
+func (s *fakeUserStore) PurgeDueUsers(_ context.Context, now time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	purged := 0
+	for id, user := range s.byID {
+		if user.DeletedAt == nil || user.PurgedAt != nil || user.DeletionScheduledAt == nil {
+			continue
+		}
+		if now.Before(*user.DeletionScheduledAt) {
+			continue
+		}
+
+		delete(s.byEmail, identity.NormalizeEmail(user.Email))
+		user.Email = "purged+" + id + "@deleted.invalid"
+		user.DisplayName = "Deleted User"
+		user.Phone = ""
+		user.ApproximateLocation = ""
+		user.AvatarURL = ""
+		user.PreferredLanguages = []string{}
+		user.PasswordHash = "!purged"
+		purgedAt := now
+		user.PurgedAt = &purgedAt
+		s.byEmail[user.Email] = user
+		purged++
+	}
+
+	return purged, nil
 }
 
 func (s *fakeUserStore) FindUsersByID(_ context.Context, ids []string) ([]*identity.User, error) {
@@ -468,6 +581,7 @@ func newTestHarness(t *testing.T, opts ...Option) *testHarness {
 		Sessions:      sessions,
 		Credentials:   credentials,
 		Verifications: verifications,
+		Deletions:     users,
 		Tokens:        issuer,
 		Cache:         redisCache,
 		Logger:        logger,
@@ -543,6 +657,7 @@ func TestNewServiceRejectsMissingDependencies(t *testing.T) {
 		Sessions:      newFakeSessionStore(),
 		Credentials:   newFakeCredentialStore(),
 		Verifications: newFakeVerificationStore(),
+		Deletions:     newFakeUserStore(),
 		Tokens:        &fakeIssuer{},
 		Cache:         redisCache,
 		Logger:        logger,
@@ -557,6 +672,7 @@ func TestNewServiceRejectsMissingDependencies(t *testing.T) {
 		"sessions":      func(d *Deps) { d.Sessions = nil },
 		"credentials":   func(d *Deps) { d.Credentials = nil },
 		"verifications": func(d *Deps) { d.Verifications = nil },
+		"deletions":     func(d *Deps) { d.Deletions = nil },
 		"tokens":        func(d *Deps) { d.Tokens = nil },
 		"cache":         func(d *Deps) { d.Cache = nil },
 		"logger":        func(d *Deps) { d.Logger = nil },
@@ -802,22 +918,131 @@ func TestLoginRejectsBadCredentials(t *testing.T) {
 	}
 }
 
-func TestLoginRefusesADeletedAccount(t *testing.T) {
+// TestLoginRecoversAnAccountInsideTheWindow is the founder's automatic recovery: a
+// successful sign-in during the 30-day window is the clearest possible signal that
+// the person wants the account back (KNOT-ADR-081).
+func TestLoginRecoversAnAccountInsideTheWindow(t *testing.T) {
 	t.Parallel()
 
 	h := newTestHarness(t)
 	user := h.registerAndVerify(t)
 
-	// A soft-deleted account is invisible to the active lookup (KNOT-ADR-081).
+	ctx := context.Background()
+
+	// Pending deletion, window still open.
 	h.users.mu.Lock()
+	deletedAt := time.Now().UTC().Add(-time.Hour)
+	scheduled := time.Now().UTC().Add(identity.DeletionRecoveryWindow - time.Hour)
+	h.users.byID[user.ID].DeletedAt = &deletedAt
+	h.users.byID[user.ID].DeletionScheduledAt = &scheduled
 	h.users.deleted[user.ID] = true
+	h.users.mu.Unlock()
+
+	out, err := h.service.Login(ctx, LoginInput{
+		Email: "ada@example.com", Password: "correct horse 7",
+	})
+	if err != nil {
+		t.Fatalf("Login() error = %v, want nil (the account should be recovered)", err)
+	}
+	if !out.Recovered {
+		t.Error("Recovered = false, want true for a sign-in that cancelled a deletion")
+	}
+	if out.AccessToken == "" || out.RefreshToken == "" {
+		t.Error("Login() issued no tokens for a recovered account")
+	}
+
+	// The deletion was cancelled before the tokens were minted, so the account is live.
+	stored, findErr := h.users.FindUserByID(ctx, user.ID)
+	if findErr != nil {
+		t.Fatalf("FindUserByID() error = %v, want nil", findErr)
+	}
+	if stored.DeletedAt != nil || stored.DeletionScheduledAt != nil {
+		t.Errorf("deletion state = (%v, %v), want both cleared", stored.DeletedAt, stored.DeletionScheduledAt)
+	}
+
+	// A second sign-in is an ordinary one, not another recovery.
+	again, err := h.service.Login(ctx, LoginInput{
+		Email: "ada@example.com", Password: "correct horse 7",
+	})
+	if err != nil {
+		t.Fatalf("second Login() error = %v, want nil", err)
+	}
+	if again.Recovered {
+		t.Error("the second sign-in reported a recovery, want an ordinary sign-in")
+	}
+}
+
+// TestLoginRefusesAnAccountPastItsWindow proves the recovery window is a deadline and
+// not a suggestion: past it, the account is gone even though the purge has not run.
+func TestLoginRefusesAnAccountPastItsWindow(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	user := h.registerAndVerify(t)
+
+	h.users.mu.Lock()
+	deletedAt := time.Now().UTC().Add(-31 * 24 * time.Hour)
+	scheduled := time.Now().UTC().Add(-24 * time.Hour)
+	h.users.byID[user.ID].DeletedAt = &deletedAt
+	h.users.byID[user.ID].DeletionScheduledAt = &scheduled
 	h.users.mu.Unlock()
 
 	_, err := h.service.Login(context.Background(), LoginInput{
 		Email: "ada@example.com", Password: "correct horse 7",
 	})
-	if !errors.Is(err, identity.ErrInvalidCredentials) {
-		t.Fatalf("Login() error = %v, want ErrInvalidCredentials", err)
+	if !errors.Is(err, identity.ErrAccountPendingPurge) {
+		t.Fatalf("Login() error = %v, want ErrAccountPendingPurge", err)
+	}
+}
+
+// TestLoginRefusesADeletedAccountWithNoWindow covers the edge case a hand-edited row
+// can produce: deleted, but with no window to recover into.
+func TestLoginRefusesADeletedAccountWithNoWindow(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	user := h.registerAndVerify(t)
+
+	h.users.mu.Lock()
+	deletedAt := time.Now().UTC()
+	h.users.byID[user.ID].DeletedAt = &deletedAt
+	h.users.byID[user.ID].DeletionScheduledAt = nil
+	h.users.mu.Unlock()
+
+	_, err := h.service.Login(context.Background(), LoginInput{
+		Email: "ada@example.com", Password: "correct horse 7",
+	})
+	if !errors.Is(err, identity.ErrAccountDeleted) {
+		t.Fatalf("Login() error = %v, want ErrAccountDeleted", err)
+	}
+}
+
+// TestLoginRefusesAPurgedAccount proves an anonymised account cannot sign in even if
+// its (rewritten) address is presented.
+func TestLoginRefusesAPurgedAccount(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	user := h.registerAndVerify(t)
+
+	ctx := context.Background()
+
+	h.users.mu.Lock()
+	deletedAt := time.Now().UTC().Add(-40 * 24 * time.Hour)
+	scheduled := time.Now().UTC().Add(-10 * 24 * time.Hour)
+	purgedAt := time.Now().UTC().Add(-9 * 24 * time.Hour)
+	h.users.byID[user.ID].DeletedAt = &deletedAt
+	h.users.byID[user.ID].DeletionScheduledAt = &scheduled
+	h.users.byID[user.ID].PurgedAt = &purgedAt
+	h.users.mu.Unlock()
+
+	_, err := h.service.Login(ctx, LoginInput{
+		Email: "ada@example.com", Password: "correct horse 7",
+	})
+	// A purged row is refused before its password is even considered: there is no
+	// person left to authenticate, and the account cannot be recovered.
+	if !errors.Is(err, identity.ErrAccountPendingPurge) {
+		t.Fatalf("Login() error = %v, want ErrAccountPendingPurge", err)
 	}
 }
 

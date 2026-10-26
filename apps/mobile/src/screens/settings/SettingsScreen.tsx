@@ -21,6 +21,7 @@ import {
   Plant,
   Prohibit,
   ShieldCheck,
+  Trash,
   SignOut,
   type Icon,
 } from 'phosphor-react-native';
@@ -74,6 +75,8 @@ type SettingsScreenProps = {
   readonly onOpenBlockedUsers: () => void;
   /** Called when the owner wants to see the devices they are signed in on. */
   readonly onOpenSessions: () => void;
+  /** Called when the owner wants to delete their account. */
+  readonly onOpenDeleteAccount: () => void;
   /** Called when the owner chooses to sign out. */
   readonly onSignOut: () => void;
 };
@@ -239,6 +242,7 @@ export default function SettingsScreen({
   onSetRooted,
   onOpenBlockedUsers,
   onOpenSessions,
+  onOpenDeleteAccount,
   onSignOut,
 }: SettingsScreenProps): React.ReactElement {
   const { colors } = useTheme();
@@ -358,6 +362,9 @@ export default function SettingsScreen({
           {/* The device list (KNOT-ADR-084): where a person reviews and ends the
               sessions their account is signed in on. */}
           <SettingRow icon={Devices} label="Sessions" onPress={onOpenSessions} />
+          {/* Destructive, and last in the section: it is the one row here that
+              cannot be undone from this screen (KNOT-034). */}
+          <SettingRow icon={Trash} label="Delete account" danger onPress={onOpenDeleteAccount} />
         </Section>
 
         {avatarError === undefined ? null : (

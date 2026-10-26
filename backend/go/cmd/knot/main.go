@@ -156,16 +156,19 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	// identity.Service owns the user-facing reads the content handlers share
-	// (resolve a user, resolve a page of authors, set an avatar). Authentication
-	// itself moved to auth.Service in KNOT-031, which owns registration, sign-in,
-	// sessions and password reset.
-	service, err := identity.NewService(store, tokens)
+	// The session store is built before the identity service because deleting an account
+	// has to end its sessions: a token minted a minute earlier must not still open an
+	// account its owner has just deleted (KNOT-ADR-081).
+	sessionStore, err := auth.NewPostgresSessionStore(pool)
 	if err != nil {
 		return err
 	}
 
-	sessionStore, err := auth.NewPostgresSessionStore(pool)
+	// identity.Service owns the user-facing reads the content handlers share
+	// (resolve a user, resolve a page of authors, set an avatar). Authentication
+	// itself moved to auth.Service in KNOT-031, which owns registration, sign-in,
+	// sessions and password reset.
+	service, err := identity.NewService(store, tokens, identity.WithSessionRevoker(sessionStore))
 	if err != nil {
 		return err
 	}
@@ -185,6 +188,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		Sessions:      sessionStore,
 		Credentials:   credentialStore,
 		Verifications: verificationStore,
+		Deletions:     service,
 		Tokens:        tokens,
 		Cache:         redisCache,
 		Logger:        logger,
@@ -201,6 +205,22 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	authHandler, err := httpapi.NewAuthHandler(authService, limiter, logger)
 	if err != nil {
 		return err
+	}
+
+	// The account lifecycle (KNOT-034). Deletion and recovery go through the identity
+	// service because they are account policy; the handler only maps them onto HTTP.
+	// It shares the auth limiter: recovery checks a password on a public route, so an
+	// attacker's attempts there must come out of the same budget as sign-in.
+	accountHandler, err := httpapi.NewAccountHandler(service, limiter, cfg.AdminSecret, logger)
+	if err != nil {
+		return err
+	}
+
+	if cfg.AdminSecret == config.LocalAdminSecretPlaceholder {
+		logger.Warn(
+			"using the local admin secret; the purge endpoint is callable by anyone who can read .env.example. Set KNOT_ADMIN_SECRET.",
+			slog.String("env", cfg.Env),
+		)
 	}
 
 	// Rooted is Knot's trust and community layer. Its service doubles as the
@@ -514,7 +534,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, avatarHandler, storyMediaHandler, notificationsHandler, profileHandler, reactionsHandler, inquiriesHandler, moderationHandler, searchHandler, authMiddleware, appinfo.Version, logger)
+	router, err := httpapi.NewRouter(authHandler, storiesHandler, versionsHandler, conversationsHandler, rootedHandler, discoveryHandler, avatarHandler, storyMediaHandler, notificationsHandler, profileHandler, reactionsHandler, inquiriesHandler, moderationHandler, searchHandler, accountHandler, authMiddleware, appinfo.Version, logger)
 	if err != nil {
 		return err
 	}
