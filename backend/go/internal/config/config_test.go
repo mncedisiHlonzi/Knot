@@ -24,6 +24,8 @@ func clearEnv(t *testing.T) {
 		envKeyS3AccessKey,
 		envKeyS3SecretKey,
 		envKeyS3Bucket,
+		envKeyResendAPIKey,
+		envKeyEmailFrom,
 	} {
 		t.Setenv(key, "")
 	}
@@ -63,6 +65,45 @@ func TestLoadLocalFallsBackToDefaults(t *testing.T) {
 	if cfg.RedisAddr != defaultRedisAddr {
 		t.Errorf("RedisAddr = %q, want default %q", cfg.RedisAddr, defaultRedisAddr)
 	}
+}
+
+// TestLoadEmailSettings proves the email configuration follows the two rules the
+// task states: the From header has a usable default everywhere, and a missing API
+// key is not an error (it means delivery is disabled, KNOT-ADR-090).
+func TestLoadEmailSettings(t *testing.T) {
+	t.Run("defaults the from address and allows no api key", func(t *testing.T) {
+		clearEnv(t)
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() returned error %v, want nil", err)
+		}
+
+		if cfg.ResendAPIKey != "" {
+			t.Errorf("ResendAPIKey = %q, want empty", cfg.ResendAPIKey)
+		}
+		if cfg.EmailFrom != defaultEmailFrom {
+			t.Errorf("EmailFrom = %q, want default %q", cfg.EmailFrom, defaultEmailFrom)
+		}
+	})
+
+	t.Run("reads both values from the environment", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv(envKeyResendAPIKey, "re_test_key")
+		t.Setenv(envKeyEmailFrom, "Knot <hello@knot.example>")
+
+		cfg, err := Load()
+		if err != nil {
+			t.Fatalf("Load() returned error %v, want nil", err)
+		}
+
+		if cfg.ResendAPIKey != "re_test_key" {
+			t.Errorf("ResendAPIKey = %q, want the configured key", cfg.ResendAPIKey)
+		}
+		if cfg.EmailFrom != "Knot <hello@knot.example>" {
+			t.Errorf("EmailFrom = %q, want the configured sender", cfg.EmailFrom)
+		}
+	})
 }
 
 // TestLoadLocalDefaultDSNUsesHostPort5433 pins the local default DSN to the host

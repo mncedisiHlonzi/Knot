@@ -61,6 +61,7 @@ type AuthService interface {
 	RevokeSession(ctx context.Context, userID, sessionID string) error
 	ForgotPassword(ctx context.Context, email string) error
 	ResetPassword(ctx context.Context, token, newPassword string) error
+	ResendVerification(ctx context.Context, email string) error
 }
 
 // AuthHandler serves the authentication endpoints: registration, address
@@ -121,6 +122,11 @@ type refreshRequest struct {
 
 // forgotPasswordRequest is the POST /auth/forgot-password body.
 type forgotPasswordRequest struct {
+	Email string `json:"email"`
+}
+
+// resendVerificationRequest is the POST /auth/resend-verification body.
+type resendVerificationRequest struct {
 	Email string `json:"email"`
 }
 
@@ -395,6 +401,38 @@ func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 	if err := h.service.ForgotPassword(r.Context(), body.Email); err != nil {
 		h.writeServiceError(w, r, err)
 		return
+	}
+
+	writeJSON(w, http.StatusOK, successResponse{Success: true})
+}
+
+// ResendVerification handles POST /auth/resend-verification.
+//
+// It sends a fresh verification link to an account that has not verified its
+// address yet, and it answers 200 for every input: registered, unregistered,
+// already verified, malformed (KNOT-ADR-090, KNOT-ADR-087). A differing status
+// would turn the endpoint into an account enumerator. The per-address rate limit
+// is what stops it from being a way to flood one inbox.
+func (h *AuthHandler) ResendVerification(w http.ResponseWriter, r *http.Request) {
+	var body resendVerificationRequest
+	if err := decodeJSON(w, r, &body); err != nil {
+		h.writeDecodeError(w, r, err)
+		return
+	}
+
+	if !h.allow(w, r, auth.LimitResendVerification, identity.NormalizeEmail(body.Email)) {
+		return
+	}
+
+	// A failure is logged rather than returned: the answer must not depend on
+	// whether the address exists or on whether the provider was reachable, and the
+	// honest remedy in every case is to try again (KNOT-ADR-090).
+	if err := h.service.ResendVerification(r.Context(), body.Email); err != nil {
+		h.logger.WarnContext(r.Context(),
+			"resend verification failed",
+			slog.String("request_id", RequestIDFromContext(r.Context())),
+			slog.String("error", err.Error()),
+		)
 	}
 
 	writeJSON(w, http.StatusOK, successResponse{Success: true})

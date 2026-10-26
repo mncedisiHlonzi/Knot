@@ -21,8 +21,9 @@ backend always run on the host — there is deliberately no application containe
 Local tool versions and CI tool versions are **not** identical today:
 
 - **Node:** local development runs **Node 24**; CI pins **Node 20**.
-- **Go:** local development runs **Go 1.27**; `backend/go/go.mod` declares `go 1.22` and
-  CI installs **Go 1.22**.
+- **Go:** local development runs **Go 1.27**; `backend/go/go.mod` declares `go 1.23` and
+  CI installs **Go 1.23**. The directive moved from 1.22 to 1.23 with KNOT-031a because the
+  Resend Go SDK declares `go 1.23` in its own `go.mod`; `go get` raised ours automatically.
 
 This drift is accepted for the foundation phase, but it means a green local run is **not**
 proof that CI will be green.
@@ -2635,25 +2636,35 @@ key, so content deletion (no such path today) would leave a derived row behind.
 
 ## Testing Auth Locally
 
-Knot's authentication verifies addresses and resets passwords with links that are
-**written to the API's console** instead of being emailed. There is no mail provider yet
-(KNOT-ADR-088), so the console is the inbox.
+Knot's authentication verifies addresses and resets passwords with links that are **emailed
+through Resend** (KNOT-ADR-090). How you read the link depends on whether
+`KNOT_RESEND_API_KEY` is set:
 
-### The full round trip
+| `KNOT_RESEND_API_KEY` | What happens to the link |
+| --- | --- |
+| **empty** (the default) | Nothing is sent. The no-op sender logs the whole message, link included, at `warn` level. This is the local round trip. |
+| **set** (`re_…`) | The message is delivered by Resend to the real mailbox. Nothing is written to stdout. |
+
+`KNOT_EMAIL_FROM` defaults to `Knot <onboarding@resend.dev>`, the Resend sandbox sender
+that needs no verified domain. A deployment with its own domain sets it to that domain,
+because the sandbox address only delivers to the Resend account's own mailbox.
+
+### The full round trip (no Resend account needed)
 
 ```bash
 # 1. Start the stack and the API, keeping the API's output.
 scripts/dev-up.sh
 cd backend/go && go run ./cmd/knot 2>&1 | tee /tmp/knot-api.log
+#    The startup warning "KNOT_RESEND_API_KEY is empty" is expected.
 
 # 2. Register. The response has NO tokens: a new account cannot sign in yet.
 curl -sS -X POST localhost:8080/auth/register \
   -H 'Content-Type: application/json' \
   -d '{"email":"ada@example.com","password":"correct horse 7","display_name":"Ada Lovelace"}'
 
-# 3. Read the verification link out of the log.
-grep 'email verification' /tmp/knot-api.log
-#   … url=knot://auth/verify-email?token=<TOKEN>
+# 3. Read the verification link out of the log (the no-op sender writes it).
+grep 'email delivery is disabled' -A 1 /tmp/knot-api.log
+#   … body="Welcome to Knot. … knot://auth/verify-email?token=<TOKEN> …
 
 # 4. Verify. Sign-in is unlocked from this moment.
 curl -sS -X POST localhost:8080/auth/verify-email \
@@ -2668,15 +2679,22 @@ curl -sS -X POST localhost:8080/auth/login \
 curl -sS localhost:8080/auth/sessions -H "Authorization: Bearer <ACCESS_TOKEN>"
 curl -sS -X POST localhost:8080/auth/logout -H "Authorization: Bearer <ACCESS_TOKEN>"
 
-# 7. Password reset, same console-link pattern.
+# 7. Password reset, same pattern.
 curl -sS -X POST localhost:8080/auth/forgot-password \
   -H 'Content-Type: application/json' -d '{"email":"ada@example.com"}'
 grep 'password reset' /tmp/knot-api.log
-#   … url=knot://auth/reset-password?token=<TOKEN>
+#   … knot://auth/reset-password?token=<TOKEN>
 curl -sS -X POST localhost:8080/auth/reset-password \
   -H 'Content-Type: application/json' \
   -d '{"token":"<TOKEN>","new_password":"another strong 1"}'
+
+# 8. Lost the verification link? Ask for another one. It always answers 200.
+curl -sS -X POST localhost:8080/auth/resend-verification \
+  -H 'Content-Type: application/json' -d '{"email":"ada@example.com"}'
 ```
+
+With a real `KNOT_RESEND_API_KEY` in the environment, steps 3 and 7 change to "open the
+mailbox". Everything else is identical.
 
 ### Deleting an account, recovering it, and purging it (KNOT-034)
 
@@ -2739,14 +2757,15 @@ way a person signs in:
 
 1. **Register** on the Create account screen. The app does **not** sign you in: an account
    cannot log in until its address is verified (KNOT-ADR-083).
-2. **Read the console.** The screen says "Check your email", and the link
-   (`knot://auth/verify-email?token=…`) is in the API's stdout.
+2. **Read the email** (or the console, when `KNOT_RESEND_API_KEY` is empty). The screen says
+   "Check your email", and the link (`knot://auth/verify-email?token=…`) arrives at the
+   address that was registered.
 3. **Paste the token** into the Verify screen (reachable from the register confirmation and
    from the login screen's "Enter verification token" button).
 4. **Sign in.** The app stores only the refresh token (AsyncStorage, `knot.session.v2`) and
    keeps the 15-minute access token in memory. On the next launch it spends the refresh
    token to restore the session, so a revoked session cannot come back.
-5. **Forgot password?** On the login screen. The reset link is again on the console, and
+5. **Forgot password?** On the login screen. The reset link is emailed the same way, and
    the Reset screen takes the token plus a new password; resetting signs out every device.
 
 `Settings → Sessions` lists the devices the account is signed in on, marks the current one,

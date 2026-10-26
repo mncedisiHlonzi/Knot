@@ -57,6 +57,13 @@ var (
 	LimitRefresh = Limit{Name: "refresh", Attempts: 30, Window: 15 * time.Minute}
 	// LimitForgotPassword is 3 reset requests per hour per address.
 	LimitForgotPassword = Limit{Name: "forgot", Attempts: 3, Window: time.Hour}
+	// LimitResendVerification is 3 verification resends per hour per address.
+	//
+	// It matches the reset limit because it protects the same resource: one
+	// person's inbox. A person who mistyped their address fixes it in one or two
+	// attempts, and a script trying to use the endpoint as a mail relay is stopped
+	// on the fourth (KNOT-ADR-090).
+	LimitResendVerification = Limit{Name: "resend_verification", Attempts: 3, Window: time.Hour}
 )
 
 // LimitResult is what one attempt cost.

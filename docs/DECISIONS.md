@@ -3079,3 +3079,57 @@ database credential and is treated that way (never logged, constant-time compare
 required outside local). Content attribution survives anonymisation as the literal string
 `Deleted User`, which is a design choice worth revisiting if profiles ever show a
 "deleted account" badge.
+
+## KNOT-ADR-090 — Resend delivers verification and reset links, best-effort, and the console stops being the inbox
+
+**Context.** KNOT-ADR-088 deliberately logged verification and reset links instead of
+emailing them, because delivery is a subsystem and the verification gate was the security
+property. That gate shipped (KNOT-030 to KNOT-034), so the last identity task is the
+delivery channel itself. The provider is Resend: its free tier (100 emails a day, 3,000 a
+month) covers the MVP, it has an official Go SDK, and it needs no domain verification to
+send from `onboarding@resend.dev`.
+
+**Decision.**
+
+- **A provider-agnostic `internal/email` package.** `email.Email` carries a rendered
+  `To`/`Subject`/`HTML`/`Text`, and `email.Sender` is a one-method interface taking a
+  `context.Context`. `auth` depends on the interface, never on Resend, which is what keeps
+  the authentication tests free of a network and the provider replaceable.
+- **`github.com/resend/resend-go/v4` is the only new dependency**, wrapped by a
+  `resendSender` whose wire request is built by its own method so a test can assert it
+  without a network call.
+- **The templates are embedded** (`//go:embed`) and rendered with `html/template`, so a
+  missing template is a build failure rather than a runtime surprise. Two messages exist —
+  verification and password reset — each with an HTML body and a plain-text fallback.
+  The `{deep_link}` placeholder in the brief is `{{.DeepLink}}` in the files, and the value
+  is typed `template.URL`: Go refuses an unknown scheme in an `href`, and `knot://` is not
+  `http`, `https`, or `mailto`, so without that type the button would render `#ZgotmplZ`.
+- **The deep link is built by the service, not the template.** The prefix stays configurable
+  (`WithVerificationLink`, `WithPasswordResetLink`), and the token is the same
+  hex-encoded secret the service already had.
+- **Sending is best-effort.** `Register` and `ForgotPassword` send after the token is
+  stored, and a delivery failure is logged at `warn`, never returned: an account must exist
+  and a reset request must answer the same way whether or not Resend is up. The remedy for
+  a lost link is `POST /auth/resend-verification`, not an error the person has to
+  understand.
+- **An empty `KNOT_RESEND_API_KEY` is a supported configuration.** The constructor returns a
+  no-op sender that logs each message (link included) instead of sending it. That is what
+  keeps local development and CI working without an account, and it is the only situation
+  in which a link still reaches a log.
+- **`POST /auth/resend-verification` exists** (public, 3 per hour per address) because
+  registration only ever sends one link: without it an account whose first email was lost
+  would be unreachable forever. It answers `200` for every input — unknown, malformed,
+  already verified — on the same anti-enumeration rule as `POST /auth/forgot-password`.
+- **The Go directive moves from 1.22 to 1.23.** Every published `resend-go/v4` release
+  declares `go 1.23` in its own `go.mod`, and `go get` raised ours automatically. Nothing
+  in the codebase needs a 1.23 language feature; CI now installs 1.23 so the directive and
+  the toolchain agree.
+
+**Consequences.** The console is no longer a credential store in any environment that sets
+an API key, which is the change ADR-088 promised. The costs are real and accepted: there is
+no retry queue, no bounce handling, no fallback provider, and no delivery telemetry, so a
+silently dropped message is invisible until someone says they did not get it. Because the
+Resend sandbox sender only delivers to the account's own mailbox, a real deployment must
+set `KNOT_EMAIL_FROM` to a verified domain before anybody else can receive mail. Nothing
+tracks open rates or clicks, and there are no unsubscribe links: both messages are
+transactional.

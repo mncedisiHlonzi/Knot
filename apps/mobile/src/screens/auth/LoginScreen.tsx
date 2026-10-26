@@ -152,8 +152,7 @@ export default function LoginScreen({
           {needsVerification ? (
             <View style={styles.notice}>
               <Text style={[typeScale.body, styles.noticeText]}>
-                Please verify your email. Check the server console for the link, then paste its
-                token here.
+                Check your email for the verification link.
               </Text>
               <Button
                 variant="ghost"

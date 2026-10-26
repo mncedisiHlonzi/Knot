@@ -35,6 +35,7 @@ type fakeAuthService struct {
 	revokeErr      error
 	forgotErr      error
 	resetErr       error
+	resendErr      error
 
 	gotRegister    auth.RegisterInput
 	gotVerifyToken string
@@ -45,6 +46,7 @@ type fakeAuthService struct {
 	gotRevoke      [2]string
 	gotForgot      string
 	gotReset       [2]string
+	gotResendEmail string
 }
 
 func (f *fakeAuthService) Register(_ context.Context, in auth.RegisterInput) (*identity.User, error) {
@@ -90,6 +92,11 @@ func (f *fakeAuthService) ForgotPassword(_ context.Context, email string) error 
 func (f *fakeAuthService) ResetPassword(_ context.Context, token, newPassword string) error {
 	f.gotReset = [2]string{token, newPassword}
 	return f.resetErr
+}
+
+func (f *fakeAuthService) ResendVerification(_ context.Context, email string) error {
+	f.gotResendEmail = email
+	return f.resendErr
 }
 
 // sampleUser is a well-formed account.

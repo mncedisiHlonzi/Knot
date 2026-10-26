@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/knot/backend/internal/cache"
+	"github.com/knot/backend/internal/email"
 	"github.com/knot/backend/internal/identity"
 )
 
@@ -32,9 +33,9 @@ const (
 	passwordResetKeyPrefix = "knot:auth:reset:"
 )
 
-// Defaults for the links logged to the server console until real email exists
-// (KNOT-ADR-088). They use the app's own scheme so a developer can paste one into
-// a device that has the scheme registered, and they are overridable with
+// Defaults for the action links embedded in the verification and password reset
+// emails (KNOT-ADR-090). They use the app's own scheme so a device with the scheme
+// registered opens the link directly, and they are overridable with
 // WithVerificationLink / WithPasswordResetLink.
 const (
 	defaultVerificationLinkBase  = "knot://auth/verify-email?token="
@@ -86,8 +87,13 @@ type Deps struct {
 	// Cache is Redis: rate-limit counters and the short-lived password reset
 	// token (KNOT-ADR-082, KNOT-ADR-087).
 	Cache cache.Cache
-	// Logger records the links that stand in for email (KNOT-ADR-088) and any
-	// background failure the caller must not be told about.
+	// Email delivers the verification and password reset links (KNOT-ADR-090). It
+	// is required: a nil sender would silently produce accounts nobody can verify.
+	// Sending is best-effort at the call sites, but the collaborator itself is not
+	// optional.
+	Email email.Sender
+	// Logger records any background failure the caller must not be told about,
+	// including a failed email delivery.
 	Logger *slog.Logger
 }
 
@@ -152,6 +158,7 @@ type Service struct {
 	deletions     DeletionCanceller
 	tokens        TokenIssuer
 	cache         cache.Cache
+	emailSender   email.Sender
 	logger        *slog.Logger
 
 	now func() time.Time
@@ -189,6 +196,9 @@ func NewService(deps Deps, opts ...Option) (*Service, error) {
 	if deps.Cache == nil {
 		return nil, fmt.Errorf("auth: service requires a cache")
 	}
+	if deps.Email == nil {
+		return nil, fmt.Errorf("auth: service requires an email sender")
+	}
 	if deps.Logger == nil {
 		return nil, fmt.Errorf("auth: service requires a logger")
 	}
@@ -206,6 +216,7 @@ func NewService(deps Deps, opts ...Option) (*Service, error) {
 		deletions:             deps.Deletions,
 		tokens:                deps.Tokens,
 		cache:                 deps.Cache,
+		emailSender:           deps.Email,
 		logger:                deps.Logger,
 		now:                   time.Now,
 		dummyHash:             dummy,
@@ -263,13 +274,14 @@ type TokenOutput struct {
 	Recovered bool
 }
 
-// Register creates an account, stores its password credential, and issues an
-// email-verification token.
+// Register creates an account, stores its password credential, and emails an
+// email-verification link.
 //
 // It returns **no tokens**: an unverified account cannot sign in, so handing out
 // a session here would contradict the rule it is about to enforce
-// (KNOT-ADR-083). The verification token is written to the log instead of being
-// emailed, because there is no email provider yet (KNOT-ADR-088).
+// (KNOT-ADR-083). The verification link is emailed best-effort: a delivery failure
+// is logged and the account remains, because the person can ask for another link
+// (KNOT-ADR-090).
 func (s *Service) Register(ctx context.Context, in RegisterInput) (*identity.User, error) {
 	email, err := identity.ValidateEmail(in.Email)
 	if err != nil {
@@ -329,7 +341,11 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (*identity.Use
 	return user, nil
 }
 
-// issueEmailVerification mints a verification token and logs the link.
+// issueEmailVerification mints a verification token and emails its link.
+//
+// The token write is the part that can fail the registration: without a stored
+// token no link could ever work. The send that follows is best-effort, so a
+// provider outage leaves a usable account and a warning in the log (KNOT-ADR-090).
 func (s *Service) issueEmailVerification(ctx context.Context, user *identity.User) error {
 	secret, err := newSecret()
 	if err != nil {
@@ -346,14 +362,32 @@ func (s *Service) issueEmailVerification(ctx context.Context, user *identity.Use
 		return fmt.Errorf("auth: register: issue verification token: %w", err)
 	}
 
-	s.logger.InfoContext(ctx,
-		"email verification link (no email provider yet; KNOT-ADR-088)",
-		slog.String("email", user.Email),
-		slog.String("expires_at", token.ExpiresAt.UTC().Format(time.RFC3339)),
-		slog.String("url", s.verificationLinkBase+secret),
-	)
+	s.sendVerificationEmail(ctx, user, s.verificationLinkBase+secret, token.ExpiresAt)
 
 	return nil
+}
+
+// sendVerificationEmail renders and sends the verification message, logging any
+// failure instead of returning it.
+func (s *Service) sendVerificationEmail(ctx context.Context, user *identity.User, deepLink string, expiresAt time.Time) {
+	msg, err := email.Verification(user.Email, deepLink)
+	if err != nil {
+		s.logger.WarnContext(ctx, "could not render the verification email",
+			slog.String("email", user.Email),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+
+	if err := s.emailSender.Send(ctx, msg); err != nil {
+		// Best-effort: the account exists, and the person can ask for another link
+		// from POST /auth/resend-verification (KNOT-ADR-090).
+		s.logger.WarnContext(ctx, "sending the verification email failed",
+			slog.String("email", user.Email),
+			slog.String("expires_at", expiresAt.UTC().Format(time.RFC3339)),
+			slog.String("error", err.Error()),
+		)
+	}
 }
 
 // VerifyEmail marks the account as verified and consumes the token.
@@ -706,8 +740,8 @@ func (s *Service) RevokeSession(ctx context.Context, userID, sessionID string) e
 // It returns nil in every case, including for an address that is not registered
 // and for one that is malformed: the endpoint's whole contract is that it answers
 // the same way whether or not an account exists (KNOT-ADR-087). The token itself
-// lives in Redis under its own hash, expires in PasswordResetTTL, and is logged
-// instead of emailed (KNOT-ADR-088).
+// lives in Redis under its own hash and expires in PasswordResetTTL, and its link
+// is emailed best-effort (KNOT-ADR-090).
 func (s *Service) ForgotPassword(ctx context.Context, email string) error {
 	normalized := identity.NormalizeEmail(email)
 	if normalized == "" {
@@ -732,14 +766,66 @@ func (s *Service) ForgotPassword(ctx context.Context, email string) error {
 		return fmt.Errorf("auth: forgot password: store token: %w", err)
 	}
 
-	s.logger.InfoContext(ctx,
-		"password reset link (no email provider yet; KNOT-ADR-088)",
-		slog.String("email", user.Email),
-		slog.String("expires_in", PasswordResetTTL.String()),
-		slog.String("url", s.passwordResetLinkBase+secret),
-	)
+	s.sendPasswordResetEmail(ctx, user, s.passwordResetLinkBase+secret)
 
 	return nil
+}
+
+// ResendVerification emails a fresh verification link when the address belongs to
+// an account that has not verified it yet.
+//
+// It returns nil in every other case as well: an unknown address, a malformed
+// address, and an account that is already verified all complete silently, because
+// a different answer would turn this endpoint into an account enumerator
+// (KNOT-ADR-087, KNOT-ADR-090). The link itself is sent best-effort; a failed send
+// is logged and the request still succeeds, since the person can simply ask again.
+func (s *Service) ResendVerification(ctx context.Context, email string) error {
+	normalized := identity.NormalizeEmail(email)
+	if normalized == "" {
+		return nil
+	}
+
+	user, err := s.users.FindActiveUserByEmail(ctx, normalized)
+	if err != nil {
+		if errors.Is(err, identity.ErrUserNotFound) {
+			return nil
+		}
+		return fmt.Errorf("auth: resend verification: %w", err)
+	}
+
+	if user.EmailVerifiedAt != nil {
+		return nil
+	}
+
+	if err := s.issueEmailVerification(ctx, user); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// sendPasswordResetEmail renders and sends the reset message, logging any failure
+// instead of returning it.
+func (s *Service) sendPasswordResetEmail(ctx context.Context, user *identity.User, deepLink string) {
+	msg, err := email.PasswordReset(user.Email, deepLink)
+	if err != nil {
+		s.logger.WarnContext(ctx, "could not render the password reset email",
+			slog.String("email", user.Email),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+
+	if err := s.emailSender.Send(ctx, msg); err != nil {
+		// Best-effort, and deliberately not returned: the endpoint answers the same
+		// way for every address (KNOT-ADR-087), and the reset token is still valid
+		// should the person try again (KNOT-ADR-090).
+		s.logger.WarnContext(ctx, "sending the password reset email failed",
+			slog.String("email", user.Email),
+			slog.String("expires_in", PasswordResetTTL.String()),
+			slog.String("error", err.Error()),
+		)
+	}
 }
 
 // ResetPassword sets a new password from a reset token and signs the account out

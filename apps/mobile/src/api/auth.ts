@@ -56,8 +56,8 @@ export type SessionList = {
 /**
  * Creates an account.
  *
- * A verification link is written to the server console (KNOT-ADR-088); the caller
- * shows the "check your email" state and must not treat this as being signed in.
+ * A verification link is emailed to the address (KNOT-ADR-090); the caller shows the
+ * "check your email" state and must not treat this as being signed in.
  */
 export function register(payload: RegisterPayload): Promise<RegisterResult> {
   return request<RegisterResult>('/auth/register', { method: 'POST', body: payload });

@@ -109,8 +109,11 @@ Creates an account. It returns **no tokens**: an account cannot sign in until it
 address is verified (KNOT-ADR-083), so a session is only obtainable from
 [`POST /auth/login`](#post-authlogin).
 
-A verification link is written to the server console instead of being emailed
-(KNOT-ADR-088); see [Testing Auth Locally](DEVELOPMENT.md#testing-auth-locally).
+A verification link is **emailed** to the address (KNOT-ADR-090). The send is best-effort: a
+delivery failure is logged and the account still exists, so an unverified account can ask
+for another link with
+[`POST /auth/resend-verification`](#post-authresend-verification). See
+[Testing Auth Locally](DEVELOPMENT.md#testing-auth-locally).
 
 **Request**
 
@@ -244,7 +247,7 @@ Redeems the token from a verification link and unlocks sign-in.
 **Request**
 
 ```json
-{ "token": "<token from the console-logged link>" }
+{ "token": "<token from the emailed verification link>" }
 ```
 
 **200** `{ "success": true }`
@@ -319,8 +322,8 @@ API never confirms that an id exists on someone else's account), `401 unauthoriz
 
 ## POST /auth/forgot-password
 
-Starts a password reset. A reset link is written to the server console instead of being
-emailed (KNOT-ADR-088), and is valid for 30 minutes.
+Starts a password reset. A reset link is **emailed** through Resend (KNOT-ADR-090), and is
+valid for 30 minutes.
 
 **Request**
 
@@ -330,6 +333,32 @@ emailed (KNOT-ADR-088), and is valid for 30 minutes.
 
 **200** `{ "success": true }` — **always**, whether or not the address has an account, so
 the endpoint cannot be used to enumerate accounts (KNOT-ADR-087).
+
+The send is best-effort: if the provider fails the endpoint still answers `200`, the failure
+is logged, and the person can request another link.
+
+**Errors:** `400 invalid_request`, `429 rate_limited`.
+
+Limited to **3 requests per hour per address**.
+
+## POST /auth/resend-verification
+
+Emails a fresh verification link to an account whose address is not verified yet
+(KNOT-ADR-090). This is the way an existing unverified account recovers: registration only
+sends the first link.
+
+**Request**
+
+```json
+{ "email": "ada@example.com" }
+```
+
+**200** `{ "success": true }` — **always**. An unknown address, a malformed address, an
+already-verified account, and a provider failure all answer identically, so the endpoint
+cannot enumerate accounts (KNOT-ADR-087, KNOT-ADR-090).
+
+A new token is minted per request; the previous link keeps working until it expires (24
+hours) or is used. The send is best-effort.
 
 **Errors:** `400 invalid_request`, `429 rate_limited`.
 
@@ -343,7 +372,7 @@ Sets a new password from a reset token, then revokes **every** session on the ac
 **Request**
 
 ```json
-{ "token": "<token from the console-logged link>", "new_password": "another strong 1" }
+{ "token": "<token from the emailed reset link>", "new_password": "another strong 1" }
 ```
 
 **200** `{ "success": true }`

@@ -15,6 +15,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 
 	"github.com/knot/backend/internal/cache"
+	"github.com/knot/backend/internal/email"
 	"github.com/knot/backend/internal/identity"
 )
 
@@ -490,6 +491,9 @@ type fakeVerificationStore struct {
 	mu     sync.Mutex
 	byHash map[string]*VerificationToken
 	seq    int
+	// createErr, when set, is returned by Create. It exists so a test can prove a
+	// store failure is reported rather than swallowed.
+	createErr error
 }
 
 func newFakeVerificationStore() *fakeVerificationStore {
@@ -499,6 +503,10 @@ func newFakeVerificationStore() *fakeVerificationStore {
 func (s *fakeVerificationStore) Create(_ context.Context, token *VerificationToken) (*VerificationToken, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	if s.createErr != nil {
+		return nil, s.createErr
+	}
 
 	s.seq++
 	stored := *token
@@ -541,6 +549,38 @@ func (s *fakeVerificationStore) Consume(_ context.Context, tokenID string) error
 	return ErrVerificationTokenNotFound
 }
 
+// fakeEmailSender records the messages the service hands it, and can be told to
+// fail so the best-effort contract can be tested.
+type fakeEmailSender struct {
+	mu   sync.Mutex
+	sent []email.Email
+	err  error
+}
+
+func (s *fakeEmailSender) Send(_ context.Context, msg email.Email) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if s.err != nil {
+		return s.err
+	}
+
+	s.sent = append(s.sent, msg)
+
+	return nil
+}
+
+// messages returns a copy of everything sent, so a test cannot mutate the record.
+func (s *fakeEmailSender) messages() []email.Email {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	out := make([]email.Email, len(s.sent))
+	copy(out, s.sent)
+
+	return out
+}
+
 // testHarness bundles everything a service test needs.
 type testHarness struct {
 	service       *Service
@@ -548,6 +588,7 @@ type testHarness struct {
 	sessions      *fakeSessionStore
 	credentials   *fakeCredentialStore
 	verifications *fakeVerificationStore
+	emails        *fakeEmailSender
 	cache         cache.Cache
 	redis         *miniredis.Miniredis
 	logs          *bytes.Buffer
@@ -560,6 +601,7 @@ func newTestHarness(t *testing.T, opts ...Option) *testHarness {
 	sessions := newFakeSessionStore()
 	credentials := newFakeCredentialStore()
 	verifications := newFakeVerificationStore()
+	emails := &fakeEmailSender{}
 
 	redis := miniredis.RunT(t)
 	redisCache, err := cache.NewRedisCache(redis.Addr(), "", 0)
@@ -584,6 +626,7 @@ func newTestHarness(t *testing.T, opts ...Option) *testHarness {
 		Deletions:     users,
 		Tokens:        issuer,
 		Cache:         redisCache,
+		Email:         emails,
 		Logger:        logger,
 	}, opts...)
 	if err != nil {
@@ -596,6 +639,7 @@ func newTestHarness(t *testing.T, opts ...Option) *testHarness {
 		sessions:      sessions,
 		credentials:   credentials,
 		verifications: verifications,
+		emails:        emails,
 		cache:         redisCache,
 		redis:         redis,
 		logs:          logs,
@@ -615,7 +659,7 @@ func (h *testHarness) registerAndVerify(t *testing.T) *identity.User {
 		t.Fatalf("Register() error = %v, want nil", err)
 	}
 
-	token := extractToken(t, h.logs.String(), defaultVerificationLinkBase)
+	token := h.latestEmailToken(t, defaultVerificationLinkBase)
 	if err := h.service.VerifyEmail(context.Background(), token); err != nil {
 		t.Fatalf("VerifyEmail() error = %v, want nil", err)
 	}
@@ -623,16 +667,35 @@ func (h *testHarness) registerAndVerify(t *testing.T) *identity.User {
 	return user
 }
 
-// extractToken pulls the token out of the most recent console-logged link.
-func extractToken(t *testing.T, logs, base string) string {
+// latestEmail returns the most recently sent message.
+func (h *testHarness) latestEmail(t *testing.T) email.Email {
 	t.Helper()
 
-	index := strings.LastIndex(logs, base)
-	if index < 0 {
-		t.Fatalf("no link starting with %q was logged; logs:\n%s", base, logs)
+	messages := h.emails.messages()
+	if len(messages) == 0 {
+		t.Fatal("no email was sent")
 	}
 
-	rest := logs[index+len(base):]
+	return messages[len(messages)-1]
+}
+
+// latestEmailToken pulls the token out of the most recent email body.
+func (h *testHarness) latestEmailToken(t *testing.T, base string) string {
+	t.Helper()
+
+	return extractToken(t, h.latestEmail(t).Text, base)
+}
+
+// extractToken pulls the token out of a link that starts with base.
+func extractToken(t *testing.T, body, base string) string {
+	t.Helper()
+
+	index := strings.LastIndex(body, base)
+	if index < 0 {
+		t.Fatalf("no link starting with %q was found; body:\n%s", base, body)
+	}
+
+	rest := body[index+len(base):]
 	end := strings.IndexAny(rest, " \n\"")
 	if end < 0 {
 		end = len(rest)
@@ -660,6 +723,7 @@ func TestNewServiceRejectsMissingDependencies(t *testing.T) {
 		Deletions:     newFakeUserStore(),
 		Tokens:        &fakeIssuer{},
 		Cache:         redisCache,
+		Email:         &fakeEmailSender{},
 		Logger:        logger,
 	}
 
@@ -675,6 +739,7 @@ func TestNewServiceRejectsMissingDependencies(t *testing.T) {
 		"deletions":     func(d *Deps) { d.Deletions = nil },
 		"tokens":        func(d *Deps) { d.Tokens = nil },
 		"cache":         func(d *Deps) { d.Cache = nil },
+		"email":         func(d *Deps) { d.Email = nil },
 		"logger":        func(d *Deps) { d.Logger = nil },
 	}
 
@@ -735,9 +800,14 @@ func TestRegisterCreatesAnUnverifiedAccount(t *testing.T) {
 		t.Error("credential data does not match the stored password hash")
 	}
 
-	// The verification link is logged, because there is no email provider yet.
-	if !strings.Contains(h.logs.String(), defaultVerificationLinkBase) {
-		t.Errorf("no verification link was logged; logs:\n%s", h.logs.String())
+	// The verification link is emailed, because there is no console stand-in any
+	// more (KNOT-ADR-090).
+	msg := h.latestEmail(t)
+	if msg.To != user.Email {
+		t.Errorf("email to = %q, want %q", msg.To, user.Email)
+	}
+	if !strings.Contains(msg.Text, defaultVerificationLinkBase) {
+		t.Errorf("the verification email has no link; body:\n%s", msg.Text)
 	}
 }
 
@@ -791,7 +861,7 @@ func TestVerifyEmail(t *testing.T) {
 		t.Fatalf("Register() error = %v, want nil", err)
 	}
 
-	token := extractToken(t, h.logs.String(), defaultVerificationLinkBase)
+	token := h.latestEmailToken(t, defaultVerificationLinkBase)
 
 	if err := h.service.VerifyEmail(context.Background(), token); err != nil {
 		t.Fatalf("VerifyEmail() error = %v, want nil", err)
@@ -824,7 +894,7 @@ func TestVerifyEmailRejectsAnExpiredToken(t *testing.T) {
 		t.Fatalf("Register() error = %v, want nil", err)
 	}
 
-	token := extractToken(t, h.logs.String(), defaultVerificationLinkBase)
+	token := h.latestEmailToken(t, defaultVerificationLinkBase)
 
 	// Move the service's clock past the token's expiry.
 	h.service.now = func() time.Time { return now.Add(EmailVerificationTTL + time.Minute) }
@@ -1272,15 +1342,17 @@ func TestForgotPasswordDoesNotRevealAccounts(t *testing.T) {
 	if err := h.service.ForgotPassword(ctx, "nobody@example.com"); err != nil {
 		t.Fatalf("ForgotPassword(unknown) error = %v, want nil", err)
 	}
-	if strings.Contains(h.logs.String(), "nobody@example.com") {
-		t.Error("a reset link was produced for an unregistered address")
+	for _, msg := range h.emails.messages() {
+		if msg.To == "nobody@example.com" {
+			t.Error("a reset link was produced for an unregistered address")
+		}
 	}
 
 	if err := h.service.ForgotPassword(ctx, "ada@example.com"); err != nil {
 		t.Fatalf("ForgotPassword() error = %v, want nil", err)
 	}
-	if !strings.Contains(h.logs.String(), defaultPasswordResetLinkBase) {
-		t.Errorf("no reset link was logged; logs:\n%s", h.logs.String())
+	if !strings.Contains(h.latestEmail(t).Text, defaultPasswordResetLinkBase) {
+		t.Errorf("the reset email has no link; body:\n%s", h.latestEmail(t).Text)
 	}
 
 	// A malformed address is not an error either.
@@ -1305,7 +1377,7 @@ func TestResetPasswordChangesTheSecretAndSignsOutEverywhere(t *testing.T) {
 	if err := h.service.ForgotPassword(ctx, "ada@example.com"); err != nil {
 		t.Fatalf("ForgotPassword() error = %v, want nil", err)
 	}
-	token := extractToken(t, h.logs.String(), defaultPasswordResetLinkBase)
+	token := h.latestEmailToken(t, defaultPasswordResetLinkBase)
 
 	if err := h.service.ResetPassword(ctx, token, "a brand new 9"); err != nil {
 		t.Fatalf("ResetPassword() error = %v, want nil", err)
@@ -1363,7 +1435,7 @@ func TestResetPasswordRejectsADeletedAccount(t *testing.T) {
 	if err := h.service.ForgotPassword(ctx, "ada@example.com"); err != nil {
 		t.Fatalf("ForgotPassword() error = %v, want nil", err)
 	}
-	token := extractToken(t, h.logs.String(), defaultPasswordResetLinkBase)
+	token := h.latestEmailToken(t, defaultPasswordResetLinkBase)
 
 	h.users.mu.Lock()
 	h.users.deleted[user.ID] = true
@@ -1371,5 +1443,134 @@ func TestResetPasswordRejectsADeletedAccount(t *testing.T) {
 
 	if err := h.service.ResetPassword(ctx, token, "a strong one 1"); !errors.Is(err, ErrInvalidPasswordResetToken) {
 		t.Fatalf("ResetPassword() error = %v, want ErrInvalidPasswordResetToken", err)
+	}
+}
+
+// TestRegisterSurvivesAFailedVerificationEmail proves the send is best-effort:
+// the account exists and the caller is told nothing about the provider outage
+// (KNOT-ADR-090).
+func TestRegisterSurvivesAFailedVerificationEmail(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	h.emails.err = errors.New("resend is down")
+
+	user, err := h.service.Register(context.Background(), RegisterInput{
+		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v, want nil when the email fails", err)
+	}
+	if user.ID == "" {
+		t.Fatal("Register() returned a user with no id")
+	}
+
+	// The token was still stored, so a link that did reach the person would work
+	// and a resend is possible.
+	if len(h.verifications.byHash) == 0 {
+		t.Error("no verification token was stored")
+	}
+	if !strings.Contains(h.logs.String(), "sending the verification email failed") {
+		t.Errorf("the failed send was not logged; logs:\n%s", h.logs.String())
+	}
+}
+
+// TestForgotPasswordSurvivesAFailedResetEmail is the same contract for the reset
+// message. The endpoint must answer the same way for every address, so a provider
+// failure can never surface as an error (KNOT-ADR-087, KNOT-ADR-090).
+func TestForgotPasswordSurvivesAFailedResetEmail(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	h.registerAndVerify(t)
+	h.emails.err = errors.New("resend is down")
+
+	if err := h.service.ForgotPassword(context.Background(), "ada@example.com"); err != nil {
+		t.Fatalf("ForgotPassword() error = %v, want nil when the email fails", err)
+	}
+	if !strings.Contains(h.logs.String(), "sending the password reset email failed") {
+		t.Errorf("the failed send was not logged; logs:\n%s", h.logs.String())
+	}
+}
+
+// TestResendVerificationSendsANewLink proves the endpoint mints a fresh token and
+// emails it, which is the whole point of the endpoint (KNOT-ADR-090).
+func TestResendVerificationSendsANewLink(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+
+	if _, err := h.service.Register(context.Background(), RegisterInput{
+		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+	}); err != nil {
+		t.Fatalf("Register() error = %v, want nil", err)
+	}
+
+	before := len(h.emails.messages())
+
+	if err := h.service.ResendVerification(context.Background(), "Ada@Example.COM"); err != nil {
+		t.Fatalf("ResendVerification() error = %v, want nil", err)
+	}
+
+	messages := h.emails.messages()
+	if len(messages) != before+1 {
+		t.Fatalf("emails sent = %d, want %d", len(messages), before+1)
+	}
+
+	msg := messages[len(messages)-1]
+	if msg.To != "ada@example.com" {
+		t.Errorf("email to = %q, want the normalised address", msg.To)
+	}
+	if !strings.Contains(msg.Text, defaultVerificationLinkBase) {
+		t.Errorf("the resent email has no link; body:\n%s", msg.Text)
+	}
+
+	// The new link must be redeemable: a resend is useless if it sends a token the
+	// store does not know.
+	token := extractToken(t, msg.Text, defaultVerificationLinkBase)
+	if err := h.service.VerifyEmail(context.Background(), token); err != nil {
+		t.Fatalf("VerifyEmail(resent token) error = %v, want nil", err)
+	}
+}
+
+// TestResendVerificationStaysSilent proves nothing about an address leaks: an
+// unknown address, an already verified account, and a malformed address all
+// complete quietly and send nothing (KNOT-ADR-087, KNOT-ADR-090).
+func TestResendVerificationStaysSilent(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	h.registerAndVerify(t) // ada@example.com, already verified
+
+	before := len(h.emails.messages())
+
+	for _, address := range []string{"nobody@example.com", "ada@example.com", "not-an-email", ""} {
+		if err := h.service.ResendVerification(context.Background(), address); err != nil {
+			t.Fatalf("ResendVerification(%q) error = %v, want nil", address, err)
+		}
+	}
+
+	if got := len(h.emails.messages()); got != before {
+		t.Errorf("emails sent = %d, want %d (nothing should be sent)", got, before)
+	}
+}
+
+// TestResendVerificationReportsAStoreFailure proves a genuine infrastructure
+// failure is still returned to the caller, which is what lets the handler log it
+// while answering 200.
+func TestResendVerificationReportsAStoreFailure(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	if _, err := h.service.Register(context.Background(), RegisterInput{
+		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+	}); err != nil {
+		t.Fatalf("Register() error = %v, want nil", err)
+	}
+
+	h.verifications.createErr = errors.New("the token table is gone")
+
+	if err := h.service.ResendVerification(context.Background(), "ada@example.com"); err == nil {
+		t.Fatal("ResendVerification() error = nil, want the store failure")
 	}
 }

@@ -117,8 +117,8 @@ export default function ResetPasswordScreen({
               />
 
               <Text style={[typeScale.bodyS, styles.note]}>
-                Resetting signs you out on every device. Until email delivery is built, the link is
-                printed in the server console.
+                Resetting signs you out on every device. Paste the token from the reset email we
+                sent you.
               </Text>
 
               {error !== undefined ? (

@@ -77,8 +77,7 @@ export default function ForgotPasswordScreen({
             <View style={styles.intro}>
               <Text style={[typeScale.h1, styles.title]}>Check your email.</Text>
               <Text style={[typeScale.body, styles.subtitle]}>
-                If that address has an account, a reset link is on its way. The link expires in 30
-                minutes.
+                Check your email for the reset link. The link expires in 30 minutes.
               </Text>
             </View>
 
@@ -113,7 +112,7 @@ export default function ForgotPasswordScreen({
               />
 
               <Text style={[typeScale.bodyS, styles.note]}>
-                Until email delivery is built, the link is printed in the server console.
+                If that address has a Knot account, the link will arrive shortly.
               </Text>
 
               {error !== undefined ? (

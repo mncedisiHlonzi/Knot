@@ -65,9 +65,8 @@ function validateForm(email: string, password: string, displayName: string): str
  *
  * Registration does **not** sign anyone in: an account cannot log in until its
  * address is verified (KNOT-ADR-083), so the screen's job after a successful submit
- * is to send the person to their inbox — which, until KNOT-031a, is the server
- * console. The confirmation says so plainly rather than implying a message is on its
- * way.
+ * is to send the person to their inbox, where the verification link is delivered
+ * (KNOT-ADR-090).
  *
  * It shares the Login screen's editorial frame (KNOT-020j): the logomark in the
  * header, the display headline and one sentence at the top, then the form in a
@@ -138,13 +137,7 @@ export default function RegisterScreen({
           <View style={styles.intro}>
             <Text style={[typeScale.h1, styles.title]}>Check your email.</Text>
             <Text style={[typeScale.body, styles.subtitle]}>
-              We sent a verification link to {registeredEmail}. Click it to activate your account.
-            </Text>
-          </View>
-
-          <View style={styles.confirmationNote}>
-            <Text style={[typeScale.bodyS, styles.note]}>
-              For now, the link is printed in the server console — there is no email delivery yet.
+              We sent a verification link to {registeredEmail}.
             </Text>
           </View>
 
@@ -279,9 +272,6 @@ const createStyles = (colors: ThemeColors) =>
       gap: spacing.sm,
       marginTop: spacing.xl,
     },
-    confirmationNote: {
-      marginBottom: spacing.lg,
-    },
     content: {
       paddingBottom: spacing.xxxl,
       paddingHorizontal: layout.screenPaddingReading,
@@ -304,9 +294,6 @@ const createStyles = (colors: ThemeColors) =>
     },
     logomark: {
       marginLeft: LOGOMARK_INSET,
-    },
-    note: {
-      color: colors.text.tertiary,
     },
     screen: {
       backgroundColor: colors.bg.canvas,

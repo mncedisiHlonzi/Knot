@@ -448,3 +448,76 @@ func TestSessionRoutesUseTheTokenSessionNotTheBody(t *testing.T) {
 		t.Error("logout obeyed a session id taken from the request body")
 	}
 }
+
+// TestResendVerificationAlwaysAnswers200 pins the anti-enumeration contract of
+// POST /auth/resend-verification: an existing address, an address with no
+// account, and a provider failure all answer the same way (KNOT-ADR-090).
+func TestResendVerificationAlwaysAnswers200(t *testing.T) {
+	tests := map[string]struct {
+		address     string
+		serviceErr  error
+		wantForward string
+	}{
+		"unknown address": {
+			address:     "nobody@example.com",
+			wantForward: "nobody@example.com",
+		},
+		"existing address": {
+			address:     "  Ada@Example.COM  ",
+			wantForward: "  Ada@Example.COM  ",
+		},
+		"provider failure": {
+			address:     "ada@example.com",
+			serviceErr:  errors.New("resend is down"),
+			wantForward: "ada@example.com",
+		},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			service := &fakeAuthService{resendErr: tc.serviceErr}
+			handler := newTestHandler(t, service)
+
+			recorder := doRequest(handler, http.MethodPost, "/auth/resend-verification",
+				fmt.Sprintf(`{"email":%q}`, tc.address))
+
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+			}
+
+			var body successResponse
+			decodeBody(t, recorder, &body)
+			if !body.Success {
+				t.Error("success = false, want true")
+			}
+
+			if service.gotResendEmail != tc.wantForward {
+				t.Errorf("service received %q, want %q", service.gotResendEmail, tc.wantForward)
+			}
+		})
+	}
+}
+
+// TestResendVerificationIsRateLimited proves the endpoint shares the auth
+// limiter, so it cannot be used to flood one inbox.
+func TestResendVerificationIsRateLimited(t *testing.T) {
+	service := &fakeAuthService{}
+	handler := newTestHandler(t, service)
+
+	body := `{"email":"ada@example.com"}`
+
+	for i := int64(1); i <= auth.LimitResendVerification.Attempts; i++ {
+		recorder := doRequest(handler, http.MethodPost, "/auth/resend-verification", body)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("attempt %d status = %d, want %d", i, recorder.Code, http.StatusOK)
+		}
+	}
+
+	recorder := doRequest(handler, http.MethodPost, "/auth/resend-verification", body)
+	if recorder.Code != http.StatusTooManyRequests {
+		t.Fatalf("status after the limit = %d, want %d", recorder.Code, http.StatusTooManyRequests)
+	}
+	if code := decodedErrorCode(t, recorder); code != codeRateLimited {
+		t.Errorf("error code = %q, want %q", code, codeRateLimited)
+	}
+}

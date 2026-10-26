@@ -1,6 +1,6 @@
 module github.com/knot/backend
 
-go 1.22
+go 1.23
 
 require (
 	github.com/alicebob/miniredis/v2 v2.40.0
@@ -11,6 +11,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/redis/go-redis/v9 v9.18.0
+	github.com/resend/resend-go/v4 v4.9.0
 	golang.org/x/crypto v0.31.0
 )
 

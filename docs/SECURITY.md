@@ -9,7 +9,7 @@ Every number here is a constant in the Go code (`internal/auth`, `internal/ident
 a test pins them (`TestLimitRulesMatchTheDocumentedNumbers`), so this page cannot drift from
 the implementation without failing CI.
 
-Related: [KNOT-ADR-079](DECISIONS.md) through [KNOT-ADR-088](DECISIONS.md), and the
+Related: [KNOT-ADR-079](DECISIONS.md) through [KNOT-ADR-090](DECISIONS.md), and the
 [API reference](API.md#post-authregister).
 
 ---
@@ -95,15 +95,21 @@ expiry. Neither token is ever returned by an API response.
 | Email verification | `verification_tokens` | **24 hours** | Sets `users.email_verified_at` |
 | Password reset | Redis (`knot:auth:reset:<hash>`) | **30 minutes** | Sets a new password and revokes **every** session |
 
-- `POST /auth/forgot-password` **always** answers `200 { "success": true }`, for registered,
-  unregistered, and malformed addresses alike (KNOT-ADR-087).
+- `POST /auth/forgot-password` and `POST /auth/resend-verification` **always** answer
+  `200 { "success": true }`, for registered, unregistered, already-verified, and
+  malformed addresses alike (KNOT-ADR-087, KNOT-ADR-090).
 - Reset order is: write the password → revoke every session → delete the token. If
   revocation fails the token is still valid, so the client can retry, and the account never
   ends up with a new password and sessions authorised by the old one.
-- **The links are written to the server console**, not emailed (KNOT-ADR-088). This means
-  **the API's stdout is a credential store during development.** Anyone who can read the
-  logs can verify an address or reset a password. That is acceptable only because there is
-  no real user data yet, and replacing it is KNOT-031a.
+- **The links are emailed through Resend** (KNOT-ADR-090). The server console is **no longer**
+  a credential store: the only time a link reaches a log is local development with
+  `KNOT_RESEND_API_KEY` unset, where the no-op sender logs the message it would have sent.
+  A deployment that sets the key never writes a link to stdout.
+- Sending is **best-effort**: a provider failure is logged and the flow still completes, so a
+  Resend outage cannot stop somebody registering or asking for a reset. The person can ask
+  for another link with `POST /auth/resend-verification`.
+- The API key itself is read from `KNOT_RESEND_API_KEY` and is never logged or returned
+  (`Config` has no `String` method).
 
 ## 7. Rate limits
 
@@ -117,6 +123,8 @@ longest the caller can possibly need to wait.
 | `POST /auth/register` | client address | 5 per hour |
 | `POST /auth/login` | client address | 10 per 15 minutes |
 | `POST /auth/login` | normalised email | 10 per 15 minutes |
+| `POST /auth/forgot-password` | normalised email | 3 per hour |
+| `POST /auth/resend-verification` | normalised email | 3 per hour |
 | `POST /users/me/recover` | client address | 10 per 15 minutes (shared with the login counters) |
 | `POST /users/me/recover` | normalised email | 10 per 15 minutes (shared with the login counters) |
 | `POST /auth/refresh` | session id | 30 per 15 minutes |
@@ -221,7 +229,9 @@ deleting an account.
 
 ## 10. What is deliberately not here yet
 
-- **No real email delivery** (KNOT-031a): links go to the console.
+- **No delivery guarantees for email.** Sending is best-effort (KNOT-ADR-090): a Resend
+  outage, a bad address, or an unverified sending domain produces a log line, not a retry
+  queue. There is no bounce handling and no fallback provider.
 - **No OAuth or magic links** beyond the closed `credentials` type set.
 - **No scheduled purge.** `POST /admin/purge-deleted` exists and anonymises correctly, but
   nothing calls it on a timer; until KNOT-034a lands, an operator has to. A deployment

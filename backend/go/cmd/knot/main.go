@@ -33,6 +33,7 @@ import (
 	"github.com/knot/backend/internal/config"
 	"github.com/knot/backend/internal/conversations"
 	"github.com/knot/backend/internal/discovery"
+	"github.com/knot/backend/internal/email"
 	"github.com/knot/backend/internal/httpapi"
 	"github.com/knot/backend/internal/identity"
 	"github.com/knot/backend/internal/inquiries"
@@ -183,6 +184,15 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
+	// Email delivery (KNOT-ADR-090). An empty KNOT_RESEND_API_KEY is a supported
+	// local configuration: the sender becomes a no-op that logs each message,
+	// including its link, which is how the identity round trip was tested before a
+	// provider existed. With a key, the same call site sends through Resend.
+	emailSender, err := email.NewResendSender(cfg.ResendAPIKey, cfg.EmailFrom, email.WithLogger(logger))
+	if err != nil {
+		return err
+	}
+
 	authService, err := auth.NewService(auth.Deps{
 		Users:         store,
 		Sessions:      sessionStore,
@@ -191,6 +201,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		Deletions:     service,
 		Tokens:        tokens,
 		Cache:         redisCache,
+		Email:         emailSender,
 		Logger:        logger,
 	})
 	if err != nil {

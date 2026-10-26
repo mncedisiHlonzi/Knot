@@ -40,6 +40,8 @@ const (
 	envKeyS3AccessKey   = "KNOT_S3_ACCESS_KEY"
 	envKeyS3SecretKey   = "KNOT_S3_SECRET_KEY"
 	envKeyS3Bucket      = "KNOT_S3_BUCKET"
+	envKeyResendAPIKey  = "KNOT_RESEND_API_KEY"
+	envKeyEmailFrom     = "KNOT_EMAIL_FROM"
 )
 
 // Safe local defaults. These are placeholders that match .env.example and the
@@ -61,6 +63,10 @@ const (
 	defaultS3AccessKey = "knot"
 	defaultS3SecretKey = "knot_local_only_change_me"
 	defaultS3Bucket    = "knot-media"
+	// DefaultEmailFrom is the sender Resend's sandbox accepts without a verified
+	// domain, which is what a checkout without a Resend account can send from
+	// (KNOT-ADR-090). It is the same default the email package documents.
+	defaultEmailFrom = "Knot <onboarding@resend.dev>"
 )
 
 // LocalJWTSecretPlaceholder is the documented local-only signing secret. It is
@@ -134,6 +140,17 @@ type Config struct {
 	S3SecretKey string
 	// S3Bucket is the bucket media objects are written to.
 	S3Bucket string
+
+	// ResendAPIKey is the Resend API key that delivers verification and password
+	// reset emails (KNOT-ADR-090). An empty value is a supported configuration: the
+	// email service becomes a no-op that logs each message, which is how local
+	// development and CI run. Like every other secret here it is never logged
+	// (Config has no String method).
+	ResendAPIKey string
+	// EmailFrom is the From header on those emails. It must be an address the
+	// Resend account is allowed to send from; the sandbox default works only with
+	// the onboarding@resend.dev sender.
+	EmailFrom string
 }
 
 // Load reads configuration from the process environment.
@@ -154,6 +171,9 @@ type Config struct {
 //     an empty value means the server requires no password, which is how the
 //     local docker-compose stack runs.
 //   - KNOT_REDIS_DB must be a non-negative integer and defaults to 0 when unset.
+//   - KNOT_RESEND_API_KEY is optional in every environment: without it the email
+//     service logs each message instead of sending it (KNOT-ADR-090).
+//   - KNOT_EMAIL_FROM defaults to the Resend sandbox sender when unset.
 //   - In "local", a missing KNOT_ADMIN_SECRET becomes LocalAdminSecretPlaceholder;
 //     outside local it is required, like the JWT secret it sits beside.
 //
@@ -189,6 +209,15 @@ func Load() (Config, error) {
 		S3AccessKey:   strings.TrimSpace(os.Getenv(envKeyS3AccessKey)),
 		S3SecretKey:   strings.TrimSpace(os.Getenv(envKeyS3SecretKey)),
 		S3Bucket:      strings.TrimSpace(os.Getenv(envKeyS3Bucket)),
+		ResendAPIKey:  strings.TrimSpace(os.Getenv(envKeyResendAPIKey)),
+		EmailFrom:     strings.TrimSpace(os.Getenv(envKeyEmailFrom)),
+	}
+
+	// The From address has a default in every environment: there is nothing
+	// unsafe about the Resend sandbox sender, and an empty header would make every
+	// send fail for a reason that reads like a bug.
+	if cfg.EmailFrom == "" {
+		cfg.EmailFrom = defaultEmailFrom
 	}
 
 	if cfg.Env == EnvLocal {

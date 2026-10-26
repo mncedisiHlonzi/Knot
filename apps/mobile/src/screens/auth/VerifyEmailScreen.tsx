@@ -23,9 +23,9 @@ type VerifyEmailScreenProps = {
 /**
  * Redeems an email-verification token.
  *
- * Until KNOT-031a there is no email provider, so the link is printed in the server
- * console (KNOT-ADR-088) and the token has to be pasted in by hand. The screen is
- * honest about that rather than pretending a message is on its way.
+ * The verification link arrives by email (KNOT-ADR-090), and the link carries the
+ * token. The field therefore exists for the person who opened the email on another
+ * device and has to paste the value in by hand.
  *
  * The token is the whole credential, so the field is not masked: masking a value
  * that the person has to copy from another window only makes it harder to check
@@ -107,7 +107,7 @@ export default function VerifyEmailScreen({
               />
 
               <Text style={[typeScale.bodyS, styles.note]}>
-                Until email delivery is built, the link is printed in the server console.
+                Paste the token from the verification email we sent you.
               </Text>
 
               {error !== undefined ? (
