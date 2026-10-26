@@ -2,6 +2,10 @@ Welcome to Knot.
 
 Click the link below to verify your email address:
 
-{{.DeepLink}}
+{{.WebLink}}
+
+Or copy this code: {{.Token}}
+
+Open in the Knot app: {{.DeepLink}}
 
 This link expires in 24 hours.

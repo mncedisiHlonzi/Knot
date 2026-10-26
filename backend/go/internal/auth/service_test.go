@@ -549,6 +549,10 @@ func (s *fakeVerificationStore) Consume(_ context.Context, tokenID string) error
 	return ErrVerificationTokenNotFound
 }
 
+// testWebURL is the origin the tests expect in every emailed link. It is a
+// documentation address, so nothing in the suite could ever resolve it.
+const testWebURL = "https://knot.example"
+
 // fakeEmailSender records the messages the service hands it, and can be told to
 // fail so the best-effort contract can be tested.
 type fakeEmailSender struct {
@@ -627,6 +631,7 @@ func newTestHarness(t *testing.T, opts ...Option) *testHarness {
 		Tokens:        issuer,
 		Cache:         redisCache,
 		Email:         emails,
+		WebURL:        testWebURL,
 		Logger:        logger,
 	}, opts...)
 	if err != nil {
@@ -724,6 +729,7 @@ func TestNewServiceRejectsMissingDependencies(t *testing.T) {
 		Tokens:        &fakeIssuer{},
 		Cache:         redisCache,
 		Email:         &fakeEmailSender{},
+		WebURL:        testWebURL,
 		Logger:        logger,
 	}
 
@@ -740,6 +746,7 @@ func TestNewServiceRejectsMissingDependencies(t *testing.T) {
 		"tokens":        func(d *Deps) { d.Tokens = nil },
 		"cache":         func(d *Deps) { d.Cache = nil },
 		"email":         func(d *Deps) { d.Email = nil },
+		"web_url":       func(d *Deps) { d.WebURL = "" },
 		"logger":        func(d *Deps) { d.Logger = nil },
 	}
 
@@ -807,7 +814,10 @@ func TestRegisterCreatesAnUnverifiedAccount(t *testing.T) {
 		t.Errorf("email to = %q, want %q", msg.To, user.Email)
 	}
 	if !strings.Contains(msg.Text, defaultVerificationLinkBase) {
-		t.Errorf("the verification email has no link; body:\n%s", msg.Text)
+		t.Errorf("the verification email has no deep link; body:\n%s", msg.Text)
+	}
+	if !strings.Contains(msg.Text, testWebURL+webVerificationPath) {
+		t.Errorf("the verification email has no web link; body:\n%s", msg.Text)
 	}
 }
 
@@ -1572,5 +1582,84 @@ func TestResendVerificationReportsAStoreFailure(t *testing.T) {
 
 	if err := h.service.ResendVerification(context.Background(), "ada@example.com"); err == nil {
 		t.Fatal("ResendVerification() error = nil, want the store failure")
+	}
+}
+
+// TestRegisterEmailCarriesAWebLinkAndTheToken pins the shape of the message a
+// person actually receives: an https link the button can open in any client, the
+// same token printed for copying, and the deep link as a secondary option
+// (KNOT-031a-fix).
+func TestRegisterEmailCarriesAWebLinkAndTheToken(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	if _, err := h.service.Register(context.Background(), RegisterInput{
+		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+	}); err != nil {
+		t.Fatalf("Register() error = %v, want nil", err)
+	}
+
+	msg := h.latestEmail(t)
+	token := extractToken(t, msg.Text, testWebURL+webVerificationPath)
+
+	assertActionTriple(t, msg, token, testWebURL+webVerificationPath, defaultVerificationLinkBase)
+}
+
+// TestForgotPasswordEmailCarriesAWebLinkAndTheToken is the same contract for the
+// reset message.
+func TestForgotPasswordEmailCarriesAWebLinkAndTheToken(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+	h.registerAndVerify(t)
+
+	if err := h.service.ForgotPassword(context.Background(), "ada@example.com"); err != nil {
+		t.Fatalf("ForgotPassword() error = %v, want nil", err)
+	}
+
+	msg := h.latestEmail(t)
+	token := extractToken(t, msg.Text, testWebURL+webPasswordResetPath)
+
+	assertActionTriple(t, msg, token, testWebURL+webPasswordResetPath, defaultPasswordResetLinkBase)
+}
+
+// assertActionTriple checks one message against the three views of its secret.
+func assertActionTriple(t *testing.T, msg email.Email, token, webPrefix, deepPrefix string) {
+	t.Helper()
+
+	if len(token) != 64 {
+		t.Errorf("token length = %d, want 64 hex characters", len(token))
+	}
+	if !strings.Contains(msg.Text, "Or copy this code: "+token) {
+		t.Errorf("the plain-text body does not show the token; body:\n%s", msg.Text)
+	}
+	if !strings.Contains(msg.Text, deepPrefix+token) {
+		t.Errorf("the deep link does not carry the same token; body:\n%s", msg.Text)
+	}
+	if !strings.Contains(msg.HTML, `href="`+webPrefix+token+`"`) {
+		t.Errorf("the HTML button does not link to %s%s; body:\n%s", webPrefix, token, msg.HTML)
+	}
+	if !strings.Contains(msg.HTML, token) {
+		t.Errorf("the HTML body does not show the token; body:\n%s", msg.HTML)
+	}
+}
+
+// TestNormalizeWebURL proves a configured origin is usable whichever way it was
+// written, so a trailing slash cannot produce a double slash in a link.
+func TestNormalizeWebURL(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]string{
+		"https://knot.example":      "https://knot.example",
+		"https://knot.example/":     "https://knot.example",
+		"https://knot.example//":    "https://knot.example",
+		"  https://knot.example/  ": "https://knot.example",
+		"":                          "",
+	}
+
+	for raw, want := range cases {
+		if got := normalizeWebURL(raw); got != want {
+			t.Errorf("normalizeWebURL(%q) = %q, want %q", raw, got, want)
+		}
 	}
 }

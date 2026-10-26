@@ -219,15 +219,25 @@ func TestSenderIsSatisfiedByBothImplementations(t *testing.T) {
 	var _ Sender = (*recordingSender)(nil)
 }
 
-// TestVerificationEmailCarriesTheDeepLink proves the template renders the action
-// link into both bodies, and that the custom scheme survives html/template's URL
-// filter (which would otherwise emit #ZgotmplZ).
-func TestVerificationEmailCarriesTheDeepLink(t *testing.T) {
+// testAction is the triple a message is rendered with: an https button, the knot://
+// deep link, and the raw token shown underneath (KNOT-031a-fix).
+func testAction(kind string) Action {
+	return Action{
+		WebLink:  "https://knot.example/auth/" + kind + "?token=abc123",
+		DeepLink: "knot://auth/" + kind + "?token=abc123",
+		Token:    "abc123",
+	}
+}
+
+// TestVerificationEmailCarriesTheAction proves the template renders the clickable
+// https link, the visible token, and the deep link, and that html/template's URL
+// filter leaves both schemes alone (it would otherwise emit #ZgotmplZ).
+func TestVerificationEmailCarriesTheAction(t *testing.T) {
 	t.Parallel()
 
-	deepLink := "knot://auth/verify-email?token=abc123"
+	action := testAction("verify-email")
 
-	msg, err := Verification("ada@example.com", deepLink)
+	msg, err := Verification("ada@example.com", action)
 	if err != nil {
 		t.Fatalf("Verification() error = %v, want nil", err)
 	}
@@ -238,28 +248,47 @@ func TestVerificationEmailCarriesTheDeepLink(t *testing.T) {
 	if msg.Subject != VerificationSubject {
 		t.Errorf("subject = %q, want %q", msg.Subject, VerificationSubject)
 	}
-	if !strings.Contains(msg.HTML, `href="`+deepLink+`"`) {
-		t.Errorf("the HTML button does not link to %q; body:\n%s", deepLink, msg.HTML)
+
+	// The button is the https link: that is the whole point of the fix, because a
+	// knot:// href is not tappable in many mail clients.
+	if !strings.Contains(msg.HTML, `href="`+action.WebLink+`"`) {
+		t.Errorf("the HTML button does not link to %q; body:\n%s", action.WebLink, msg.HTML)
+	}
+	if !strings.Contains(msg.HTML, "Or copy this code:") || !strings.Contains(msg.HTML, action.Token) {
+		t.Errorf("the HTML body does not show the token; body:\n%s", msg.HTML)
+	}
+	if !strings.Contains(msg.HTML, "Open in the Knot app:") {
+		t.Errorf("the HTML body does not offer the deep link; body:\n%s", msg.HTML)
+	}
+	if !strings.Contains(msg.HTML, `href="`+action.DeepLink+`"`) {
+		t.Errorf("the deep link is not rendered as a link to %q; body:\n%s", action.DeepLink, msg.HTML)
 	}
 	if strings.Contains(msg.HTML, "#ZgotmplZ") {
-		t.Errorf("html/template filtered the knot:// scheme out of the button; body:\n%s", msg.HTML)
+		t.Errorf("html/template filtered a link scheme out; body:\n%s", msg.HTML)
 	}
-	if !strings.Contains(msg.Text, deepLink) {
-		t.Errorf("the plain-text body does not contain %q; body:\n%s", deepLink, msg.Text)
+
+	if !strings.Contains(msg.Text, action.WebLink) {
+		t.Errorf("the plain-text body does not contain the web link %q; body:\n%s", action.WebLink, msg.Text)
+	}
+	if !strings.Contains(msg.Text, "Or copy this code: "+action.Token) {
+		t.Errorf("the plain-text body does not show the token; body:\n%s", msg.Text)
+	}
+	if !strings.Contains(msg.Text, "Open in the Knot app: "+action.DeepLink) {
+		t.Errorf("the plain-text body does not offer the deep link; body:\n%s", msg.Text)
 	}
 	if !strings.Contains(msg.Text, "expires in 24 hours") {
 		t.Errorf("the plain-text body does not state the expiry; body:\n%s", msg.Text)
 	}
 }
 
-// TestPasswordResetEmailCarriesTheDeepLink is the same contract for the second
+// TestPasswordResetEmailCarriesTheAction is the same contract for the second
 // message.
-func TestPasswordResetEmailCarriesTheDeepLink(t *testing.T) {
+func TestPasswordResetEmailCarriesTheAction(t *testing.T) {
 	t.Parallel()
 
-	deepLink := "knot://auth/reset-password?token=def456"
+	action := testAction("reset-password")
 
-	msg, err := PasswordReset("ada@example.com", deepLink)
+	msg, err := PasswordReset("ada@example.com", action)
 	if err != nil {
 		t.Fatalf("PasswordReset() error = %v, want nil", err)
 	}
@@ -267,27 +296,40 @@ func TestPasswordResetEmailCarriesTheDeepLink(t *testing.T) {
 	if msg.Subject != PasswordResetSubject {
 		t.Errorf("subject = %q, want %q", msg.Subject, PasswordResetSubject)
 	}
-	if !strings.Contains(msg.HTML, `href="`+deepLink+`"`) {
-		t.Errorf("the HTML button does not link to %q; body:\n%s", deepLink, msg.HTML)
+	if !strings.Contains(msg.HTML, `href="`+action.WebLink+`"`) {
+		t.Errorf("the HTML button does not link to %q; body:\n%s", action.WebLink, msg.HTML)
+	}
+	if !strings.Contains(msg.HTML, "Or copy this code:") || !strings.Contains(msg.HTML, action.Token) {
+		t.Errorf("the HTML body does not show the token; body:\n%s", msg.HTML)
+	}
+	if !strings.Contains(msg.HTML, `href="`+action.DeepLink+`"`) {
+		t.Errorf("the deep link is not rendered as a link to %q; body:\n%s", action.DeepLink, msg.HTML)
 	}
 	if strings.Contains(msg.HTML, "#ZgotmplZ") {
-		t.Errorf("html/template filtered the knot:// scheme out of the button; body:\n%s", msg.HTML)
+		t.Errorf("html/template filtered a link scheme out; body:\n%s", msg.HTML)
 	}
-	if !strings.Contains(msg.Text, deepLink) {
-		t.Errorf("the plain-text body does not contain %q; body:\n%s", deepLink, msg.Text)
+	if !strings.Contains(msg.Text, action.WebLink) {
+		t.Errorf("the plain-text body does not contain the web link %q; body:\n%s", action.WebLink, msg.Text)
+	}
+	if !strings.Contains(msg.Text, "Or copy this code: "+action.Token) {
+		t.Errorf("the plain-text body does not show the token; body:\n%s", msg.Text)
 	}
 	if !strings.Contains(msg.Text, "expires in 30 minutes") {
 		t.Errorf("the plain-text body does not state the expiry; body:\n%s", msg.Text)
 	}
 }
 
-// TestTemplatesDoNotUseRawHTML is a guard on the renderer: a body that echoes the
-// deep link as markup rather than text would be an injection surface if the link
-// ever stopped being server-generated.
+// TestTemplatesDoNotUseRawHTML is a guard on the renderer: a body that echoes a
+// link as markup rather than text would be an injection surface if the link ever
+// stopped being server-generated.
 func TestTemplatesDoNotUseRawHTML(t *testing.T) {
 	t.Parallel()
 
-	msg, err := Verification("ada@example.com", `knot://auth/verify-email?token="><script>`)
+	msg, err := Verification("ada@example.com", Action{
+		WebLink:  `https://knot.example/auth/verify-email?token="><script>`,
+		DeepLink: `knot://auth/verify-email?token="><script>`,
+		Token:    `"><script>`,
+	})
 	if err != nil {
 		t.Fatalf("Verification() error = %v, want nil", err)
 	}
@@ -307,7 +349,13 @@ func TestRenderReportsATemplateFailure(t *testing.T) {
 		text: texttemplate.Must(texttemplate.New("failing").Parse("unused")),
 	}
 
-	if _, err := render(templates, "subject", "ada@example.com", "knot://x"); err == nil {
+	action := Action{
+		WebLink:  "https://knot.example/auth/verify-email?token=abc",
+		DeepLink: "knot://auth/verify-email?token=abc",
+		Token:    "abc",
+	}
+
+	if _, err := render(templates, "subject", "ada@example.com", action); err == nil {
 		t.Fatal("render() with a failing template error = nil, want an error")
 	}
 }

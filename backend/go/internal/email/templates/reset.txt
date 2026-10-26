@@ -2,6 +2,10 @@ Reset your Knot password.
 
 Click the link below to reset your password. If you did not request this, ignore this email.
 
-{{.DeepLink}}
+{{.WebLink}}
+
+Or copy this code: {{.Token}}
+
+Open in the Knot app: {{.DeepLink}}
 
 This link expires in 30 minutes.

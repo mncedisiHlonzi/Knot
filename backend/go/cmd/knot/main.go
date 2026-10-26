@@ -211,6 +211,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		Tokens:        tokens,
 		Cache:         redisCache,
 		Email:         emailSender,
+		WebURL:        cfg.WebURL,
 		Logger:        logger,
 	})
 	if err != nil {

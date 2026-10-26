@@ -2649,6 +2649,13 @@ through Resend** (KNOT-ADR-090). How you read the link depends on whether
 that needs no verified domain. A deployment with its own domain sets it to that domain,
 because the sandbox address only delivers to the Resend account's own mailbox.
 
+Every message carries three views of the same secret (KNOT-031a-fix): an **https link**
+behind the button (`{KNOT_WEB_URL}/auth/verify-email?token=…`), the **raw token** printed
+underneath as `Or copy this code: …`, and the `knot://` **deep link** as a secondary note for
+a client that opens custom schemes. The button is https because many mail clients do not
+treat `knot://` as tappable. `KNOT_WEB_URL` defaults to `https://knot.local`, a placeholder
+that resolves nowhere — there is no web app yet, so the visible token is the reliable path.
+
 Running `go run ./cmd/knot` from `backend/go` loads the repository-root `.env` automatically,
 so a value placed there needs no export. The file only fills in what is unset: a variable
 exported in the shell always wins, and a missing `.env` is not an error.
@@ -2666,9 +2673,10 @@ curl -sS -X POST localhost:8080/auth/register \
   -H 'Content-Type: application/json' \
   -d '{"email":"ada@example.com","password":"correct horse 7","display_name":"Ada Lovelace"}'
 
-# 3. Read the verification link out of the log (the no-op sender writes it).
+# 3. Read the message out of the log (the no-op sender writes it).
 grep 'email delivery is disabled' -A 1 /tmp/knot-api.log
-#   … body="Welcome to Knot. … knot://auth/verify-email?token=<TOKEN> …
+#   … body="Welcome to Knot. … https://knot.local/auth/verify-email?token=<TOKEN>
+#      … Or copy this code: <TOKEN> … knot://auth/verify-email?token=<TOKEN> …
 
 # 4. Verify. Sign-in is unlocked from this moment.
 curl -sS -X POST localhost:8080/auth/verify-email \
@@ -2762,8 +2770,8 @@ way a person signs in:
 1. **Register** on the Create account screen. The app does **not** sign you in: an account
    cannot log in until its address is verified (KNOT-ADR-083).
 2. **Read the email** (or the console, when `KNOT_RESEND_API_KEY` is empty). The screen says
-   "Check your email", and the link (`knot://auth/verify-email?token=…`) arrives at the
-   address that was registered.
+   "Check your email", and the message carries an https link, the raw token under
+   `Or copy this code:`, and the `knot://auth/verify-email?token=…` deep link.
 3. **Paste the token** into the Verify screen (reachable from the register confirmation and
    from the login screen's "Enter verification token" button).
 4. **Sign in.** The app stores only the refresh token (AsyncStorage, `knot.session.v2`) and

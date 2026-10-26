@@ -42,6 +42,15 @@ const (
 	defaultPasswordResetLinkBase = "knot://auth/reset-password?token="
 )
 
+// Paths appended to the configured web origin for the clickable button in each
+// email. They mirror the deep links: the same token, on https instead of a custom
+// scheme, because many mail clients do not treat knot:// as tappable
+// (KNOT-031a-fix).
+const (
+	webVerificationPath  = "/auth/verify-email?token="
+	webPasswordResetPath = "/auth/reset-password?token="
+)
+
 // Service errors. Each maps to exactly one HTTP status in the handler, which is
 // the only place they are turned into words a client sees.
 var (
@@ -92,6 +101,10 @@ type Deps struct {
 	// Sending is best-effort at the call sites, but the collaborator itself is not
 	// optional.
 	Email email.Sender
+	// WebURL is the public origin behind the button in those emails, e.g.
+	// https://knot.example (KNOT-031a-fix). It is required because an empty base
+	// would make every emailed link dead.
+	WebURL string
 	// Logger records any background failure the caller must not be told about,
 	// including a failed email delivery.
 	Logger *slog.Logger
@@ -159,6 +172,7 @@ type Service struct {
 	tokens        TokenIssuer
 	cache         cache.Cache
 	emailSender   email.Sender
+	webURL        string
 	logger        *slog.Logger
 
 	now func() time.Time
@@ -199,6 +213,10 @@ func NewService(deps Deps, opts ...Option) (*Service, error) {
 	if deps.Email == nil {
 		return nil, fmt.Errorf("auth: service requires an email sender")
 	}
+	webURL := normalizeWebURL(deps.WebURL)
+	if webURL == "" {
+		return nil, fmt.Errorf("auth: service requires a web URL")
+	}
 	if deps.Logger == nil {
 		return nil, fmt.Errorf("auth: service requires a logger")
 	}
@@ -217,6 +235,7 @@ func NewService(deps Deps, opts ...Option) (*Service, error) {
 		tokens:                deps.Tokens,
 		cache:                 deps.Cache,
 		emailSender:           deps.Email,
+		webURL:                webURL,
 		logger:                deps.Logger,
 		now:                   time.Now,
 		dummyHash:             dummy,
@@ -229,6 +248,12 @@ func NewService(deps Deps, opts ...Option) (*Service, error) {
 	}
 
 	return service, nil
+}
+
+// normalizeWebURL trims a configured web origin and drops trailing slashes, so a
+// base written as https://knot.example/ does not produce https://knot.example//auth.
+func normalizeWebURL(raw string) string {
+	return strings.TrimRight(strings.TrimSpace(raw), "/")
 }
 
 // RegisterInput is the input to Register. It mirrors the registration request
@@ -362,15 +387,36 @@ func (s *Service) issueEmailVerification(ctx context.Context, user *identity.Use
 		return fmt.Errorf("auth: register: issue verification token: %w", err)
 	}
 
-	s.sendVerificationEmail(ctx, user, s.verificationLinkBase+secret, token.ExpiresAt)
+	s.sendVerificationEmail(ctx, user, s.verificationAction(secret), token.ExpiresAt)
 
 	return nil
 }
 
+// verificationAction is the three views of one verification secret: the https link
+// the button points at, the deep link for a device with the app installed, and the
+// raw token shown underneath so the person can always paste it by hand
+// (KNOT-031a-fix).
+func (s *Service) verificationAction(secret string) email.Action {
+	return email.Action{
+		WebLink:  s.webURL + webVerificationPath + secret,
+		DeepLink: s.verificationLinkBase + secret,
+		Token:    secret,
+	}
+}
+
+// passwordResetAction is the same triple for a reset secret.
+func (s *Service) passwordResetAction(secret string) email.Action {
+	return email.Action{
+		WebLink:  s.webURL + webPasswordResetPath + secret,
+		DeepLink: s.passwordResetLinkBase + secret,
+		Token:    secret,
+	}
+}
+
 // sendVerificationEmail renders and sends the verification message, logging any
 // failure instead of returning it.
-func (s *Service) sendVerificationEmail(ctx context.Context, user *identity.User, deepLink string, expiresAt time.Time) {
-	msg, err := email.Verification(user.Email, deepLink)
+func (s *Service) sendVerificationEmail(ctx context.Context, user *identity.User, action email.Action, expiresAt time.Time) {
+	msg, err := email.Verification(user.Email, action)
 	if err != nil {
 		s.logger.WarnContext(ctx, "could not render the verification email",
 			slog.String("email", user.Email),
@@ -766,7 +812,7 @@ func (s *Service) ForgotPassword(ctx context.Context, email string) error {
 		return fmt.Errorf("auth: forgot password: store token: %w", err)
 	}
 
-	s.sendPasswordResetEmail(ctx, user, s.passwordResetLinkBase+secret)
+	s.sendPasswordResetEmail(ctx, user, s.passwordResetAction(secret))
 
 	return nil
 }
@@ -806,8 +852,8 @@ func (s *Service) ResendVerification(ctx context.Context, email string) error {
 
 // sendPasswordResetEmail renders and sends the reset message, logging any failure
 // instead of returning it.
-func (s *Service) sendPasswordResetEmail(ctx context.Context, user *identity.User, deepLink string) {
-	msg, err := email.PasswordReset(user.Email, deepLink)
+func (s *Service) sendPasswordResetEmail(ctx context.Context, user *identity.User, action email.Action) {
+	msg, err := email.PasswordReset(user.Email, action)
 	if err != nil {
 		s.logger.WarnContext(ctx, "could not render the password reset email",
 			slog.String("email", user.Email),

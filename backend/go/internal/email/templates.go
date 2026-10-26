@@ -25,17 +25,35 @@ const (
 	PasswordResetSubject = "Reset your Knot password"
 )
 
+// Action is the call to action one message carries.
+//
+// It holds three views of the same thing, because a mail client cannot be relied
+// on to support all of them: WebLink is the https URL behind the button, DeepLink
+// is the knot:// URL that opens the app directly, and Token is the raw secret both
+// of them carry, printed so the person can always paste it by hand
+// (KNOT-031a-fix).
+type Action struct {
+	// WebLink is the clickable https URL. It is what the button points at.
+	WebLink string
+	// DeepLink is the knot:// URL, offered as a secondary note for clients that do
+	// treat a custom scheme as a link.
+	DeepLink string
+	// Token is the raw secret, shown verbatim under the button.
+	Token string
+}
+
 // templateData is what every template is rendered with.
 //
-// The templates refer to the action link as {{.DeepLink}}; the task brief for
-// KNOT-031a calls that placeholder {deep_link}. It is a template.URL rather than a
-// string for a reason worth recording: Go's html/template refuses to put an
-// unknown URL scheme into an href, and knot:// is not http, https, or mailto.
-// Typing the value as template.URL marks it as already validated, which is true
-// here because the service builds it from a constant prefix plus hex-encoded random
-// material. Without this the button would render href="#ZgotmplZ".
+// The link fields are template.URL rather than string for a reason worth
+// recording: Go's html/template refuses to put an unknown URL scheme into an
+// href, and knot:// is not http, https, or mailto. Typing the value as
+// template.URL marks it as already validated, which is true here because the
+// service builds it from a constant prefix plus hex-encoded random material.
+// Without this the deep-link note would render href="#ZgotmplZ".
 type templateData struct {
+	WebLink  template.URL
 	DeepLink template.URL
+	Token    string
 }
 
 // messageTemplates is one message in both of its bodies.
@@ -72,20 +90,25 @@ func parseTemplates(htmlPath, textPath string) messageTemplates {
 
 // Verification renders the address verification email.
 //
-// The caller owns the deep link: the authentication service builds it, because
-// the token inside it belongs to authentication policy, not to presentation.
-func Verification(to, deepLink string) (Email, error) {
-	return render(verificationTemplates, VerificationSubject, to, deepLink)
+// The caller owns the action: the authentication service builds both links and
+// holds the token, because all three belong to authentication policy, not to
+// presentation.
+func Verification(to string, action Action) (Email, error) {
+	return render(verificationTemplates, VerificationSubject, to, action)
 }
 
 // PasswordReset renders the password reset email.
-func PasswordReset(to, deepLink string) (Email, error) {
-	return render(resetTemplates, PasswordResetSubject, to, deepLink)
+func PasswordReset(to string, action Action) (Email, error) {
+	return render(resetTemplates, PasswordResetSubject, to, action)
 }
 
 // render executes both bodies of one message.
-func render(templates messageTemplates, subject, to, deepLink string) (Email, error) {
-	data := templateData{DeepLink: template.URL(deepLink)}
+func render(templates messageTemplates, subject, to string, action Action) (Email, error) {
+	data := templateData{
+		WebLink:  template.URL(action.WebLink),
+		DeepLink: template.URL(action.DeepLink),
+		Token:    action.Token,
+	}
 
 	var htmlBody bytes.Buffer
 	if err := templates.html.Execute(&htmlBody, data); err != nil {

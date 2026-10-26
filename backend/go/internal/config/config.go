@@ -42,6 +42,7 @@ const (
 	envKeyS3Bucket      = "KNOT_S3_BUCKET"
 	envKeyResendAPIKey  = "KNOT_RESEND_API_KEY"
 	envKeyEmailFrom     = "KNOT_EMAIL_FROM"
+	envKeyWebURL        = "KNOT_WEB_URL"
 )
 
 // Safe local defaults. These are placeholders that match .env.example and the
@@ -67,6 +68,11 @@ const (
 	// domain, which is what a checkout without a Resend account can send from
 	// (KNOT-ADR-090). It is the same default the email package documents.
 	defaultEmailFrom = "Knot <onboarding@resend.dev>"
+	// defaultWebURL is the placeholder origin behind the clickable links in the
+	// verification and reset emails. It is a reserved mDNS name, so it resolves
+	// nowhere on purpose: there is no web app yet, and a deployment must set
+	// KNOT_WEB_URL to its real origin before anyone relies on the link.
+	defaultWebURL = "https://knot.local"
 )
 
 // LocalJWTSecretPlaceholder is the documented local-only signing secret. It is
@@ -151,6 +157,11 @@ type Config struct {
 	// Resend account is allowed to send from; the sandbox default works only with
 	// the onboarding@resend.dev sender.
 	EmailFrom string
+	// WebURL is the public origin the emails link to, e.g. https://knot.example.
+	// It backs the clickable button, which has to be https because many mail
+	// clients do not treat a custom scheme as a link (KNOT-031a-fix). A trailing
+	// slash is tolerated and normalised by the authentication service.
+	WebURL string
 }
 
 // Load reads configuration from the process environment.
@@ -174,6 +185,8 @@ type Config struct {
 //   - KNOT_RESEND_API_KEY is optional in every environment: without it the email
 //     service logs each message instead of sending it (KNOT-ADR-090).
 //   - KNOT_EMAIL_FROM defaults to the Resend sandbox sender when unset.
+//   - KNOT_WEB_URL is the origin the emails link to and defaults to
+//     https://knot.local, a placeholder that resolves nowhere (KNOT-031a-fix).
 //   - In "local", a missing KNOT_ADMIN_SECRET becomes LocalAdminSecretPlaceholder;
 //     outside local it is required, like the JWT secret it sits beside.
 //
@@ -211,6 +224,7 @@ func Load() (Config, error) {
 		S3Bucket:      strings.TrimSpace(os.Getenv(envKeyS3Bucket)),
 		ResendAPIKey:  strings.TrimSpace(os.Getenv(envKeyResendAPIKey)),
 		EmailFrom:     strings.TrimSpace(os.Getenv(envKeyEmailFrom)),
+		WebURL:        strings.TrimSpace(os.Getenv(envKeyWebURL)),
 	}
 
 	// The From address has a default in every environment: there is nothing
@@ -218,6 +232,12 @@ func Load() (Config, error) {
 	// send fail for a reason that reads like a bug.
 	if cfg.EmailFrom == "" {
 		cfg.EmailFrom = defaultEmailFrom
+	}
+
+	// Likewise the web origin: an empty base would turn every button in an email
+	// into a dead link, which reads as a bug rather than as missing configuration.
+	if cfg.WebURL == "" {
+		cfg.WebURL = defaultWebURL
 	}
 
 	if cfg.Env == EnvLocal {

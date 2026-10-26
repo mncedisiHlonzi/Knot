@@ -26,6 +26,7 @@ func clearEnv(t *testing.T) {
 		envKeyS3Bucket,
 		envKeyResendAPIKey,
 		envKeyEmailFrom,
+		envKeyWebURL,
 	} {
 		t.Setenv(key, "")
 	}
@@ -85,12 +86,16 @@ func TestLoadEmailSettings(t *testing.T) {
 		if cfg.EmailFrom != defaultEmailFrom {
 			t.Errorf("EmailFrom = %q, want default %q", cfg.EmailFrom, defaultEmailFrom)
 		}
+		if cfg.WebURL != defaultWebURL {
+			t.Errorf("WebURL = %q, want default %q", cfg.WebURL, defaultWebURL)
+		}
 	})
 
 	t.Run("reads both values from the environment", func(t *testing.T) {
 		clearEnv(t)
 		t.Setenv(envKeyResendAPIKey, "re_test_key")
 		t.Setenv(envKeyEmailFrom, "Knot <hello@knot.example>")
+		t.Setenv(envKeyWebURL, "https://knot.example")
 
 		cfg, err := Load()
 		if err != nil {
@@ -102,6 +107,9 @@ func TestLoadEmailSettings(t *testing.T) {
 		}
 		if cfg.EmailFrom != "Knot <hello@knot.example>" {
 			t.Errorf("EmailFrom = %q, want the configured sender", cfg.EmailFrom)
+		}
+		if cfg.WebURL != "https://knot.example" {
+			t.Errorf("WebURL = %q, want the configured origin", cfg.WebURL)
 		}
 	})
 }

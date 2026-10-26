@@ -48,9 +48,9 @@
                 <p style="margin: 0 0 24px; font-size: 16px; line-height: 24px; color: #334155">
                   Click the link below to verify your email address.
                 </p>
-                <p style="margin: 0 0 24px">
+                <p style="margin: 0 0 16px">
                   <a
-                    href="{{.DeepLink}}"
+                    href="{{.WebLink}}"
                     style="
                       display: inline-block;
                       padding: 14px 24px;
@@ -63,6 +63,22 @@
                     "
                     >Verify Email</a
                   >
+                </p>
+                <p style="margin: 0 0 24px; font-size: 13px; line-height: 20px; color: #64748b">
+                  Or copy this code:
+                  <span
+                    style="
+                      font-family: Menlo, Consolas, 'Courier New', monospace;
+                      font-size: 13px;
+                      color: #0f172a;
+                      word-break: break-all;
+                    "
+                    >{{.Token}}</span
+                  >
+                </p>
+                <p style="margin: 0 0 24px; font-size: 13px; line-height: 20px; color: #64748b">
+                  Open in the Knot app:
+                  <a href="{{.DeepLink}}" style="color: #5b35e8">{{.DeepLink}}</a>
                 </p>
                 <p style="margin: 0; font-size: 13px; line-height: 20px; color: #64748b">
                   This link expires in 24 hours.
