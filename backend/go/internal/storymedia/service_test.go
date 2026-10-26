@@ -604,9 +604,9 @@ func TestStreamMediaFullAndRange(t *testing.T) {
 		t.Fatalf("CreateMedia() error = %v", err)
 	}
 
-	// No Range header: the whole object.
+	// No Range header: the whole object. No variant asks for the original.
 	request := newRangeRequest("")
-	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, request)
+	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, "", request)
 	if err != nil {
 		t.Fatalf("StreamMedia(full) error = %v", err)
 	}
@@ -623,7 +623,7 @@ func TestStreamMediaFullAndRange(t *testing.T) {
 
 	// A Range header: only the requested bytes.
 	request = newRangeRequest("bytes=3-6")
-	body, total, _, err = service.StreamMedia(context.Background(), created.ID, request)
+	body, total, _, err = service.StreamMedia(context.Background(), created.ID, "", request)
 	if err != nil {
 		t.Fatalf("StreamMedia(range) error = %v", err)
 	}
@@ -689,4 +689,284 @@ func newRangeRequest(header string) *http.Request {
 		request.Header.Set("Range", header)
 	}
 	return request
+}
+
+// ---------------------------------------------------------------------------
+// Derivatives (KNOT-037)
+// ---------------------------------------------------------------------------
+
+// imageInput is a create input carrying a real PNG, so the derivative pipeline
+// runs instead of failing to decode.
+func imageInput(t *testing.T, width, height int) CreateMediaInput {
+	t.Helper()
+
+	payload := testPNG(t, width, height)
+	in := validInput()
+	in.MimeType = "image/png"
+	in.Body = bytes.NewReader(payload)
+	in.SizeBytes = int64(len(payload))
+
+	return in
+}
+
+// videoInput is a create input carrying bytes the poster extractor is asked for.
+// The bytes are deliberately not a real video: the extractor is stubbed, so only
+// the type and the offset matter.
+func videoInput(t *testing.T, durationMS *int) CreateMediaInput {
+	t.Helper()
+
+	payload := []byte("pretend mp4 bytes")
+	return CreateMediaInput{
+		StoryID:    storyID,
+		UploaderID: authorID,
+		MimeType:   "video/mp4",
+		Source:     MediaSourceGallery,
+		Body:       bytes.NewReader(payload),
+		SizeBytes:  int64(len(payload)),
+		DurationMS: durationMS,
+	}
+}
+
+func TestCreateMediaStoresImageDerivatives(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, logger := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 1000, 500))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+
+	if created.ThumbnailKey == nil {
+		t.Fatal("thumbnail key = nil, want a key on the stored row")
+	}
+	if created.MediumKey == nil {
+		t.Fatal("medium key = nil, want a key on the stored row")
+	}
+	if created.PosterKey != nil {
+		t.Error("poster key is set for an image, want nil")
+	}
+
+	base := strings.TrimSuffix(created.StorageKey, ".png")
+	if want := base + "_thumb.jpg"; *created.ThumbnailKey != want {
+		t.Errorf("thumbnail key = %q, want %q", *created.ThumbnailKey, want)
+	}
+	if want := base + "_medium.jpg"; *created.MediumKey != want {
+		t.Errorf("medium key = %q, want %q", *created.MediumKey, want)
+	}
+
+	// The renditions are objects in the same bucket as the original.
+	thumbnail, ok := objects.objects[*created.ThumbnailKey]
+	if !ok {
+		t.Fatal("the thumbnail object was not written")
+	}
+	if _, ok := objects.objects[*created.MediumKey]; !ok {
+		t.Fatal("the medium object was not written")
+	}
+	if got := decodeJPEG(t, thumbnail).Bounds().Dx(); got != ThumbnailMaxWidth {
+		t.Errorf("stored thumbnail width = %d, want %d", got, ThumbnailMaxWidth)
+	}
+
+	// A successful pipeline is silent.
+	if len(logger.warnings) != 0 {
+		t.Errorf("warnings = %v, want none", logger.warnings)
+	}
+}
+
+func TestCreateMediaStoresAVideoPoster(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, logger := newTestService(t, store, objects)
+
+	var gotOffset int
+	service.extractPoster = func(_ context.Context, _ []byte, offsetMS int) ([]byte, error) {
+		gotOffset = offsetMS
+		return testPNG(t, 400, 225), nil
+	}
+
+	duration := 3000
+	created, err := service.CreateMedia(context.Background(), videoInput(t, &duration))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+
+	// 20% into three seconds.
+	if gotOffset != 600 {
+		t.Errorf("poster offset = %d ms, want 600", gotOffset)
+	}
+	if created.PosterKey == nil {
+		t.Fatal("poster key = nil, want a key on the stored row")
+	}
+	if created.ThumbnailKey != nil || created.MediumKey != nil {
+		t.Error("an image rendition key is set for a video, want only the poster")
+	}
+
+	base := strings.TrimSuffix(created.StorageKey, ".mp4")
+	if want := base + "_poster.jpg"; *created.PosterKey != want {
+		t.Errorf("poster key = %q, want %q", *created.PosterKey, want)
+	}
+	if _, ok := objects.objects[*created.PosterKey]; !ok {
+		t.Error("the poster object was not written")
+	}
+	if len(logger.warnings) != 0 {
+		t.Errorf("warnings = %v, want none", logger.warnings)
+	}
+}
+
+func TestCreateMediaSurvivesAFailedPoster(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, logger := newTestService(t, store, objects)
+
+	service.extractPoster = func(context.Context, []byte, int) ([]byte, error) {
+		return nil, ErrPosterUnavailable
+	}
+
+	created, err := service.CreateMedia(context.Background(), videoInput(t, nil))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil when the poster fails", err)
+	}
+
+	if created.PosterKey != nil {
+		t.Error("poster key is set after a failed extraction, want nil")
+	}
+	if _, ok := objects.objects[created.StorageKey]; !ok {
+		t.Error("the original was not stored")
+	}
+	if len(logger.warnings) == 0 {
+		t.Error("the failed poster was not logged")
+	}
+}
+
+func TestCreateMediaSurvivesAnUndecodableImage(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, logger := newTestService(t, store, objects)
+
+	// validInput() carries bytes that are not an image, so decoding must fail and
+	// the upload must still succeed.
+	created, err := service.CreateMedia(context.Background(), validInput())
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil when decoding fails", err)
+	}
+
+	if created.ThumbnailKey != nil || created.MediumKey != nil {
+		t.Error("derivative keys are set after a decode failure, want nil")
+	}
+	if _, ok := objects.objects[created.StorageKey]; !ok {
+		t.Error("the original was not stored")
+	}
+	if len(logger.warnings) == 0 {
+		t.Error("the failed derivative was not logged")
+	}
+}
+
+func TestStreamMediaServesAThumbnail(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, _ := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 1000, 500))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+
+	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, newRangeRequest(""))
+	if err != nil {
+		t.Fatalf("StreamMedia(thumb) error = %v, want nil", err)
+	}
+
+	served, _ := io.ReadAll(body)
+	want := objects.objects[*created.ThumbnailKey]
+	if !bytes.Equal(served, want) {
+		t.Error("StreamMedia(thumb) did not serve the stored thumbnail")
+	}
+	if total != int64(len(want)) {
+		t.Errorf("total = %d, want the rendition's %d bytes", total, len(want))
+	}
+	if mimeType != derivativeContentType {
+		t.Errorf("mime = %q, want %q", mimeType, derivativeContentType)
+	}
+	// A rendition is smaller than the original, which is the point of serving it.
+	if total >= created.SizeBytes {
+		t.Errorf("rendition size = %d, want less than the original's %d", total, created.SizeBytes)
+	}
+}
+
+func TestStreamMediaFallsBackWhenTheRenditionObjectIsMissing(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, _ := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 1000, 500))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+
+	// The row still names the key, but the object is gone.
+	delete(objects.objects, *created.ThumbnailKey)
+
+	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, newRangeRequest(""))
+	if err != nil {
+		t.Fatalf("StreamMedia(thumb, missing object) error = %v, want the original", err)
+	}
+
+	served, _ := io.ReadAll(body)
+	if !bytes.Equal(served, objects.objects[created.StorageKey]) {
+		t.Error("the fallback did not serve the original")
+	}
+	if total != created.SizeBytes {
+		t.Errorf("total = %d, want the original's %d", total, created.SizeBytes)
+	}
+	if mimeType != created.MimeType {
+		t.Errorf("mime = %q, want the original's %q", mimeType, created.MimeType)
+	}
+}
+
+func TestStreamMediaFallsBackForAVariantTheRowDoesNotHave(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, _ := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 1000, 500))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+
+	// An image has no poster, so asking for one must still return the picture.
+	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantPoster, newRangeRequest(""))
+	if err != nil {
+		t.Fatalf("StreamMedia(poster on an image) error = %v, want the original", err)
+	}
+
+	served, _ := io.ReadAll(body)
+	if !bytes.Equal(served, objects.objects[created.StorageKey]) {
+		t.Error("the fallback did not serve the original")
+	}
+	if total != created.SizeBytes || mimeType != created.MimeType {
+		t.Errorf("served %d bytes as %q, want the original's %d as %q", total, mimeType, created.SizeBytes, created.MimeType)
+	}
+}
+
+func TestDeleteMediaRemovesTheDerivatives(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, _ := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 1000, 500))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+
+	if err := service.DeleteMedia(context.Background(), created.ID, authorID); err != nil {
+		t.Fatalf("DeleteMedia() error = %v, want nil", err)
+	}
+
+	// Everything the upload created goes with the row, or the bucket keeps the
+	// bytes of a deleted item.
+	for _, key := range append([]string{created.StorageKey}, created.derivativeKeys()...) {
+		if _, ok := objects.objects[key]; ok {
+			t.Errorf("object %q still present after deleting the media", key)
+		}
+	}
 }

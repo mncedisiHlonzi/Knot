@@ -23,6 +23,9 @@ const (
 	testMediaAuthorID = "22222222-2222-4222-8222-222222222222"
 	testMediaOtherID  = "44444444-4444-4444-8444-444444444444"
 	testMediaStoryID  = "55555555-5555-4555-8555-555555555555"
+	// testMediaID names a media item for the tests that call a handler method
+	// directly, where no upload has assigned a real id.
+	testMediaID = "66666666-6666-4666-8666-666666666666"
 )
 
 // ---------------------------------------------------------------------------
@@ -73,6 +76,8 @@ type fakeStoryMediaService struct {
 
 	gotDeleteID   string
 	gotDeleteUser string
+	// gotVariant is the variant the content handler asked for.
+	gotVariant storymedia.Variant
 }
 
 func (f *fakeStoryMediaService) CreateMedia(_ context.Context, _ storymedia.CreateMediaInput) (storymedia.StoryMedia, error) {
@@ -83,7 +88,8 @@ func (f *fakeStoryMediaService) ListMedia(_ context.Context, _ string) ([]storym
 	return f.listResult, f.listErr
 }
 
-func (f *fakeStoryMediaService) StreamMedia(_ context.Context, _ string, _ *http.Request) (io.ReadCloser, int64, string, error) {
+func (f *fakeStoryMediaService) StreamMedia(_ context.Context, _ string, variant storymedia.Variant, _ *http.Request) (io.ReadCloser, int64, string, error) {
+	f.gotVariant = variant
 	if f.streamErr != nil {
 		return nil, 0, "", f.streamErr
 	}
@@ -879,8 +885,11 @@ func TestStoryMediaDelete(t *testing.T) {
 	if recorder.Code != http.StatusNotFound {
 		t.Errorf("content after delete status = %d, want %d", recorder.Code, http.StatusNotFound)
 	}
-	if len(env.objects.deleted) != 1 {
-		t.Errorf("deleted objects = %d, want 1", len(env.objects.deleted))
+	// An image upload creates three objects — the original and its two renditions —
+	// and deleting the item must remove all of them, not just the original
+	// (KNOT-037).
+	if len(env.objects.deleted) != 3 {
+		t.Errorf("deleted objects = %d, want 3 (original, thumbnail, medium)", len(env.objects.deleted))
 	}
 }
 
@@ -950,5 +959,140 @@ func TestStoryMediaListInternalErrorIsGeneric(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), "database on fire") {
 		t.Errorf("response leaked internal detail: %s", recorder.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Derivatives (KNOT-037)
+// ---------------------------------------------------------------------------
+
+func TestStoryMediaCreateExposesDerivativeURLs(t *testing.T) {
+	env := newStoryMediaTestEnv(t)
+	router := env.router(t, testMediaAuthorID)
+
+	created := env.uploadMedia(t, router, pngImage(t), string(storymedia.MediaSourceCamera))
+
+	// A real image is decoded by the pipeline, so both image renditions exist and
+	// are addressed by the original's path with a variant.
+	if created.ThumbnailURL == nil {
+		t.Fatal("thumbnail_url = null, want a rendition URL")
+	}
+	if want := created.URL + "?variant=thumb"; *created.ThumbnailURL != want {
+		t.Errorf("thumbnail_url = %q, want %q", *created.ThumbnailURL, want)
+	}
+	if created.MediumURL == nil {
+		t.Fatal("medium_url = null, want a rendition URL")
+	}
+	if want := created.URL + "?variant=medium"; *created.MediumURL != want {
+		t.Errorf("medium_url = %q, want %q", *created.MediumURL, want)
+	}
+
+	// A still image has no poster frame.
+	if created.PosterURL != nil {
+		t.Errorf("poster_url = %q, want null for an image", *created.PosterURL)
+	}
+
+	// The original address stays variant-free: it is what a full-screen viewer
+	// keeps reading (KNOT-037 non-goal: no client change).
+	if strings.Contains(created.URL, "variant=") {
+		t.Errorf("url = %q, want no variant on the original", created.URL)
+	}
+}
+
+func TestStoryMediaContentAsksForTheVariant(t *testing.T) {
+	service := &fakeStoryMediaService{streamSize: 3, streamMime: "image/jpeg"}
+	handler, err := NewStoryMediaHandler(service, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewStoryMediaHandler() error = %v, want nil", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/stories/"+testMediaStoryID+"/media/"+testMediaID+"/content?variant=thumb",
+		nil,
+	)
+	request.SetPathValue("mid", testMediaID)
+	recorder := httptest.NewRecorder()
+	handler.Content(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if service.gotVariant != storymedia.VariantThumb {
+		t.Errorf("variant = %q, want %q", service.gotVariant, storymedia.VariantThumb)
+	}
+}
+
+func TestStoryMediaContentWithoutAVariantAsksForTheOriginal(t *testing.T) {
+	service := &fakeStoryMediaService{streamSize: 3, streamMime: "image/png"}
+	handler, err := NewStoryMediaHandler(service, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewStoryMediaHandler() error = %v, want nil", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/stories/"+testMediaStoryID+"/media/"+testMediaID+"/content",
+		nil,
+	)
+	request.SetPathValue("mid", testMediaID)
+	recorder := httptest.NewRecorder()
+	handler.Content(recorder, request)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if service.gotVariant != storymedia.Variant("") {
+		t.Errorf("variant = %q, want the empty (original) variant", service.gotVariant)
+	}
+}
+
+func TestStoryMediaContentRejectsAnUnknownVariant(t *testing.T) {
+	service := &fakeStoryMediaService{}
+	handler, err := NewStoryMediaHandler(service, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewStoryMediaHandler() error = %v, want nil", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/stories/"+testMediaStoryID+"/media/"+testMediaID+"/content?variant=huge",
+		nil,
+	)
+	request.SetPathValue("mid", testMediaID)
+	recorder := httptest.NewRecorder()
+	handler.Content(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+	if code := decodedErrorCode(t, recorder); code != codeInvalidRequest {
+		t.Errorf("error code = %q, want %q", code, codeInvalidRequest)
+	}
+	// A rejected request must not reach storage: answering with the original would
+	// send exactly the bytes the caller asked to avoid.
+	if service.gotVariant != storymedia.Variant("") {
+		t.Errorf("the service was called with variant %q, want none", service.gotVariant)
+	}
+}
+
+// TestFirstMediaFieldsPrefersTheThumbnail is the feed's contract: a card reads
+// `first_media_url`, and that address is the thumbnail when the item has one.
+func TestFirstMediaFieldsPrefersTheThumbnail(t *testing.T) {
+	original := "/stories/" + testMediaStoryID + "/media/" + testMediaID + "/content"
+	thumbnail := original + "?variant=thumb"
+
+	withThumbnail := firstMediaFields([]storyMediaResponse{
+		{MediaType: "image", URL: original, ThumbnailURL: &thumbnail},
+	})
+	if withThumbnail.url == nil || *withThumbnail.url != thumbnail {
+		t.Errorf("first media url = %v, want the thumbnail %q", withThumbnail.url, thumbnail)
+	}
+
+	// An item with no rendition keeps the original, so nothing disappears when the
+	// pipeline did not run for it.
+	withoutThumbnail := firstMediaFields([]storyMediaResponse{{MediaType: "image", URL: original}})
+	if withoutThumbnail.url == nil || *withoutThumbnail.url != original {
+		t.Errorf("first media url = %v, want the original %q", withoutThumbnail.url, original)
 	}
 }

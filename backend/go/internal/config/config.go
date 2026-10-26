@@ -24,25 +24,42 @@ const (
 	EnvTest = "test"
 )
 
+// Object-storage providers the backend knows how to be pointed at.
+//
+// The choice changes nothing about the code that talks to the store: both speak
+// the S3 API through the same client, so this value is a label — it names which
+// endpoint the credentials belong to, and it is what the startup log reports
+// (KNOT-037, KNOT-ADR-091).
+const (
+	// StorageProviderMinIO is the local docker-compose MinIO service
+	// (KNOT-ADR-028). It is the default in every environment.
+	StorageProviderMinIO = "minio"
+	// StorageProviderR2 is Cloudflare R2, the production object store: S3-compatible,
+	// with no egress charge (KNOT-ADR-091). Its endpoint is
+	// https://<account-id>.r2.cloudflarestorage.com and its region is "auto".
+	StorageProviderR2 = "r2"
+)
+
 // Environment variable names read by Load.
 const (
-	envKeyEnv           = "KNOT_ENV"
-	envKeyPostgresDSN   = "KNOT_POSTGRES_DSN"
-	envKeyRedisAddr     = "KNOT_REDIS_ADDR"
-	envKeyRedisPassword = "KNOT_REDIS_PASSWORD"
-	envKeyRedisDB       = "KNOT_REDIS_DB"
-	envKeyHTTPPort      = "KNOT_HTTP_PORT"
-	envKeyJWTSecret     = "KNOT_JWT_SECRET"
-	envKeyAdminSecret   = "KNOT_ADMIN_SECRET"
-	envKeyLogLevel      = "KNOT_LOG_LEVEL"
-	envKeyS3Endpoint    = "KNOT_S3_ENDPOINT"
-	envKeyS3Region      = "KNOT_S3_REGION"
-	envKeyS3AccessKey   = "KNOT_S3_ACCESS_KEY"
-	envKeyS3SecretKey   = "KNOT_S3_SECRET_KEY"
-	envKeyS3Bucket      = "KNOT_S3_BUCKET"
-	envKeyResendAPIKey  = "KNOT_RESEND_API_KEY"
-	envKeyEmailFrom     = "KNOT_EMAIL_FROM"
-	envKeyWebURL        = "KNOT_WEB_URL"
+	envKeyEnv             = "KNOT_ENV"
+	envKeyPostgresDSN     = "KNOT_POSTGRES_DSN"
+	envKeyRedisAddr       = "KNOT_REDIS_ADDR"
+	envKeyRedisPassword   = "KNOT_REDIS_PASSWORD"
+	envKeyRedisDB         = "KNOT_REDIS_DB"
+	envKeyHTTPPort        = "KNOT_HTTP_PORT"
+	envKeyJWTSecret       = "KNOT_JWT_SECRET"
+	envKeyAdminSecret     = "KNOT_ADMIN_SECRET"
+	envKeyLogLevel        = "KNOT_LOG_LEVEL"
+	envKeyS3Endpoint      = "KNOT_S3_ENDPOINT"
+	envKeyS3Region        = "KNOT_S3_REGION"
+	envKeyS3AccessKey     = "KNOT_S3_ACCESS_KEY"
+	envKeyS3SecretKey     = "KNOT_S3_SECRET_KEY"
+	envKeyS3Bucket        = "KNOT_S3_BUCKET"
+	envKeyStorageProvider = "KNOT_STORAGE_PROVIDER"
+	envKeyResendAPIKey    = "KNOT_RESEND_API_KEY"
+	envKeyEmailFrom       = "KNOT_EMAIL_FROM"
+	envKeyWebURL          = "KNOT_WEB_URL"
 )
 
 // Safe local defaults. These are placeholders that match .env.example and the
@@ -59,11 +76,17 @@ const (
 	// Local object storage: the MinIO container's published S3 port and its
 	// placeholder credentials (KNOT-ADR-028). These are local-only, exactly like
 	// the Postgres and Redis defaults above.
-	defaultS3Endpoint  = "http://127.0.0.1:9000"
-	defaultS3Region    = "us-east-1"
+	defaultS3Endpoint = "http://127.0.0.1:9000"
+	// defaultS3Region is R2's signing region. MinIO ignores the value entirely (it
+	// signs with whatever region it is told), so one default serves both providers
+	// and the deployed product needs no override (KNOT-037).
+	defaultS3Region    = "auto"
 	defaultS3AccessKey = "knot"
 	defaultS3SecretKey = "knot_local_only_change_me"
 	defaultS3Bucket    = "knot-media"
+	// defaultStorageProvider is MinIO: a checkout with no object-store
+	// configuration must keep working against the local container.
+	defaultStorageProvider = StorageProviderMinIO
 	// DefaultEmailFrom is the sender Resend's sandbox accepts without a verified
 	// domain, which is what a checkout without a Resend account can send from
 	// (KNOT-ADR-090). It is the same default the email package documents.
@@ -137,7 +160,7 @@ type Config struct {
 	// (KNOT-ADR-028); in production it is the equivalent managed service.
 	S3Endpoint string
 	// S3Region is the signing region. MinIO ignores it, but the AWS SDK requires
-	// one and a real bucket has a real region.
+	// one and a real bucket has a real region. R2 signs with "auto" (KNOT-037).
 	S3Region string
 	// S3AccessKey is the object store's access key id.
 	S3AccessKey string
@@ -146,6 +169,11 @@ type Config struct {
 	S3SecretKey string
 	// S3Bucket is the bucket media objects are written to.
 	S3Bucket string
+	// StorageProvider names which object store the S3 settings point at:
+	// StorageProviderMinIO or StorageProviderR2. It is a label rather than a code
+	// path — both speak the S3 API — and it exists so the composition root can say
+	// at startup which store this process will write to (KNOT-ADR-091).
+	StorageProvider string
 
 	// ResendAPIKey is the Resend API key that delivers verification and password
 	// reset emails (KNOT-ADR-090). An empty value is a supported configuration: the
@@ -189,6 +217,10 @@ type Config struct {
 //     https://knot.local, a placeholder that resolves nowhere (KNOT-031a-fix).
 //   - In "local", a missing KNOT_ADMIN_SECRET becomes LocalAdminSecretPlaceholder;
 //     outside local it is required, like the JWT secret it sits beside.
+//   - KNOT_STORAGE_PROVIDER names the object store the S3 settings belong to:
+//     "minio" (the default, in every environment) or "r2". Any other value is
+//     an error, because a typo there would point a deployment at the wrong store
+//     (KNOT-037).
 //
 // Load performs no I/O beyond reading environment variables.
 func Load() (Config, error) {
@@ -207,24 +239,30 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	storageProvider, err := parseStorageProvider(os.Getenv(envKeyStorageProvider))
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
-		Env:           resolveEnv(os.Getenv(envKeyEnv)),
-		PostgresDSN:   strings.TrimSpace(os.Getenv(envKeyPostgresDSN)),
-		RedisAddr:     strings.TrimSpace(os.Getenv(envKeyRedisAddr)),
-		RedisPassword: os.Getenv(envKeyRedisPassword),
-		RedisDB:       redisDB,
-		HTTPPort:      httpPort,
-		JWTSecret:     strings.TrimSpace(os.Getenv(envKeyJWTSecret)),
-		AdminSecret:   strings.TrimSpace(os.Getenv(envKeyAdminSecret)),
-		LogLevel:      logLevel,
-		S3Endpoint:    strings.TrimSpace(os.Getenv(envKeyS3Endpoint)),
-		S3Region:      strings.TrimSpace(os.Getenv(envKeyS3Region)),
-		S3AccessKey:   strings.TrimSpace(os.Getenv(envKeyS3AccessKey)),
-		S3SecretKey:   strings.TrimSpace(os.Getenv(envKeyS3SecretKey)),
-		S3Bucket:      strings.TrimSpace(os.Getenv(envKeyS3Bucket)),
-		ResendAPIKey:  strings.TrimSpace(os.Getenv(envKeyResendAPIKey)),
-		EmailFrom:     strings.TrimSpace(os.Getenv(envKeyEmailFrom)),
-		WebURL:        strings.TrimSpace(os.Getenv(envKeyWebURL)),
+		Env:             resolveEnv(os.Getenv(envKeyEnv)),
+		PostgresDSN:     strings.TrimSpace(os.Getenv(envKeyPostgresDSN)),
+		RedisAddr:       strings.TrimSpace(os.Getenv(envKeyRedisAddr)),
+		RedisPassword:   os.Getenv(envKeyRedisPassword),
+		RedisDB:         redisDB,
+		HTTPPort:        httpPort,
+		JWTSecret:       strings.TrimSpace(os.Getenv(envKeyJWTSecret)),
+		AdminSecret:     strings.TrimSpace(os.Getenv(envKeyAdminSecret)),
+		LogLevel:        logLevel,
+		S3Endpoint:      strings.TrimSpace(os.Getenv(envKeyS3Endpoint)),
+		S3Region:        strings.TrimSpace(os.Getenv(envKeyS3Region)),
+		S3AccessKey:     strings.TrimSpace(os.Getenv(envKeyS3AccessKey)),
+		S3SecretKey:     strings.TrimSpace(os.Getenv(envKeyS3SecretKey)),
+		S3Bucket:        strings.TrimSpace(os.Getenv(envKeyS3Bucket)),
+		StorageProvider: storageProvider,
+		ResendAPIKey:    strings.TrimSpace(os.Getenv(envKeyResendAPIKey)),
+		EmailFrom:       strings.TrimSpace(os.Getenv(envKeyEmailFrom)),
+		WebURL:          strings.TrimSpace(os.Getenv(envKeyWebURL)),
 	}
 
 	// The From address has a default in every environment: there is nothing
@@ -360,6 +398,26 @@ func parseLogLevel(raw string) (string, error) {
 		return "", fmt.Errorf(
 			"config: %s must be one of %s, %s, %s, %s (got %q)",
 			envKeyLogLevel, LogLevelDebug, LogLevelInfo, LogLevelWarn, LogLevelError, raw,
+		)
+	}
+}
+
+// parseStorageProvider resolves KNOT_STORAGE_PROVIDER.
+//
+// An empty value is MinIO, so every existing checkout keeps working unchanged. An
+// unknown value is refused rather than treated as MinIO: pointing a deployment at
+// the wrong object store would silently write media nobody can find (KNOT-037).
+func parseStorageProvider(raw string) (string, error) {
+	provider := strings.ToLower(strings.TrimSpace(raw))
+	switch provider {
+	case "":
+		return defaultStorageProvider, nil
+	case StorageProviderMinIO, StorageProviderR2:
+		return provider, nil
+	default:
+		return "", fmt.Errorf(
+			"config: %s must be one of %s, %s (got %q)",
+			envKeyStorageProvider, StorageProviderMinIO, StorageProviderR2, raw,
 		)
 	}
 }

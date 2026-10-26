@@ -21,6 +21,7 @@
 package storymedia
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -219,10 +220,58 @@ type StoryMedia struct {
 	DurationMS *int
 	// SizeBytes is the stored object's size.
 	SizeBytes int64
+	// ThumbnailKey, MediumKey, and PosterKey are the object keys of the renditions
+	// generated beside the original, or nil when none was generated (KNOT-037).
+	// Each is a key, never a URL, exactly as StorageKey is (KNOT-ADR-029).
+	//
+	// They are nullable because a rendition is an optimisation: an upload whose
+	// bytes could not be decoded, a video the system has no FFmpeg for, and every
+	// row written before migration 0024 all read correctly through the original.
+	ThumbnailKey *string
+	MediumKey    *string
+	PosterKey    *string
 	// DisplayOrder is the item's position within its story. Lower comes first.
 	DisplayOrder int
 	// CreatedAt is the insertion time.
 	CreatedAt time.Time
+}
+
+// DerivativeKey answers the object key for one variant, and whether this row has
+// that rendition.
+//
+// The original is not a variant: a row with no rendition answers false, and the
+// caller serves the object StorageKey names.
+func (m StoryMedia) DerivativeKey(variant Variant) (string, bool) {
+	var key *string
+	switch variant {
+	case VariantThumb:
+		key = m.ThumbnailKey
+	case VariantMedium:
+		key = m.MediumKey
+	case VariantPoster:
+		key = m.PosterKey
+	default:
+		return "", false
+	}
+
+	if key == nil || strings.TrimSpace(*key) == "" {
+		return "", false
+	}
+
+	return *key, true
+}
+
+// derivativeKeys lists the rendition object keys this row holds, in a stable
+// order. It exists so deleting an item can remove everything the upload created.
+func (m StoryMedia) derivativeKeys() []string {
+	keys := make([]string, 0, 3)
+	for _, key := range []*string{m.ThumbnailKey, m.MediumKey, m.PosterKey} {
+		if key != nil && strings.TrimSpace(*key) != "" {
+			keys = append(keys, *key)
+		}
+	}
+
+	return keys
 }
 
 // CreateMediaInput is the input to CreateMedia. It is a domain type, not an HTTP
@@ -286,7 +335,15 @@ type Service struct {
 	store   StoryMediaStore
 	objects Storage
 	logger  Logger
+	// extractPoster renders a video's poster frame. It is a field so a test can
+	// substitute a stand-in without FFmpeg installed, exactly as the stories store
+	// does for its feature upsert (KNOT-037). Production never replaces the
+	// default, which is ExtractPosterFrame.
+	extractPoster posterExtractor
 }
+
+// posterExtractor renders one frame of a video as JPEG bytes.
+type posterExtractor func(ctx context.Context, video []byte, offsetMS int) ([]byte, error)
 
 // Storage is the slice of the object-storage contract this package needs:
 // writing an object, reading a byte range, and deleting one. Depending on this
@@ -317,7 +374,12 @@ func NewService(store StoryMediaStore, objects Storage, logger Logger) (*Service
 	if logger == nil {
 		return nil, fmt.Errorf("storymedia: service requires a logger")
 	}
-	return &Service{store: store, objects: objects, logger: logger}, nil
+	return &Service{
+		store:         store,
+		objects:       objects,
+		logger:        logger,
+		extractPoster: ExtractPosterFrame,
+	}, nil
 }
 
 // TrimMimeType normalises a MIME type by dropping any parameters, so
@@ -327,19 +389,67 @@ func TrimMimeType(raw string) string {
 	return strings.TrimSpace(strings.SplitN(raw, ";", 2)[0])
 }
 
+// Variant names one of the generated renditions a client may ask for instead of
+// the original upload (KNOT-037, KNOT-ADR-091).
+type Variant string
+
+// The derivative variants. The empty string is the original object, which is why
+// Variant's zero value means "serve what was uploaded".
+const (
+	// VariantThumb is the feed thumbnail, at most ThumbnailMaxWidth wide.
+	VariantThumb Variant = "thumb"
+	// VariantMedium is the story-detail rendition, at most MediumMaxWidth wide.
+	VariantMedium Variant = "medium"
+	// VariantPoster is a video's poster frame.
+	VariantPoster Variant = "poster"
+)
+
+// ParseVariant validates the `variant` query parameter of the content endpoint.
+//
+// An absent or blank value resolves to the original object. An unknown value must
+// be rejected rather than ignored: silently answering with the original would send
+// a full-size photo to a client that asked for a 400px thumbnail, which is the
+// opposite of what the parameter is for.
+func ParseVariant(raw string) (Variant, bool) {
+	trimmed := Variant(strings.TrimSpace(raw))
+	switch trimmed {
+	case "", VariantThumb, VariantMedium, VariantPoster:
+		return trimmed, true
+	default:
+		return "", false
+	}
+}
+
 // StreamMedia resolves a media id to a reader positioned for the request's Range
 // header.
 //
-// It returns the reader, the object's TOTAL size, and the stored MIME type. The
-// reader yields the requested byte range when the Range header is valid for the
-// object's size, and the whole object otherwise; the caller uses ParseRange with
-// the same header and the returned total to decide whether to answer 206 or 200.
-// Putting the decision in one exported helper is what keeps the service and the
-// handler from disagreeing about which bytes were sent.
-func (s *Service) StreamMedia(ctx context.Context, id string, r *http.Request) (io.ReadCloser, int64, string, error) {
+// It returns the reader, the object's TOTAL size, and the content type. The reader
+// yields the requested byte range when the Range header is valid for the object's
+// size, and the whole object otherwise; the caller uses ParseRange with the same
+// header and the returned total to decide whether to answer 206 or 200. Putting
+// the decision in one exported helper is what keeps the service and the handler
+// from disagreeing about which bytes were sent.
+//
+// A named variant is answered from its rendition when the row has one. Renditions
+// are small, so they are read whole and sent without range support, which also
+// means a thumbnail request can never be turned into a full-size transfer. When
+// the row has no rendition, or its object is missing, the original is served
+// instead: an optimisation that failed must not hide the image (KNOT-ADR-091).
+func (s *Service) StreamMedia(ctx context.Context, id string, variant Variant, r *http.Request) (io.ReadCloser, int64, string, error) {
 	media, err := s.GetMedia(ctx, id)
 	if err != nil {
 		return nil, 0, "", err
+	}
+
+	if key, ok := media.DerivativeKey(variant); ok {
+		body, size, readErr := s.readRendition(ctx, key)
+		switch {
+		case readErr == nil:
+			return body, size, derivativeContentType, nil
+		case !errors.Is(readErr, ErrNotFound):
+			return nil, 0, "", readErr
+		}
+		// The object is gone, so fall through to the original.
 	}
 
 	if start, end, ok := ParseRange(r.Header.Get("Range"), media.SizeBytes); ok {
@@ -356,6 +466,27 @@ func (s *Service) StreamMedia(ctx context.Context, id string, r *http.Request) (
 	}
 
 	return body, media.SizeBytes, media.MimeType, nil
+}
+
+// readRendition reads one rendition whole.
+//
+// The storage contract has no stat method, and a rendition is small (a 400px JPEG
+// is tens of kilobytes), so buffering it is what allows an exact Content-Length
+// without widening the interface. Renditions are images, so they are never played
+// with a Range request.
+func (s *Service) readRendition(ctx context.Context, key string) (io.ReadCloser, int64, error) {
+	body, _, err := s.objects.Get(ctx, key)
+	if err != nil {
+		return nil, 0, storageReadError(err)
+	}
+	defer func() { _ = body.Close() }()
+
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return nil, 0, fmt.Errorf("storymedia: read rendition: %w", err)
+	}
+
+	return io.NopCloser(bytes.NewReader(data)), int64(len(data)), nil
 }
 
 // storageReadError turns a missing object into ErrNotFound and leaves anything

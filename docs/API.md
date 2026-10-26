@@ -600,7 +600,10 @@ and the pillar it belongs to.
       "size_bytes": 204800,
       "display_order": 0,
       "created_at": "2026-10-09T18:26:37.134182+02:00",
-      "url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content"
+      "url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content",
+      "thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb",
+      "medium_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=medium",
+      "poster_url": null
     }
   ],
   "created_at": "2026-10-07T18:26:37.134182+02:00",
@@ -1022,10 +1025,28 @@ request_too_large`, `415 unsupported_media_type`, `500 internal_error`.
 Returns **200** with the story's media, in display order:
 
 ```json
-{ "media": [ { "id": "...", "media_type": "image", "source": "camera", "url": "..." } ] }
+{
+  "media": [
+    {
+      "id": "...",
+      "media_type": "image",
+      "source": "camera",
+      "url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content",
+      "thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb",
+      "medium_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=medium",
+      "poster_url": null
+    }
+  ]
+}
 ```
 
 `media` is always an array, never `null`. A story that does not exist is `404 not_found`.
+
+**`url` is always the original upload**, because that is what a full-screen viewer reads.
+`thumbnail_url`, `medium_url`, and `poster_url` address the generated renditions
+(KNOT-037) and are `null` when this item has none — an image upload whose bytes could not
+be decoded, a video the system has no FFmpeg for, or a row written before migration
+`0024`. A client that wants a renditions must fall back to `url` when they are null.
 
 **Errors:** `404 not_found`, `500 internal_error`.
 
@@ -1034,6 +1055,22 @@ Returns **200** with the story's media, in display order:
 Streams the bytes with the stored `Content-Type`, `Cache-Control: public, max-age=3600`,
 `Accept-Ranges: bytes`, and `X-Content-Type-Options: nosniff`.
 
+**The `variant` parameter.** An optional `variant` query value asks for a generated
+rendition instead of the original upload (KNOT-037):
+
+| `variant` | Serves | Content type |
+| --- | --- | --- |
+| absent | The original upload | The stored type (`image/jpeg`, `image/png`, `image/webp`, `video/mp4`, `video/quicktime`) |
+| `thumb` | The feed thumbnail, max 400px wide | `image/jpeg` |
+| `medium` | The story-detail rendition, max 1200px wide | `image/jpeg` |
+| `poster` | A video's poster frame, max 400px wide | `image/jpeg` |
+
+A rendition is always a JPEG, so its response never echoes the row's stored type. A
+variant the item does not have — `poster` on an image, or any variant on a row whose
+pipeline did not run — is answered with **the original**, so a missing rendition never
+hides the media. Renditions are small and are sent whole; `Range` applies to the original.
+An unrecognised `variant` is `400 invalid_request` rather than a silent full-size response.
+
 **Range support.** A valid single-range `Range: bytes=start-end` header (also `bytes=start-`
 and `bytes=-suffix`) is answered **206 Partial Content** with a `Content-Range` header and
 exactly the requested bytes. With no header, or an unusable one, the whole object is
@@ -1041,7 +1078,8 @@ answered **200** (KNOT-ADR-032). Multi-range requests are treated as unusable.
 
 A media id that does not exist — or a row whose object is missing — returns `404 not_found`.
 
-**Errors:** `404 not_found`, `500 internal_error`.
+**Errors:** `400 invalid_request` (an unknown `variant`), `404 not_found`, `500
+internal_error`.
 
 ### DELETE /stories/{id}/media/{mid}
 

@@ -102,7 +102,7 @@ writes objects (KNOT-ADR-028, KNOT-ADR-029).
 | S3 API              | `http://127.0.0.1:9000`                                            |
 | Web console         | `http://127.0.0.1:9001`                                            |
 | Bucket              | `knot-media` (`KNOT_S3_BUCKET`)                                     |
-| Object layout       | Avatars: `avatars/<user id>/<uuid>.{jpg,png,webp}`. Story media: `story-media/<story id>/<uuid>.{jpg,png,webp,mp4,mov}` |
+| Object layout       | Avatars: `avatars/<user id>/<uuid>.{jpg,png,webp}`. Story media: `story-media/<story id>/<uuid>.{jpg,png,webp,mp4,mov}`, with the renditions beside it as `<uuid>_thumb.jpg`, `<uuid>_medium.jpg` and `<uuid>_poster.jpg` (KNOT-037) |
 | Data directory      | `/bitnami/minio/data` in the container, on the `knot_minio_data` named volume |
 | Credentials         | `KNOT_S3_ACCESS_KEY` / `KNOT_S3_SECRET_KEY`, which are the same values the container is given as `KNOT_MINIO_ROOT_USER` / `KNOT_MINIO_ROOT_PASSWORD` |
 | Health              | `curl -f http://127.0.0.1:9000/minio/health/live`                   |
@@ -162,13 +162,74 @@ sheet refuses to launch at 0 rather than allowing an unbounded pick).
 
 Deleting a media row does **not** remove the object from the bucket in the console view
 until the `DELETE` endpoint is called; a row and its object are removed together by
-`DELETE /stories/{id}/media/{mid}`.
+`DELETE /stories/{id}/media/{mid}`, which also removes that item's renditions.
+
+#### Media renditions (KNOT-037)
+
+Every image upload is also rendered as a feed thumbnail (JPEG, max 400px wide, quality 80)
+and a story-detail rendition (JPEG, max 1200px wide, quality 85); every video upload gets a
+poster frame (JPEG, max 400px wide) taken a fifth of the way in. The objects are named
+`<uuid>_thumb.jpg`, `<uuid>_medium.jpg` and `<uuid>_poster.jpg` inside the same
+`story-media/<story id>/` folder, and the row records their keys in `thumbnail_key`,
+`medium_key` and `poster_key` (migration `0024`).
+
+Renditions are served by the same content endpoint with `?variant=thumb|medium|poster`:
+
+```bash
+# The thumbnail, the medium rendition, and the fallback behaviour
+curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=thumb"
+curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=medium"
+# A poster on an image has none, so this answers with the ORIGINAL (200, image/png)
+curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=poster"
+```
+
+A failed rendition is a `WARN` in the log and nothing else: the original is already stored
+and every reader falls back to it, so a missing decoder or a missing FFmpeg never fails an
+upload.
+
+**FFmpeg is required for video poster frames**, and only for those. Image renditions are
+pure Go and need nothing installed:
+
+```bash
+# macOS
+brew install ffmpeg
+# Debian/Ubuntu
+sudo apt-get install ffmpeg
+# Verify
+ffmpeg -version
+```
+
+The backend calls `ffmpeg` from `PATH` only when a video is uploaded; if it is missing, the
+upload still succeeds with a `WARN` ("could not generate a video poster frame: … ffmpeg is
+not installed") and the item simply has no `poster_url`. A production image that wants video
+posters must install FFmpeg in the container. FFmpeg is **not** a Go dependency and is not
+vendored: it is a system prerequisite, like Docker.
+
+#### Cloudflare R2 (production storage)
+
+Both local and production speak the S3 API through `internal/storage`, so moving to R2 is
+configuration only — no code, no bucket-management calls (KNOT-ADR-091). `KNOT_STORAGE_PROVIDER`
+names which store the settings point at (`minio`, the default, or `r2`); the backend logs an
+INFO line at startup when it is `r2`.
+
+```bash
+KNOT_STORAGE_PROVIDER=r2
+KNOT_S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com
+KNOT_S3_REGION=auto
+KNOT_S3_ACCESS_KEY=<r2-access-key-id>
+KNOT_S3_SECRET_KEY=<r2-secret-access-key>
+KNOT_S3_BUCKET=knot-media
+```
+
+The bucket must already exist, and the credentials are an R2 API token's key id and secret.
+R2's region is `auto`; MinIO ignores the value, so one default serves both.
 
 Because the data directory is on a named volume, `scripts/dev-down.sh` keeps every
 uploaded avatar and `scripts/dev-reset.sh` deletes it along with the databases.
 
-Backend settings: `KNOT_S3_ENDPOINT`, `KNOT_S3_REGION`, `KNOT_S3_ACCESS_KEY`,
-`KNOT_S3_SECRET_KEY`, and `KNOT_S3_BUCKET` — see "Backend configuration" below. In
+Backend settings: `KNOT_STORAGE_PROVIDER`, `KNOT_S3_ENDPOINT`, `KNOT_S3_REGION`,
+`KNOT_S3_ACCESS_KEY`, `KNOT_S3_SECRET_KEY`, and `KNOT_S3_BUCKET` — see "Backend
+configuration" below and "Cloudflare R2" above. In
 `local` every one of them has a working default, so a fresh clone needs no `.env` edit to
 upload an avatar. Outside `local`, the endpoint and both credentials are required and the
 server refuses to start without them.

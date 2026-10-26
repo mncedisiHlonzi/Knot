@@ -244,6 +244,19 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		)
 	}
 
+	// Which object store this process writes media to. Both providers speak the S3
+	// API through the same client, so this is a label rather than a branch — but it
+	// is the one line an operator can read to know where bytes will land, and a
+	// deployment that meant to use R2 but is still pointed at MinIO has no other
+	// symptom until the bucket is gone (KNOT-037, KNOT-ADR-091).
+	if cfg.StorageProvider == config.StorageProviderR2 {
+		logger.Info(
+			"media storage is Cloudflare R2",
+			slog.String("bucket", cfg.S3Bucket),
+			slog.String("endpoint", cfg.S3Endpoint),
+		)
+	}
+
 	// Rooted is Knot's trust and community layer. Its service doubles as the
 	// enrichment lookup the content handlers use to attach an author's inline
 	// Rooted summary to a response.

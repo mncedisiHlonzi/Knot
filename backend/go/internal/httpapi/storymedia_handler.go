@@ -41,7 +41,7 @@ const (
 type StoryMediaService interface {
 	CreateMedia(ctx context.Context, in storymedia.CreateMediaInput) (storymedia.StoryMedia, error)
 	ListMedia(ctx context.Context, storyID string) ([]storymedia.StoryMedia, error)
-	StreamMedia(ctx context.Context, id string, r *http.Request) (io.ReadCloser, int64, string, error)
+	StreamMedia(ctx context.Context, id string, variant storymedia.Variant, r *http.Request) (io.ReadCloser, int64, string, error)
 	DeleteMedia(ctx context.Context, id, byUserID string) error
 }
 
@@ -81,8 +81,18 @@ type storyMediaResponse struct {
 	DisplayOrder int       `json:"display_order"`
 	CreatedAt    time.Time `json:"created_at"`
 	// URL is the path on this API that serves the bytes. It is relative, so the
-	// client resolves it against its own API base URL.
+	// client resolves it against its own API base URL. It always addresses the
+	// ORIGINAL upload: the renditions below are separate addresses, and a client
+	// that wants the full-size picture keeps asking for this one (KNOT-037).
 	URL string `json:"url"`
+	// ThumbnailURL, MediumURL, and PosterURL address the generated renditions, or
+	// are null when this item has none (no decoder, no FFmpeg, or a row older than
+	// migration 0024). A client must fall back to URL. Each is the same path as URL
+	// with `?variant=` appended, so nothing about the bucket reaches the client
+	// (KNOT-ADR-029).
+	ThumbnailURL *string `json:"thumbnail_url"`
+	MediumURL    *string `json:"medium_url"`
+	PosterURL    *string `json:"poster_url"`
 }
 
 // storyMediaEnvelope wraps a single item, so the response shape can gain sibling
@@ -197,8 +207,22 @@ func (h *StoryMediaHandler) List(w http.ResponseWriter, r *http.Request) {
 // so a video can be played without transferring the whole file. A valid range is
 // answered 206 with Content-Range; anything else (no header, or an unusable one)
 // is answered 200 with the whole object.
+//
+// The optional `variant` parameter asks for a generated rendition instead of the
+// original — `thumb`, `medium`, or `poster` (KNOT-037). An unknown value is a 400
+// rather than a silent full-size response, because answering with the original
+// would send exactly the bytes the caller asked to avoid. A rendition the item
+// does not have is answered with the original, so a failed pipeline never breaks
+// an image.
 func (h *StoryMediaHandler) Content(w http.ResponseWriter, r *http.Request) {
-	body, total, mimeType, err := h.service.StreamMedia(r.Context(), r.PathValue("mid"), r)
+	variant, ok := storymedia.ParseVariant(r.URL.Query().Get("variant"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, codeInvalidRequest,
+			"variant must be thumb, medium, or poster")
+		return
+	}
+
+	body, total, mimeType, err := h.service.StreamMedia(r.Context(), r.PathValue("mid"), variant, r)
 	if err != nil {
 		h.writeServiceError(w, r, err)
 		return
@@ -330,12 +354,29 @@ func newStoryMediaResponse(media storymedia.StoryMedia, storyID string) storyMed
 		DisplayOrder: media.DisplayOrder,
 		CreatedAt:    media.CreatedAt,
 		URL:          storyMediaURL(storyID, media.ID),
+		ThumbnailURL: storyMediaVariantURL(storyID, media.ID, media.ThumbnailKey, storymedia.VariantThumb),
+		MediumURL:    storyMediaVariantURL(storyID, media.ID, media.MediumKey, storymedia.VariantMedium),
+		PosterURL:    storyMediaVariantURL(storyID, media.ID, media.PosterKey, storymedia.VariantPoster),
 	}
 }
 
 // storyMediaURL builds the relative path a client fetches the bytes from.
 func storyMediaURL(storyID, mediaID string) string {
 	return "/stories/" + storyID + "/media/" + mediaID + "/content"
+}
+
+// storyMediaVariantURL builds the address of one rendition, or nil when the item
+// has none.
+//
+// The key is what proves a rendition exists; its value is never sent. A nil answer
+// is what tells the client to fall back to URL (KNOT-037).
+func storyMediaVariantURL(storyID, mediaID string, key *string, variant storymedia.Variant) *string {
+	if key == nil || *key == "" {
+		return nil
+	}
+
+	url := storyMediaURL(storyID, mediaID) + "?variant=" + string(variant)
+	return &url
 }
 
 // optionalFormInt reads an optional non-negative integer form field, returning

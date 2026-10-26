@@ -24,6 +24,7 @@ func clearEnv(t *testing.T) {
 		envKeyS3AccessKey,
 		envKeyS3SecretKey,
 		envKeyS3Bucket,
+		envKeyStorageProvider,
 		envKeyResendAPIKey,
 		envKeyEmailFrom,
 		envKeyWebURL,
@@ -48,6 +49,67 @@ func TestLoadDefaultsWhenEnvUnset(t *testing.T) {
 	}
 	if cfg.RedisAddr != defaultRedisAddr {
 		t.Errorf("RedisAddr = %q, want default %q", cfg.RedisAddr, defaultRedisAddr)
+	}
+	// A checkout with no object-store configuration keeps pointing at the local
+	// MinIO container, and the signing region is R2's value because MinIO ignores
+	// it (KNOT-037).
+	if cfg.StorageProvider != StorageProviderMinIO {
+		t.Errorf("StorageProvider = %q, want %q", cfg.StorageProvider, StorageProviderMinIO)
+	}
+	if cfg.S3Region != defaultS3Region {
+		t.Errorf("S3Region = %q, want default %q", cfg.S3Region, defaultS3Region)
+	}
+}
+
+func TestLoadAcceptsR2AsTheStorageProvider(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envKeyStorageProvider, "R2")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+	if cfg.StorageProvider != StorageProviderR2 {
+		t.Errorf("StorageProvider = %q, want %q (and case-insensitive)", cfg.StorageProvider, StorageProviderR2)
+	}
+}
+
+func TestLoadRejectsAnUnknownStorageProvider(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envKeyStorageProvider, "s3")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() error = nil, want a rejection of an unknown provider")
+	}
+}
+
+func TestParseStorageProvider(t *testing.T) {
+	cases := []struct {
+		raw     string
+		want    string
+		wantErr bool
+	}{
+		{raw: "", want: StorageProviderMinIO},
+		{raw: " minio ", want: StorageProviderMinIO},
+		{raw: "r2", want: StorageProviderR2},
+		{raw: "unknown", wantErr: true},
+	}
+
+	for _, testCase := range cases {
+		got, err := parseStorageProvider(testCase.raw)
+		if testCase.wantErr {
+			if err == nil {
+				t.Errorf("parseStorageProvider(%q) error = nil, want an error", testCase.raw)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parseStorageProvider(%q) error = %v, want nil", testCase.raw, err)
+			continue
+		}
+		if got != testCase.want {
+			t.Errorf("parseStorageProvider(%q) = %q, want %q", testCase.raw, got, testCase.want)
+		}
 	}
 }
 

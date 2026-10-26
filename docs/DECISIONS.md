@@ -3133,3 +3133,74 @@ Resend sandbox sender only delivers to the account's own mailbox, a real deploym
 set `KNOT_EMAIL_FROM` to a verified domain before anybody else can receive mail. Nothing
 tracks open rates or clicks, and there are no unsubscribe links: both messages are
 transactional.
+
+## KNOT-ADR-091 — Media lives in Cloudflare R2, and every upload gets a derivative
+
+**Context.** KNOT-000-RECON established three facts: storage was already an S3-compatible
+`internal/storage` contract behind a private bucket (KNOT-ADR-028, KNOT-ADR-029); no
+derivative generation existed anywhere, so a feed card streamed a full-size original; and
+the deployed choice of object store had never been made — ADR-028 said so explicitly, and
+Cloudflare R2 appeared in the log only as a rejected option for *local* development. Feed
+bandwidth is the first cost that grows with users, and it grows with the square of the
+picture: a 2048px phone photo drawn in a 400pt card is roughly twenty-five times the bytes
+it needs.
+
+**Decision.** Two changes, one deployment decision and one pipeline.
+
+- **The production object store is Cloudflare R2.** The code does not change: R2 speaks the
+  S3 API, so `storage.NewS3Storage` already points at it with an endpoint, a region, a key
+  pair and a bucket. `KNOT_STORAGE_PROVIDER` (`minio` | `r2`) names which store those
+  settings belong to; it is a validated label, not a branch, and the composition root logs
+  an INFO line when it is `r2`. The default region becomes `auto` (R2's convention), which
+  MinIO ignores, so one default serves both.
+- **Three renditions are generated on upload and stored beside the original.** An image
+  gets a feed thumbnail (JPEG, max 400px wide, quality 80) and a story-detail rendition
+  (JPEG, max 1200px wide, quality 85); a video gets a poster frame (JPEG, max 400px wide)
+  taken a fifth of the way in, so the still is not a black fade. Keys are
+  `<uuid>_thumb.jpg`, `<uuid>_medium.jpg` and `<uuid>_poster.jpg` in the same
+  `story-media/<story id>/` folder, recorded in `story_media.thumbnail_key`,
+  `medium_key` and `poster_key` (migration `0024`).
+- **A rendition is an optimisation, never a requirement.** The three columns are nullable,
+  there is no backfill, and every failure — an undecodable image, a system without FFmpeg,
+  an object lost from the bucket — degrades to serving the original with a `WARN`. A reader
+  that asks for a variant the row does not have is answered with the original, not an
+  error: hiding a photo because an optimisation failed would be a strictly worse product.
+- **`GET …/content?variant=thumb|medium|poster` is how a rendition is addressed**, so the
+  wire format stays backend-mediated and no bucket hostname reaches a client
+  (KNOT-ADR-029). `first_media_url` on a story payload is the thumbnail when one exists,
+  because that field is a card's field; the item's own `url` still addresses the original,
+  which is what the full-screen viewer reads.
+
+**Alternatives Considered.**
+1. **Presigned R2 URLs handed to the client** — rejected for the reasons ADR-029 already
+   recorded: the bucket becomes internet-reachable, CORS becomes a requirement, and format
+   and authorization leave the backend. R2's zero egress makes a CDN-in-front-of-the-API the
+   cheaper next step, not a reason to expose the bucket.
+2. **Generate renditions on read (lazily)** — rejected. It puts image encoding on the request
+   path of a public endpoint, makes the first reader of every photo pay for it, and needs a
+   cache and a lock to avoid stampedes. Upload is the one moment the bytes are already in
+   memory.
+3. **`golang.org/x/image/draw` instead of `disintegration/imaging`** — considered and
+   declined. It is one module fewer, but it has no EXIF orientation handling, and a phone's
+   portrait photo is stored sideways with a rotation flag: a thumbnail that ignores it is a
+   thumbnail of a sideways photo. `imaging` also brings WebP decoding through
+   `golang.org/x/image`, which it already requires, so the allowed `image/webp` uploads get
+   renditions too.
+4. **Transcode video (HLS/adaptive bitrate)** — rejected as out of scope. Poster extraction
+   is a still frame; transcoding is a job queue and a second storage tier.
+5. **Store renditions as base64 in PostgreSQL** — rejected for the reason ADR-028 gave for
+   avatars: binary blobs do not belong in the row database.
+
+**Consequences.** Feed and detail traffic drops to a fraction of the original bytes, and the
+bytes a client can ask for are bounded by the variant rather than by what somebody's camera
+produced. The costs are stated rather than hidden: `github.com/disintegration/imaging` and
+`golang.org/x/image` are new Go dependencies, and FFmpeg becomes a **system** prerequisite for
+video posters — absent here, so every video uploaded in this checkout has no `poster_key`
+until it is installed, and a production image must install it. Upload memory roughly doubles:
+the HTTP handler already buffers the body to sniff its type, and the service reads it again so
+the renditions and the original come from one copy. Renditions are read whole rather than
+range-served (they are tens of kilobytes, and the storage contract still has no stat method).
+Deleting an item now removes three or four objects instead of one. There is no backfill and no
+job that renders old rows, so existing media keeps streaming its original until it is
+re-uploaded; and nothing yet sweeps orphaned renditions, the same gap ADR-029 recorded for
+objects.

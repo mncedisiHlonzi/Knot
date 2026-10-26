@@ -708,7 +708,15 @@ func firstMediaFields(media []storyMediaResponse) firstMedia {
 	}
 
 	kind := media[0].MediaType
+	// The preview is the thumbnail when one exists. `first_media_*` is a card
+	// field: a feed entry draws the media a few hundred points wide, so sending the
+	// original there is exactly the bandwidth the derivative pipeline exists to
+	// remove (KNOT-037). The item's own `url` still addresses the original, which is
+	// what the full-screen viewer reads.
 	url := media[0].URL
+	if media[0].ThumbnailURL != nil {
+		url = *media[0].ThumbnailURL
+	}
 	return firstMedia{
 		mediaType: &kind,
 		url:       &url,

@@ -29,6 +29,7 @@ Migrations live in `backend/go/migrations/` and are applied with
 | `0021`  | `identity_domain` | The `credentials`, `sessions` and `verification_tokens` tables; `users.deleted_at` and `users.deletion_scheduled_at`; and the partial `users_deleted_at_idx` |
 | `0022`  | `email_verified` | The `users.email_verified_at` column and the partial `users_email_verified_at_idx` |
 | `0023`  | `account_purge` | The `users.purged_at` column and the partial `users_purged_at_idx` that the purge job scans |
+| `0024`  | `media_derivatives` | The `story_media.thumbnail_key`, `medium_key` and `poster_key` columns (KNOT-037) |
 
 `0014`–`0020` are documented in the sections that introduced them — moderation, search, the
 profile wall, `user_interactions` and `entity_features` — rather than in this table.
@@ -586,6 +587,16 @@ KNOT-ADR-030.
 | `size_bytes`    | `bigint`      | no       | —                   | The stored object's size                                               |
 | `display_order` | `integer`     | no       | `0`                 | Position within the story; lower comes first. Appended on upload        |
 | `created_at`    | `timestamptz` | no       | `now()`             |                                                                        |
+| `thumbnail_key` | `text`        | yes      | `NULL`              | Object key of the feed thumbnail (JPEG, max 400px wide), or `NULL` when none was generated (KNOT-037) |
+| `medium_key`    | `text`        | yes      | `NULL`              | Object key of the story-detail rendition (JPEG, max 1200px wide), or `NULL` when none was generated (KNOT-037) |
+| `poster_key`    | `text`        | yes      | `NULL`              | Object key of a video poster frame (JPEG, max 400px wide); `NULL` for images, for a system without FFmpeg, or when extraction failed (KNOT-037) |
+
+The three derivative columns name renditions generated beside the original in the same
+bucket. Like `storage_key` they hold **object keys, never URLs**, and all three are
+nullable on purpose: a rendition is an optimisation, so a row without one is still fully
+servable through `storage_key`. There is deliberately no backfill — rows written before
+migration `0024` keep working untouched, and the API answers `null` for a rendition a row
+does not have (KNOT-ADR-091).
 
 ### Indexes and constraints
 

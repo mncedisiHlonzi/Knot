@@ -1,10 +1,12 @@
 package storymedia
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 )
@@ -44,14 +46,32 @@ func (s *Service) CreateMedia(ctx context.Context, in CreateMediaInput) (StoryMe
 		return StoryMedia{}, ErrMediaLimit
 	}
 
-	key, err := newMediaKey(in.StoryID, extension)
+	// The upload's bytes are read once and used three times: the original object,
+	// the image renditions, and the video poster frame. The handler has already
+	// buffered the body to sniff its type, so this is a second copy bounded by the
+	// media limit — the price of generating a rendition from a request body that
+	// cannot be replayed (KNOT-037).
+	data, err := readUpload(in)
 	if err != nil {
 		return StoryMedia{}, err
 	}
 
-	if err := s.objects.Put(ctx, key, in.Body, in.MimeType); err != nil {
+	name, err := newUUIDv4()
+	if err != nil {
+		return StoryMedia{}, fmt.Errorf("storymedia: mint object key: %w", err)
+	}
+	prefix := StoryMediaKeyPrefix(in.StoryID)
+	key := prefix + name + extension
+
+	if err := s.objects.Put(ctx, key, bytes.NewReader(data), in.MimeType); err != nil {
 		return StoryMedia{}, fmt.Errorf("storymedia: store object: %w", err)
 	}
+
+	// Renditions are stored beside the original BEFORE the row that names them, so
+	// the row is the single record of what exists. Every failure here is a warning:
+	// the original is already durable, and a reader that finds no rendition serves
+	// the original instead (KNOT-ADR-091).
+	renditions := s.storeDerivatives(ctx, mediaType, data, prefix, name, in.DurationMS)
 
 	// A negative DisplayOrder asks the store to append the item after the story's
 	// current last one; a non-negative value places it explicitly.
@@ -71,16 +91,121 @@ func (s *Service) CreateMedia(ctx context.Context, in CreateMediaInput) (StoryMe
 		Height:       in.Height,
 		DurationMS:   in.DurationMS,
 		SizeBytes:    in.SizeBytes,
+		ThumbnailKey: renditions.thumbnail,
+		MediumKey:    renditions.medium,
+		PosterKey:    renditions.poster,
 		DisplayOrder: order,
 	})
 	if err != nil {
-		// The row failed, so the object is now orphaned rather than referenced.
-		// Remove it best-effort so a failed upload does not leak storage.
+		// The row failed, so the objects are now orphaned rather than referenced.
+		// Remove them best-effort so a failed upload does not leak storage.
 		s.discardObject(ctx, key)
+		for _, derivative := range renditions.all() {
+			s.discardObject(ctx, derivative)
+		}
 		return StoryMedia{}, fmt.Errorf("storymedia: create media: %w", err)
 	}
 
 	return stored, nil
+}
+
+// readUpload buffers the bytes the caller declared.
+//
+// The declared size has already been validated against the media type's limit, so
+// the read is bounded. One byte more than declared is requested so a caller that
+// under-reported its size is refused rather than silently truncated.
+func readUpload(in CreateMediaInput) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(in.Body, in.SizeBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("storymedia: read upload: %w", err)
+	}
+	if int64(len(data)) != in.SizeBytes {
+		return nil, &ValidationError{Field: "file", Message: "does not match its declared size"}
+	}
+
+	return data, nil
+}
+
+// derivativeKeys are the object keys stored for one upload's renditions. A nil
+// field means that rendition was not produced.
+type derivativeKeys struct {
+	thumbnail *string
+	medium    *string
+	poster    *string
+}
+
+// set records the key for one variant.
+func (k *derivativeKeys) set(variant Variant, key string) {
+	value := key
+	switch variant {
+	case VariantThumb:
+		k.thumbnail = &value
+	case VariantMedium:
+		k.medium = &value
+	case VariantPoster:
+		k.poster = &value
+	}
+}
+
+// all lists the keys that exist, so a failed row insert can remove every object
+// the upload created.
+func (k derivativeKeys) all() []string {
+	keys := make([]string, 0, 3)
+	for _, key := range []*string{k.thumbnail, k.medium, k.poster} {
+		if key != nil {
+			keys = append(keys, *key)
+		}
+	}
+
+	return keys
+}
+
+// storeDerivatives renders and stores the renditions for one upload.
+//
+// A failure never fails the upload: the original is already stored, the client
+// falls back to it, and the reason is logged. A missing decoder for an unusual
+// image or a system without FFmpeg therefore costs a rendition, not the story
+// (KNOT-ADR-091).
+func (s *Service) storeDerivatives(ctx context.Context, mediaType MediaType, data []byte, prefix, name string, durationMS *int) derivativeKeys {
+	var keys derivativeKeys
+
+	switch mediaType {
+	case MediaTypeImage:
+		renditions, err := ImageDerivatives(data)
+		if err != nil {
+			s.warnDerivative(ctx, "could not generate image derivatives", err)
+			return keys
+		}
+
+		for _, rendition := range renditions {
+			key := prefix + name + rendition.Suffix + derivativeExtension
+			if err := s.objects.Put(ctx, key, bytes.NewReader(rendition.Body), rendition.ContentType); err != nil {
+				s.warnDerivative(ctx, "could not store an image derivative", err)
+				continue
+			}
+			keys.set(rendition.Variant, key)
+		}
+	case MediaTypeVideo:
+		poster, err := s.extractPoster(ctx, data, posterOffsetMS(durationMS))
+		if err != nil {
+			s.warnDerivative(ctx, "could not generate a video poster frame", err)
+			return keys
+		}
+
+		key := prefix + name + posterSuffix + derivativeExtension
+		if err := s.objects.Put(ctx, key, bytes.NewReader(poster), derivativeContentType); err != nil {
+			s.warnDerivative(ctx, "could not store a video poster frame", err)
+			return keys
+		}
+		keys.poster = &key
+	}
+
+	return keys
+}
+
+// warnDerivative logs a rendition that could not be produced or stored.
+func (s *Service) warnDerivative(ctx context.Context, message string, err error) {
+	s.logger.WarnContext(ctx, message, "error", err.Error())
 }
 
 // ListMedia returns every media item of a story, in display order.
@@ -168,17 +293,21 @@ func (s *Service) DeleteMedia(ctx context.Context, id, byUserID string) error {
 		return ErrForbidden
 	}
 
-	// The object is removed first and best-effort: a storage failure leaves an
-	// orphaned object, which is preferable to a row that still points at a
-	// deleted object. The deletion is logged, not returned, because the client
-	// cannot act on it and the row is being removed regardless.
-	if err := s.objects.Delete(ctx, media.StorageKey); err != nil {
-		s.logger.WarnContext(
-			ctx,
-			"could not delete media object",
-			"key", media.StorageKey,
-			"error", err.Error(),
-		)
+	// The objects are removed first and best-effort: a storage failure leaves an
+	// orphaned object, which is preferable to a row that still points at a deleted
+	// object. The deletion is logged, not returned, because the client cannot act
+	// on it and the row is being removed regardless. Every rendition is removed
+	// with the original, or the bucket would keep the bytes of a deleted item
+	// (KNOT-037).
+	for _, key := range append([]string{media.StorageKey}, media.derivativeKeys()...) {
+		if err := s.objects.Delete(ctx, key); err != nil {
+			s.logger.WarnContext(
+				ctx,
+				"could not delete media object",
+				"key", key,
+				"error", err.Error(),
+			)
+		}
 	}
 
 	if err := s.store.DeleteMedia(ctx, id); err != nil {
@@ -256,14 +385,6 @@ func validateCreateMedia(in CreateMediaInput) (MediaType, string, error) {
 // The name is a fresh UUID rather than a fixed name, so uploading a new file
 // never overwrites the bytes an in-flight response is still serving, and the key
 // cannot be derived from the public path.
-func newMediaKey(storyID, extension string) (string, error) {
-	suffix, err := newUUIDv4()
-	if err != nil {
-		return "", err
-	}
-	return StoryMediaKeyPrefix(storyID) + suffix + extension, nil
-}
-
 // newUUIDv4 returns a random RFC 4122 version 4 UUID.
 //
 // It is written out here rather than pulled from a dependency: a key needs

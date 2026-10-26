@@ -13,7 +13,12 @@ import (
 // mediaColumns is the canonical SELECT/RETURNING column list. It is a constant
 // so every query in this file stays consistent with scanMedia, and its order is
 // the order scanMedia reads.
-const mediaColumns = `id, story_id, uploader_id, storage_key, media_type, mime_type, source, width, height, duration_ms, size_bytes, display_order, created_at`
+//
+// The three derivative keys follow storage_key because migration 0024 added them
+// as the renditions of the original object, and every read of a row needs them:
+// the feed addresses the thumbnail, the detail the medium rendition, and a video
+// card its poster frame (KNOT-037).
+const mediaColumns = `id, story_id, uploader_id, storage_key, thumbnail_key, medium_key, poster_key, media_type, mime_type, source, width, height, duration_ms, size_bytes, display_order, created_at`
 
 // PostgresStore is the pgx-backed implementation of StoryMediaStore.
 //
@@ -60,18 +65,19 @@ func (s *PostgresStore) CreateMedia(ctx context.Context, media StoryMedia) (Stor
 
 	const query = `
 		INSERT INTO story_media (
-			story_id, uploader_id, storage_key, media_type, mime_type, source,
-			width, height, duration_ms, size_bytes, display_order
+			story_id, uploader_id, storage_key, thumbnail_key, medium_key, poster_key,
+			media_type, mime_type, source, width, height, duration_ms, size_bytes, display_order
 		)
 		VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+			$1, $2, $3, $4, $5, $6,
+			$7, $8, $9, $10, $11, $12, $13,
 			CASE
-				WHEN $11 < 0 THEN (
+				WHEN $14 < 0 THEN (
 					SELECT COALESCE(MAX(display_order) + 1, 0)
 					FROM story_media
 					WHERE story_id = $1
 				)
-				ELSE $11
+				ELSE $14
 			END
 		)
 		RETURNING ` + mediaColumns
@@ -82,6 +88,9 @@ func (s *PostgresStore) CreateMedia(ctx context.Context, media StoryMedia) (Stor
 		media.StoryID,
 		media.UploaderID,
 		media.StorageKey,
+		media.ThumbnailKey,
+		media.MediumKey,
+		media.PosterKey,
 		string(media.MediaType),
 		media.MimeType,
 		string(media.Source),
@@ -299,6 +308,9 @@ func scanMedia(row rowScanner) (StoryMedia, error) {
 		&media.StoryID,
 		&media.UploaderID,
 		&media.StorageKey,
+		&media.ThumbnailKey,
+		&media.MediumKey,
+		&media.PosterKey,
 		&kind,
 		&media.MimeType,
 		&source,
