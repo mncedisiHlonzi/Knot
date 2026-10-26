@@ -297,6 +297,14 @@ func decodedErrorCode(t *testing.T, recorder *httptest.ResponseRecorder) string 
 	return body.Error.Code
 }
 
+func decodedErrorMessage(t *testing.T, recorder *httptest.ResponseRecorder) string {
+	t.Helper()
+
+	var body errorResponse
+	decodeBody(t, recorder, &body)
+	return body.Error.Message
+}
+
 func TestHealth(t *testing.T) {
 	handler := newTestHandler(t, &fakeAuthService{})
 
@@ -407,7 +415,8 @@ func TestRegisterHappyPath(t *testing.T) {
 		"display_name": "Ada Lovelace",
 		"preferred_languages": ["eng", "fra"],
 		"approximate_location": "Cape Town",
-		"phone": "+27000000000"
+		"phone": "+27000000000",
+		"agreed_to_terms": true
 	}`)
 
 	if recorder.Code != http.StatusCreated {
@@ -441,6 +450,11 @@ func TestRegisterHappyPath(t *testing.T) {
 	if len(service.gotRegister.PreferredLanguages) != 2 {
 		t.Errorf("service received %v, want two languages", service.gotRegister.PreferredLanguages)
 	}
+	// Consent travels with the request: the service is what enforces it, so the
+	// flag has to arrive intact (KNOT-035).
+	if !service.gotRegister.AgreedToTerms {
+		t.Error("service did not receive the consent flag")
+	}
 }
 
 // TestRegisterResponseNeverLeaksPasswordHash is the critical projection check.
@@ -450,7 +464,8 @@ func TestRegisterResponseNeverLeaksPasswordHash(t *testing.T) {
 	recorder := doRequest(handler, http.MethodPost, "/auth/register", `{
 		"email": "ada@example.com",
 		"password": "correct horse battery staple",
-		"display_name": "Ada Lovelace"
+		"display_name": "Ada Lovelace",
+		"agreed_to_terms": true
 	}`)
 
 	raw := recorder.Body.String()
@@ -474,7 +489,8 @@ func TestRegisterEmitsEmptyLanguageArrayNotNull(t *testing.T) {
 	recorder := doRequest(handler, http.MethodPost, "/auth/register", `{
 		"email": "ada@example.com",
 		"password": "correct horse battery staple",
-		"display_name": "Ada Lovelace"
+		"display_name": "Ada Lovelace",
+		"agreed_to_terms": true
 	}`)
 
 	if !strings.Contains(recorder.Body.String(), `"preferred_languages":[]`) {
@@ -491,7 +507,8 @@ func TestRegisterValidationFailure(t *testing.T) {
 	recorder := doRequest(handler, http.MethodPost, "/auth/register", `{
 		"email": "not-an-email",
 		"password": "correct horse battery staple",
-		"display_name": "Ada Lovelace"
+		"display_name": "Ada Lovelace",
+		"agreed_to_terms": true
 	}`)
 
 	if recorder.Code != http.StatusBadRequest {
@@ -502,13 +519,36 @@ func TestRegisterValidationFailure(t *testing.T) {
 	}
 }
 
+// TestRegisterRequiresConsent proves a missing consent is reported as the
+// documented 400 with the one sentence the person has to act on (KNOT-035).
+func TestRegisterRequiresConsent(t *testing.T) {
+	handler := newTestHandler(t, &fakeAuthService{registerErr: auth.ErrTermsNotAccepted})
+
+	recorder := doRequest(handler, http.MethodPost, "/auth/register", `{
+		"email": "ada@example.com",
+		"password": "correct horse battery staple",
+		"display_name": "Ada Lovelace"
+	}`)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+	if code := decodedErrorCode(t, recorder); code != codeValidation {
+		t.Errorf("error code = %q, want %q", code, codeValidation)
+	}
+	if message := decodedErrorMessage(t, recorder); message != "You must agree to the Terms of Service and Privacy Policy." {
+		t.Errorf("error message = %q, want the consent sentence", message)
+	}
+}
+
 func TestRegisterDuplicateEmail(t *testing.T) {
 	handler := newTestHandler(t, &fakeAuthService{registerErr: identity.ErrEmailTaken})
 
 	recorder := doRequest(handler, http.MethodPost, "/auth/register", `{
 		"email": "ada@example.com",
 		"password": "correct horse battery staple",
-		"display_name": "Ada Lovelace"
+		"display_name": "Ada Lovelace",
+		"agreed_to_terms": true
 	}`)
 
 	if recorder.Code != http.StatusConflict {

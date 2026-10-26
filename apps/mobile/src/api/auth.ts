@@ -15,6 +15,12 @@ export type RegisterPayload = {
   readonly email: string;
   readonly password: string;
   readonly display_name: string;
+  /**
+   * The consent checkbox. The server refuses a registration without it, so it is
+   * not optional: the form has no way to create an account that has not agreed to
+   * the Terms of Service and the Privacy Policy (KNOT-035).
+   */
+  readonly agreed_to_terms: boolean;
   readonly preferred_languages?: readonly string[];
   readonly approximate_location?: string;
   readonly phone?: string;

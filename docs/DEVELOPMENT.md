@@ -1513,7 +1513,7 @@ To try it by hand:
 curl -s http://localhost:8080/health
 curl -s -X POST http://localhost:8080/auth/register \
   -H 'Content-Type: application/json' \
-  -d '{"email":"you@example.com","password":"at-least-8-chars","display_name":"You"}'
+  -d '{"email":"you@example.com","password":"at-least-8-chars","display_name":"You","agreed_to_terms":true}'
 ```
 
 ### Routes
@@ -2671,7 +2671,7 @@ cd backend/go && go run ./cmd/knot 2>&1 | tee /tmp/knot-api.log
 # 2. Register. The response has NO tokens: a new account cannot sign in yet.
 curl -sS -X POST localhost:8080/auth/register \
   -H 'Content-Type: application/json' \
-  -d '{"email":"ada@example.com","password":"correct horse 7","display_name":"Ada Lovelace"}'
+  -d '{"email":"ada@example.com","password":"correct horse 7","display_name":"Ada Lovelace","agreed_to_terms":true}'
 
 # 3. Read the message out of the log (the no-op sender writes it).
 grep 'email delivery is disabled' -A 1 /tmp/knot-api.log

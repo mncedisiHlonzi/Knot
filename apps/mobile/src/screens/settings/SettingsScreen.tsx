@@ -1,8 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
-  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -35,18 +33,9 @@ import MediaPickerSheet, { type PickedMedia } from '../../components/MediaPicker
 import RootedBadge from '../../components/RootedBadge';
 import { API_BASE_URL } from '../../config/api';
 import { APP_VERSION } from '../../config/app';
+import type { LegalDocument } from '../../data/legalDocuments';
 import { fontWeights, layout, spacing, typeScale, useTheme, useThemedStyles } from '../../theme';
 import type { ThemeColors } from '../../theme';
-
-/**
- * Where the legal pages will live once they are published.
- *
- * They are placeholders on the reserved `.example` domain on purpose: the app must
- * not imply a page exists before it does, and a broken open is reported rather than
- * swallowed (KNOT-020k-fix22).
- */
-const PRIVACY_URL = 'https://knot.example/privacy';
-const TERMS_URL = 'https://knot.example/terms';
 
 /**
  * Resolves the profile's relative avatar path against the API base URL.
@@ -77,6 +66,8 @@ type SettingsScreenProps = {
   readonly onOpenSessions: () => void;
   /** Called when the owner wants to delete their account. */
   readonly onOpenDeleteAccount: () => void;
+  /** Called when the owner opens one of the legal documents (KNOT-035). */
+  readonly onOpenLegal: (document: LegalDocument) => void;
   /** Called when the owner chooses to sign out. */
   readonly onSignOut: () => void;
 };
@@ -216,7 +207,8 @@ function Section({
  * unrelated things — an account action, a device preference and the way out of the
  * app, all behind one chevron. A pushed screen can say what each group is for, and
  * it leaves room for the sections the app actually needs: the account, the
- * preferences, and the About block (version, privacy, terms).
+ * preferences, the About block, and the two legal documents (KNOT-020k-fix22,
+ * KNOT-035).
  *
  * The avatar flow lives here now, because "Edit avatar" is an account action rather
  * than a profile-card action. The upload reports through `onUserUpdated`, which
@@ -243,6 +235,7 @@ export default function SettingsScreen({
   onOpenBlockedUsers,
   onOpenSessions,
   onOpenDeleteAccount,
+  onOpenLegal,
   onSignOut,
 }: SettingsScreenProps): React.ReactElement {
   const { colors } = useTheme();
@@ -292,13 +285,6 @@ export default function SettingsScreen({
     },
     [loadProfile, onUserUpdated, token],
   );
-
-  /** Opens a legal page, reporting a link the device cannot follow. */
-  const openExternal = useCallback((url: string): void => {
-    void Linking.openURL(url).catch(() => {
-      Alert.alert('Link unavailable', 'This page has not been published yet.');
-    });
-  }, []);
 
   return (
     <View style={styles.container}>
@@ -377,15 +363,20 @@ export default function SettingsScreen({
 
         <Section title="About">
           <SettingRow icon={Info} label="App version" value={`v${APP_VERSION}`} />
+        </Section>
+
+        {/* The documents are shipped with the app and read in place, so nothing
+            leaves Knot to read them (KNOT-035). */}
+        <Section title="Legal">
           <SettingRow
             icon={ShieldCheck}
             label="Privacy Policy"
-            onPress={() => openExternal(PRIVACY_URL)}
+            onPress={() => onOpenLegal('privacy')}
           />
           <SettingRow
             icon={FileText}
-            label="Terms of Use"
-            onPress={() => openExternal(TERMS_URL)}
+            label="Terms of Service"
+            onPress={() => onOpenLegal('terms')}
           />
         </Section>
 

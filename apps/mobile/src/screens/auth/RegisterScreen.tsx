@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { CheckSquare, Square } from 'phosphor-react-native';
 
 import { register } from '../../api/auth';
 import { describeError } from '../../api/client';
@@ -8,7 +9,16 @@ import Header from '../../components/Header';
 import Input from '../../components/Input';
 import LanguagePicker from '../../components/LanguagePicker';
 import Logomark from '../../components/Logomark';
-import { layout, spacing, typeScale, useThemedStyles, type ThemeColors } from '../../theme';
+import type { LegalDocument } from '../../data/legalDocuments';
+import {
+  fontWeights,
+  layout,
+  spacing,
+  typeScale,
+  useTheme,
+  useThemedStyles,
+  type ThemeColors,
+} from '../../theme';
 import { MIN_PASSWORD_LENGTH, validateEmail, validatePassword } from '../../utils/authForm';
 
 /** The logomark's size in the auth header, one step up from the Feed's 32. */
@@ -28,6 +38,13 @@ type RegisterScreenProps = {
   readonly onSwitchToLogin: () => void;
   /** Called when a freshly registered person wants to paste their verification token. */
   readonly onOpenVerifyEmail: () => void;
+  /**
+   * Called when the person taps one of the consent links.
+   *
+   * The document opens over this screen rather than replacing it, so a half-filled
+   * form survives reading the Terms (KNOT-035).
+   */
+  readonly onOpenLegal: (document: LegalDocument) => void;
 };
 
 const MAX_DISPLAY_NAME_LENGTH = 80;
@@ -77,7 +94,9 @@ function validateForm(email: string, password: string, displayName: string): str
 export default function RegisterScreen({
   onSwitchToLogin,
   onOpenVerifyEmail,
+  onOpenLegal,
 }: RegisterScreenProps): React.ReactElement {
+  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -88,11 +107,23 @@ export default function RegisterScreen({
   const [error, setError] = useState<string | undefined>(undefined);
   const [submitting, setSubmitting] = useState(false);
   const [registeredEmail, setRegisteredEmail] = useState<string | undefined>(undefined);
+  // The consent checkbox. It is the last state slot on purpose: the tests script
+  // state by position, and appending keeps every earlier slot where it was
+  // (KNOT-035).
+  const [consented, setConsented] = useState(false);
 
   async function handleSubmit(): Promise<void> {
     const problem = validateForm(email, password, displayName);
     if (problem !== undefined) {
       setError(problem);
+      return;
+    }
+
+    // The button is disabled without consent, so this is a guard rather than the
+    // usual path: no request may leave without the agreement, and the server
+    // refuses one that does (KNOT-035).
+    if (!consented) {
+      setError('You must agree to the Terms of Service and Privacy Policy.');
       return;
     }
 
@@ -107,6 +138,7 @@ export default function RegisterScreen({
         email: trimmedEmail,
         password,
         display_name: displayName.trim(),
+        agreed_to_terms: true,
         ...(preferredLanguages.length > 0 ? { preferred_languages: preferredLanguages } : {}),
         ...(location.trim() === '' ? {} : { approximate_location: location.trim() }),
         ...(phone.trim() === '' ? {} : { phone: phone.trim() }),
@@ -235,6 +267,47 @@ export default function RegisterScreen({
             placeholder="+27 00 000 0000"
           />
 
+          {/* Consent sits at the foot of the form and directly above the submit
+              action, so the last thing read before creating the account is what
+              is being agreed to (KNOT-035). */}
+          <View style={styles.consentRow}>
+            <Pressable
+              style={styles.consentBox}
+              onPress={() => setConsented((current) => !current)}
+              hitSlop={spacing.md}
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: consented }}
+              accessibilityLabel="I agree to the Terms of Service and Privacy Policy"
+              testID="consent-checkbox"
+            >
+              {consented ? (
+                <CheckSquare color={colors.brand.primary} size={22} weight="fill" />
+              ) : (
+                <Square color={colors.text.tertiary} size={22} />
+              )}
+            </Pressable>
+
+            <Text style={[typeScale.bodyS, styles.consentText]}>
+              I agree to the{' '}
+              <Text
+                style={styles.consentLink}
+                onPress={() => onOpenLegal('terms')}
+                accessibilityRole="link"
+              >
+                Terms of Service
+              </Text>{' '}
+              and{' '}
+              <Text
+                style={styles.consentLink}
+                onPress={() => onOpenLegal('privacy')}
+                accessibilityRole="link"
+              >
+                Privacy Policy
+              </Text>
+              .
+            </Text>
+          </View>
+
           {error !== undefined ? <Text style={[typeScale.body, styles.error]}>{error}</Text> : null}
         </View>
 
@@ -246,6 +319,7 @@ export default function RegisterScreen({
             variant="primary"
             fullWidth
             label="Create account"
+            disabled={!consented}
             loading={submitting}
             onPress={() => {
               void handleSubmit();
@@ -276,6 +350,27 @@ const createStyles = (colors: ThemeColors) =>
       paddingBottom: spacing.xxxl,
       paddingHorizontal: layout.screenPaddingReading,
       paddingTop: spacing.xl,
+    },
+    // The checkbox and its sentence sit on the same baseline as the first line of
+    // that sentence, which is what `flex-start` gives in a row whose text wraps.
+    consentBox: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      minHeight: 24,
+      minWidth: 24,
+    },
+    consentLink: {
+      color: colors.brand.primary,
+      fontWeight: fontWeights.bold,
+    },
+    consentRow: {
+      alignItems: 'flex-start',
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    consentText: {
+      color: colors.text.secondary,
+      flex: 1,
     },
     error: {
       color: colors.state.danger,

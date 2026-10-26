@@ -4,6 +4,7 @@ import {
   Appearance,
   BackHandler,
   Easing,
+  Modal,
   Pressable,
   SafeAreaView,
   StatusBar,
@@ -54,6 +55,8 @@ import ForgotPasswordScreen from './src/screens/auth/ForgotPasswordScreen';
 import ResetPasswordScreen from './src/screens/auth/ResetPasswordScreen';
 import SessionsScreen from './src/screens/settings/SessionsScreen';
 import DeleteAccountScreen from './src/screens/settings/DeleteAccountScreen';
+import LegalScreen from './src/screens/settings/LegalScreen';
+import type { LegalDocument } from './src/data/legalDocuments';
 import CommentThreadScreen from './src/screens/conversations/CommentThreadScreen';
 import DiscoveryMapScreen from './src/screens/discovery/DiscoveryMapScreen';
 import PlaceStoriesScreen from './src/screens/discovery/PlaceStoriesScreen';
@@ -147,6 +150,7 @@ type Overlay =
   | { readonly name: 'search' }
   | { readonly name: 'blockedUsers' }
   | { readonly name: 'settings' }
+  | { readonly name: 'legal'; readonly document: LegalDocument }
   | { readonly name: 'sessions' }
   | { readonly name: 'deleteAccount' }
   | { readonly name: 'userProfile'; readonly userId: string };
@@ -214,6 +218,10 @@ function ThemedApp(): React.ReactElement {
   const STATUS_BAR = statusBarProps(colors, theme);
   const [session, setSession] = useState<Session | null>(null);
   const [authMode, setAuthMode] = useState<AuthMode>('login');
+  // The legal document open over the auth screens, if any. It is separate from
+  // `authMode` on purpose: switching mode unmounts the screen, which would throw
+  // away a half-filled Register form (KNOT-035).
+  const [authLegal, setAuthLegal] = useState<LegalDocument | undefined>(undefined);
   // True for one signed-in moment after a login cancelled a pending deletion.
   const [recoveryNotice, setRecoveryNotice] = useState(false);
   const [tab, setTab] = useState<TabName>('feed');
@@ -912,9 +920,16 @@ function ThemedApp(): React.ReactElement {
             onOpenDeleteAccount={() =>
               setOverlays((stack) => pushOverlay(stack, { name: 'deleteAccount' }))
             }
+            onOpenLegal={(document) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'legal', document }))
+            }
             onSignOut={handleSignOut}
           />
         );
+      case 'legal':
+        // The approved Terms of Service and Privacy Policy, shipped with the app
+        // and read in place (KNOT-035).
+        return <LegalScreen documentType={overlay.document} onBack={handleBack} />;
       case 'deleteAccount':
         // The account is soft-deleted: the app signs itself out because the session is
         // expected to be dead, and the person can come back by signing in during the
@@ -987,6 +1002,7 @@ function ThemedApp(): React.ReactElement {
           <RegisterScreen
             onSwitchToLogin={() => setAuthMode('login')}
             onOpenVerifyEmail={() => setAuthMode('verifyEmail')}
+            onOpenLegal={(document) => setAuthLegal(document)}
           />
         );
       case 'verifyEmail':
@@ -1018,6 +1034,19 @@ function ThemedApp(): React.ReactElement {
       <SafeAreaView style={styles.authContainer}>
         <StatusBar {...STATUS_BAR} />
         {renderAuthScreen()}
+
+        {/* A document opened from the Register form floats over it, so the form
+            keeps everything already typed while the person reads what they are
+            agreeing to (KNOT-035). */}
+        <Modal
+          visible={authLegal !== undefined}
+          animationType="slide"
+          onRequestClose={() => setAuthLegal(undefined)}
+        >
+          {authLegal === undefined ? null : (
+            <LegalScreen documentType={authLegal} onBack={() => setAuthLegal(undefined)} />
+          )}
+        </Modal>
       </SafeAreaView>
     );
   }

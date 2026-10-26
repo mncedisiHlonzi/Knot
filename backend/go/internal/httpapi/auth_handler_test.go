@@ -336,7 +336,7 @@ func TestProtectedAuthRoutesRequireAToken(t *testing.T) {
 func TestRegisterIsRateLimited(t *testing.T) {
 	handler := newTestHandler(t, &fakeAuthService{registerResult: sampleUser()})
 
-	body := `{"email":"ada@example.com","password":"correct horse 7","display_name":"Ada"}`
+	body := `{"email":"ada@example.com","password":"correct horse 7","display_name":"Ada","agreed_to_terms":true}`
 
 	for i := int64(1); i <= auth.LimitRegister.Attempts; i++ {
 		recorder := doRequest(handler, http.MethodPost, "/auth/register", body)

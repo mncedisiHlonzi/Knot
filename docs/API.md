@@ -120,6 +120,11 @@ email_taken`, but when that account is **not yet verified** a fresh verification
 emailed before the response (KNOT-031a-fix2). A second registration attempt is therefore a
 recovery rather than a dead end. An account that is already verified is not emailed again.
 
+Registration requires consent to the [Terms of Service](TERMS_OF_SERVICE.md) and
+[Privacy Policy](PRIVACY_POLICY.md): `agreed_to_terms` must be `true`, and it is checked
+before any other validation (KNOT-035). Creating the account is the record of that
+agreement — no separate acceptance row or timestamp is stored.
+
 **Request**
 
 ```json
@@ -127,6 +132,7 @@ recovery rather than a dead end. An account that is already verified is not emai
   "email": "ada@example.com",
   "password": "at-least-8-characters-1",
   "display_name": "Ada Lovelace",
+  "agreed_to_terms": true,
   "preferred_languages": ["eng", "fra"],
   "approximate_location": "Cape Town",
   "phone": "+27000000000"
@@ -138,6 +144,7 @@ recovery rather than a dead end. An account that is already verified is not emai
 | `email`                | yes      | Valid address, at most 254 characters, stored lower-cased        |
 | `password`             | yes      | At least 8 characters, at most 1024 bytes, and at least one letter and one number (KNOT-ADR-086) |
 | `display_name`         | yes      | 1-80 characters after trimming                                   |
+| `agreed_to_terms`      | yes      | Must be `true`. Without it the request is refused with `400 validation_error` and the message "You must agree to the Terms of Service and Privacy Policy." (KNOT-035) |
 | `preferred_languages`  | no       | An array of at most 20 ISO 639-3 codes; blanks dropped. See [Languages](#languages) |
 | `approximate_location` | no       | At most 120 characters                                           |
 | `phone`                | no       | At most 32 characters                                            |

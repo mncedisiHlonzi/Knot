@@ -158,6 +158,7 @@ const PROPS = {
   onOpenBlockedUsers: () => undefined,
   onOpenSessions: () => undefined,
   onOpenDeleteAccount: () => undefined,
+  onOpenLegal: jest.fn(),
   onSignOut: () => undefined,
 };
 
@@ -189,12 +190,13 @@ describe('SettingsScreen', () => {
     expect(header?.props?.left).toBeDefined();
   });
 
-  it('groups the account, the preferences and the About block', () => {
+  it('groups the account, the preferences, the About block and the legal documents', () => {
     const text = renderedText(renderExpanded());
 
     expect(text).toContain('Account');
     expect(text).toContain('Preferences');
     expect(text).toContain('About');
+    expect(text).toContain('Legal');
   });
 
   it('opens with the signed-in person’s face, name and Rooted summary', () => {
@@ -319,9 +321,17 @@ describe('SettingsScreen', () => {
     expect(byLabel('App version')?.props?.value).toBe(`v${APP_VERSION}`);
     expect(byLabel('App version')?.props?.onPress).toBeUndefined();
 
-    // The legal rows are controls: each opens a page.
+    // The legal rows are controls, and each opens the document in the app rather
+    // than handing a URL to the browser (KNOT-035).
+    jest.clearAllMocks();
     expect(typeof byLabel('Privacy Policy')?.props?.onPress).toBe('function');
-    expect(typeof byLabel('Terms of Use')?.props?.onPress).toBe('function');
+    expect(typeof byLabel('Terms of Service')?.props?.onPress).toBe('function');
+
+    (byLabel('Privacy Policy')?.props?.onPress as () => void)();
+    expect(PROPS.onOpenLegal).toHaveBeenCalledWith('privacy');
+
+    (byLabel('Terms of Service')?.props?.onPress as () => void)();
+    expect(PROPS.onOpenLegal).toHaveBeenCalledWith('terms');
   });
 
   it('ends with a destructive sign out', () => {

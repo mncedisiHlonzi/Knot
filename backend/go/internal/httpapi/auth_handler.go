@@ -99,6 +99,10 @@ type registerRequest struct {
 	PreferredLanguages  []string `json:"preferred_languages"`
 	ApproximateLocation string   `json:"approximate_location"`
 	Phone               string   `json:"phone"`
+	// AgreedToTerms is the consent checkbox. It is not optional in practice: the
+	// service refuses the registration when it is false, so an absent field is
+	// the same as an unticked box (KNOT-035).
+	AgreedToTerms bool `json:"agreed_to_terms"`
 }
 
 // verifyEmailRequest is the POST /auth/verify-email body.
@@ -230,6 +234,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		PreferredLanguages:  body.PreferredLanguages,
 		ApproximateLocation: body.ApproximateLocation,
 		Phone:               body.Phone,
+		AgreedToTerms:       body.AgreedToTerms,
 	})
 	if err != nil {
 		h.writeServiceError(w, r, err)
@@ -501,6 +506,11 @@ func (h *AuthHandler) writeServiceError(w http.ResponseWriter, r *http.Request, 
 	switch {
 	case errors.As(err, &validation):
 		writeError(w, http.StatusBadRequest, codeValidation, fmt.Sprintf("%s %s", validation.Field, validation.Message))
+	case errors.Is(err, auth.ErrTermsNotAccepted):
+		// The wording is the sentence the person has to act on, so it is written
+		// here rather than assembled from the error (KNOT-035).
+		writeError(w, http.StatusBadRequest, codeValidation,
+			"You must agree to the Terms of Service and Privacy Policy.")
 	case errors.Is(err, identity.ErrEmailTaken):
 		writeError(w, http.StatusConflict, codeEmailTaken, "that email is already registered")
 	case errors.Is(err, identity.ErrEmailNotVerified):

@@ -68,6 +68,12 @@ var (
 	// ErrInvalidPasswordResetToken is returned for a reset token that is unknown
 	// or has expired.
 	ErrInvalidPasswordResetToken = errors.New("auth: invalid password reset token")
+	// ErrTermsNotAccepted is returned by Register when the consent checkbox was
+	// not ticked. It is deliberately its own error rather than a validation
+	// failure on a field: the condition is the absence of an agreement, not a
+	// malformed value, and the handler turns it into the one sentence a person
+	// has to read (KNOT-035).
+	ErrTermsNotAccepted = errors.New("auth: terms of service not accepted")
 )
 
 // Deps are the collaborators the authentication service needs.
@@ -265,6 +271,11 @@ type RegisterInput struct {
 	PreferredLanguages  []string
 	ApproximateLocation string
 	Phone               string
+	// AgreedToTerms is the registration form's consent checkbox: the person
+	// accepted the Terms of Service and the Privacy Policy. Registration is the
+	// act of consenting, so this is checked and not stored — there is no separate
+	// acceptance row or timestamp (KNOT-035).
+	AgreedToTerms bool
 }
 
 // LoginInput is the input to Login.
@@ -314,7 +325,15 @@ type TokenOutput struct {
 // first message was lost, could never obtain another link from this endpoint: the
 // client has no resend action, so registering again was a permanent dead end
 // rather than a recovery (KNOT-031a-fix2). A verified account is left alone.
+//
+// Consent is checked before anything else: the account cannot be created, and no
+// email can be minted, for a person who has not accepted the Terms of Service and
+// the Privacy Policy (KNOT-035).
 func (s *Service) Register(ctx context.Context, in RegisterInput) (*identity.User, error) {
+	if !in.AgreedToTerms {
+		return nil, ErrTermsNotAccepted
+	}
+
 	email, err := identity.ValidateEmail(in.Email)
 	if err != nil {
 		return nil, err

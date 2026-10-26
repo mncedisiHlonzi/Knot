@@ -28,6 +28,15 @@ An account is four things:
 Secrets are always stored as argon2id hashes (passwords) or SHA-256 digests (tokens). No
 token is ever recoverable from the database or from Redis.
 
+### Consent
+
+User consent is enforced at registration. The acceptance of Terms of Service and Privacy
+Policy is recorded at the time of account creation: the API refuses a registration that
+does not carry `agreed_to_terms: true`, and the created account is that record — there is
+no separate acceptance table or timestamp (KNOT-035). Both documents are canonical in
+[`PRIVACY_POLICY.md`](PRIVACY_POLICY.md) and [`TERMS_OF_SERVICE.md`](TERMS_OF_SERVICE.md),
+and the app shows those same documents from the consent row on the Register screen.
+
 ## 2. Passwords
 
 - Minimum **8 characters**, maximum **1024 bytes**, and at least **one letter and one

@@ -656,9 +656,10 @@ func (h *testHarness) registerAndVerify(t *testing.T) *identity.User {
 	t.Helper()
 
 	user, err := h.service.Register(context.Background(), RegisterInput{
-		Email:       "ada@example.com",
-		Password:    "correct horse 7",
-		DisplayName: "Ada Lovelace",
+		Email:         "ada@example.com",
+		Password:      "correct horse 7",
+		DisplayName:   "Ada Lovelace",
+		AgreedToTerms: true,
 	})
 	if err != nil {
 		t.Fatalf("Register() error = %v, want nil", err)
@@ -783,6 +784,7 @@ func TestRegisterCreatesAnUnverifiedAccount(t *testing.T) {
 		Password:           "correct horse 7",
 		DisplayName:        "Ada Lovelace",
 		PreferredLanguages: []string{"eng"},
+		AgreedToTerms:      true,
 	})
 	if err != nil {
 		t.Fatalf("Register() error = %v, want nil", err)
@@ -828,9 +830,10 @@ func TestRegisterRejectsWeakPasswords(t *testing.T) {
 
 	for _, password := range []string{"short1", "nodigitsatall", "12345678"} {
 		_, err := h.service.Register(context.Background(), RegisterInput{
-			Email:       "ada@example.com",
-			Password:    password,
-			DisplayName: "Ada Lovelace",
+			Email:         "ada@example.com",
+			Password:      password,
+			DisplayName:   "Ada Lovelace",
+			AgreedToTerms: true,
 		})
 
 		var validation *identity.ValidationError
@@ -846,16 +849,53 @@ func TestRegisterRejectsDuplicateEmail(t *testing.T) {
 	h := newTestHarness(t)
 
 	if _, err := h.service.Register(context.Background(), RegisterInput{
-		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+		Email:         "ada@example.com",
+		Password:      "correct horse 7",
+		DisplayName:   "Ada",
+		AgreedToTerms: true,
 	}); err != nil {
 		t.Fatalf("Register() error = %v, want nil", err)
 	}
 
 	_, err := h.service.Register(context.Background(), RegisterInput{
-		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+		Email:         "ada@example.com",
+		Password:      "correct horse 7",
+		DisplayName:   "Ada",
+		AgreedToTerms: true,
 	})
 	if !errors.Is(err, identity.ErrEmailTaken) {
 		t.Fatalf("second Register() error = %v, want ErrEmailTaken", err)
+	}
+}
+
+// TestRegisterRequiresConsent proves the Terms of Service and Privacy Policy
+// checkbox is enforced by the service and not only by the form: a caller that
+// sends everything else correctly is refused, and nothing is created, stored or
+// emailed (KNOT-035).
+func TestRegisterRequiresConsent(t *testing.T) {
+	t.Parallel()
+
+	h := newTestHarness(t)
+
+	_, err := h.service.Register(context.Background(), RegisterInput{
+		Email:       "ada@example.com",
+		Password:    "correct horse 7",
+		DisplayName: "Ada Lovelace",
+	})
+	if !errors.Is(err, ErrTermsNotAccepted) {
+		t.Fatalf("Register(without consent) error = %v, want ErrTermsNotAccepted", err)
+	}
+
+	// Consent is the first check, so nothing after it ran: there is no account, no
+	// verification token and no message.
+	if _, findErr := h.users.FindUserByEmail(context.Background(), "ada@example.com"); !errors.Is(findErr, identity.ErrUserNotFound) {
+		t.Errorf("FindUserByEmail() error = %v, want ErrUserNotFound", findErr)
+	}
+	if got := len(h.emails.messages()); got != 0 {
+		t.Errorf("emails sent = %d, want 0", got)
+	}
+	if got := len(h.verifications.byHash); got != 0 {
+		t.Errorf("verification tokens stored = %d, want 0", got)
 	}
 }
 
@@ -865,7 +905,10 @@ func TestVerifyEmail(t *testing.T) {
 	h := newTestHarness(t)
 
 	user, err := h.service.Register(context.Background(), RegisterInput{
-		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+		Email:         "ada@example.com",
+		Password:      "correct horse 7",
+		DisplayName:   "Ada",
+		AgreedToTerms: true,
 	})
 	if err != nil {
 		t.Fatalf("Register() error = %v, want nil", err)
@@ -899,7 +942,10 @@ func TestVerifyEmailRejectsAnExpiredToken(t *testing.T) {
 	h := newTestHarness(t, WithClock(func() time.Time { return now }))
 
 	if _, err := h.service.Register(context.Background(), RegisterInput{
-		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+		Email:         "ada@example.com",
+		Password:      "correct horse 7",
+		DisplayName:   "Ada",
+		AgreedToTerms: true,
 	}); err != nil {
 		t.Fatalf("Register() error = %v, want nil", err)
 	}
@@ -920,7 +966,10 @@ func TestLoginRefusesAnUnverifiedAccount(t *testing.T) {
 	h := newTestHarness(t)
 
 	if _, err := h.service.Register(context.Background(), RegisterInput{
-		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+		Email:         "ada@example.com",
+		Password:      "correct horse 7",
+		DisplayName:   "Ada",
+		AgreedToTerms: true,
 	}); err != nil {
 		t.Fatalf("Register() error = %v, want nil", err)
 	}
@@ -1466,7 +1515,10 @@ func TestRegisterSurvivesAFailedVerificationEmail(t *testing.T) {
 	h.emails.err = errors.New("resend is down")
 
 	user, err := h.service.Register(context.Background(), RegisterInput{
-		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+		Email:         "ada@example.com",
+		Password:      "correct horse 7",
+		DisplayName:   "Ada",
+		AgreedToTerms: true,
 	})
 	if err != nil {
 		t.Fatalf("Register() error = %v, want nil when the email fails", err)
@@ -1495,7 +1547,10 @@ func TestRegisterSendsTheVerificationEmail(t *testing.T) {
 	h := newTestHarness(t)
 
 	if _, err := h.service.Register(context.Background(), RegisterInput{
-		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+		Email:         "ada@example.com",
+		Password:      "correct horse 7",
+		DisplayName:   "Ada",
+		AgreedToTerms: true,
 	}); err != nil {
 		t.Fatalf("Register() error = %v, want nil", err)
 	}
@@ -1530,7 +1585,10 @@ func TestRegisterResendsVerificationForAnUnverifiedAccount(t *testing.T) {
 
 	h := newTestHarness(t)
 	input := RegisterInput{
-		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+		Email:         "ada@example.com",
+		Password:      "correct horse 7",
+		DisplayName:   "Ada",
+		AgreedToTerms: true,
 	}
 
 	if _, err := h.service.Register(context.Background(), input); err != nil {
@@ -1576,7 +1634,10 @@ func TestRegisterDoesNotResendVerificationForAVerifiedAccount(t *testing.T) {
 	before := len(h.emails.messages())
 
 	if _, err := h.service.Register(context.Background(), RegisterInput{
-		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+		Email:         "ada@example.com",
+		Password:      "correct horse 7",
+		DisplayName:   "Ada",
+		AgreedToTerms: true,
 	}); !errors.Is(err, identity.ErrEmailTaken) {
 		t.Fatalf("Register() error = %v, want ErrEmailTaken", err)
 	}
@@ -1612,7 +1673,10 @@ func TestResendVerificationSendsANewLink(t *testing.T) {
 	h := newTestHarness(t)
 
 	if _, err := h.service.Register(context.Background(), RegisterInput{
-		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+		Email:         "ada@example.com",
+		Password:      "correct horse 7",
+		DisplayName:   "Ada",
+		AgreedToTerms: true,
 	}); err != nil {
 		t.Fatalf("Register() error = %v, want nil", err)
 	}
@@ -1674,7 +1738,10 @@ func TestResendVerificationReportsAStoreFailure(t *testing.T) {
 
 	h := newTestHarness(t)
 	if _, err := h.service.Register(context.Background(), RegisterInput{
-		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+		Email:         "ada@example.com",
+		Password:      "correct horse 7",
+		DisplayName:   "Ada",
+		AgreedToTerms: true,
 	}); err != nil {
 		t.Fatalf("Register() error = %v, want nil", err)
 	}
@@ -1695,7 +1762,10 @@ func TestRegisterEmailCarriesAWebLinkAndTheToken(t *testing.T) {
 
 	h := newTestHarness(t)
 	if _, err := h.service.Register(context.Background(), RegisterInput{
-		Email: "ada@example.com", Password: "correct horse 7", DisplayName: "Ada",
+		Email:         "ada@example.com",
+		Password:      "correct horse 7",
+		DisplayName:   "Ada",
+		AgreedToTerms: true,
 	}); err != nil {
 		t.Fatalf("Register() error = %v, want nil", err)
 	}
