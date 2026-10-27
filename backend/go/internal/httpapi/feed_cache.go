@@ -26,14 +26,14 @@ import (
 //   - the reader is anonymous — no feed exists, and an anonymous read must not
 //     populate one;
 //   - the reader's feed is empty (a new account, or a cache miss);
-//   - the cached ids no longer resolve to stories (everything trimmed away);
+//   - the cached ids no longer resolve to entries (everything trimmed away);
 //   - Redis or the follow-up read failed. A feed that cannot be cached is a slower
 //     feed, never a broken one.
 //
 // The cursor has already been checked by the caller: the cached path has no cursor
 // of its own (KNOT-ADR-093), so a paginated request is always answered by SQL.
 func (h *StoriesHandler) precomputedFeedPage(ctx context.Context, limit int) ([]stories.FeedItem, bool) {
-	if h.feed == nil {
+	if h.caches.Feed == nil {
 		return nil, false
 	}
 
@@ -42,7 +42,7 @@ func (h *StoriesHandler) precomputedFeedPage(ctx context.Context, limit int) ([]
 		return nil, false
 	}
 
-	ids, err := h.feed.Read(ctx, userID, limit)
+	cached, err := h.caches.Feed.Read(ctx, userID, limit)
 	if err != nil {
 		h.logger.ErrorContext(
 			ctx,
@@ -52,11 +52,14 @@ func (h *StoriesHandler) precomputedFeedPage(ctx context.Context, limit int) ([]
 		)
 		return nil, false
 	}
-	if len(ids) == 0 {
+	if len(cached) == 0 {
 		return nil, false
 	}
 
-	items, err := h.service.StoriesByIDs(ctx, ids)
+	// Both kinds are resolved by the same call, through the same SQL branches the
+	// feed query uses, so a cached page and a queried page carry identical fields
+	// (KNOT-036-fix).
+	items, err := h.service.FeedItemsByIDs(ctx, feedRefs(cached))
 	if err != nil {
 		h.logger.ErrorContext(
 			ctx,
@@ -75,22 +78,46 @@ func (h *StoriesHandler) precomputedFeedPage(ctx context.Context, limit int) ([]
 
 // seedEntries projects a feed page onto the entries a cold-start seed writes.
 //
-// Only story entries are seeded: the sorted set stores story ids, and an adaptation
-// entry's id is a version id, which would be read back as a story and found
-// missing. Adaptations therefore stay a SQL-path capability for now, which is the
-// known limitation of the cached feed (KNOT-ADR-093).
+// BOTH kinds are seeded, each into its own set, so a cold reader's cached page
+// carries the adaptations the SQL page carried. Before KNOT-036-fix only stories
+// were seeded, which meant a reader's very first cached page silently lost every
+// adaptation (KNOT-ADR-093 recorded that as a limitation; this is the fix).
 func seedEntries(page []stories.FeedItem) []feedcache.Entry {
 	entries := make([]feedcache.Entry, 0, len(page))
 	for _, item := range page {
-		if item.Kind != stories.FeedKindStory || item.Story.ID == "" {
+		if item.SortID() == "" {
 			continue
 		}
-		entries = append(entries, feedcache.Entry{
-			ID:        item.Story.ID,
-			CreatedAt: item.Story.CreatedAt,
-		})
+
+		entry := feedcache.Entry{
+			ID:        item.SortID(),
+			Kind:      feedcache.KindStory,
+			CreatedAt: item.SortTime(),
+		}
+		if item.Kind == stories.FeedKindVersion {
+			entry.Kind = feedcache.KindVersion
+		}
+
+		entries = append(entries, entry)
 	}
 	return entries
+}
+
+// feedRefs maps a page of cached entries onto the refs the stories service
+// resolves.
+//
+// The two types stay separate on purpose: feedcache must not import the stories
+// domain, and the domain must not import the cache.
+func feedRefs(items []feedcache.Item) []stories.FeedRef {
+	refs := make([]stories.FeedRef, 0, len(items))
+	for _, item := range items {
+		kind := stories.FeedKindStory
+		if item.Kind == feedcache.KindVersion {
+			kind = stories.FeedKindVersion
+		}
+		refs = append(refs, stories.FeedRef{Kind: kind, ID: item.ID})
+	}
+	return refs
 }
 
 // FeedCache is the HTTP layer's view of the precomputed feed.
@@ -98,14 +125,16 @@ func seedEntries(page []stories.FeedItem) []feedcache.Entry {
 // It is an interface rather than the concrete service so a handler test can drive
 // the cached path — and every one of its failure modes — without Redis.
 type FeedCache interface {
-	// Read returns up to limit story ids from one reader's feed, newest first.
-	// An empty slice means "nothing cached", which is a cache miss rather than an
-	// error.
-	Read(ctx context.Context, userID string, limit int) ([]string, error)
+	// Read returns up to limit entries from one reader's feed, newest first, with
+	// each entry's kind. An empty slice means "nothing cached", which is a cache
+	// miss rather than an error.
+	Read(ctx context.Context, userID string, limit int) ([]feedcache.Item, error)
 	// FanoutStory pushes one newly created story into the feeds of the readers who
 	// should see it.
 	FanoutStory(ctx context.Context, storyID, authorID, language string, createdAt time.Time) (feedcache.Result, error)
-	// Seed fills one reader's feed from a page the SQL fallback just served, so a
+	// FanoutVersion does the same for an adaptation, into the version feed set.
+	FanoutVersion(ctx context.Context, versionID, authorID, language string, createdAt time.Time) (feedcache.Result, error)
+	// Seed fills one reader's feeds from a page the SQL fallback just served, so a
 	// reader who was never fanned out to (a new account) stops hitting PostgreSQL
 	// on every read.
 	Seed(ctx context.Context, userID string, entries []feedcache.Entry) error
@@ -125,18 +154,20 @@ const (
 	feedSeedTimeout = 10 * time.Second
 )
 
-// recordFeedFanout precomputes the feeds a new story belongs in, without delaying
+// recordFeedFanout precomputes the feeds a new entry belongs in, without delaying
 // or failing the request that created it.
 //
 // This is the write half of fan-out on write, and it is deliberately best-effort:
-// the story is already stored and already in the response, so a Redis failure here
+// the entry is already stored and already in the response, so a Redis failure here
 // leaves the feed eventually consistent rather than making a successful publish
 // look like a failure. A failed fan-out is logged at ERROR because it is the one
-// case an operator must be able to see — the story exists but nobody's feed knows.
+// case an operator must be able to see — the entry exists but nobody's feed knows.
 //
-// A nil cache (the feature is switched off) is a silent no-op.
-func recordFeedFanout(ctx context.Context, logger *slog.Logger, feed FeedCache, storyID, authorID, language string, createdAt time.Time) {
-	if feed == nil || storyID == "" || authorID == "" {
+// kind selects which of the two sets is written: a story id goes into the story set,
+// a version id into the version set. A nil cache (the feature is switched off) is a
+// silent no-op.
+func recordFeedFanout(ctx context.Context, logger *slog.Logger, feed FeedCache, kind feedcache.Kind, id, authorID, language string, createdAt time.Time) {
+	if feed == nil || id == "" || authorID == "" {
 		return
 	}
 
@@ -145,11 +176,17 @@ func recordFeedFanout(ctx context.Context, logger *slog.Logger, feed FeedCache, 
 		writeCtx, cancel := context.WithTimeout(detached, feedFanoutTimeout)
 		defer cancel()
 
-		result, err := feed.FanoutStory(writeCtx, storyID, authorID, language, createdAt)
+		fanout := feed.FanoutStory
+		if kind == feedcache.KindVersion {
+			fanout = feed.FanoutVersion
+		}
+
+		result, err := fanout(writeCtx, id, authorID, language, createdAt)
 		if err != nil {
 			logger.Error(
 				"feed fan-out failed",
-				"story_id", storyID,
+				"kind", string(kind),
+				"id", id,
 				"author_id", authorID,
 				"error", err,
 			)
@@ -158,7 +195,8 @@ func recordFeedFanout(ctx context.Context, logger *slog.Logger, feed FeedCache, 
 
 		logger.Debug(
 			"feed fan-out complete",
-			"story_id", storyID,
+			"kind", string(kind),
+			"id", id,
 			"recipients", result.Recipients,
 			"high_fanout", result.HighFanout,
 		)

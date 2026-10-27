@@ -104,44 +104,78 @@ func (s *Service) ListFeed(ctx context.Context, rawCursor string, limit int) ([]
 	return page, nextCursor, nil
 }
 
-// StoriesByIDs returns story entries for the given ids, in the order given.
+// FeedRef names one entry of the precomputed feed: which kind it is and the id to
+// resolve.
 //
-// It is the read half of the precomputed feed (KNOT-036): the feed cache answers
-// with a page of ids, and this turns them into the same story entries the SQL feed
-// serves, so the handler renders both paths identically.
+// It is the domain's own type rather than the cache package's, so the stories
+// domain stays free of any dependency on how (or whether) the feed is cached.
+type FeedRef struct {
+	// Kind is story or version.
+	Kind FeedKind
+	// ID is the story id for a story entry, the version id for an adaptation.
+	ID string
+}
+
+// FeedItemsByIDs returns merged-feed entries for the given refs, in the order
+// given.
 //
-// The input is filtered rather than trusted — a duplicate is read once and a
-// malformed id is dropped without reaching the database — and an id that no longer
-// exists is skipped, because a cached id outliving its story is the expected
-// consequence of a feed that is trimmed by size rather than invalidated on delete.
-// The block filter is applied here, exactly as GetStory applies it: a block hides
-// an author's stories whichever path a reader reaches them by (KNOT-ADR-060).
-func (s *Service) StoriesByIDs(ctx context.Context, ids []string) ([]FeedItem, error) {
-	unique := uniqueIDs(ids)
+// It is the read half of the precomputed feed (KNOT-036, KNOT-036-fix): the cache
+// answers with a page of ids of both kinds, and this turns them into the same
+// entries the SQL feed serves, so the handler renders both paths identically.
+//
+// The input is filtered rather than trusted — a duplicate is read once, a malformed
+// id is dropped without reaching the database, and a ref of an unknown kind is
+// ignored — and a ref that no longer resolves is skipped, because a cached id
+// outliving its row is the expected consequence of a feed that is trimmed by size
+// rather than invalidated on delete. The block filter is applied here, exactly as
+// GetStory and GetVersion apply it, so a block hides an entry whichever path a
+// reader reaches it by (KNOT-ADR-060).
+func (s *Service) FeedItemsByIDs(ctx context.Context, refs []FeedRef) ([]FeedItem, error) {
+	unique := uniqueRefs(refs)
 	if len(unique) == 0 {
 		return []FeedItem{}, nil
 	}
 
-	found, err := s.store.StoriesByIDs(ctx, unique)
-	if err != nil {
-		return nil, fmt.Errorf("stories: stories by ids: %w", err)
+	storyIDs := make([]string, 0, len(unique))
+	versionIDs := make([]string, 0, len(unique))
+	for _, ref := range unique {
+		switch ref.Kind {
+		case FeedKindStory:
+			storyIDs = append(storyIDs, ref.ID)
+		case FeedKindVersion:
+			versionIDs = append(versionIDs, ref.ID)
+		}
 	}
 
-	byID := make(map[string]Story, len(found))
-	for _, story := range found {
-		byID[story.ID] = story
+	found, err := s.store.FeedItemsByIDs(ctx, storyIDs, versionIDs)
+	if err != nil {
+		return nil, fmt.Errorf("stories: feed items by ids: %w", err)
+	}
+
+	byRef := make(map[FeedRef]FeedItem, len(found))
+	for _, item := range found {
+		byRef[FeedRef{Kind: item.Kind, ID: item.SortID()}] = item
 	}
 
 	items := make([]FeedItem, 0, len(unique))
-	for _, id := range unique {
-		story, ok := byID[id]
+	for _, ref := range unique {
+		item, ok := byRef[ref]
 		if !ok {
 			continue
 		}
-		if moderation.IsExcludedAuthor(ctx, story.AuthorID) {
+
+		// A block hides an AUTHOR, not a lineage: a story entry is judged by its
+		// author, an adaptation entry by the adapter who wrote it. That is the rule
+		// both the feed query and the version endpoints already follow.
+		authorID := item.Story.AuthorID
+		if item.Kind == FeedKindVersion {
+			authorID = item.Version.AuthorID
+		}
+		if moderation.IsExcludedAuthor(ctx, authorID) {
 			continue
 		}
-		items = append(items, FeedItem{Kind: FeedKindStory, Story: story})
+
+		items = append(items, item)
 	}
 
 	return items, nil
@@ -306,21 +340,26 @@ func validateMediaURLs(urls []string) ([]string, error) {
 	return media, nil
 }
 
-// uniqueIDs returns the distinct canonical UUIDs in ids, in the order they first
-// appear, dropping empty and malformed values.
+// uniqueRefs returns the distinct, valid refs in refs, in the order they first
+// appear.
 //
-// Order is preserved because it is the feed cache's ordering: the ids arrive
-// newest-first and the rows must come back the same way.
-func uniqueIDs(ids []string) []string {
-	seen := make(map[string]bool, len(ids))
-	out := make([]string, 0, len(ids))
+// Order is preserved because it is the feed cache's ordering: the refs arrive
+// newest-first and the entries must come back the same way. An unknown kind is
+// dropped rather than guessed at, so a corrupt cache entry cannot be served as the
+// wrong shape.
+func uniqueRefs(refs []FeedRef) []FeedRef {
+	seen := make(map[FeedRef]bool, len(refs))
+	out := make([]FeedRef, 0, len(refs))
 
-	for _, id := range ids {
-		if !isUUID(id) || seen[id] {
+	for _, ref := range refs {
+		if ref.Kind != FeedKindStory && ref.Kind != FeedKindVersion {
 			continue
 		}
-		seen[id] = true
-		out = append(out, id)
+		if !isUUID(ref.ID) || seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		out = append(out, ref)
 	}
 
 	return out

@@ -34,13 +34,21 @@ type fakeVersionsService struct {
 	treeErr      error
 	chainResult  versions.Chain
 	chainErr     error
+
+	// Call counts, so a test can prove the cache answered instead of the service.
+	createCalls int
+	getCalls    int
+	gotCreate   versions.CreateAdaptationInput
 }
 
-func (f *fakeVersionsService) CreateAdaptation(_ context.Context, _ versions.CreateAdaptationInput) (versions.StoryVersion, error) {
+func (f *fakeVersionsService) CreateAdaptation(_ context.Context, in versions.CreateAdaptationInput) (versions.StoryVersion, error) {
+	f.createCalls++
+	f.gotCreate = in
 	return f.createResult, f.createErr
 }
 
 func (f *fakeVersionsService) GetVersion(_ context.Context, _ string) (versions.StoryVersion, error) {
+	f.getCalls++
 	return f.getResult, f.getErr
 }
 

@@ -77,13 +77,26 @@ func defaultOptions() Options {
 	return Options{Cap: FeedCap, FanoutThreshold: FanoutThreshold}
 }
 
-// readIDs is a terse Read that fails the test on error.
+// readItems is a terse Read that fails the test on error.
+func readItems(t *testing.T, feed *Feed, userID string, limit int) []Item {
+	t.Helper()
+
+	items, err := feed.Read(context.Background(), userID, limit)
+	if err != nil {
+		t.Fatalf("Read(%s) error = %v, want nil", userID, err)
+	}
+	return items
+}
+
+// readIDs is readItems projected onto the ids, for the assertions that only care
+// about which entries came back.
 func readIDs(t *testing.T, feed *Feed, userID string, limit int) []string {
 	t.Helper()
 
-	ids, err := feed.Read(context.Background(), userID, limit)
-	if err != nil {
-		t.Fatalf("Read(%s) error = %v, want nil", userID, err)
+	items := readItems(t, feed, userID, limit)
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
 	}
 	return ids
 }
@@ -225,8 +238,8 @@ func TestFanoutStoryHighFanoutStoresTheAuthorFeed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadMerged() error = %v, want nil", err)
 	}
-	if len(merged) != 1 || merged[0] != storyID {
-		t.Errorf("merged feed = %v, want [%s]", merged, storyID)
+	if len(merged) != 1 || merged[0].ID != storyID || merged[0].Kind != KindStory {
+		t.Errorf("merged feed = %v, want one story entry %s", merged, storyID)
 	}
 	if ids := readIDs(t, feed, readerA, 10); len(ids) != 0 {
 		t.Errorf("unmerged feed = %v, want empty", ids)
@@ -325,18 +338,21 @@ func TestReadMergedOrdersBothSourcesAndCollapsesDuplicates(t *testing.T) {
 		t.Fatalf("prepend author feed: %v", err)
 	}
 
-	ids, err := feed.ReadMerged(ctx, readerA, 10, []string{highFanout})
+	items, err := feed.ReadMerged(ctx, readerA, 10, []string{highFanout})
 	if err != nil {
 		t.Fatalf("ReadMerged() error = %v, want nil", err)
 	}
 
 	want := []string{newest, newer, older}
-	if len(ids) != len(want) {
-		t.Fatalf("merged feed = %v, want %v", ids, want)
+	if len(items) != len(want) {
+		t.Fatalf("merged feed = %v, want %v", items, want)
 	}
 	for i := range want {
-		if ids[i] != want[i] {
-			t.Fatalf("merged feed = %v, want %v", ids, want)
+		if items[i].ID != want[i] {
+			t.Fatalf("merged feed = %v, want %v", items, want)
+		}
+		if items[i].Kind != KindStory {
+			t.Fatalf("entry %d kind = %q, want %q", i, items[i].Kind, KindStory)
 		}
 	}
 }
@@ -352,12 +368,12 @@ func TestReadHonoursTheLimit(t *testing.T) {
 		}
 	}
 
-	ids, err := feed.Read(ctx, readerA, 2)
+	items, err := feed.Read(ctx, readerA, 2)
 	if err != nil {
 		t.Fatalf("Read() error = %v, want nil", err)
 	}
-	if len(ids) != 2 || ids[0] != storyIDFor(4) || ids[1] != storyIDFor(3) {
-		t.Errorf("Read(limit 2) = %v, want the two newest", ids)
+	if len(items) != 2 || items[0].ID != storyIDFor(4) || items[1].ID != storyIDFor(3) {
+		t.Errorf("Read(limit 2) = %v, want the two newest", items)
 	}
 }
 
@@ -453,4 +469,170 @@ func storyIDFor(index int) string {
 	}
 
 	return "00000000-0000-4000-8000-" + string(suffix)
+}
+
+func TestFanoutVersionWritesTheVersionFeed(t *testing.T) {
+	audience := &fakeAudience{targets: []string{readerA, readerB}}
+	feed, server := newTestFeed(t, defaultOptions(), audience)
+
+	const versionID = "aaaaaaaa-aaaa-4aaa-9aaa-aaaaaaaaaaaa"
+
+	result, err := feed.FanoutVersion(context.Background(), versionID, authorID, "zul", testNow)
+	if err != nil {
+		t.Fatalf("FanoutVersion() error = %v, want nil", err)
+	}
+	if result.Recipients != 2 {
+		t.Errorf("Recipients = %d, want 2", result.Recipients)
+	}
+
+	for _, userID := range []string{readerA, readerB} {
+		items := readItems(t, feed, userID, 10)
+		if len(items) != 1 || items[0].ID != versionID || items[0].Kind != KindVersion {
+			t.Fatalf("feed %s = %v, want one version entry %s", userID, items, versionID)
+		}
+
+		// It lands in the VERSION set, not the story set: a reader that only knows
+		// the story set must never be handed a version id as a story.
+		if got := zcard(t, server, FeedVersionsKey(userID)); got != 1 {
+			t.Errorf("version set %s cardinality = %d, want 1", userID, got)
+		}
+		if got := zcard(t, server, FeedKey(userID)); got != 0 {
+			t.Errorf("story set %s cardinality = %d, want 0", userID, got)
+		}
+
+		score, err := server.ZScore(FeedVersionsKey(userID), versionID)
+		if err != nil {
+			t.Fatalf("ZScore(%s) error = %v, want nil", userID, err)
+		}
+		if want := float64(testNow.Unix()); score != want {
+			t.Errorf("score in %s = %v, want %v (the version's own created_at)", userID, score, want)
+		}
+	}
+
+	// The author is never a recipient of their own adaptation.
+	if items := readItems(t, feed, authorID, 10); len(items) != 0 {
+		t.Errorf("author feed = %v, want empty", items)
+	}
+}
+
+func TestFanoutVersionTrimsToCap(t *testing.T) {
+	const cap = 2
+
+	audience := &fakeAudience{targets: []string{readerA}}
+	feed, server := newTestFeed(t, Options{Cap: cap, FanoutThreshold: FanoutThreshold}, audience)
+
+	for i := 0; i < 4; i++ {
+		if _, err := feed.FanoutVersion(context.Background(), storyIDFor(i), authorID, "eng", testNow.Add(time.Duration(i)*time.Second)); err != nil {
+			t.Fatalf("FanoutVersion(%d) error = %v, want nil", i, err)
+		}
+	}
+
+	if got := zcard(t, server, FeedVersionsKey(readerA)); got != cap {
+		t.Fatalf("version set cardinality = %d, want %d", got, cap)
+	}
+
+	items := readItems(t, feed, readerA, 10)
+	if len(items) != cap || items[0].ID != storyIDFor(3) || items[1].ID != storyIDFor(2) {
+		t.Fatalf("version feed = %v, want the two newest", items)
+	}
+}
+
+func TestFanoutVersionHighFanoutStoresTheAuthorVersionFeed(t *testing.T) {
+	audience := &fakeAudience{targets: []string{readerA, readerB, outsiderID}}
+	feed, server := newTestFeed(t, Options{Cap: FeedCap, FanoutThreshold: 2}, audience)
+
+	const versionID = "bbbbbbbb-bbbb-4bbb-9bbb-bbbbbbbbbbbb"
+
+	result, err := feed.FanoutVersion(context.Background(), versionID, authorID, "eng", testNow)
+	if err != nil {
+		t.Fatalf("FanoutVersion() error = %v, want nil", err)
+	}
+	if !result.HighFanout || result.Recipients != 0 {
+		t.Errorf("result = %+v, want HighFanout with no per-reader writes", result)
+	}
+
+	if got := zcard(t, server, AuthorFeedVersionsKey(authorID)); got != 1 {
+		t.Errorf("author version feed cardinality = %d, want 1", got)
+	}
+	for _, userID := range []string{readerA, readerB, outsiderID} {
+		if got := zcard(t, server, FeedVersionsKey(userID)); got != 0 {
+			t.Errorf("version set %s cardinality = %d, want 0", userID, got)
+		}
+	}
+
+	merged, err := feed.ReadMerged(context.Background(), readerA, 10, []string{authorID})
+	if err != nil {
+		t.Fatalf("ReadMerged() error = %v, want nil", err)
+	}
+	if len(merged) != 1 || merged[0].ID != versionID || merged[0].Kind != KindVersion {
+		t.Errorf("merged feed = %v, want the version entry %s", merged, versionID)
+	}
+}
+
+func TestReadMergedInterleavesStoriesAndVersions(t *testing.T) {
+	audience := &fakeAudience{targets: []string{readerA}}
+	feed, _ := newTestFeed(t, defaultOptions(), audience)
+	ctx := context.Background()
+
+	// Written out of order on purpose: the merge is by score, not by arrival.
+	if _, err := feed.FanoutStory(ctx, storyIDFor(2), authorID, "eng", testNow.Add(3*time.Second)); err != nil {
+		t.Fatalf("FanoutStory(2) error = %v, want nil", err)
+	}
+	if _, err := feed.FanoutVersion(ctx, storyIDFor(1), authorID, "eng", testNow.Add(2*time.Second)); err != nil {
+		t.Fatalf("FanoutVersion(1) error = %v, want nil", err)
+	}
+	if _, err := feed.FanoutStory(ctx, storyIDFor(0), authorID, "eng", testNow.Add(time.Second)); err != nil {
+		t.Fatalf("FanoutStory(0) error = %v, want nil", err)
+	}
+
+	items := readItems(t, feed, readerA, 10)
+	if len(items) != 3 {
+		t.Fatalf("merged feed = %v, want 3 entries", items)
+	}
+
+	want := []struct {
+		id   string
+		kind Kind
+	}{
+		{storyIDFor(2), KindStory},
+		{storyIDFor(1), KindVersion},
+		{storyIDFor(0), KindStory},
+	}
+	for i, entry := range want {
+		if items[i].ID != entry.id || items[i].Kind != entry.kind {
+			t.Fatalf("merged feed = %v, want %v", items, want)
+		}
+	}
+
+	// The page is truncated AFTER the interleave, so a limit of 2 keeps the two
+	// newest across both kinds rather than two of one.
+	if limited := readItems(t, feed, readerA, 2); len(limited) != 2 || limited[0].ID != storyIDFor(2) || limited[1].ID != storyIDFor(1) {
+		t.Errorf("merged feed (limit 2) = %v, want the two newest of both kinds", limited)
+	}
+}
+
+func TestSeedWritesBothKinds(t *testing.T) {
+	feed, server := newTestFeed(t, defaultOptions(), nil)
+	ctx := context.Background()
+
+	entries := []Entry{
+		{ID: storyIDFor(0), Kind: KindStory, CreatedAt: testNow},
+		{ID: storyIDFor(1), Kind: KindVersion, CreatedAt: testNow.Add(time.Minute)},
+	}
+
+	if err := feed.Seed(ctx, readerA, entries); err != nil {
+		t.Fatalf("Seed() error = %v, want nil", err)
+	}
+
+	if got := zcard(t, server, FeedKey(readerA)); got != 1 {
+		t.Errorf("story set cardinality = %d, want 1", got)
+	}
+	if got := zcard(t, server, FeedVersionsKey(readerA)); got != 1 {
+		t.Errorf("version set cardinality = %d, want 1", got)
+	}
+
+	items := readItems(t, feed, readerA, 10)
+	if len(items) != 2 || items[0].Kind != KindVersion || items[1].Kind != KindStory {
+		t.Fatalf("seeded feed = %v, want the version then the story", items)
+	}
 }

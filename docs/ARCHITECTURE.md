@@ -187,10 +187,41 @@ writes.
 client, so there is still one connection pool and one package that opens a socket.
 The `for_you` ranked feed is untouched and always uses SQL.
 
-**Known limits** (full list in KNOT-ADR-093): the cached page carries story
-entries only — adaptation entries return on page two or with the cache off; there
-is no cursor on the cached path; story deletion does not remove a cached id (the
-read skips ids that no longer resolve); and the language half of the audience
+### Parity: two sets per reader (KNOT-036-fix)
+
+The SQL feed interleaves stories and adaptations, so the cached page does too. Each
+reader has two sorted sets — `knot:feed:{user_id}` (story ids) and
+`knot:feed_versions:{user_id}` (version ids) — both scored by the entry's own
+`created_at`. The read merges them by score and resolves the page in **one** query
+(`stories.FeedItemsByIDs`), which reuses the two branches `ListFeed` is built from,
+so a cached entry carries exactly the fields a queried one does. A high-fanout
+author gets a matching `knot:author_feed_versions:{author_id}` pair. An adaptation
+is fanned out on write like a story, and the cold-start seed writes both kinds.
+
+### The detail cache (KNOT-036-fix)
+
+`GET /stories/{id}` and `GET /versions/{id}` are stored in `internal/detailcache`
+under `knot:story:{id}` and `knot:version:{id}` as the serialized response envelope,
+with a **10-minute TTL** (`KNOT_DETAIL_CACHE_TTL`).
+
+| Event | What happens |
+| --- | --- |
+| Hit | one `GET`; a signed-in reader's `my_reactions` is re-read and re-applied |
+| Miss / Redis error / undecodable payload | the database path, then the payload is stored |
+| Viewer has blocked the author | the hit is discarded and the database path answers 404 |
+
+The stored payload is the **anonymous projection**: `my_reactions` is blanked
+before storing, because it belongs to the reader who asked. Visibility is likewise
+decided per request, not stored. A publish deletes its own story key; an adaptation
+deletes the parent story's key (its `version_count` changed) and the new version's
+key. Reaction and comment counts are *not* invalidated — the TTL is what heals them,
+and that is the deliberate trade recorded in KNOT-ADR-094.
+
+**Known limits** (full list in KNOT-ADR-093 and KNOT-ADR-094): there is no cursor on
+the cached feed path; story deletion invalidates nothing (the read skips ids that no
+longer resolve, and a cached detail outlives a deletion by at most the TTL); a
+detail response that ever gains a new reader-specific field must have it re-applied
+on a hit or the cache must be partitioned; and the language half of the audience
 query is a `users` scan until `preferred_languages` is indexed.
 
 ## Boundaries summary

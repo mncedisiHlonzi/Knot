@@ -2763,27 +2763,51 @@ key, so content deletion (no such path today) would leave a derived row behind.
 ## The precomputed feed cache (KNOT-036)
 
 `GET /stories` no longer always runs the SQL feed. The default (chronological)
-feed is precomputed in Redis when a story is created, and served from one sorted
-set per reader (`knot:feed:{user_id}`, story id → `created_at` in Unix seconds,
-trimmed to `KNOT_FEED_CAP`). The ranked `?feed_type=for_you` feed is unchanged and
-still uses SQL. See KNOT-ADR-093 for the decision and its limitations.
+feed is precomputed in Redis when an entry is created, and served from sorted sets
+per reader (id → `created_at` in Unix seconds, trimmed to `KNOT_FEED_CAP`). The ranked
+`?feed_type=for_you` feed is unchanged and still uses SQL. See KNOT-ADR-093 and
+KNOT-ADR-094 for the decisions and their limits.
 
-**Three settings** (`.env`, all optional):
+Each reader has **two** sets, because the feed interleaves two entry kinds:
+
+| Key | Holds |
+| --- | --- |
+| `knot:feed:{user_id}` | story ids |
+| `knot:feed_versions:{user_id}` | version (adaptation) ids |
+| `knot:author_feed:{author_id}` | a high-fanout author's stories |
+| `knot:author_feed_versions:{author_id}` | a high-fanout author's adaptations |
+
+The read merges the first two by score, so an adaptation sits where it was written,
+and resolves the page with one query that reuses the feed's own SQL branches.
+
+**Five settings** (`.env`, all optional):
 
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `KNOT_FEED_CACHE_ENABLED` | `true` | `false` serves every request from PostgreSQL and stops fanning out |
 | `KNOT_FEED_FANOUT_THRESHOLD` | `10000` | Past this audience size a story is stored once in `knot:author_feed:{author_id}` instead of being written to every reader |
 | `KNOT_FEED_CAP` | `800` | How many entries one reader's feed holds |
+| `KNOT_DETAIL_CACHE_ENABLED` | `true` | `false` reads every story/version detail from PostgreSQL and writes nothing |
+| `KNOT_DETAIL_CACHE_TTL` | `10m` | How long a cached detail response lives (Go duration) |
 
 **Inspecting the cache by hand.** The local stack's Redis is `knot-redis` on
 `:6379` (`docker exec -it knot-redis redis-cli`):
 
 ```
-ZRANGE knot:feed:{user_id} 0 -1 WITHSCORES   # oldest first, id → created_at (unix)
-ZREVRANGE knot:feed:{user_id} 0 -1           # newest first, which is the read order
+ZRANGE knot:feed:{user_id} 0 -1 WITHSCORES          # stories, oldest first
+ZREVRANGE knot:feed:{user_id} 0 -1                  # stories, newest first
+ZREVRANGE knot:feed_versions:{user_id} 0 -1         # adaptations, newest first
 ZRANGE knot:author_feed:{author_id} 0 -1 WITHSCORES
+ZRANGE knot:author_feed_versions:{author_id} 0 -1 WITHSCORES
+GET knot:story:{story_id}                           # the cached detail JSON
+TTL knot:story:{story_id}                           # seconds left; -2 = absent
+TTL knot:version:{version_id}
 ```
+
+A detail key is written the first time anything reads that story or version, and
+disappears on a publish or on an adaptation of its story. `TTL` is the quickest way
+to prove the cache is live: `-2` means nothing is cached, a number up to `600`
+means a hit will be served from Redis.
 
 **What to expect when you create a story.** The fan-out runs on a goroutine after
 the 201, so it is not synchronous with the response — if a `ZRANGE` comes back
@@ -2803,10 +2827,17 @@ request takes the pre-KNOT-036 path, nothing is fanned out, and the sets already
 Redis are simply ignored (they are bounded, so they age out of usefulness rather
 than needing a flush).
 
-**Known gaps** (deliberate, see KNOT-ADR-093): a cached page carries story entries
-only (adaptations return on page two or with the cache off), there is no cursor on
-the cached path, and deleting a story does not remove its id from feeds — the read
-skips ids that no longer resolve.
+**What the detail cache stores.** The response envelope with `my_reactions` blanked.
+That is not decoration: `my_reactions` belongs to the reader who asked, so it is
+re-read on every hit, and a viewer who has blocked the author gets a 404 whether the
+entry was cached or not. If a future field is reader-specific it must be re-applied
+in `cachedStoryDetail`/`cachedVersionDetail`, or the cache must be partitioned.
+
+**Known gaps** (deliberate, see KNOT-ADR-093 and KNOT-ADR-094): there is no cursor
+on the cached feed path; deleting a story invalidates nothing (the read skips ids
+that no longer resolve, and a cached detail outlives the deletion by at most the
+TTL); and reaction or comment counts on a detail can be up to
+`KNOT_DETAIL_CACHE_TTL` stale, because those writes do not invalidate yet.
 
 ## Testing Auth Locally
 

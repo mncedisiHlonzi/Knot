@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/knot/backend/internal/feedcache"
 	"github.com/knot/backend/internal/moderation"
 	"github.com/knot/backend/internal/reactions"
 	"github.com/knot/backend/internal/versions"
@@ -32,7 +33,11 @@ type VersionsHandler struct {
 	rooted    RootedLookup
 	reactions ReactionsLookup
 	recorder  InteractionRecorder
-	logger    *slog.Logger
+	// caches are the optional Redis read caches: the version feed sets an
+	// adaptation is fanned out into, and the version detail store (KNOT-036-fix).
+	// Nil fields mean "take the database path".
+	caches Caches
+	logger *slog.Logger
 }
 
 // NewVersionsHandler returns a handler backed by service. The author lookup names
@@ -50,6 +55,15 @@ func NewVersionsHandler(service VersionsService, authors AuthorLookup, rooted Ro
 // NewVersionsHandlerWithRecorder is NewVersionsHandler plus the engagement
 // recorder. A nil recorder disables the log.
 func NewVersionsHandlerWithRecorder(service VersionsService, authors AuthorLookup, rooted RootedLookup, reactions ReactionsLookup, logger *slog.Logger, recorder InteractionRecorder) (*VersionsHandler, error) {
+	return NewVersionsHandlerWithCaches(service, authors, rooted, reactions, logger, recorder, Caches{})
+}
+
+// NewVersionsHandlerWithCaches is NewVersionsHandlerWithRecorder plus the Redis
+// read caches (KNOT-036-fix).
+//
+// A nil cache leaves every behaviour unchanged: the version detail is the database
+// read it has always been, and a new adaptation is not fanned out.
+func NewVersionsHandlerWithCaches(service VersionsService, authors AuthorLookup, rooted RootedLookup, reactions ReactionsLookup, logger *slog.Logger, recorder InteractionRecorder, caches Caches) (*VersionsHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: versions handler requires a service")
 	}
@@ -65,7 +79,7 @@ func NewVersionsHandlerWithRecorder(service VersionsService, authors AuthorLooku
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: versions handler requires a logger")
 	}
-	return &VersionsHandler{service: service, authors: authors, rooted: rooted, reactions: reactions, recorder: recorder, logger: logger}, nil
+	return &VersionsHandler{service: service, authors: authors, rooted: rooted, reactions: reactions, recorder: recorder, caches: caches, logger: logger}, nil
 }
 
 // createAdaptationRequest is the POST /stories/{id}/adapt body.
@@ -179,6 +193,20 @@ func (h *VersionsHandler) Adapt(w http.ResponseWriter, r *http.Request) {
 	// content whose pillar the reader engaged with (KNOT-026).
 	recordInteraction(r.Context(), h.logger, h.recorder, authorID, interactionEntityVersion, body.ParentVersionID, interactionAdapt)
 
+	// The parent story's cached detail is stale from this moment: its version_count
+	// and language_count changed. Deleting it is the invalidation the read cache
+	// needs, and it happens before the response so the next reader cannot see the
+	// old counts (KNOT-036-fix).
+	invalidateStoryDetail(r.Context(), h.logger, h.caches.Details, created.StoryID)
+	// A brand-new version cannot be cached yet, so this delete is hygiene rather
+	// than repair, exactly like the one a story creation performs.
+	invalidateVersionDetail(r.Context(), h.logger, h.caches.Details, created.ID)
+
+	// The adaptation is fanned out on write like a story, into the version feed
+	// sets, so it appears in readers' precomputed feeds where it was written
+	// (KNOT-036-fix).
+	recordFeedFanout(r.Context(), h.logger, h.caches.Feed, feedcache.KindVersion, created.ID, created.AuthorID, created.Language, created.CreatedAt)
+
 	writeJSON(w, http.StatusCreated, versionEnvelope{Version: response})
 }
 
@@ -250,7 +278,16 @@ func (h *VersionsHandler) Tree(w http.ResponseWriter, r *http.Request) {
 
 // Get handles GET /versions/{id}. The route is public.
 func (h *VersionsHandler) Get(w http.ResponseWriter, r *http.Request) {
-	version, err := h.service.GetVersion(r.Context(), r.PathValue("id"))
+	versionID := r.PathValue("id")
+
+	// A repeat tap on the same adaptation is answered from Redis, with the reader's
+	// own signals and the block filter re-applied (KNOT-036-fix).
+	if cached, ok := h.cachedVersionDetail(r.Context(), versionID); ok {
+		writeJSON(w, http.StatusOK, versionEnvelope{Version: *cached})
+		return
+	}
+
+	version, err := h.service.GetVersion(r.Context(), versionID)
 	if err != nil {
 		h.writeServiceError(w, r, err, "version not found")
 		return
@@ -263,6 +300,8 @@ func (h *VersionsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	userID, _ := UserIDFromContext(r.Context())
 	response.Reactions, response.MyReactions = reactionsForEntity(r.Context(), h.reactions, h.logger, reactions.EntityVersion, userID, version.ID)
 	response.AttributionLine, response.VersionDepth = h.attribution(r.Context(), version.ID)
+
+	h.storeVersionDetail(r.Context(), response)
 
 	writeJSON(w, http.StatusOK, versionEnvelope{Version: response})
 }

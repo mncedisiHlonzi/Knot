@@ -12,6 +12,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Environment names the backend understands.
@@ -63,6 +64,8 @@ const (
 	envKeyFeedCache       = "KNOT_FEED_CACHE_ENABLED"
 	envKeyFeedThreshold   = "KNOT_FEED_FANOUT_THRESHOLD"
 	envKeyFeedCap         = "KNOT_FEED_CAP"
+	envKeyDetailCache     = "KNOT_DETAIL_CACHE_ENABLED"
+	envKeyDetailTTL       = "KNOT_DETAIL_CACHE_TTL"
 )
 
 // Safe local defaults. These are placeholders that match .env.example and the
@@ -110,6 +113,14 @@ const (
 	// DefaultFeedCap mirrors feedcache.FeedCap: how many entries one reader's
 	// precomputed feed holds.
 	DefaultFeedCap = 800
+
+	// DefaultDetailCacheEnabled is ON: the story and version detail responses are
+	// the reads a tap waits on (KNOT-036-fix).
+	defaultDetailCacheEnabled = true
+	// DefaultDetailCacheTTL mirrors detailcache.DefaultTTL. It is the honesty
+	// valve for the writes that do not invalidate yet: a stale reaction or version
+	// count heals within this window rather than never.
+	DefaultDetailCacheTTL = 10 * time.Minute
 )
 
 // LocalJWTSecretPlaceholder is the documented local-only signing secret. It is
@@ -217,6 +228,15 @@ type Config struct {
 	// FeedCap is how many entries one reader's precomputed feed holds. The sorted set
 	// is trimmed to it on every insert, which is what replaces a time to live.
 	FeedCap int
+
+	// DetailCacheEnabled switches the story and version detail cache on or off
+	// (KNOT-036-fix). With it off, GET /stories/{id} and GET /versions/{id} are the
+	// database reads they were before, and no detail key is written or
+	// invalidated.
+	DetailCacheEnabled bool
+	// DetailCacheTTL is how long a cached detail response lives. It bounds how
+	// stale a count can be on a screen nobody has written to.
+	DetailCacheTTL time.Duration
 }
 
 // Load reads configuration from the process environment.
@@ -254,6 +274,11 @@ type Config struct {
 //   - KNOT_FEED_FANOUT_THRESHOLD and KNOT_FEED_CAP must be positive integers when
 //     set, and default to 10000 and 800. A zero or negative value is an error: a
 //     feed of size zero would silently serve nothing.
+//   - KNOT_DETAIL_CACHE_ENABLED switches the story and version detail cache on or
+//     off. It defaults to true and accepts the same spellings as
+//     KNOT_FEED_CACHE_ENABLED (KNOT-036-fix).
+//   - KNOT_DETAIL_CACHE_TTL must be a positive Go duration when set (for example
+//     "10m" or "90s") and defaults to 10 minutes.
 //
 // Load performs no I/O beyond reading environment variables.
 func Load() (Config, error) {
@@ -292,6 +317,16 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	detailCacheEnabled, err := parseFeedCacheEnabledValue(envKeyDetailCache, os.Getenv(envKeyDetailCache), defaultDetailCacheEnabled)
+	if err != nil {
+		return Config{}, err
+	}
+
+	detailCacheTTL, err := parsePositiveDuration(envKeyDetailTTL, os.Getenv(envKeyDetailTTL), DefaultDetailCacheTTL)
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
 		Env:             resolveEnv(os.Getenv(envKeyEnv)),
 		PostgresDSN:     strings.TrimSpace(os.Getenv(envKeyPostgresDSN)),
@@ -315,6 +350,9 @@ func Load() (Config, error) {
 		FeedCacheEnabled:    feedCacheEnabled,
 		FeedFanoutThreshold: feedFanoutThreshold,
 		FeedCap:             feedCap,
+
+		DetailCacheEnabled: detailCacheEnabled,
+		DetailCacheTTL:     detailCacheTTL,
 	}
 
 	// The From address has a default in every environment: there is nothing
@@ -512,9 +550,15 @@ func resolveEnv(raw string) string {
 // silently read as true, because "KNOT_FEED_CACHE_ENABLED=nope" that quietly left
 // the cache on would be a trap (KNOT-036).
 func parseFeedCacheEnabled(raw string) (bool, error) {
+	return parseFeedCacheEnabledValue(envKeyFeedCache, raw, defaultFeedCacheEnabled)
+}
+
+// parseFeedCacheEnabledValue is the shared switch parser, so the feed and detail
+// caches accept exactly the same spellings and reject the same typos.
+func parseFeedCacheEnabledValue(name, raw string, fallback bool) (bool, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "":
-		return defaultFeedCacheEnabled, nil
+		return fallback, nil
 	case "true", "1", "yes", "on":
 		return true, nil
 	case "false", "0", "no", "off":
@@ -522,9 +566,30 @@ func parseFeedCacheEnabled(raw string) (bool, error) {
 	default:
 		return false, fmt.Errorf(
 			"config: %s must be true or false (got %q)",
-			envKeyFeedCache, raw,
+			name, raw,
 		)
 	}
+}
+
+// parsePositiveDuration resolves a Go duration setting with a default.
+//
+// Zero is refused rather than treated as "unset": a cache entry with no deadline
+// would never heal from a write that does not invalidate it.
+func parsePositiveDuration(name, raw string, fallback time.Duration) (time.Duration, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return fallback, nil
+	}
+
+	value, err := time.ParseDuration(trimmed)
+	if err != nil {
+		return 0, fmt.Errorf("config: %s must be a duration such as 10m or 90s: %w", name, err)
+	}
+	if value <= 0 {
+		return 0, fmt.Errorf("config: %s must be positive (got %s)", name, trimmed)
+	}
+
+	return value, nil
 }
 
 // parsePositiveCount resolves a positive-integer setting with a default.

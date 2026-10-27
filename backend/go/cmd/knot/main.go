@@ -34,6 +34,7 @@ import (
 	"github.com/knot/backend/internal/cache"
 	"github.com/knot/backend/internal/config"
 	"github.com/knot/backend/internal/conversations"
+	"github.com/knot/backend/internal/detailcache"
 	"github.com/knot/backend/internal/discovery"
 	"github.com/knot/backend/internal/email"
 	"github.com/knot/backend/internal/feedcache"
@@ -164,12 +165,11 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		}
 	}()
 
-	// The precomputed feed (KNOT-036). It reuses the Redis client above rather than
-	// dialling a second pool, and resolves a story's audience from the author's
-	// Rooted place and the story's language. With the feature switched off every
-	// feed request keeps taking the SQL path, which is the escape hatch an operator
-	// needs if Redis itself is the problem.
-	var feedCache httpapi.FeedCache
+	// The Redis read caches (KNOT-036, KNOT-036-fix). Both reuse the client above
+	// rather than dialling a second pool. Either may be switched off independently,
+	// and each nil field simply means "take the database path", so a deployment with
+	// Redis trouble still serves every request.
+	var caches httpapi.Caches
 	if cfg.FeedCacheEnabled {
 		feedSets, err := cache.NewSortedSet(redisCache)
 		if err != nil {
@@ -186,12 +186,29 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		feedCache = feed
+		caches.Feed = feed
 
 		logger.Info(
 			"precomputed feed cache enabled",
 			slog.Int("feed_cap", cfg.FeedCap),
 			slog.Int("fanout_threshold", cfg.FeedFanoutThreshold),
+		)
+	}
+
+	// The detail cache is the read a tap waits on: the story and version detail
+	// responses are stored as the JSON the handler already writes, with the
+	// reader-specific fields blanked, and invalidated when that content changes
+	// (KNOT-036-fix).
+	if cfg.DetailCacheEnabled {
+		details, err := detailcache.New(redisCache, cfg.DetailCacheTTL)
+		if err != nil {
+			return err
+		}
+		caches.Details = details
+
+		logger.Info(
+			"story and version detail cache enabled",
+			slog.Duration("ttl", cfg.DetailCacheTTL),
 		)
 	}
 
@@ -431,7 +448,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	versionsHandler, err := httpapi.NewVersionsHandlerWithRecorder(versionsService, service, rootedService, reactionsService, logger, interactionService)
+	versionsHandler, err := httpapi.NewVersionsHandlerWithCaches(versionsService, service, rootedService, reactionsService, logger, interactionService, caches)
 	if err != nil {
 		return err
 	}
@@ -440,7 +457,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	// adaptations in one stream, so it is built after the versions service and
 	// takes it as its chain lookup: attributing a page of adaptations is a batched
 	// read of the version domain, not a query per entry (KNOT-022).
-	storiesHandler, err := httpapi.NewStoriesHandlerWithPrecomputedFeed(
+	storiesHandler, err := httpapi.NewStoriesHandlerWithCaches(
 		storiesService,
 		service,
 		rootedService,
@@ -462,7 +479,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		// The default feed is read from the precomputed cache first. A nil value
 		// means the feature is switched off and every request takes the SQL path
 		// (KNOT-036).
-		feedCache,
+		caches,
 	)
 	if err != nil {
 		return err

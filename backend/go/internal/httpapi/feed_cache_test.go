@@ -24,9 +24,10 @@ var errCacheDown = errors.New("feed cache unavailable")
 // background fan-out can be observed without a server. It is mutex-guarded
 // because the handler calls it from goroutines while the test reads it.
 
-// fanoutCall is one recorded FanoutStory call.
+// fanoutCall is one recorded fan-out call.
 type fanoutCall struct {
-	storyID   string
+	kind      feedcache.Kind
+	id        string
 	authorID  string
 	language  string
 	createdAt time.Time
@@ -50,7 +51,7 @@ type feedCacheState struct {
 type feedCacheRecorder struct {
 	mu sync.Mutex
 
-	ids     []string
+	items   []feedcache.Item
 	readErr error
 
 	seedErr   error
@@ -59,7 +60,7 @@ type feedCacheRecorder struct {
 	state feedCacheState
 }
 
-func (f *feedCacheRecorder) Read(_ context.Context, userID string, limit int) ([]string, error) {
+func (f *feedCacheRecorder) Read(_ context.Context, userID string, limit int) ([]feedcache.Item, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -67,21 +68,30 @@ func (f *feedCacheRecorder) Read(_ context.Context, userID string, limit int) ([
 	f.state.readUserID = userID
 	f.state.readLimit = limit
 
-	return f.ids, f.readErr
+	return f.items, f.readErr
 }
 
 func (f *feedCacheRecorder) FanoutStory(_ context.Context, storyID, authorID, language string, createdAt time.Time) (feedcache.Result, error) {
+	f.record(feedcache.KindStory, storyID, authorID, language, createdAt)
+	return feedcache.Result{Recipients: 1}, f.fanoutErr
+}
+
+func (f *feedCacheRecorder) FanoutVersion(_ context.Context, versionID, authorID, language string, createdAt time.Time) (feedcache.Result, error) {
+	f.record(feedcache.KindVersion, versionID, authorID, language, createdAt)
+	return feedcache.Result{Recipients: 1}, f.fanoutErr
+}
+
+func (f *feedCacheRecorder) record(kind feedcache.Kind, id, authorID, language string, createdAt time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	f.state.fanoutCalls = append(f.state.fanoutCalls, fanoutCall{
-		storyID:   storyID,
+		kind:      kind,
+		id:        id,
 		authorID:  authorID,
 		language:  language,
 		createdAt: createdAt,
 	})
-
-	return feedcache.Result{Recipients: 1}, f.fanoutErr
 }
 
 func (f *feedCacheRecorder) Seed(_ context.Context, userID string, entries []feedcache.Entry) error {
@@ -119,9 +129,9 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
-// newStoriesHandlerWithFeed composes the router with the real stories service over
-// store and the given precomputed feed.
-func newStoriesHandlerWithFeed(t *testing.T, store stories.StoryStore, feed FeedCache) http.Handler {
+// newStoriesHandlerWithCaches composes the router with the real stories service
+// over store and the given Redis read caches.
+func newStoriesHandlerWithCaches(t *testing.T, store stories.StoryStore, caches Caches) http.Handler {
 	t.Helper()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -139,8 +149,15 @@ func newStoriesHandlerWithFeed(t *testing.T, store stories.StoryStore, feed Feed
 		stats:        &fakeStoryStatsLookup{},
 		chains:       &fakeVersionChainLookup{},
 		interactions: &fakeInteractionsLookup{},
-		feed:         feed,
+		caches:       caches,
 	})
+}
+
+// newStoriesHandlerWithFeed is newStoriesHandlerWithCaches for the feed cache
+// alone, which is what most of these tests need.
+func newStoriesHandlerWithFeed(t *testing.T, store stories.StoryStore, feed FeedCache) http.Handler {
+	t.Helper()
+	return newStoriesHandlerWithCaches(t, store, Caches{Feed: feed})
 }
 
 // twoStoryStore seeds a store with two stories whose ids are easy to read.
@@ -159,7 +176,7 @@ func twoStoryStore() (*memoryStoryStore, [2]string) {
 
 func TestFeedIsServedFromTheCache(t *testing.T) {
 	store, ids := twoStoryStore()
-	feed := &feedCacheRecorder{ids: []string{ids[1]}}
+	feed := &feedCacheRecorder{items: []feedcache.Item{{ID: ids[1], Kind: feedcache.KindStory}}}
 	handler := newStoriesHandlerWithFeed(t, store, feed)
 
 	recorder := doStoryRequest(handler, http.MethodGet, "/stories", "", testAccessToken)
@@ -270,7 +287,7 @@ func TestFeedFallsBackWhenTheCacheReadFails(t *testing.T) {
 
 func TestAnonymousFeedNeverTouchesTheCache(t *testing.T) {
 	store, _ := twoStoryStore()
-	feed := &feedCacheRecorder{ids: []string{"0a000000-0000-4000-8000-000000000001"}}
+	feed := &feedCacheRecorder{items: []feedcache.Item{{ID: "0a000000-0000-4000-8000-000000000001", Kind: feedcache.KindStory}}}
 	handler := newStoriesHandlerWithFeed(t, store, feed)
 
 	recorder := doStoryRequest(handler, http.MethodGet, "/stories", "", "")
@@ -294,7 +311,7 @@ func TestAnonymousFeedNeverTouchesTheCache(t *testing.T) {
 
 func TestPaginatedFeedSkipsTheCache(t *testing.T) {
 	store, _ := twoStoryStore()
-	feed := &feedCacheRecorder{ids: []string{"0a000000-0000-4000-8000-000000000001"}}
+	feed := &feedCacheRecorder{items: []feedcache.Item{{ID: "0a000000-0000-4000-8000-000000000001", Kind: feedcache.KindStory}}}
 	handler := newStoriesHandlerWithFeed(t, store, feed)
 
 	// A cursor means page two or later, which the cached path (first page only)
@@ -312,7 +329,7 @@ func TestPaginatedFeedSkipsTheCache(t *testing.T) {
 
 func TestForYouFeedSkipsTheCache(t *testing.T) {
 	store, _ := twoStoryStore()
-	feed := &feedCacheRecorder{ids: []string{"0a000000-0000-4000-8000-000000000001"}}
+	feed := &feedCacheRecorder{items: []feedcache.Item{{ID: "0a000000-0000-4000-8000-000000000001", Kind: feedcache.KindStory}}}
 	handler := newStoriesHandlerWithFeed(t, store, feed)
 
 	// The ranked feed is out of scope for the cache (KNOT-ADR-093). This router is
@@ -355,8 +372,11 @@ func TestCreateStoryFansOutOffTheRequestPath(t *testing.T) {
 		t.Fatalf("fan-out calls = %d, want 1", len(state.fanoutCalls))
 	}
 	call := state.fanoutCalls[0]
-	if call.storyID != envelope.Story.ID {
-		t.Errorf("fanned out story = %q, want the created %q", call.storyID, envelope.Story.ID)
+	if call.kind != feedcache.KindStory {
+		t.Errorf("fanned out kind = %q, want %q", call.kind, feedcache.KindStory)
+	}
+	if call.id != envelope.Story.ID {
+		t.Errorf("fanned out id = %q, want the created %q", call.id, envelope.Story.ID)
 	}
 	if call.authorID != testUserID {
 		t.Errorf("fanned out author = %q, want %q", call.authorID, testUserID)
@@ -384,17 +404,102 @@ func TestCreateStorySurvivesAFailedFanout(t *testing.T) {
 	waitFor(t, "the fan-out attempt", func() bool { return len(feed.snapshot().fanoutCalls) == 1 })
 }
 
-func TestSeedEntriesSkipsAdaptationEntries(t *testing.T) {
+// TestSeedEntriesKeepsBothKinds is the parity half of the cold-start repair: a
+// seeded page must carry the adaptations it was served, each into its own set.
+// Before KNOT-036-fix only story entries were seeded.
+func TestSeedEntriesKeepsBothKinds(t *testing.T) {
 	page := []stories.FeedItem{
-		{Kind: stories.FeedKindVersion, Version: stories.VersionFeedItem{ID: "11111111-1111-4111-8111-111111111111"}},
+		{Kind: stories.FeedKindVersion, Version: stories.VersionFeedItem{
+			ID:        "11111111-1111-4111-8111-111111111111",
+			CreatedAt: testNow.Add(time.Minute),
+		}},
 		{Kind: stories.FeedKindStory, Story: storyFixture("22222222-2222-4222-8222-222222222222", testUserID)},
 	}
 
 	entries := seedEntries(page)
-	if len(entries) != 1 {
-		t.Fatalf("entries = %d, want 1 (a version id is not a story id)", len(entries))
+	if len(entries) != 2 {
+		t.Fatalf("entries = %d, want 2 (both kinds are seeded)", len(entries))
 	}
-	if entries[0].ID != "22222222-2222-4222-8222-222222222222" {
-		t.Errorf("entry id = %q, want the story entry", entries[0].ID)
+	if entries[0].Kind != feedcache.KindVersion || entries[0].ID != "11111111-1111-4111-8111-111111111111" {
+		t.Errorf("entry 0 = %+v, want the version", entries[0])
+	}
+	if !entries[0].CreatedAt.Equal(testNow.Add(time.Minute)) {
+		t.Errorf("entry 0 created_at = %v, want the version's own timestamp", entries[0].CreatedAt)
+	}
+	if entries[1].Kind != feedcache.KindStory || entries[1].ID != "22222222-2222-4222-8222-222222222222" {
+		t.Errorf("entry 1 = %+v, want the story", entries[1])
+	}
+}
+
+// TestFeedRefsMapsKinds proves the cache's kind vocabulary is translated into the
+// domain's, so an unknown kind can never become a version by accident.
+func TestFeedRefsMapsKinds(t *testing.T) {
+	refs := feedRefs([]feedcache.Item{
+		{ID: "11111111-1111-4111-8111-111111111111", Kind: feedcache.KindStory},
+		{ID: "22222222-2222-4222-8222-222222222222", Kind: feedcache.KindVersion},
+	})
+
+	if len(refs) != 2 {
+		t.Fatalf("refs = %v, want 2", refs)
+	}
+	if refs[0].Kind != stories.FeedKindStory || refs[1].Kind != stories.FeedKindVersion {
+		t.Errorf("refs = %v, want [story version]", refs)
+	}
+}
+
+// TestCachedPageCarriesAdaptationEntries is the parity proof at the handler
+// boundary: a cached page containing a version id is rendered as an adaptation
+// entry — not dropped, and not served as a story (KNOT-036-fix).
+func TestCachedPageCarriesAdaptationEntries(t *testing.T) {
+	store, ids := twoStoryStore()
+	versionID := "0c000000-0000-4000-8000-000000000003"
+	store.versions = []stories.VersionFeedItem{{
+		ID:        versionID,
+		StoryID:   ids[1],
+		AuthorID:  testUserID,
+		Language:  "zul",
+		Title:     "The first rain, in Zulu",
+		Body:      "Adapted body.",
+		Pillar:    stories.PillarWonder,
+		CreatedAt: testNow.Add(2 * time.Minute),
+	}}
+
+	feed := &feedCacheRecorder{items: []feedcache.Item{
+		{ID: versionID, Kind: feedcache.KindVersion},
+		{ID: ids[1], Kind: feedcache.KindStory},
+	}}
+	handler := newStoriesHandlerWithFeed(t, store, feed)
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories", "", testAccessToken)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var page feedPage
+	decodeBody(t, recorder, &page)
+
+	if got := feedKinds(t, page); len(got) != 2 || got[0] != feedKindVersion || got[1] != feedKindStory {
+		t.Fatalf("kinds = %v, want [version story] (the cache's order is preserved)", got)
+	}
+
+	versions := feedVersions(t, page)
+	if len(versions) != 1 || versions[0].ID != versionID {
+		t.Fatalf("adaptation entries = %v, want the cached version", versions)
+	}
+
+	// One call resolves both kinds, each through its own id space.
+	if store.byIDCalls != 1 {
+		t.Errorf("FeedItemsByIDs calls = %d, want 1", store.byIDCalls)
+	}
+	if len(store.gotRefs) != 2 {
+		t.Fatalf("refs = %v, want both entries", store.gotRefs)
+	}
+
+	// The adaptation's card fields come from the same enrichment the SQL page uses.
+	if versions[0].Language != "zul" || versions[0].StoryID != ids[1] {
+		t.Errorf("version = %+v, want its own language and the parent story id", versions[0])
+	}
+	if versions[0].RecentInteractions == nil {
+		t.Error("recent_interactions = nil, want an empty array (it must never be null)")
 	}
 }

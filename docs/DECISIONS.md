@@ -3428,3 +3428,80 @@ read instead of nine to eleven statements. The costs are real and stated:
   GIN index on `preferred_languages`). It is bounded by the threshold and paid once
   per story rather than once per read, but it is the first thing to index when the
   user table grows.
+
+---
+
+## KNOT-ADR-094 — Detail responses are cached for ten minutes, and the feed carries adaptations
+
+**Context.** KNOT-036 precomputed the default feed but disclosed two gaps. The
+cached page held **story ids only**, so the adaptation entries the SQL feed
+interleaves were missing from it — a cached page was a strict subset of the queried
+one, and a brand-new adaptation never appeared in a cached feed. And a tap on an
+entry still ran the full detail read: the row, the author, the Rooted summary, the
+media, four count statements and the reactions (plus a lineage walk for a version).
+That is the read a reader waits on, so it is the read worth caching.
+
+**Decision.**
+
+- **Feed parity by a second sorted set.** Each reader now has two sets:
+  `knot:feed:{user_id}` for story ids and `knot:feed_versions:{user_id}` for version
+  ids, both scored by the entry's own `created_at`. The read path reads both, merges
+  them by score (id as the tie-break, matching `created_at DESC, id DESC`), truncates
+  to the page, and resolves the result in **one** query —
+  `stories.FeedItemsByIDs` — that reuses `feedStoryBranch` and `feedVersionBranch`,
+  the two branches `ListFeed` is built from. A cached entry is therefore produced by
+  exactly the SQL that would have produced it from the table, and both kinds flow
+  through the same `feedPageLookups.enrich`, so the page is identical in shape and
+  content. A high-fanout author gets a matching pair of author sets
+  (`knot:author_feed_versions:{author_id}`), so an adaptation from a large author is
+  stored once like their stories. The cold-start seed writes both kinds.
+- **Adaptations are fanned out like stories.** `POST /stories/{id}/adapt` resolves the
+  audience with the same query and writes the version id into the version set, on a
+  detached goroutine, exactly as a publish does.
+- **Detail responses are cached as JSON.** `knot:story:{id}` and `knot:version:{id}`
+  hold the serialized response envelope with a **10-minute TTL**
+  (`KNOT_DETAIL_CACHE_TTL`). The payload is the **anonymous projection**: the handler
+  blanks `my_reactions` before storing and re-applies the reader's own signals on a
+  hit.
+- **Invalidation is on write.** A publish deletes its own story key (hygiene: it
+  cannot exist yet). An adaptation deletes the **parent story's** key, because
+  `version_count` and `language_count` change, and the new version's key. Both run on
+  the request path so the next reader cannot see the old counts.
+
+**Alternatives Considered.**
+
+1. **A member prefix (`story:<id>` / `version:<id>`) in one set.** Rejected: it
+   rewrites the existing story fan-out, the existing key and every existing reader for
+   a saving of one command per read.
+2. **Caching the response verbatim, reader-specific fields included.** Rejected
+   outright. `my_reactions` belongs to the reader who asked, so one reader's signals
+   would be served to another — and `GetStory`/`GetVersion` also refuse a blocked
+   author, which a cache hit that skipped the service would not do. The cached payload
+   is the anonymous projection and both the block check and the reader's reactions are
+   re-applied on a hit.
+3. **Invalidating from every write that touches a detail** (reaction toggles, comments,
+   inquiries). Rejected for this task: it would touch eight reaction routes and the
+   conversation domain for a counter nobody is reading at the exact moment they
+   toggled it. The TTL is the deliberate bound — see the consequences.
+4. **No TTL, invalidation everywhere.** Rejected: one missing invalidation site would
+   then be permanent instead of a ten-minute delay.
+
+**Consequences.** A repeat tap on a story or version costs one `GET` plus, for a
+signed-in reader, one reactions read — instead of six to eight statements. The costs
+and limits are stated plainly:
+
+- **The detail response is a shared projection, not a per-reader one.** If a future
+  task adds a reader-specific field, it must be applied in
+  `cachedStoryDetail`/`cachedVersionDetail` (as `my_reactions` is), or the cache must
+  be partitioned per reader, or dropped. This is the load-bearing constraint of this
+  decision.
+- **Reaction and comment counts can be up to the TTL stale.** They are not
+  invalidated today; the TTL is what heals them.
+- **The cached feed page still has no cursor.** Pagination remains on the SQL path
+  (KNOT-ADR-093), and the first page is the only cached one.
+- **Feed parity is conditional on the sets being complete.** A reader who has never
+  been fanned out to is seeded from their first SQL page, which now includes
+  adaptations; a reader whose sets were partly trimmed sees the newest entries only,
+  exactly as before.
+- **Deletion is still not invalidated.** A cached detail outlives a deleted story for
+  at most the TTL, and a cached feed id that no longer resolves is skipped.

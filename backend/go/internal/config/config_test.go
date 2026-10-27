@@ -3,6 +3,7 @@ package config
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // clearEnv removes every variable Load reads so each test starts from a known
@@ -31,6 +32,8 @@ func clearEnv(t *testing.T) {
 		envKeyFeedCache,
 		envKeyFeedThreshold,
 		envKeyFeedCap,
+		envKeyDetailCache,
+		envKeyDetailTTL,
 	} {
 		t.Setenv(key, "")
 	}
@@ -57,6 +60,12 @@ func TestLoadDefaultsWhenEnvUnset(t *testing.T) {
 	}
 	if cfg.FeedCap != DefaultFeedCap {
 		t.Errorf("FeedCap = %d, want %d", cfg.FeedCap, DefaultFeedCap)
+	}
+	if !cfg.DetailCacheEnabled {
+		t.Error("DetailCacheEnabled = false, want true (the detail cache is the default read path)")
+	}
+	if cfg.DetailCacheTTL != DefaultDetailCacheTTL {
+		t.Errorf("DetailCacheTTL = %s, want %s", cfg.DetailCacheTTL, DefaultDetailCacheTTL)
 	}
 	if cfg.PostgresDSN != defaultPostgresDSN {
 		t.Errorf("PostgresDSN = %q, want default %q", cfg.PostgresDSN, defaultPostgresDSN)
@@ -667,6 +676,47 @@ func TestLoadRejectsInvalidFeedSettings(t *testing.T) {
 		"negative cap":      {key: envKeyFeedCap, value: "-1"},
 		"zero threshold":    {key: envKeyFeedThreshold, value: "0"},
 		"text threshold":    {key: envKeyFeedThreshold, value: "many"},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv(tc.key, tc.value)
+
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load() error = nil, want an error for %s=%q", tc.key, tc.value)
+			}
+		})
+	}
+}
+
+func TestLoadDetailCacheSettings(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envKeyDetailCache, "off")
+	t.Setenv(envKeyDetailTTL, " 90s ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error %v, want nil", err)
+	}
+
+	if cfg.DetailCacheEnabled {
+		t.Error("DetailCacheEnabled = true, want false for KNOT_DETAIL_CACHE_ENABLED=off")
+	}
+	if cfg.DetailCacheTTL != 90*time.Second {
+		t.Errorf("DetailCacheTTL = %s, want 90s", cfg.DetailCacheTTL)
+	}
+}
+
+func TestLoadRejectsInvalidDetailCacheSettings(t *testing.T) {
+	tests := map[string]struct {
+		key   string
+		value string
+	}{
+		"unparsable switch": {key: envKeyDetailCache, value: "maybe"},
+		"unparsable ttl":    {key: envKeyDetailTTL, value: "ten minutes"},
+		"zero ttl":          {key: envKeyDetailTTL, value: "0s"},
+		"negative ttl":      {key: envKeyDetailTTL, value: "-5m"},
 	}
 
 	for name, tc := range tests {

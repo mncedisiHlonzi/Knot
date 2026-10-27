@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/knot/backend/internal/feedcache"
 	"github.com/knot/backend/internal/reactions"
 	"github.com/knot/backend/internal/stories"
 	"github.com/knot/backend/internal/versions"
@@ -29,9 +30,10 @@ type StoriesService interface {
 	CreateStory(ctx context.Context, in stories.CreateStoryInput) (stories.Story, error)
 	GetStory(ctx context.Context, id string) (stories.Story, error)
 	ListFeed(ctx context.Context, cursor string, limit int) ([]stories.FeedItem, string, error)
-	// StoriesByIDs turns a page of ids from the precomputed feed back into story
-	// entries, in the order the cache returned them (KNOT-036).
-	StoriesByIDs(ctx context.Context, ids []string) ([]stories.FeedItem, error)
+	// FeedItemsByIDs turns a page of ids from the precomputed feed back into feed
+	// entries of both kinds, in the order the cache returned them (KNOT-036,
+	// KNOT-036-fix).
+	FeedItemsByIDs(ctx context.Context, refs []stories.FeedRef) ([]stories.FeedItem, error)
 }
 
 // The feed's discriminator values. They mirror the domain's own literals so the
@@ -53,10 +55,10 @@ type StoriesHandler struct {
 	interactions InteractionLookup
 	recorder     InteractionRecorder
 	ranking      FeedRanking
-	// feed is the precomputed feed read before the SQL query. Nil means the cache
-	// is switched off (or absent), in which case every request takes the SQL path
-	// exactly as it did before KNOT-036.
-	feed   FeedCache
+	// caches are the optional Redis read caches: the precomputed feed read before
+	// the SQL feed, and the story detail store (KNOT-036, KNOT-036-fix). Nil fields
+	// mean "take the database path".
+	caches Caches
 	logger *slog.Logger
 }
 
@@ -106,6 +108,18 @@ func NewStoriesHandlerWithRanking(service StoriesService, authors AuthorLookup, 
 // from Redis and falls back to SQL on a miss, while the ranked `for_you` feed keeps
 // using SQL.
 func NewStoriesHandlerWithPrecomputedFeed(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, stats StoryStatsLookup, chains VersionChainLookup, interactions InteractionLookup, logger *slog.Logger, recorder InteractionRecorder, ranking FeedRanking, feed FeedCache) (*StoriesHandler, error) {
+	return NewStoriesHandlerWithCaches(
+		service, authors, rooted, media, reactions, stats, chains, interactions, logger, recorder, ranking,
+		Caches{Feed: feed},
+	)
+}
+
+// NewStoriesHandlerWithCaches is NewStoriesHandlerWithPrecomputedFeed plus the
+// detail cache (KNOT-036-fix).
+//
+// Either cache may be nil, and a nil cache means "take the database path": a
+// deployment with Redis trouble still serves every request, just slower.
+func NewStoriesHandlerWithCaches(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, stats StoryStatsLookup, chains VersionChainLookup, interactions InteractionLookup, logger *slog.Logger, recorder InteractionRecorder, ranking FeedRanking, caches Caches) (*StoriesHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a service")
 	}
@@ -133,7 +147,7 @@ func NewStoriesHandlerWithPrecomputedFeed(service StoriesService, authors Author
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a logger")
 	}
-	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, stats: stats, chains: chains, interactions: interactions, recorder: recorder, ranking: ranking, feed: feed, logger: logger}, nil
+	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, stats: stats, chains: chains, interactions: interactions, recorder: recorder, ranking: ranking, caches: caches, logger: logger}, nil
 }
 
 // createStoryRequest is the POST /stories body.
@@ -455,14 +469,31 @@ func (h *StoriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// The feed is precomputed on write: this story is pushed into the Redis feed of
 	// every reader who should see it. It runs off the request path and never fails
 	// the publish, so the response below is already the whole answer (KNOT-036).
-	recordFeedFanout(r.Context(), h.logger, h.feed, created.ID, created.AuthorID, created.Language, created.CreatedAt)
+	recordFeedFanout(r.Context(), h.logger, h.caches.Feed, feedcache.KindStory, created.ID, created.AuthorID, created.Language, created.CreatedAt)
+
+	// A brand-new story cannot have a cached detail yet, so this delete is hygiene
+	// rather than repair: it keeps the key space honest if anything else ever writes
+	// that key (KNOT-036-fix).
+	invalidateStoryDetail(r.Context(), h.logger, h.caches.Details, created.ID)
 
 	writeJSON(w, http.StatusCreated, storyEnvelope{Story: response})
 }
 
 // Get handles GET /stories/{id}. The route is public.
 func (h *StoriesHandler) Get(w http.ResponseWriter, r *http.Request) {
-	story, err := h.service.GetStory(r.Context(), r.PathValue("id"))
+	storyID := r.PathValue("id")
+	userID, _ := UserIDFromContext(r.Context())
+
+	// A repeat tap on the same story is answered from Redis. The cached payload
+	// carries the anonymous projection, so the reader's own signals and the block
+	// filter are re-applied inside cachedStoryDetail (KNOT-036-fix).
+	if cached, ok := h.cachedStoryDetail(r.Context(), storyID); ok {
+		recordInteraction(r.Context(), h.logger, h.recorder, userID, interactionEntityStory, cached.ID, interactionView)
+		writeJSON(w, http.StatusOK, storyEnvelope{Story: *cached})
+		return
+	}
+
+	story, err := h.service.GetStory(r.Context(), storyID)
 	if err != nil {
 		h.writeServiceError(w, r, err)
 		return
@@ -474,7 +505,6 @@ func (h *StoriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 	response.Media = storyMediaForDetail(r.Context(), h.media, h.logger, story.ID)
 	attachStoryCounts(&response, h.stats, r, h.logger, story.ID)
 
-	userID, _ := UserIDFromContext(r.Context())
 	response.Reactions, response.MyReactions = reactionsForEntity(r.Context(), h.reactions, h.logger, reactions.EntityStory, userID, story.ID)
 
 	// The story detail IS the root version, so its attribution needs no store
@@ -494,8 +524,11 @@ func (h *StoriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	// Opening the detail is a view for the signed-in reader. It is telemetry for
 	// the relevance engine, so it is fire-and-forget and never affects the
-	// response (KNOT-026).
+	// response (KNOT-026). It is recorded whether the response came from the
+	// database or the cache: a cached read is still a read.
 	recordInteraction(r.Context(), h.logger, h.recorder, userID, interactionEntityStory, story.ID, interactionView)
+
+	h.storeStoryDetail(r.Context(), response)
 
 	writeJSON(w, http.StatusOK, storyEnvelope{Story: response})
 }
@@ -569,7 +602,7 @@ func (h *StoriesHandler) List(w http.ResponseWriter, r *http.Request) {
 	// wrong entries in the wrong order into the cached path.
 	if !fromCache && rawCursor == "" && feedType != feedTypeForYou {
 		if userID, ok := UserIDFromContext(r.Context()); ok && len(page) > 0 {
-			seedPrecomputedFeed(r.Context(), h.logger, h.feed, userID, seedEntries(page))
+			seedPrecomputedFeed(r.Context(), h.logger, h.caches.Feed, userID, seedEntries(page))
 		}
 	}
 

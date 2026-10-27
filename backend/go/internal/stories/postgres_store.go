@@ -293,42 +293,46 @@ func (s *PostgresStore) ListFeed(ctx context.Context, cursor *Cursor, limit int)
 	return page[:limit], &next, nil
 }
 
-// StoriesByIDs returns the stories with the given ids in one query.
+// FeedItemsByIDs returns the merged-feed entries for the given ids in one query.
 //
-// It backs the precomputed feed's read path (KNOT-036): the feed cache holds ids,
-// and a page of them has to become story rows without a query per entry. The ids
-// are proven canonical UUID text before they reach this method, so the array cast
-// cannot fail on a malformed element.
+// It backs the precomputed feed's read path (KNOT-036, KNOT-036-fix): the cache
+// holds ids of both kinds, and a page of them has to become entries without a
+// query per entry. Rather than inventing a second projection, it reuses the two
+// branches `ListFeed` is built from — `feedStoryBranch` and `feedVersionBranch` —
+// with an id predicate instead of a cursor predicate, so an entry served from the
+// cache is produced by exactly the SQL that would have served it from the table.
 //
-// A missing row is absent from the result rather than an error: a feed entry that
-// outlived its story is skipped by the caller. Ordering is left to the caller,
-// which knows the order the cache returned.
-func (s *PostgresStore) StoriesByIDs(ctx context.Context, ids []string) ([]Story, error) {
-	if len(ids) == 0 {
-		return []Story{}, nil
+// The ids are proven canonical UUID text before they reach this method, so the
+// array casts cannot fail on a malformed element. A missing row is absent from the
+// result rather than an error: a feed entry that outlived its story is skipped by
+// the caller. Ordering is the caller's, which knows the order the cache returned.
+func (s *PostgresStore) FeedItemsByIDs(ctx context.Context, storyIDs, versionIDs []string) ([]FeedItem, error) {
+	if len(storyIDs) == 0 && len(versionIDs) == 0 {
+		return []FeedItem{}, nil
 	}
 
-	const query = `SELECT ` + storyColumns + storyFrom + ` WHERE s.id = ANY($1::uuid[])`
+	query := feedStoryBranch + ` WHERE s.id = ANY($1::uuid[])` +
+		` UNION ALL ` + feedVersionBranch + ` WHERE v.id = ANY($2::uuid[])`
 
-	rows, err := s.pool.Query(ctx, query, ids)
+	rows, err := s.pool.Query(ctx, query, storyIDs, versionIDs)
 	if err != nil {
-		return nil, fmt.Errorf("stories: stories by ids: %w", err)
+		return nil, fmt.Errorf("stories: feed items by ids: %w", err)
 	}
 	defer rows.Close()
 
-	found := make([]Story, 0, len(ids))
+	items := make([]FeedItem, 0, len(storyIDs)+len(versionIDs))
 	for rows.Next() {
-		story, err := scanStory(rows)
+		item, err := scanFeedItem(rows)
 		if err != nil {
-			return nil, fmt.Errorf("stories: stories by ids: %w", err)
+			return nil, fmt.Errorf("stories: feed items by ids: %w", err)
 		}
-		found = append(found, story)
+		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("stories: stories by ids: %w", err)
+		return nil, fmt.Errorf("stories: feed items by ids: %w", err)
 	}
 
-	return found, nil
+	return items, nil
 }
 
 // rowScanner is the subset of pgx.Row and pgx.Rows that scanStory needs.

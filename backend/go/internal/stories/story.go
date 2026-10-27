@@ -192,11 +192,14 @@ type StoryStore interface {
 	// the newest entry. The returned cursor is the position to resume from, or
 	// nil when the page is the last one. See FeedItem for the two entry kinds.
 	ListFeed(ctx context.Context, cursor *Cursor, limit int) ([]FeedItem, *Cursor, error)
-	// StoriesByIDs returns the stories with the given ids, in one query. Ids that
-	// do not exist are simply absent from the result; the caller decides what an
-	// incomplete set means. It is how the precomputed feed turns a page of cached
-	// ids back into story rows (KNOT-036).
-	StoriesByIDs(ctx context.Context, ids []string) ([]Story, error)
+	// FeedItemsByIDs returns the merged-feed entries for the given ids, in one
+	// query: the stories named in storyIDs and the adaptations named in
+	// versionIDs. Ids that do not exist are simply absent from the result; the
+	// caller decides what an incomplete set means. It is how the precomputed feed
+	// turns a page of cached ids back into rows, for BOTH entry kinds, using the
+	// same branches the SQL feed uses so a cached entry and a queried entry cannot
+	// drift apart (KNOT-036, KNOT-036-fix).
+	FeedItemsByIDs(ctx context.Context, storyIDs, versionIDs []string) ([]FeedItem, error)
 }
 
 // Service holds the stories business rules.

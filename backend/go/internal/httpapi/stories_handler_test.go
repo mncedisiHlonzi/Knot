@@ -47,7 +47,7 @@ type memoryStoryStore struct {
 	gotCreate  stories.Story
 	gotCursor  *stories.Cursor
 	gotLimit   int
-	gotByIDs   []string
+	gotRefs    []stories.FeedRef
 	createCall int
 	getCalls   int
 	listCalls  int
@@ -125,21 +125,36 @@ func (m *memoryStoryStore) ListFeed(_ context.Context, cursor *stories.Cursor, l
 	return remaining[:limit], &next, nil
 }
 
-// StoriesByIDs returns the seeded stories with the given ids, in the order asked
+// FeedItemsByIDs returns the seeded entries with the given refs, in the order asked
 // for. It is how the precomputed-feed tests turn a page of cached ids back into
-// rows without a database (KNOT-036).
-func (m *memoryStoryStore) StoriesByIDs(_ context.Context, ids []string) ([]stories.Story, error) {
+// rows without a database (KNOT-036, KNOT-036-fix).
+func (m *memoryStoryStore) FeedItemsByIDs(_ context.Context, storyIDs, versionIDs []string) ([]stories.FeedItem, error) {
 	m.byIDCalls++
-	m.gotByIDs = ids
+	m.gotRefs = make([]stories.FeedRef, 0, len(storyIDs)+len(versionIDs))
+	for _, id := range storyIDs {
+		m.gotRefs = append(m.gotRefs, stories.FeedRef{Kind: stories.FeedKindStory, ID: id})
+	}
+	for _, id := range versionIDs {
+		m.gotRefs = append(m.gotRefs, stories.FeedRef{Kind: stories.FeedKindVersion, ID: id})
+	}
+
 	if m.err != nil {
 		return nil, m.err
 	}
 
-	found := make([]stories.Story, 0, len(ids))
-	for _, id := range ids {
+	found := make([]stories.FeedItem, 0, len(storyIDs)+len(versionIDs))
+	for _, id := range storyIDs {
 		for _, story := range m.stories {
 			if story.ID == id {
-				found = append(found, story)
+				found = append(found, stories.FeedItem{Kind: stories.FeedKindStory, Story: story})
+				break
+			}
+		}
+	}
+	for _, id := range versionIDs {
+		for _, version := range m.versions {
+			if version.ID == id {
+				found = append(found, stories.FeedItem{Kind: stories.FeedKindVersion, Version: version})
 				break
 			}
 		}
@@ -177,7 +192,7 @@ type fakeStoriesService struct {
 
 	listCalls  int
 	byIDsCalls int
-	gotByIDs   []string
+	gotRefs    []stories.FeedRef
 }
 
 func (f *fakeStoriesService) CreateStory(_ context.Context, _ stories.CreateStoryInput) (stories.Story, error) {
@@ -192,9 +207,9 @@ func (f *fakeStoriesService) ListFeed(_ context.Context, _ string, _ int) ([]sto
 	return f.listResult, f.listNext, f.listErr
 }
 
-func (f *fakeStoriesService) StoriesByIDs(_ context.Context, ids []string) ([]stories.FeedItem, error) {
+func (f *fakeStoriesService) FeedItemsByIDs(_ context.Context, refs []stories.FeedRef) ([]stories.FeedItem, error) {
 	f.byIDsCalls++
-	f.gotByIDs = ids
+	f.gotRefs = refs
 	return f.byIDsResult, f.byIDsErr
 }
 
@@ -390,9 +405,12 @@ type feedLookups struct {
 	stats        StoryStatsLookup
 	chains       VersionChainLookup
 	interactions InteractionLookup
-	// feed is the precomputed feed cache. Nil is the pre-KNOT-036 behaviour: every
-	// request takes the SQL path.
-	feed FeedCache
+	// versions is the versions service the Tell My People routes use. Nil means
+	// the inert fake.
+	versions VersionsService
+	// caches are the optional Redis read caches (KNOT-036, KNOT-036-fix). Zero
+	// means the pre-cache behaviour: every request takes the database path.
+	caches Caches
 }
 
 // newRouterWithFeedLookups assembles the full router with explicit feed
@@ -405,12 +423,17 @@ func newRouterWithFeedLookups(t *testing.T, logger *slog.Logger, service Stories
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandlerWithPrecomputedFeed(service, lookups.authors, lookups.rooted, lookups.media, lookups.reactions, lookups.stats, lookups.chains, lookups.interactions, logger, nil, FeedRanking{}, lookups.feed)
+	storiesHandler, err := NewStoriesHandlerWithCaches(service, lookups.authors, lookups.rooted, lookups.media, lookups.reactions, lookups.stats, lookups.chains, lookups.interactions, logger, nil, FeedRanking{}, lookups.caches)
 	if err != nil {
-		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
+		t.Fatalf("NewStoriesHandlerWithCaches() error = %v, want nil", err)
 	}
 
-	versionsHandler, err := NewVersionsHandler(&fakeVersionsService{}, &fakeAuthorService{}, &fakeRootedService{}, &fakeReactionsLookup{}, logger)
+	versionsService := lookups.versions
+	if versionsService == nil {
+		versionsService = &fakeVersionsService{}
+	}
+
+	versionsHandler, err := NewVersionsHandlerWithCaches(versionsService, &fakeAuthorService{}, &fakeRootedService{}, &fakeReactionsLookup{}, logger, nil, lookups.caches)
 	if err != nil {
 		t.Fatalf("NewVersionsHandler() error = %v, want nil", err)
 	}
