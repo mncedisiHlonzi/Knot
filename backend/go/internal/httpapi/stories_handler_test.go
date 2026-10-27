@@ -47,9 +47,11 @@ type memoryStoryStore struct {
 	gotCreate  stories.Story
 	gotCursor  *stories.Cursor
 	gotLimit   int
+	gotByIDs   []string
 	createCall int
 	getCalls   int
 	listCalls  int
+	byIDCalls  int
 }
 
 func (m *memoryStoryStore) CreateStory(_ context.Context, story stories.Story) (stories.Story, error) {
@@ -123,6 +125,29 @@ func (m *memoryStoryStore) ListFeed(_ context.Context, cursor *stories.Cursor, l
 	return remaining[:limit], &next, nil
 }
 
+// StoriesByIDs returns the seeded stories with the given ids, in the order asked
+// for. It is how the precomputed-feed tests turn a page of cached ids back into
+// rows without a database (KNOT-036).
+func (m *memoryStoryStore) StoriesByIDs(_ context.Context, ids []string) ([]stories.Story, error) {
+	m.byIDCalls++
+	m.gotByIDs = ids
+	if m.err != nil {
+		return nil, m.err
+	}
+
+	found := make([]stories.Story, 0, len(ids))
+	for _, id := range ids {
+		for _, story := range m.stories {
+			if story.ID == id {
+				found = append(found, story)
+				break
+			}
+		}
+	}
+
+	return found, nil
+}
+
 // beforeCursor reports whether an entry with this sort key sorts strictly after
 // cursor in the feed order (created_at DESC, id DESC), i.e. whether it belongs on
 // a later page. It takes the key rather than the entry so the story store's
@@ -147,6 +172,12 @@ type fakeStoriesService struct {
 	listResult   []stories.FeedItem
 	listNext     string
 	listErr      error
+	byIDsResult  []stories.FeedItem
+	byIDsErr     error
+
+	listCalls  int
+	byIDsCalls int
+	gotByIDs   []string
 }
 
 func (f *fakeStoriesService) CreateStory(_ context.Context, _ stories.CreateStoryInput) (stories.Story, error) {
@@ -159,6 +190,12 @@ func (f *fakeStoriesService) GetStory(_ context.Context, _ string) (stories.Stor
 
 func (f *fakeStoriesService) ListFeed(_ context.Context, _ string, _ int) ([]stories.FeedItem, string, error) {
 	return f.listResult, f.listNext, f.listErr
+}
+
+func (f *fakeStoriesService) StoriesByIDs(_ context.Context, ids []string) ([]stories.FeedItem, error) {
+	f.byIDsCalls++
+	f.gotByIDs = ids
+	return f.byIDsResult, f.byIDsErr
 }
 
 // feedOf wraps stories as story entries of the merged feed, so a test that cares
@@ -353,6 +390,9 @@ type feedLookups struct {
 	stats        StoryStatsLookup
 	chains       VersionChainLookup
 	interactions InteractionLookup
+	// feed is the precomputed feed cache. Nil is the pre-KNOT-036 behaviour: every
+	// request takes the SQL path.
+	feed FeedCache
 }
 
 // newRouterWithFeedLookups assembles the full router with explicit feed
@@ -365,7 +405,7 @@ func newRouterWithFeedLookups(t *testing.T, logger *slog.Logger, service Stories
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandler(service, lookups.authors, lookups.rooted, lookups.media, lookups.reactions, lookups.stats, lookups.chains, lookups.interactions, logger)
+	storiesHandler, err := NewStoriesHandlerWithPrecomputedFeed(service, lookups.authors, lookups.rooted, lookups.media, lookups.reactions, lookups.stats, lookups.chains, lookups.interactions, logger, nil, FeedRanking{}, lookups.feed)
 	if err != nil {
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}

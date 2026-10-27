@@ -60,6 +60,9 @@ const (
 	envKeyResendAPIKey    = "KNOT_RESEND_API_KEY"
 	envKeyEmailFrom       = "KNOT_EMAIL_FROM"
 	envKeyWebURL          = "KNOT_WEB_URL"
+	envKeyFeedCache       = "KNOT_FEED_CACHE_ENABLED"
+	envKeyFeedThreshold   = "KNOT_FEED_FANOUT_THRESHOLD"
+	envKeyFeedCap         = "KNOT_FEED_CAP"
 )
 
 // Safe local defaults. These are placeholders that match .env.example and the
@@ -96,6 +99,17 @@ const (
 	// nowhere on purpose: there is no web app yet, and a deployment must set
 	// KNOT_WEB_URL to its real origin before anyone relies on the link.
 	defaultWebURL = "https://knot.local"
+
+	// DefaultFeedCacheEnabled is ON: the precomputed feed is the default read path,
+	// and the switch exists so a problem with Redis can be diagnosed against the SQL
+	// feed without a deploy (KNOT-036).
+	defaultFeedCacheEnabled = true
+	// DefaultFeedFanoutThreshold mirrors feedcache.FanoutThreshold: past this audience
+	// size an author's stories are stored once instead of fanned out.
+	DefaultFeedFanoutThreshold = 10000
+	// DefaultFeedCap mirrors feedcache.FeedCap: how many entries one reader's
+	// precomputed feed holds.
+	DefaultFeedCap = 800
 )
 
 // LocalJWTSecretPlaceholder is the documented local-only signing secret. It is
@@ -190,6 +204,19 @@ type Config struct {
 	// clients do not treat a custom scheme as a link (KNOT-031a-fix). A trailing
 	// slash is tolerated and normalised by the authentication service.
 	WebURL string
+
+	// FeedCacheEnabled switches the precomputed feed on or off (KNOT-036). With it
+	// off, GET /stories takes the PostgreSQL path exactly as it did before, and no
+	// story is fanned out — which is the escape hatch an operator needs if Redis is
+	// the problem.
+	FeedCacheEnabled bool
+	// FeedFanoutThreshold is the audience size above which an author is treated as
+	// high-fanout: their stories are stored once and pulled at read time instead of
+	// being written into every reader's feed.
+	FeedFanoutThreshold int
+	// FeedCap is how many entries one reader's precomputed feed holds. The sorted set
+	// is trimmed to it on every insert, which is what replaces a time to live.
+	FeedCap int
 }
 
 // Load reads configuration from the process environment.
@@ -221,6 +248,12 @@ type Config struct {
 //     "minio" (the default, in every environment) or "r2". Any other value is
 //     an error, because a typo there would point a deployment at the wrong store
 //     (KNOT-037).
+//   - KNOT_FEED_CACHE_ENABLED switches the precomputed feed on or off. It defaults
+//     to true; "false", "0", "no" and "off" switch it off, and anything else is
+//     an error rather than a silent truthy read (KNOT-036).
+//   - KNOT_FEED_FANOUT_THRESHOLD and KNOT_FEED_CAP must be positive integers when
+//     set, and default to 10000 and 800. A zero or negative value is an error: a
+//     feed of size zero would silently serve nothing.
 //
 // Load performs no I/O beyond reading environment variables.
 func Load() (Config, error) {
@@ -244,6 +277,21 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 
+	feedCacheEnabled, err := parseFeedCacheEnabled(os.Getenv(envKeyFeedCache))
+	if err != nil {
+		return Config{}, err
+	}
+
+	feedFanoutThreshold, err := parsePositiveCount(envKeyFeedThreshold, os.Getenv(envKeyFeedThreshold), DefaultFeedFanoutThreshold)
+	if err != nil {
+		return Config{}, err
+	}
+
+	feedCap, err := parsePositiveCount(envKeyFeedCap, os.Getenv(envKeyFeedCap), DefaultFeedCap)
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
 		Env:             resolveEnv(os.Getenv(envKeyEnv)),
 		PostgresDSN:     strings.TrimSpace(os.Getenv(envKeyPostgresDSN)),
@@ -263,6 +311,10 @@ func Load() (Config, error) {
 		ResendAPIKey:    strings.TrimSpace(os.Getenv(envKeyResendAPIKey)),
 		EmailFrom:       strings.TrimSpace(os.Getenv(envKeyEmailFrom)),
 		WebURL:          strings.TrimSpace(os.Getenv(envKeyWebURL)),
+
+		FeedCacheEnabled:    feedCacheEnabled,
+		FeedFanoutThreshold: feedFanoutThreshold,
+		FeedCap:             feedCap,
 	}
 
 	// The From address has a default in every environment: there is nothing
@@ -450,4 +502,49 @@ func resolveEnv(raw string) string {
 		return defaultEnv
 	}
 	return env
+}
+
+// parseFeedCacheEnabled resolves KNOT_FEED_CACHE_ENABLED.
+//
+// Unset is ON, because the precomputed feed is the default read path. The explicit
+// false spellings are accepted so a shell, a compose file and a dashboard can each
+// write the value the way they prefer; anything else is refused rather than
+// silently read as true, because "KNOT_FEED_CACHE_ENABLED=nope" that quietly left
+// the cache on would be a trap (KNOT-036).
+func parseFeedCacheEnabled(raw string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "":
+		return defaultFeedCacheEnabled, nil
+	case "true", "1", "yes", "on":
+		return true, nil
+	case "false", "0", "no", "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf(
+			"config: %s must be true or false (got %q)",
+			envKeyFeedCache, raw,
+		)
+	}
+}
+
+// parsePositiveCount resolves a positive-integer setting with a default.
+//
+// Zero is refused rather than treated as "unset": a feed cap of zero would serve
+// every reader an empty feed, which is a silent outage, and a fan-out threshold of
+// zero would push every author down the high-fanout path.
+func parsePositiveCount(name, raw string, fallback int) (int, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return fallback, nil
+	}
+
+	value, err := strconv.Atoi(trimmed)
+	if err != nil {
+		return 0, fmt.Errorf("config: %s must be a number: %w", name, err)
+	}
+	if value < 1 {
+		return 0, fmt.Errorf("config: %s must be positive (got %d)", name, value)
+	}
+
+	return value, nil
 }

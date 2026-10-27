@@ -21,15 +21,19 @@ type fakeStore struct {
 	listResult   []FeedItem
 	listNext     *Cursor
 	listErr      error
+	byIDsResult  []Story
+	byIDsErr     error
 
 	gotCreate Story
 	gotGetID  string
 	gotCursor *Cursor
 	gotLimit  int
+	gotByIDs  []string
 
 	createCalls int
 	getCalls    int
 	listCalls   int
+	byIDsCalls  int
 }
 
 func (f *fakeStore) CreateStory(_ context.Context, story Story) (Story, error) {
@@ -62,6 +66,12 @@ func (f *fakeStore) ListFeed(_ context.Context, cursor *Cursor, limit int) ([]Fe
 	f.gotCursor = cursor
 	f.gotLimit = limit
 	return f.listResult, f.listNext, f.listErr
+}
+
+func (f *fakeStore) StoriesByIDs(_ context.Context, ids []string) ([]Story, error) {
+	f.byIDsCalls++
+	f.gotByIDs = ids
+	return f.byIDsResult, f.byIDsErr
 }
 
 // storyEntry wraps a story as a story entry of the merged feed, so a test about
@@ -578,5 +588,78 @@ func TestValidationErrorImplementsTheSentinelContract(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "title") {
 		t.Errorf("Error() = %q, want it to name the field", err.Error())
+	}
+}
+
+// TestStoriesByIDsKeepsTheRequestedOrder proves the cached feed's read contract:
+// the ids arrive in the feed's order and the entries come back the same way, with
+// malformed ids dropped and duplicates read once.
+func TestStoriesByIDsKeepsTheRequestedOrder(t *testing.T) {
+	first := "0a000000-0000-4000-8000-000000000001"
+	second := "0b000000-0000-4000-8000-000000000002"
+
+	store := &fakeStore{
+		byIDsResult: []Story{
+			{ID: first, AuthorID: authorID, Title: "first"},
+			{ID: second, AuthorID: authorID, Title: "second"},
+		},
+	}
+	service, err := NewService(store)
+	if err != nil {
+		t.Fatalf("NewService() error = %v, want nil", err)
+	}
+
+	// The database answers in its own order; the service reorders to the cache's.
+	items, err := service.StoriesByIDs(context.Background(), []string{second, "not-a-uuid", first, second})
+	if err != nil {
+		t.Fatalf("StoriesByIDs() error = %v, want nil", err)
+	}
+
+	if len(items) != 2 {
+		t.Fatalf("items = %d, want 2", len(items))
+	}
+	if items[0].Kind != FeedKindStory {
+		t.Errorf("kind = %q, want %q (the cached path only serves stories)", items[0].Kind, FeedKindStory)
+	}
+	if items[0].ID != second || items[1].ID != first {
+		t.Errorf("order = [%s %s], want [%s %s]", items[0].ID, items[1].ID, second, first)
+	}
+	if len(store.gotByIDs) != 2 {
+		t.Errorf("store ids = %v, want the 2 distinct valid ones", store.gotByIDs)
+	}
+}
+
+// TestStoriesByIDsSkipsMissingStories proves a cached id that no longer resolves is
+// dropped rather than rendered as an empty entry.
+func TestStoriesByIDsSkipsMissingStories(t *testing.T) {
+	store := &fakeStore{byIDsResult: []Story{}}
+	service, err := NewService(store)
+	if err != nil {
+		t.Fatalf("NewService() error = %v, want nil", err)
+	}
+
+	items, err := service.StoriesByIDs(context.Background(), []string{"0a000000-0000-4000-8000-000000000001"})
+	if err != nil {
+		t.Fatalf("StoriesByIDs() error = %v, want nil", err)
+	}
+	if len(items) != 0 {
+		t.Errorf("items = %v, want none", items)
+	}
+}
+
+// TestStoriesByIDsWithNoValidIDsDoesNotQuery proves an all-garbage input costs no
+// database round trip.
+func TestStoriesByIDsWithNoValidIDsDoesNotQuery(t *testing.T) {
+	store := &fakeStore{}
+	service, err := NewService(store)
+	if err != nil {
+		t.Fatalf("NewService() error = %v, want nil", err)
+	}
+
+	if _, err := service.StoriesByIDs(context.Background(), []string{"", "nope"}); err != nil {
+		t.Fatalf("StoriesByIDs() error = %v, want nil", err)
+	}
+	if store.byIDsCalls != 0 {
+		t.Errorf("store calls = %d, want 0", store.byIDsCalls)
 	}
 }

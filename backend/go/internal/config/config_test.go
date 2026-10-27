@@ -28,6 +28,9 @@ func clearEnv(t *testing.T) {
 		envKeyResendAPIKey,
 		envKeyEmailFrom,
 		envKeyWebURL,
+		envKeyFeedCache,
+		envKeyFeedThreshold,
+		envKeyFeedCap,
 	} {
 		t.Setenv(key, "")
 	}
@@ -43,6 +46,17 @@ func TestLoadDefaultsWhenEnvUnset(t *testing.T) {
 
 	if cfg.Env != EnvLocal {
 		t.Errorf("Env = %q, want %q", cfg.Env, EnvLocal)
+	}
+	// The precomputed feed is on by default, and its two numbers are the documented
+	// defaults (KNOT-036).
+	if !cfg.FeedCacheEnabled {
+		t.Error("FeedCacheEnabled = false, want true (the cache is the default read path)")
+	}
+	if cfg.FeedFanoutThreshold != DefaultFeedFanoutThreshold {
+		t.Errorf("FeedFanoutThreshold = %d, want %d", cfg.FeedFanoutThreshold, DefaultFeedFanoutThreshold)
+	}
+	if cfg.FeedCap != DefaultFeedCap {
+		t.Errorf("FeedCap = %d, want %d", cfg.FeedCap, DefaultFeedCap)
 	}
 	if cfg.PostgresDSN != defaultPostgresDSN {
 		t.Errorf("PostgresDSN = %q, want default %q", cfg.PostgresDSN, defaultPostgresDSN)
@@ -616,6 +630,52 @@ func TestLoadRejectsInvalidRedisDB(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), envKeyRedisDB) {
 				t.Errorf("error %q does not name %q", err.Error(), envKeyRedisDB)
+			}
+		})
+	}
+}
+
+func TestLoadFeedSettings(t *testing.T) {
+	clearEnv(t)
+	t.Setenv(envKeyFeedCache, "off")
+	t.Setenv(envKeyFeedThreshold, " 2500 ")
+	t.Setenv(envKeyFeedCap, "1200")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error %v, want nil", err)
+	}
+
+	if cfg.FeedCacheEnabled {
+		t.Error("FeedCacheEnabled = true, want false for KNOT_FEED_CACHE_ENABLED=off")
+	}
+	if cfg.FeedFanoutThreshold != 2500 {
+		t.Errorf("FeedFanoutThreshold = %d, want 2500 (trimmed)", cfg.FeedFanoutThreshold)
+	}
+	if cfg.FeedCap != 1200 {
+		t.Errorf("FeedCap = %d, want 1200", cfg.FeedCap)
+	}
+}
+
+func TestLoadRejectsInvalidFeedSettings(t *testing.T) {
+	tests := map[string]struct {
+		key   string
+		value string
+	}{
+		"unparsable switch": {key: envKeyFeedCache, value: "sometimes"},
+		"zero cap":          {key: envKeyFeedCap, value: "0"},
+		"negative cap":      {key: envKeyFeedCap, value: "-1"},
+		"zero threshold":    {key: envKeyFeedThreshold, value: "0"},
+		"text threshold":    {key: envKeyFeedThreshold, value: "many"},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			clearEnv(t)
+			t.Setenv(tc.key, tc.value)
+
+			if _, err := Load(); err == nil {
+				t.Fatalf("Load() error = nil, want an error for %s=%q", tc.key, tc.value)
 			}
 		})
 	}

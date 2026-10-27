@@ -104,6 +104,49 @@ func (s *Service) ListFeed(ctx context.Context, rawCursor string, limit int) ([]
 	return page, nextCursor, nil
 }
 
+// StoriesByIDs returns story entries for the given ids, in the order given.
+//
+// It is the read half of the precomputed feed (KNOT-036): the feed cache answers
+// with a page of ids, and this turns them into the same story entries the SQL feed
+// serves, so the handler renders both paths identically.
+//
+// The input is filtered rather than trusted — a duplicate is read once and a
+// malformed id is dropped without reaching the database — and an id that no longer
+// exists is skipped, because a cached id outliving its story is the expected
+// consequence of a feed that is trimmed by size rather than invalidated on delete.
+// The block filter is applied here, exactly as GetStory applies it: a block hides
+// an author's stories whichever path a reader reaches them by (KNOT-ADR-060).
+func (s *Service) StoriesByIDs(ctx context.Context, ids []string) ([]FeedItem, error) {
+	unique := uniqueIDs(ids)
+	if len(unique) == 0 {
+		return []FeedItem{}, nil
+	}
+
+	found, err := s.store.StoriesByIDs(ctx, unique)
+	if err != nil {
+		return nil, fmt.Errorf("stories: stories by ids: %w", err)
+	}
+
+	byID := make(map[string]Story, len(found))
+	for _, story := range found {
+		byID[story.ID] = story
+	}
+
+	items := make([]FeedItem, 0, len(unique))
+	for _, id := range unique {
+		story, ok := byID[id]
+		if !ok {
+			continue
+		}
+		if moderation.IsExcludedAuthor(ctx, story.AuthorID) {
+			continue
+		}
+		items = append(items, FeedItem{Kind: FeedKindStory, Story: story})
+	}
+
+	return items, nil
+}
+
 // validateCreateStory applies every input rule and returns the story to store.
 //
 // Title, language, and approximate_location are trimmed because surrounding
@@ -261,6 +304,26 @@ func validateMediaURLs(urls []string) ([]string, error) {
 	}
 
 	return media, nil
+}
+
+// uniqueIDs returns the distinct canonical UUIDs in ids, in the order they first
+// appear, dropping empty and malformed values.
+//
+// Order is preserved because it is the feed cache's ordering: the ids arrive
+// newest-first and the rows must come back the same way.
+func uniqueIDs(ids []string) []string {
+	seen := make(map[string]bool, len(ids))
+	out := make([]string, 0, len(ids))
+
+	for _, id := range ids {
+		if !isUUID(id) || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+
+	return out
 }
 
 // isUUID reports whether s is a canonical 8-4-4-4-12 hexadecimal UUID string.

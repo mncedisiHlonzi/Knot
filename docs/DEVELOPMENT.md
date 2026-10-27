@@ -2760,6 +2760,54 @@ version survives it. `UpsertEntityFeature` is also available on the stories stor
 standalone rebuild of one entity. No schema change: `entity_features` still has no foreign
 key, so content deletion (no such path today) would leave a derived row behind.
 
+## The precomputed feed cache (KNOT-036)
+
+`GET /stories` no longer always runs the SQL feed. The default (chronological)
+feed is precomputed in Redis when a story is created, and served from one sorted
+set per reader (`knot:feed:{user_id}`, story id → `created_at` in Unix seconds,
+trimmed to `KNOT_FEED_CAP`). The ranked `?feed_type=for_you` feed is unchanged and
+still uses SQL. See KNOT-ADR-093 for the decision and its limitations.
+
+**Three settings** (`.env`, all optional):
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `KNOT_FEED_CACHE_ENABLED` | `true` | `false` serves every request from PostgreSQL and stops fanning out |
+| `KNOT_FEED_FANOUT_THRESHOLD` | `10000` | Past this audience size a story is stored once in `knot:author_feed:{author_id}` instead of being written to every reader |
+| `KNOT_FEED_CAP` | `800` | How many entries one reader's feed holds |
+
+**Inspecting the cache by hand.** The local stack's Redis is `knot-redis` on
+`:6379` (`docker exec -it knot-redis redis-cli`):
+
+```
+ZRANGE knot:feed:{user_id} 0 -1 WITHSCORES   # oldest first, id → created_at (unix)
+ZREVRANGE knot:feed:{user_id} 0 -1           # newest first, which is the read order
+ZRANGE knot:author_feed:{author_id} 0 -1 WITHSCORES
+```
+
+**What to expect when you create a story.** The fan-out runs on a goroutine after
+the 201, so it is not synchronous with the response — if a `ZRANGE` comes back
+empty, wait a beat (or read the `feed fan-out complete` debug line). A reader
+qualifies when their **primary** Rooted signal is for the author's place (or its
+country) *or* their `preferred_languages` contains the story's language; the author
+is never a recipient.
+
+**Why a feed is empty.** Exactly four things produce an empty set: nobody in the
+audience has declared that place/language; the reader is the author; the reader has
+never been fanned out to (their first read seeds the set from the SQL page, so the
+second read is a hit); or the author is high-fanout and their stories live in the
+author feed instead.
+
+**Turning it off.** `KNOT_FEED_CACHE_ENABLED=false` is the escape hatch: every
+request takes the pre-KNOT-036 path, nothing is fanned out, and the sets already in
+Redis are simply ignored (they are bounded, so they age out of usefulness rather
+than needing a flush).
+
+**Known gaps** (deliberate, see KNOT-ADR-093): a cached page carries story entries
+only (adaptations return on page two or with the cache off), there is no cursor on
+the cached path, and deleting a story does not remove its id from feeds — the read
+skips ids that no longer resolve.
+
 ## Testing Auth Locally
 
 Knot's authentication verifies addresses and resets passwords with links that are **emailed

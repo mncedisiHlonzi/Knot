@@ -3332,3 +3332,99 @@ flush per request, `status` in the log is a server-side judgement (503) rather t
 anyone was sent, and the distinction between a deadline and a broken connection lives in the
 message and in `deadline_exceeded` rather than in the status itself. `WriteTimeout` and
 `ReadTimeout` are unchanged; this decision makes their expiry visible, it does not prevent it.
+
+---
+
+## KNOT-ADR-093 — The feed is precomputed in Redis with hybrid fan-out
+
+**Context.** Reconnaissance (KNOT-000-RECON) confirmed that every `GET /stories`
+request is a live, multi-statement PostgreSQL read: the merged `UNION ALL` of
+stories and adaptations, plus one statement each for authors, Rooted summaries,
+media, reactions and interactions, and four for the aggregate counts. That is an
+acceptable cost at MVP scale and the wrong shape for a read-heavy feed: the work
+is repeated identically for every reader on every refresh, and it grows with the
+page's fan-out rather than with the one thing a reader asked for.
+
+The industry-standard answer for a read-heavy social feed is fan-out on write: a
+story is written into each reader's timeline once, and the read becomes a single
+lookup. Knot has no follower graph — its audience is defined by Rooted place and
+preferred language — but the shape of the problem is the same.
+
+**Decision.** The default (chronological) feed is **precomputed in Redis with a
+hybrid fan-out**, and the ranked `for_you` feed is untouched.
+
+- **One sorted set per reader**, `knot:feed:{user_id}`, member = story id, score =
+  `created_at` in Unix seconds — the same ordering the SQL feed serves
+  (`created_at DESC, id DESC`). Writing is `ZADD` + `ZREMRANGEBYRANK` in one
+  pipeline (`cache.SortedSet.Prepend`), trimming to `KNOT_FEED_CAP` (800).
+- **Normal authors fan out on write.** When a story is created, the audience is
+  resolved in one bounded statement (the author's primary Rooted place OR its
+  country, or the story's language in `users.preferred_languages`), excluding the
+  author and deleted accounts. Every target reader's set is written.
+- **High-fanout authors are pulled at read time.** If the audience exceeds
+  `KNOT_FEED_FANOUT_THRESHOLD` (10,000) the story is written **once**, to
+  `knot:author_feed:{author_id}`, and readers merge that set in at read time. The
+  audience query asks for `threshold + 1` ids, so an over-large audience is
+  detected without being materialised.
+- **The default feed is served from Redis.** `GET /stories` (no `feed_type`, no
+  cursor, authenticated) reads the reader's set and resolves the ids with one
+  `IN`-style query. An empty set, an anonymous reader, a paginated request, or a
+  Redis/read failure all fall back to the existing PostgreSQL feed unchanged.
+- **A miss is repaired.** For an authenticated reader on the first page, the SQL
+  page that was just served is written back into their set, off the request path.
+  An anonymous read never populates anything.
+- **No TTL.** The set is bounded by size and updated on write, so it can never
+  grow without limit and never needs rebuilding from scratch. A feed that expired
+  would be slower to serve than one that was trimmed.
+- **Story creation is the invalidation.** The fan-out *is* the update, so no
+  separate invalidation step exists. Deletion (not implemented) will leave a stale
+  entry until it is trimmed out.
+- **Cursor pagination is deferred for the cached path.** The cached path answers
+  the first page only; a request carrying a cursor always goes to SQL. The
+  response shape is unchanged, and `next_cursor` is empty on a cached page.
+
+**Alternatives Considered.**
+
+1. **Pure fan-out on write, no threshold.** Rejected: one author with a large
+   audience turns a single create into an unbounded number of writes, and the
+   publish handler would become the slowest route in the API.
+2. **A read-through cache of the rendered page.** Rejected: any new story or
+   interaction invalidates every reader's cached page, which is exactly the
+   write-amplification problem fan-out exists to avoid, with none of the read
+   benefit at scale.
+3. **A TTL on each feed.** Rejected: an expiring feed has to be rebuilt from
+   PostgreSQL — the query this decision removes — and the rebuild is unbounded
+   work triggered by a clock rather than by a write.
+4. **A message queue or job system for the fan-out.** Rejected for this task:
+   Knot has no worker infrastructure, and adding one to publish one story is a
+   larger change than the feature. The fan-out runs on a detached, bounded
+   goroutine, which is the same boundary the interaction log already uses.
+5. **Widening `cache.Cache` with sorted-set methods.** Rejected: every key/value
+   caller would have to implement them. `cache.NewSortedSet` exposes the two
+   operations the feed needs over the **same** client and connection pool, so
+   there is still exactly one place that opens a socket to Redis.
+
+**Consequences.** The default feed becomes one Redis command plus one batched row
+read instead of nine to eleven statements. The costs are real and stated:
+
+- **The feed is eventually consistent.** A fan-out that fails is logged at ERROR
+  and never retried; the reader keeps their previous feed until a later write or
+  a cold-start seed repairs it. Publishing never fails because of Redis.
+- **The cached path carries story entries only.** The set stores story ids, so
+  adaptation entries — which the SQL feed interleaves — do not appear on a cached
+  page. They return as soon as a reader pages past the first page or the cache is
+  switched off. Closing this needs a second set (or version ids in the same set)
+  and is a follow-up.
+- **No cursor on the cached path**, so a reader who paginates drops to SQL from
+  page two.
+- **Deletion is not reflected.** A deleted story's id stays in feeds until the cap
+  trims it out; the read path skips ids that no longer resolve, so the entry is
+  invisible even while the id lingers.
+- **Block filtering moved to the read.** The cached ids are filtered for hidden
+  authors when they are resolved (`stories.StoriesByIDs` applies the same
+  `moderation.IsExcludedAuthor` rule `GetStory` does), so a block takes effect on
+  the next request rather than on the next fan-out.
+- **The audience query is a scan** of `users` for the language rule (there is no
+  GIN index on `preferred_languages`). It is bounded by the threshold and paid once
+  per story rather than once per read, but it is the first thing to index when the
+  user table grows.

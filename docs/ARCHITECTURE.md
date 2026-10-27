@@ -145,6 +145,54 @@ stack has none) and the database number defaults to 0. `cmd/knot` constructs the
 startup and closes it on shutdown without using it yet, so a bad address fails on boot
 rather than at the first sign-in.
 
+## The precomputed feed (KNOT-036)
+
+The default feed is the product's hottest read and its costliest query: the merged
+`UNION ALL` of stories and adaptations plus five batched lookups and four count
+statements. KNOT-036 moves that work from read time to write time (KNOT-ADR-093).
+
+**One sorted set per reader.** `knot:feed:{user_id}` holds story ids scored by
+`created_at`, trimmed to `KNOT_FEED_CAP` (800) on every insert. A read is one
+`ZREVRANGE` plus one batched row fetch, instead of nine to eleven statements.
+
+**Hybrid fan-out.** Creating a story resolves its audience in a single bounded
+statement — readers whose primary Rooted place (or its country) matches the
+author's, or whose `preferred_languages` contains the story's language, minus the
+author and deleted accounts:
+
+- **normal authors** — the story id is written into every target reader's set;
+- **high-fanout authors** (audience above `KNOT_FEED_FANOUT_THRESHOLD`) — the
+  story is written **once** to `knot:author_feed:{author_id}` and merged in at
+  read time.
+
+The fan-out runs on a detached, bounded goroutine from the publish handler. It is
+best-effort by design: a Redis failure is logged at ERROR and never fails a
+publish, because a stored story is a story.
+
+**Read path.** `GET /stories` on the first page, authenticated, with the cache
+wired:
+
+| Situation | Answer |
+| --- | --- |
+| ids in the reader's set | `stories.StoriesByIDs` (one query), `next_cursor` empty |
+| empty set, anonymous reader, or cursor present | the SQL feed, unchanged |
+| Redis or the row read failed | the SQL feed, unchanged |
+
+A miss for an authenticated reader is repaired off the request path: the page
+PostgreSQL just served is written back into the set. An anonymous read never
+writes.
+
+**Boundaries.** `internal/feedcache` owns the keys, the cap and the fan-out rules;
+`internal/cache` gained a two-method `SortedSet` view over the **same** Redis
+client, so there is still one connection pool and one package that opens a socket.
+The `for_you` ranked feed is untouched and always uses SQL.
+
+**Known limits** (full list in KNOT-ADR-093): the cached page carries story
+entries only — adaptation entries return on page two or with the cache off; there
+is no cursor on the cached path; story deletion does not remove a cached id (the
+read skips ids that no longer resolve); and the language half of the audience
+query is a `users` scan until `preferred_languages` is indexed.
+
 ## Boundaries summary
 
 ```

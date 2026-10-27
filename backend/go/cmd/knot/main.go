@@ -36,6 +36,7 @@ import (
 	"github.com/knot/backend/internal/conversations"
 	"github.com/knot/backend/internal/discovery"
 	"github.com/knot/backend/internal/email"
+	"github.com/knot/backend/internal/feedcache"
 	"github.com/knot/backend/internal/httpapi"
 	"github.com/knot/backend/internal/identity"
 	"github.com/knot/backend/internal/inquiries"
@@ -162,6 +163,37 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 			logger.Warn("closing the redis client failed", slog.Any("error", closeErr))
 		}
 	}()
+
+	// The precomputed feed (KNOT-036). It reuses the Redis client above rather than
+	// dialling a second pool, and resolves a story's audience from the author's
+	// Rooted place and the story's language. With the feature switched off every
+	// feed request keeps taking the SQL path, which is the escape hatch an operator
+	// needs if Redis itself is the problem.
+	var feedCache httpapi.FeedCache
+	if cfg.FeedCacheEnabled {
+		feedSets, err := cache.NewSortedSet(redisCache)
+		if err != nil {
+			return err
+		}
+		feedAudience, err := feedcache.NewPostgresAudience(pool)
+		if err != nil {
+			return err
+		}
+		feed, err := feedcache.New(feedSets, feedAudience, feedcache.Options{
+			Cap:             cfg.FeedCap,
+			FanoutThreshold: cfg.FeedFanoutThreshold,
+		})
+		if err != nil {
+			return err
+		}
+		feedCache = feed
+
+		logger.Info(
+			"precomputed feed cache enabled",
+			slog.Int("feed_cap", cfg.FeedCap),
+			slog.Int("fanout_threshold", cfg.FeedFanoutThreshold),
+		)
+	}
 
 	store, err := identity.NewPostgresStore(pool)
 	if err != nil {
@@ -408,7 +440,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	// adaptations in one stream, so it is built after the versions service and
 	// takes it as its chain lookup: attributing a page of adaptations is a batched
 	// read of the version domain, not a query per entry (KNOT-022).
-	storiesHandler, err := httpapi.NewStoriesHandlerWithRanking(
+	storiesHandler, err := httpapi.NewStoriesHandlerWithPrecomputedFeed(
 		storiesService,
 		service,
 		rootedService,
@@ -427,6 +459,10 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 			Engagement: interactionsStore,
 			Features:   storiesStore,
 		},
+		// The default feed is read from the precomputed cache first. A nil value
+		// means the feature is switched off and every request takes the SQL path
+		// (KNOT-036).
+		feedCache,
 	)
 	if err != nil {
 		return err

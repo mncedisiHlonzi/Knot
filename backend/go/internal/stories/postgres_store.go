@@ -293,6 +293,44 @@ func (s *PostgresStore) ListFeed(ctx context.Context, cursor *Cursor, limit int)
 	return page[:limit], &next, nil
 }
 
+// StoriesByIDs returns the stories with the given ids in one query.
+//
+// It backs the precomputed feed's read path (KNOT-036): the feed cache holds ids,
+// and a page of them has to become story rows without a query per entry. The ids
+// are proven canonical UUID text before they reach this method, so the array cast
+// cannot fail on a malformed element.
+//
+// A missing row is absent from the result rather than an error: a feed entry that
+// outlived its story is skipped by the caller. Ordering is left to the caller,
+// which knows the order the cache returned.
+func (s *PostgresStore) StoriesByIDs(ctx context.Context, ids []string) ([]Story, error) {
+	if len(ids) == 0 {
+		return []Story{}, nil
+	}
+
+	const query = `SELECT ` + storyColumns + storyFrom + ` WHERE s.id = ANY($1::uuid[])`
+
+	rows, err := s.pool.Query(ctx, query, ids)
+	if err != nil {
+		return nil, fmt.Errorf("stories: stories by ids: %w", err)
+	}
+	defer rows.Close()
+
+	found := make([]Story, 0, len(ids))
+	for rows.Next() {
+		story, err := scanStory(rows)
+		if err != nil {
+			return nil, fmt.Errorf("stories: stories by ids: %w", err)
+		}
+		found = append(found, story)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("stories: stories by ids: %w", err)
+	}
+
+	return found, nil
+}
+
 // rowScanner is the subset of pgx.Row and pgx.Rows that scanStory needs.
 type rowScanner interface {
 	Scan(dest ...any) error

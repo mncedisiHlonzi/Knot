@@ -29,6 +29,9 @@ type StoriesService interface {
 	CreateStory(ctx context.Context, in stories.CreateStoryInput) (stories.Story, error)
 	GetStory(ctx context.Context, id string) (stories.Story, error)
 	ListFeed(ctx context.Context, cursor string, limit int) ([]stories.FeedItem, string, error)
+	// StoriesByIDs turns a page of ids from the precomputed feed back into story
+	// entries, in the order the cache returned them (KNOT-036).
+	StoriesByIDs(ctx context.Context, ids []string) ([]stories.FeedItem, error)
 }
 
 // The feed's discriminator values. They mirror the domain's own literals so the
@@ -50,7 +53,11 @@ type StoriesHandler struct {
 	interactions InteractionLookup
 	recorder     InteractionRecorder
 	ranking      FeedRanking
-	logger       *slog.Logger
+	// feed is the precomputed feed read before the SQL query. Nil means the cache
+	// is switched off (or absent), in which case every request takes the SQL path
+	// exactly as it did before KNOT-036.
+	feed   FeedCache
+	logger *slog.Logger
 }
 
 // NewStoriesHandler returns a handler backed by service. The author lookup names and
@@ -86,6 +93,19 @@ func NewStoriesHandlerWithRecorder(service StoriesService, authors AuthorLookup,
 // keeps the chronological feed working and answers 500 for `for_you`, so a
 // wiring mistake can never be mistaken for a correct ranking.
 func NewStoriesHandlerWithRanking(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, stats StoryStatsLookup, chains VersionChainLookup, interactions InteractionLookup, logger *slog.Logger, recorder InteractionRecorder, ranking FeedRanking) (*StoriesHandler, error) {
+	return NewStoriesHandlerWithPrecomputedFeed(
+		service, authors, rooted, media, reactions, stats, chains, interactions, logger, recorder, ranking, nil,
+	)
+}
+
+// NewStoriesHandlerWithPrecomputedFeed is NewStoriesHandlerWithRanking plus the
+// precomputed feed cache (KNOT-036).
+//
+// A nil cache leaves every behaviour unchanged: the default feed is the SQL query
+// it has always been. With a cache, the first page of the default feed is served
+// from Redis and falls back to SQL on a miss, while the ranked `for_you` feed keeps
+// using SQL.
+func NewStoriesHandlerWithPrecomputedFeed(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, stats StoryStatsLookup, chains VersionChainLookup, interactions InteractionLookup, logger *slog.Logger, recorder InteractionRecorder, ranking FeedRanking, feed FeedCache) (*StoriesHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a service")
 	}
@@ -113,7 +133,7 @@ func NewStoriesHandlerWithRanking(service StoriesService, authors AuthorLookup, 
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a logger")
 	}
-	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, stats: stats, chains: chains, interactions: interactions, recorder: recorder, ranking: ranking, logger: logger}, nil
+	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, stats: stats, chains: chains, interactions: interactions, recorder: recorder, ranking: ranking, feed: feed, logger: logger}, nil
 }
 
 // createStoryRequest is the POST /stories body.
@@ -432,6 +452,11 @@ func (h *StoriesHandler) Create(w http.ResponseWriter, r *http.Request) {
 	response := newStoryResponse(created)
 	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, created.AuthorID)
 
+	// The feed is precomputed on write: this story is pushed into the Redis feed of
+	// every reader who should see it. It runs off the request path and never fails
+	// the publish, so the response below is already the whole answer (KNOT-036).
+	recordFeedFanout(r.Context(), h.logger, h.feed, created.ID, created.AuthorID, created.Language, created.CreatedAt)
+
 	writeJSON(w, http.StatusCreated, storyEnvelope{Story: response})
 }
 
@@ -504,23 +529,48 @@ func (h *StoriesHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rawCursor := query.Get("cursor")
+
 	var (
-		page []stories.FeedItem
-		next string
+		page      []stories.FeedItem
+		next      string
+		fromCache bool
 	)
-	if feedType == feedTypeForYou {
+	switch {
+	case feedType == feedTypeForYou:
 		userID, ok := UserIDFromContext(r.Context())
 		if !ok {
 			writeError(w, http.StatusUnauthorized, codeUnauthorized, "authentication required")
 			return
 		}
-		page, next, err = h.rankedFeedPage(r.Context(), userID, query.Get("cursor"), limit)
-	} else {
-		page, next, err = h.service.ListFeed(r.Context(), query.Get("cursor"), limit)
+		page, next, err = h.rankedFeedPage(r.Context(), userID, rawCursor, limit)
+	case rawCursor == "":
+		// The default (chronological) feed tries Redis first. A cached page has no
+		// cursor — the cached path serves the first page only — so this branch is
+		// also where the response's empty next_cursor comes from (KNOT-036).
+		if cached, ok := h.precomputedFeedPage(r.Context(), limit); ok {
+			page, fromCache = cached, true
+			break
+		}
+		fallthrough
+	default:
+		page, next, err = h.service.ListFeed(r.Context(), rawCursor, limit)
 	}
 	if err != nil {
 		h.writeServiceError(w, r, err)
 		return
+	}
+
+	// A signed-in reader whose feed was empty is served by the query above; that page
+	// is then written into Redis so their next read is a single lookup. Anonymous
+	// readers never seed, a later page is not a feed's newest entries, a page that
+	// came from Redis has nothing to repair, and the RANKED feed is never a source:
+	// its order is not the chronological feed's, so seeding from it would put the
+	// wrong entries in the wrong order into the cached path.
+	if !fromCache && rawCursor == "" && feedType != feedTypeForYou {
+		if userID, ok := UserIDFromContext(r.Context()); ok && len(page) > 0 {
+			seedPrecomputedFeed(r.Context(), h.logger, h.feed, userID, seedEntries(page))
+		}
 	}
 
 	storyItems := make([]storyResponse, 0, len(page))

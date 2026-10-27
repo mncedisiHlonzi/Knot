@@ -1,0 +1,400 @@
+package httpapi
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/knot/backend/internal/feedcache"
+	"github.com/knot/backend/internal/stories"
+)
+
+// errCacheDown stands in for a Redis failure.
+var errCacheDown = errors.New("feed cache unavailable")
+
+// The precomputed feed's HTTP behaviour (KNOT-036).
+//
+// The cache is a recorder rather than a real Redis, so every branch of the read
+// path — hit, miss, failure, anonymous, paginated — is testable, and so the
+// background fan-out can be observed without a server. It is mutex-guarded
+// because the handler calls it from goroutines while the test reads it.
+
+// fanoutCall is one recorded FanoutStory call.
+type fanoutCall struct {
+	storyID   string
+	authorID  string
+	language  string
+	createdAt time.Time
+}
+
+// feedCacheState is a consistent snapshot of the recorder.
+type feedCacheState struct {
+	readCalls  int
+	readUserID string
+	readLimit  int
+
+	seedCalls   int
+	seedUserID  string
+	seedEntries []feedcache.Entry
+
+	fanoutCalls []fanoutCall
+}
+
+// feedCacheRecorder is a FeedCache that returns canned values and records
+// everything it was asked to do.
+type feedCacheRecorder struct {
+	mu sync.Mutex
+
+	ids     []string
+	readErr error
+
+	seedErr   error
+	fanoutErr error
+
+	state feedCacheState
+}
+
+func (f *feedCacheRecorder) Read(_ context.Context, userID string, limit int) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.state.readCalls++
+	f.state.readUserID = userID
+	f.state.readLimit = limit
+
+	return f.ids, f.readErr
+}
+
+func (f *feedCacheRecorder) FanoutStory(_ context.Context, storyID, authorID, language string, createdAt time.Time) (feedcache.Result, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.state.fanoutCalls = append(f.state.fanoutCalls, fanoutCall{
+		storyID:   storyID,
+		authorID:  authorID,
+		language:  language,
+		createdAt: createdAt,
+	})
+
+	return feedcache.Result{Recipients: 1}, f.fanoutErr
+}
+
+func (f *feedCacheRecorder) Seed(_ context.Context, userID string, entries []feedcache.Entry) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.state.seedCalls++
+	f.state.seedUserID = userID
+	f.state.seedEntries = entries
+
+	return f.seedErr
+}
+
+// snapshot returns a copy of what the recorder has seen so far.
+func (f *feedCacheRecorder) snapshot() feedCacheState {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	return f.state
+}
+
+// waitFor polls cond until it holds, so a test can observe work the handler
+// deliberately runs off the request path.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+// newStoriesHandlerWithFeed composes the router with the real stories service over
+// store and the given precomputed feed.
+func newStoriesHandlerWithFeed(t *testing.T, store stories.StoryStore, feed FeedCache) http.Handler {
+	t.Helper()
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	service, err := stories.NewService(store)
+	if err != nil {
+		t.Fatalf("stories.NewService() error = %v, want nil", err)
+	}
+
+	return newRouterWithFeedLookups(t, logger, service, feedLookups{
+		authors:      &fakeAuthorService{},
+		rooted:       &fakeRootedService{},
+		media:        &fakeStoryMediaLookup{},
+		reactions:    &fakeReactionsLookup{},
+		stats:        &fakeStoryStatsLookup{},
+		chains:       &fakeVersionChainLookup{},
+		interactions: &fakeInteractionsLookup{},
+		feed:         feed,
+	})
+}
+
+// twoStoryStore seeds a store with two stories whose ids are easy to read.
+func twoStoryStore() (*memoryStoryStore, [2]string) {
+	firstID := "0a000000-0000-4000-8000-000000000001"
+	secondID := "0b000000-0000-4000-8000-000000000002"
+
+	first := storyFixture(firstID, testUserID)
+	second := storyFixture(secondID, testUserID)
+	// The SQL feed is newest-first, so the seed must be too.
+	second.CreatedAt = testNow.Add(time.Minute)
+	second.UpdatedAt = second.CreatedAt
+
+	return &memoryStoryStore{stories: []stories.Story{first, second}}, [2]string{firstID, secondID}
+}
+
+func TestFeedIsServedFromTheCache(t *testing.T) {
+	store, ids := twoStoryStore()
+	feed := &feedCacheRecorder{ids: []string{ids[1]}}
+	handler := newStoriesHandlerWithFeed(t, store, feed)
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories", "", testAccessToken)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var page feedPage
+	decodeBody(t, recorder, &page)
+
+	if len(page.Items) != 1 {
+		t.Fatalf("items = %d, want the 1 cached entry", len(page.Items))
+	}
+	entries := feedStories(t, page)
+	if entries[0].ID != ids[1] {
+		t.Errorf("story id = %q, want the cached %q", entries[0].ID, ids[1])
+	}
+	if page.NextCursor != "" {
+		t.Errorf("next cursor = %q, want empty (the cached path has no cursor)", page.NextCursor)
+	}
+
+	// The whole point: the SQL feed was not queried, and the ids were resolved in
+	// one by-id read.
+	if store.listCalls != 0 {
+		t.Errorf("ListFeed calls = %d, want 0 when the cache answers", store.listCalls)
+	}
+	if store.byIDCalls != 1 {
+		t.Errorf("StoriesByIDs calls = %d, want exactly 1", store.byIDCalls)
+	}
+
+	state := feed.snapshot()
+	if state.readCalls != 1 {
+		t.Fatalf("cache Read calls = %d, want 1", state.readCalls)
+	}
+	if state.readUserID != testUserID {
+		t.Errorf("cache read for %q, want the authenticated %q", state.readUserID, testUserID)
+	}
+	if state.readLimit != stories.DefaultListLimit {
+		t.Errorf("cache limit = %d, want the default %d", state.readLimit, stories.DefaultListLimit)
+	}
+	// A cache hit must not be seeded back into the cache.
+	waitFor(t, "the seed goroutine to stay quiet", func() bool { return true })
+	if state := feed.snapshot(); state.seedCalls != 0 {
+		t.Errorf("Seed calls = %d, want 0 for a cache hit", state.seedCalls)
+	}
+}
+
+func TestFeedFallsBackToPostgresAndSeedsTheCache(t *testing.T) {
+	store, ids := twoStoryStore()
+	feed := &feedCacheRecorder{} // an empty feed: a cold start
+	handler := newStoriesHandlerWithFeed(t, store, feed)
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories", "", testAccessToken)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var page feedPage
+	decodeBody(t, recorder, &page)
+	if len(page.Items) != 2 {
+		t.Fatalf("items = %d, want the 2 stories PostgreSQL returned", len(page.Items))
+	}
+
+	if store.listCalls != 1 {
+		t.Errorf("ListFeed calls = %d, want 1 (the fallback)", store.listCalls)
+	}
+	if store.byIDCalls != 0 {
+		t.Errorf("StoriesByIDs calls = %d, want 0 on a miss", store.byIDCalls)
+	}
+
+	// The page just served is written back, so the reader's next read is a hit.
+	waitFor(t, "the cache to be seeded", func() bool { return feed.snapshot().seedCalls > 0 })
+
+	state := feed.snapshot()
+	if state.seedUserID != testUserID {
+		t.Errorf("seed user = %q, want %q", state.seedUserID, testUserID)
+	}
+	if len(state.seedEntries) != 2 {
+		t.Fatalf("seeded %d entries, want 2", len(state.seedEntries))
+	}
+	if state.seedEntries[0].ID != ids[1] {
+		t.Errorf("first seeded id = %q, want the newest %q", state.seedEntries[0].ID, ids[1])
+	}
+	if !state.seedEntries[0].CreatedAt.Equal(testNow.Add(time.Minute)) {
+		t.Errorf("seeded created_at = %v, want the story's own timestamp", state.seedEntries[0].CreatedAt)
+	}
+}
+
+func TestFeedFallsBackWhenTheCacheReadFails(t *testing.T) {
+	store, _ := twoStoryStore()
+	feed := &feedCacheRecorder{readErr: errCacheDown}
+	handler := newStoriesHandlerWithFeed(t, store, feed)
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories", "", testAccessToken)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: a broken cache must not break the feed (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var page feedPage
+	decodeBody(t, recorder, &page)
+	if len(page.Items) != 2 {
+		t.Errorf("items = %d, want the SQL page", len(page.Items))
+	}
+	if store.listCalls != 1 {
+		t.Errorf("ListFeed calls = %d, want 1", store.listCalls)
+	}
+}
+
+func TestAnonymousFeedNeverTouchesTheCache(t *testing.T) {
+	store, _ := twoStoryStore()
+	feed := &feedCacheRecorder{ids: []string{"0a000000-0000-4000-8000-000000000001"}}
+	handler := newStoriesHandlerWithFeed(t, store, feed)
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories", "", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+
+	if state := feed.snapshot(); state.readCalls != 0 {
+		t.Errorf("cache Read calls = %d, want 0 for an anonymous reader", state.readCalls)
+	}
+	if store.listCalls != 1 {
+		t.Errorf("ListFeed calls = %d, want 1", store.listCalls)
+	}
+
+	// An anonymous reader has no feed to seed; the fallback must not create one.
+	waitFor(t, "the seed goroutine to stay quiet", func() bool { return true })
+	if state := feed.snapshot(); state.seedCalls != 0 {
+		t.Errorf("Seed calls = %d, want 0 for an anonymous reader", state.seedCalls)
+	}
+}
+
+func TestPaginatedFeedSkipsTheCache(t *testing.T) {
+	store, _ := twoStoryStore()
+	feed := &feedCacheRecorder{ids: []string{"0a000000-0000-4000-8000-000000000001"}}
+	handler := newStoriesHandlerWithFeed(t, store, feed)
+
+	// A cursor means page two or later, which the cached path (first page only)
+	// cannot answer. The bogus value is enough: what matters is that the SQL path
+	// was chosen, and it rejects it.
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories?cursor=bogus", "", testAccessToken)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d (the SQL path answered and rejected the cursor)", recorder.Code, http.StatusBadRequest)
+	}
+
+	if state := feed.snapshot(); state.readCalls != 0 {
+		t.Errorf("cache Read calls = %d, want 0 for a paginated request", state.readCalls)
+	}
+}
+
+func TestForYouFeedSkipsTheCache(t *testing.T) {
+	store, _ := twoStoryStore()
+	feed := &feedCacheRecorder{ids: []string{"0a000000-0000-4000-8000-000000000001"}}
+	handler := newStoriesHandlerWithFeed(t, store, feed)
+
+	// The ranked feed is out of scope for the cache (KNOT-ADR-093). This router is
+	// wired without ranking dependencies, so `for_you` answers 500 — the point is
+	// that it never reached the cache.
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories?feed_type=for_you", "", testAccessToken)
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d without ranking dependencies", recorder.Code, http.StatusInternalServerError)
+	}
+
+	if state := feed.snapshot(); state.readCalls != 0 {
+		t.Errorf("cache Read calls = %d, want 0 for the ranked feed", state.readCalls)
+	}
+
+	// Nor is a ranked page ever a seed source: its order is not the chronological
+	// feed's, so writing it into the cache would poison the default feed.
+	waitFor(t, "the seed goroutine to stay quiet", func() bool { return true })
+	if state := feed.snapshot(); state.seedCalls != 0 {
+		t.Errorf("Seed calls = %d, want 0 for the ranked feed", state.seedCalls)
+	}
+}
+
+func TestCreateStoryFansOutOffTheRequestPath(t *testing.T) {
+	store := &memoryStoryStore{}
+	feed := &feedCacheRecorder{}
+	handler := newStoriesHandlerWithFeed(t, store, feed)
+
+	recorder := doStoryRequest(handler, http.MethodPost, "/stories", validStoryBody(), testAccessToken)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	var envelope storyEnvelope
+	decodeBody(t, recorder, &envelope)
+
+	waitFor(t, "the fan-out goroutine", func() bool { return len(feed.snapshot().fanoutCalls) > 0 })
+
+	state := feed.snapshot()
+	if len(state.fanoutCalls) != 1 {
+		t.Fatalf("fan-out calls = %d, want 1", len(state.fanoutCalls))
+	}
+	call := state.fanoutCalls[0]
+	if call.storyID != envelope.Story.ID {
+		t.Errorf("fanned out story = %q, want the created %q", call.storyID, envelope.Story.ID)
+	}
+	if call.authorID != testUserID {
+		t.Errorf("fanned out author = %q, want %q", call.authorID, testUserID)
+	}
+	if call.language != "eng" {
+		t.Errorf("fanned out language = %q, want eng", call.language)
+	}
+	if call.createdAt.IsZero() {
+		t.Error("fanned out created_at is zero, want the story's timestamp")
+	}
+}
+
+func TestCreateStorySurvivesAFailedFanout(t *testing.T) {
+	store := &memoryStoryStore{}
+	feed := &feedCacheRecorder{fanoutErr: errCacheDown}
+	handler := newStoriesHandlerWithFeed(t, store, feed)
+
+	recorder := doStoryRequest(handler, http.MethodPost, "/stories", validStoryBody(), testAccessToken)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d: a cache failure must not fail a publish", recorder.Code, http.StatusCreated)
+	}
+
+	// The failure is logged, not returned — so the only observable effect is that
+	// the attempt happened.
+	waitFor(t, "the fan-out attempt", func() bool { return len(feed.snapshot().fanoutCalls) == 1 })
+}
+
+func TestSeedEntriesSkipsAdaptationEntries(t *testing.T) {
+	page := []stories.FeedItem{
+		{Kind: stories.FeedKindVersion, Version: stories.VersionFeedItem{ID: "11111111-1111-4111-8111-111111111111"}},
+		{Kind: stories.FeedKindStory, Story: storyFixture("22222222-2222-4222-8222-222222222222", testUserID)},
+	}
+
+	entries := seedEntries(page)
+	if len(entries) != 1 {
+		t.Fatalf("entries = %d, want 1 (a version id is not a story id)", len(entries))
+	}
+	if entries[0].ID != "22222222-2222-4222-8222-222222222222" {
+		t.Errorf("entry id = %q, want the story entry", entries[0].ID)
+	}
+}
