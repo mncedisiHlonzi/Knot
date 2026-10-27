@@ -3219,3 +3219,88 @@ manager's own 5 MiB / five defaults were slower on the same link, because parall
 split a saturated uplink. `github.com/aws/aws-sdk-go-v2/feature/s3/manager` is a new direct Go
 dependency and is **deprecated upstream** in favour of `feature/s3/transfermanager`; that
 migration is a follow-up, tracked here rather than done in this task.
+
+**Update (KNOT-037-fix3) — the migration is done.** `internal/storage` now uses
+`feature/s3/transfermanager`, and `feature/s3/manager` is gone from `go.mod`. The seam that
+made this small is `S3Storage.uploader`, a one-method interface, so only the constructor and
+the adapter body changed. The tuning is unchanged at 8 MiB parts and three in flight, but the
+package's vocabulary differs, and one difference is behavioural rather than cosmetic:
+
+- `manager.NewUploader(client, func(*manager.Uploader))` became
+  `transfermanager.New(client, func(*transfermanager.Options))`; the method
+  `Upload(ctx, *s3.PutObjectInput, …)` became `UploadObject(ctx, *UploadObjectInput, …)`, on a
+  `*Client` rather than an `*Uploader`.
+- `PartSize` became `PartSizeBytes`. `Concurrency` kept its name and meaning.
+- **`manager` chose multipart by comparing the body against `PartSize`; `transfermanager`
+  compares it against a separate `MultipartUploadThreshold` that defaults to 16 MiB.** That
+  default is set explicitly to the part size here, otherwise an 8-16 MiB upload would silently
+  go back to being one `PutObject` — the behaviour this task exists to avoid.
+
+Retry semantics are preserved: both packages send each part through the shared S3 client, so
+a failed part is retried with that client's exponential backoff and jitter.
+
+The migration is pinned to `transfermanager v0.1.6`, not `@latest`, because v0.1.7 onward
+require **Go 1.24** and CI pins **1.23**; `@latest` (v0.5.0) would also drag `service/s3` to
+v1.114 and `aws-sdk-go-v2` to v1.47. v0.1.6 keeps the `go` directive at 1.23 while still
+moving `service/s3` to v1.96.2. Removing that constraint is a toolchain decision, not a
+storage one.
+
+---
+
+## KNOT-ADR-092 — A request log reports what the client received, not what the handler intended
+
+**Context.** KNOT-037-fix2's live test produced the line
+`method=POST path=/stories/{id}/media status=201 duration_ms=256611` for a request whose
+response the client never received. The R2 upload had finished, the handler wrote its 201,
+and the server's 120 s `WriteTimeout` had already expired — so the bytes went nowhere and the
+log claimed success. Anyone debugging a stalled media upload would have started from a lie.
+
+The mechanism is worth stating precisely, because it is not obvious from the handler's code.
+`WriteHeader` commits the status and returns no error, so a status recorder that only watches
+`WriteHeader` has already recorded 201 before the body is known to be deliverable. Worse, a
+response small enough to fit the server's 2 KiB buffer is not written to the socket by
+`Write` at all: `net/http` flushes it in `finishRequest` after the handler returns, and
+**discards the error from that flush**. A body-write-error check alone therefore misses the
+very case that motivated this decision — the first version of the fix did exactly that, and a
+test against a real `WriteTimeout` caught it.
+
+**Decision.** The request-logging middleware owns one rule: **when the response body could not
+be fully written to the client, the log must report the client-facing status, not the
+handler's intended status.** Concretely, in `internal/httpapi/middleware.go`:
+
+- `statusRecorder` keeps the first `Write` error and records a failed `Flush` the same way,
+  and re-exposes `Flusher` and `Unwrap` so wrapping the writer does not take capabilities away
+  from handlers or from `http.ResponseController`.
+- The middleware **flushes once after the handler returns**, before deciding what to log. This
+  is what makes a missed deadline observable at all; without it the error is swallowed in
+  `finishRequest`.
+- On a write failure it emits one `ERROR` line with `status=503` (what the client
+experienced),
+  `intended_status=<the handler's status>`, `deadline_exceeded=<bool>`, the duration and the
+  write error. The message is `write deadline exceeded; client did not receive response` when
+  a deadline elapsed, and `response write failed; client did not receive the full response`
+  otherwise.
+- A delivered response logs exactly what it logged before: one `INFO` line, `msg="http
+request"`,
+  the handler's status. The rule is additive; no successful line changes shape.
+
+**Alternatives Considered.**
+1. **Check `ctx.Err()` in the media handler after the encode (Approach B).** Rejected: a
+   `WriteTimeout` sets the connection's write deadline and does **not** cancel the request
+   context, so `ctx.Err()` stays nil and the check would never fire.
+2. **A per-handler `defer` that inspects the write result (Approach C).** Rejected because it
+   is per-handler by construction: every future large-response route would have to remember
+   to opt in, and the one that forgets fails silently.
+3. **Only checking `Write` errors, without the explicit flush.** Rejected once tested — it
+   reports success for any response that fits the buffer.
+4. **Letting the client's absence surface as a 5xx from the transport layer.** Rejected: at
+   that point the response is gone, so no status can be sent; the log line is the only place
+   the information can survive.
+
+**Consequences.** A stalled upload now produces an `ERROR` line that names the real problem
+and keeps the handler's status beside it, so the two facts a debugger needs — "we tried to send
+201" and "the client got nothing" — appear together. The costs are small but real: one extra
+flush per request, `status` in the log is a server-side judgement (503) rather than a status
+anyone was sent, and the distinction between a deadline and a broken connection lives in the
+message and in `deadline_exceeded` rather than in the status itself. `WriteTimeout` and
+`ReadTimeout` are unchanged; this decision makes their expiry visible, it does not prevent it.

@@ -12,20 +12,20 @@ import (
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
-// How the multipart uploader is tuned (KNOT-037-fix2).
+// How the multipart uploader is tuned (KNOT-037-fix2, KNOT-037-fix3).
 //
 // The numbers are measured, not copied from a default. A 20 MiB upload to R2 over
-// the link this was tuned on took 65-211s as one PutObject, 98s with the
-// manager's 5 MiB/5 defaults, and 42s with 8 MiB parts and three at a time. Fewer,
-// larger parts mean fewer round trips and less per-request overhead, which is what
-// a slow, high-latency link punishes; more concurrency than that only splits a
-// saturated uplink into smaller pieces. 8 MiB is also comfortably above S3's 5 MiB
-// minimum part size, so a small file still goes as a single PutObject.
+// the link this was tuned on took 65-211s as one PutObject, 98s with a 5 MiB/5
+// configuration, and 42s with 8 MiB parts and three at a time. Fewer, larger parts
+// mean fewer round trips and less per-request overhead, which is what a slow,
+// high-latency link punishes; more concurrency than that only splits a saturated
+// uplink into smaller pieces. 8 MiB is also comfortably above S3's 5 MiB minimum
+// part size, so a small file still goes as a single PutObject.
 const (
 	// uploadPartSize is the size of one multipart part.
 	uploadPartSize = 8 << 20
@@ -33,14 +33,14 @@ const (
 	uploadConcurrency = 3
 )
 
-// putUploader is the one method this package needs from manager.Uploader.
+// putUploader is the one method this package needs from the transfer manager.
 //
 // It exists as an interface so a unit test can prove that Put goes through the
-// multipart uploader rather than calling PutObject itself. manager.Uploader is a
+// multipart uploader rather than calling PutObject itself. The SDK's client is a
 // concrete type, so without this seam "did we use it?" cannot be observed without
 // a network.
 type putUploader interface {
-	Upload(ctx context.Context, input *s3.PutObjectInput, opts ...func(*manager.Uploader)) (*manager.UploadOutput, error)
+	UploadObject(ctx context.Context, input *transfermanager.UploadObjectInput, opts ...func(*transfermanager.Options)) (*transfermanager.UploadObjectOutput, error)
 }
 
 // S3Storage is the S3-compatible implementation of Storage. It holds the client,
@@ -98,13 +98,21 @@ func NewS3Storage(ctx context.Context, endpoint, region, accessKey, secretKey, b
 		options.UsePathStyle = true
 	})
 
-	// The uploader shares the client, so it inherits its endpoint, path-style
-	// addressing and — importantly — its retryer: a failed part is retried with the
-	// SDK's standard exponential backoff and jitter, which means a transient network
-	// fault costs one part rather than the whole upload (KNOT-037-fix2).
-	uploader := manager.NewUploader(client, func(u *manager.Uploader) {
-		u.PartSize = uploadPartSize
-		u.Concurrency = uploadConcurrency
+	// The transfer client shares the S3 client, so it inherits its endpoint,
+	// path-style addressing and — importantly — its retryer: a failed part is
+	// retried with the SDK's standard exponential backoff and jitter, which means a
+	// transient network fault costs one part rather than the whole upload
+	// (KNOT-037-fix2).
+	//
+	// MultipartUploadThreshold is set explicitly, which manager had no equivalent
+	// for: manager switched to multipart once the body exceeded PartSize, whereas
+	// transfermanager defaults the threshold to 16 MiB independently. Leaving the
+	// default would have silently sent an 8-16 MiB upload as one PutObject — the
+	// exact behaviour this was tuned to avoid (KNOT-037-fix3).
+	uploader := transfermanager.New(client, func(o *transfermanager.Options) {
+		o.PartSizeBytes = uploadPartSize
+		o.MultipartUploadThreshold = uploadPartSize
+		o.Concurrency = uploadConcurrency
 	})
 
 	return &S3Storage{client: client, uploader: uploader, bucket: bucket}, nil
@@ -112,7 +120,7 @@ func NewS3Storage(ctx context.Context, endpoint, region, accessKey, secretKey, b
 
 // Put stores body under key with the given content type.
 //
-// It goes through the multipart uploader rather than a bare PutObject. For a body
+// It goes through the transfer manager rather than a bare PutObject. For a body
 // that fits in one part the manager sends a single PutObject — the same request as
 // before — and above that it splits the body into parts and sends them with bounded
 // concurrency. The point is not throughput on a fast link, where one request is
@@ -120,7 +128,7 @@ func NewS3Storage(ctx context.Context, endpoint, region, accessKey, secretKey, b
 // longer has to survive as a single long-lived request, and a failure retries a
 // part instead of restarting the file (KNOT-037-fix2).
 func (s *S3Storage) Put(ctx context.Context, key string, body io.Reader, contentType string) error {
-	_, err := s.uploader.Upload(ctx, &s3.PutObjectInput{
+	_, err := s.uploader.UploadObject(ctx, &transfermanager.UploadObjectInput{
 		Bucket:      aws.String(s.bucket),
 		Key:         aws.String(key),
 		Body:        body,

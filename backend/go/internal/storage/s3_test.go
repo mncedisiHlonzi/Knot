@@ -11,8 +11,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
@@ -294,17 +293,17 @@ func TestIsNoSuchBucketIsDistinctFromNoSuchObject(t *testing.T) {
 
 // recordingUploader is a putUploader that records what it was asked to store.
 //
-// It is the only way to observe that Put uses the multipart uploader: the real
-// manager.Uploader talks to a network, and "it returned nil" would be equally
-// consistent with a direct PutObject call.
+// It is the only way to observe that Put uses the transfer manager: the real
+// client talks to a network, and "it returned nil" would be equally consistent
+// with a direct PutObject call.
 type recordingUploader struct {
 	calls  int
-	input  *s3.PutObjectInput
+	input  *transfermanager.UploadObjectInput
 	stored []byte
 	err    error
 }
 
-func (r *recordingUploader) Upload(_ context.Context, input *s3.PutObjectInput, _ ...func(*manager.Uploader)) (*manager.UploadOutput, error) {
+func (r *recordingUploader) UploadObject(_ context.Context, input *transfermanager.UploadObjectInput, _ ...func(*transfermanager.Options)) (*transfermanager.UploadObjectOutput, error) {
 	r.calls++
 	r.input = input
 
@@ -320,13 +319,13 @@ func (r *recordingUploader) Upload(_ context.Context, input *s3.PutObjectInput, 
 		return nil, r.err
 	}
 
-	return &manager.UploadOutput{}, nil
+	return &transfermanager.UploadObjectOutput{}, nil
 }
 
-// TestPutDelegatesToTheMultipartUploader pins the KNOT-037-fix2 change: Put must
-// route through the uploader (which is what makes a large upload multipart and
-// retryable per part) instead of issuing a bare PutObject, and it must forward the
-// bucket, key, content type and bytes unchanged.
+// TestPutDelegatesToTheMultipartUploader pins the change from KNOT-037-fix2:
+// Put must route through the transfer manager (which is what makes a large upload
+// multipart and retryable per part) instead of issuing a bare PutObject, and it
+// must forward the bucket, key, content type and bytes unchanged.
 func TestPutDelegatesToTheMultipartUploader(t *testing.T) {
 	uploader := &recordingUploader{}
 	store := &S3Storage{uploader: uploader, bucket: "knot-media"}
@@ -375,7 +374,7 @@ func TestPutWrapsUploaderFailure(t *testing.T) {
 }
 
 // TestS3StorageBuildsAMultipartUploader proves the constructor wires the real
-// manager.Uploader in, so the seam above is a test double for a field that is
+// transfer manager in, so the seam above is a test double for a field that is
 // genuinely populated in production.
 func TestS3StorageBuildsAMultipartUploader(t *testing.T) {
 	store, err := NewS3Storage(
@@ -393,7 +392,7 @@ func TestS3StorageBuildsAMultipartUploader(t *testing.T) {
 	if store.uploader == nil {
 		t.Fatal("S3Storage.uploader = nil, want a configured uploader")
 	}
-	if _, ok := store.uploader.(*manager.Uploader); !ok {
-		t.Errorf("S3Storage.uploader is %T, want *manager.Uploader", store.uploader)
+	if _, ok := store.uploader.(*transfermanager.Client); !ok {
+		t.Errorf("S3Storage.uploader is %T, want *transfermanager.Client", store.uploader)
 	}
 }

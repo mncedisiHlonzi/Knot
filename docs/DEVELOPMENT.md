@@ -226,26 +226,54 @@ R2's region is `auto`; MinIO ignores the value, so one default serves both.
 
 #### Large uploads use the multipart uploader
 
-`storage.Put` goes through `manager.Uploader` from
-`github.com/aws/aws-sdk-go-v2/feature/s3/manager`, not a bare `PutObject` (KNOT-037-fix2).
-Below the part size the manager issues exactly one `PutObject`, so a thumbnail or a poster
-behaves as it always did; above it the body is split into parts sent with bounded concurrency,
-and a failed part is retried with the SDK's exponential backoff instead of the whole file being
-restarted.
+`storage.Put` goes through the transfer manager from
+`github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager`, not a bare `PutObject`
+(KNOT-037-fix2, KNOT-037-fix3). Below the part size it issues exactly one `PutObject`, so a
+thumbnail or a poster behaves as it always did; above it the body is split into parts sent
+with bounded concurrency, and a failed part is retried with the SDK's exponential backoff
+instead of the whole file being restarted.
 
-The tuning is two constants in `internal/storage/s3.go` — `uploadPartSize` (8 MiB) and
-`uploadConcurrency` (3) — and the values were **measured on a slow link, not copied from the
-manager's defaults**. The defaults (5 MiB, five parts in flight) were slower on the same
-connection: parallel parts only split a saturated uplink into smaller pieces. What the uploader
-buys is not throughput, it is that a large upload no longer has to survive as one long-lived
-request.
+The tuning is three numbers in `internal/storage/s3.go` — `uploadPartSize` (8 MiB),
+`uploadConcurrency` (3) and, set to the part size, `MultipartUploadThreshold` — and the values
+were **measured on a slow link, not copied from the package's defaults**. The 5 MiB / five
+parts default was slower on the same connection: parallel parts only split a saturated uplink
+into smaller pieces. What the uploader buys is not throughput, it is that a large upload no
+longer has to survive as one long-lived request.
 
 Two things to know before changing those numbers. A part size below S3's 5 MiB minimum is
 rejected by the store — MinIO enforces it too — so `TestS3StorageMultipartUploadRoundTrips`
 (a real 9 MiB upload read back byte for byte) is the test that catches it. And
-`feature/s3/manager` is **deprecated upstream** in favour of `feature/s3/transfermanager`;
-migrating is a follow-up. `S3Storage.uploader` is a one-method interface, so that swap touches
-one field and one constructor line.
+`MultipartUploadThreshold` **defaults to 16 MiB independently of the part size**, unlike the
+old `manager` package which compared the body against the part size; it is set explicitly
+here so an 8-16 MiB upload does not quietly revert to a single request.
+
+The dependency is pinned to `transfermanager v0.1.6` rather than `@latest` on purpose: v0.1.7
+and later require **Go 1.24** and CI pins **1.23**. Bumping the toolchain is a separate
+decision; until then, do not "helpfully" upgrade this module. `S3Storage.uploader` is a
+one-method interface, so the next migration touches one field, one constructor line and the
+test double.
+
+#### The request log reports what the client received (KNOT-ADR-092)
+
+One line is logged per request. A response that was **delivered** logs the usual
+`INFO msg="http request" status=<handler status>`.
+
+When the response body could not be written to the client, that same slot becomes an `ERROR`
+and the `status` is **503** — what the client experienced — not the status the handler
+intended. The handler's own status is kept beside it:
+
+```
+ERROR write deadline exceeded; client did not receive response
+     status=503 intended_status=201 deadline_exceeded=true duration_ms=256611 …
+```
+
+This exists because a large upload that outlives `WriteTimeout` used to log `status=201` for
+a response nobody received (KNOT-037-fix3). Two details matter if you touch the middleware:
+`WriteHeader` commits a status and returns no error, so a write *error* is the only honest
+signal; and a response small enough to fit the server's 2 KiB buffer is written to the socket
+in `finishRequest`, whose error `net/http` discards — which is why the middleware **flushes
+explicitly** before deciding what to log. Remove that flush and the failure becomes invisible
+again; `TestRequestLoggingCatchesARealWriteTimeout` is the test that proves it.
 
 Because the data directory is on a named volume, `scripts/dev-down.sh` keeps every
 uploaded avatar and `scripts/dev-reset.sh` deletes it along with the databases.
