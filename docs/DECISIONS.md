@@ -3170,6 +3170,12 @@ it needs.
   (KNOT-ADR-029). `first_media_url` on a story payload is the thumbnail when one exists,
   because that field is a card's field; the item's own `url` still addresses the original,
   which is what the full-screen viewer reads.
+- **Every upload goes through the S3 multipart uploader.** `storage.Put` calls
+  `manager.Uploader.Upload` instead of a bare `PutObject`, so a body larger than one part is
+  sent as several parts with bounded concurrency, and a failed part is retried with the SDK's
+  exponential backoff instead of the whole file being restarted. Below the part size the
+  manager issues the same single `PutObject` as before, so a thumbnail or a poster takes
+  exactly the path it always did (KNOT-037-fix2).
 
 **Alternatives Considered.**
 1. **Presigned R2 URLs handed to the client** — rejected for the reasons ADR-029 already
@@ -3204,3 +3210,12 @@ Deleting an item now removes three or four objects instead of one. There is no b
 job that renders old rows, so existing media keeps streaming its original until it is
 re-uploaded; and nothing yet sweeps orphaned renditions, the same gap ADR-029 recorded for
 objects.
+
+Uploading is bounded by the link, not by the API. Measured on the founder's connection, a
+20 MiB object took 65-211s as one `PutObject` and 42s through the uploader, and a 34.7 MB
+video that had been taking 250-352s (and failing outright once) completed in 72s. The uploader
+is tuned to 8 MiB parts with three in flight, which was measured rather than defaulted: the
+manager's own 5 MiB / five defaults were slower on the same link, because parallel parts only
+split a saturated uplink. `github.com/aws/aws-sdk-go-v2/feature/s3/manager` is a new direct Go
+dependency and is **deprecated upstream** in favour of `feature/s3/transfermanager`; that
+migration is a follow-up, tracked here rather than done in this task.

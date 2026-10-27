@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -59,6 +61,67 @@ func TestS3StorageSatisfiesContract(t *testing.T) {
 	store := integrationSetup(t)
 
 	runStorageContract(t, store, "integration/contract")
+}
+
+// multipartPayloadBytes is one byte more than one part, so the uploader has to
+// split the body and the server has to reassemble it. A file smaller than a part
+// would be a plain PutObject and would prove nothing about the multipart path.
+const multipartPayloadBytes = uploadPartSize + (1 << 20)
+
+// TestS3StorageMultipartUploadRoundTrips proves the multipart path end to end
+// against a real S3-compatible server: a body larger than one part is uploaded,
+// reassembled by the store, and read back byte for byte (KNOT-037-fix2).
+//
+// The in-memory contract test cannot cover this — it has no parts — and the unit
+// test only proves the uploader is called. This is the one test that would catch a
+// manager misconfiguration (a part size below S3's minimum, or a silently
+// truncated assembly).
+func TestS3StorageMultipartUploadRoundTrips(t *testing.T) {
+	store := integrationSetup(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	// A deterministic, non-repeating pattern: all-zero bytes would still match if
+	// the store padded or truncated the object.
+	payload := make([]byte, multipartPayloadBytes)
+	for i := range payload {
+		payload[i] = byte(i*7 + i/251)
+	}
+
+	key := "integration/multipart-large.bin"
+	t.Cleanup(func() {
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		if err := store.Delete(cleanupCtx, key); err != nil {
+			t.Logf("cleanup: %v", err)
+		}
+	})
+
+	if err := store.Put(ctx, key, bytes.NewReader(payload), "application/octet-stream"); err != nil {
+		t.Fatalf("Put(%d bytes) error = %v, want nil", len(payload), err)
+	}
+
+	reader, contentType, err := store.Get(ctx, key)
+	if err != nil {
+		t.Fatalf("Get() error = %v, want nil", err)
+	}
+	defer reader.Close()
+
+	if contentType != "application/octet-stream" {
+		t.Errorf("Get() content type = %q, want %q", contentType, "application/octet-stream")
+	}
+
+	stored, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read back the object: %v", err)
+	}
+	if len(stored) != len(payload) {
+		t.Fatalf("stored %d bytes, want %d", len(stored), len(payload))
+	}
+	if !bytes.Equal(stored, payload) {
+		t.Error("the stored bytes differ from the uploaded bytes")
+	}
 }
 
 // TestS3StorageMissingBucketSurfacesErrors pins that a misconfigured bucket is an

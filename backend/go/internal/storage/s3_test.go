@@ -6,9 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
@@ -285,5 +289,111 @@ func TestIsNoSuchBucketIsDistinctFromNoSuchObject(t *testing.T) {
 	// missing key first cannot mistake a missing bucket for an absent object.
 	if isNotFound(&types.NoSuchBucket{}) {
 		t.Error("isNotFound(NoSuchBucket) = true, want false")
+	}
+}
+
+// recordingUploader is a putUploader that records what it was asked to store.
+//
+// It is the only way to observe that Put uses the multipart uploader: the real
+// manager.Uploader talks to a network, and "it returned nil" would be equally
+// consistent with a direct PutObject call.
+type recordingUploader struct {
+	calls  int
+	input  *s3.PutObjectInput
+	stored []byte
+	err    error
+}
+
+func (r *recordingUploader) Upload(_ context.Context, input *s3.PutObjectInput, _ ...func(*manager.Uploader)) (*manager.UploadOutput, error) {
+	r.calls++
+	r.input = input
+
+	if input.Body != nil {
+		data, err := io.ReadAll(input.Body)
+		if err != nil {
+			return nil, err
+		}
+		r.stored = data
+	}
+
+	if r.err != nil {
+		return nil, r.err
+	}
+
+	return &manager.UploadOutput{}, nil
+}
+
+// TestPutDelegatesToTheMultipartUploader pins the KNOT-037-fix2 change: Put must
+// route through the uploader (which is what makes a large upload multipart and
+// retryable per part) instead of issuing a bare PutObject, and it must forward the
+// bucket, key, content type and bytes unchanged.
+func TestPutDelegatesToTheMultipartUploader(t *testing.T) {
+	uploader := &recordingUploader{}
+	store := &S3Storage{uploader: uploader, bucket: "knot-media"}
+
+	payload := []byte("the bytes of a story's media")
+	if err := store.Put(context.Background(), "story-media/story/object.png", bytes.NewReader(payload), "image/png"); err != nil {
+		t.Fatalf("Put() error = %v, want nil", err)
+	}
+
+	if uploader.calls != 1 {
+		t.Errorf("uploader calls = %d, want exactly 1", uploader.calls)
+	}
+	if uploader.input == nil {
+		t.Fatal("the uploader was never called")
+	}
+	if got := aws.ToString(uploader.input.Bucket); got != "knot-media" {
+		t.Errorf("bucket = %q, want %q", got, "knot-media")
+	}
+	if got := aws.ToString(uploader.input.Key); got != "story-media/story/object.png" {
+		t.Errorf("key = %q, want %q", got, "story-media/story/object.png")
+	}
+	if got := aws.ToString(uploader.input.ContentType); got != "image/png" {
+		t.Errorf("content type = %q, want %q", got, "image/png")
+	}
+	if !bytes.Equal(uploader.stored, payload) {
+		t.Errorf("stored bytes = %q, want %q", uploader.stored, payload)
+	}
+}
+
+// TestPutWrapsUploaderFailure pins that a failed upload is reported as an error
+// naming the key, whatever layer inside the uploader failed.
+func TestPutWrapsUploaderFailure(t *testing.T) {
+	uploader := &recordingUploader{err: errors.New("broken pipe")}
+	store := &S3Storage{uploader: uploader, bucket: "knot-media"}
+
+	err := store.Put(context.Background(), "story-media/story/object.mp4", bytes.NewReader([]byte("x")), "video/mp4")
+	if err == nil {
+		t.Fatal("Put() error = nil, want an error")
+	}
+	if !errors.Is(err, uploader.err) {
+		t.Errorf("Put() error = %v, want it to wrap the uploader's error", err)
+	}
+	if !strings.Contains(err.Error(), "story-media/story/object.mp4") {
+		t.Errorf("Put() error = %q, want it to name the key", err.Error())
+	}
+}
+
+// TestS3StorageBuildsAMultipartUploader proves the constructor wires the real
+// manager.Uploader in, so the seam above is a test double for a field that is
+// genuinely populated in production.
+func TestS3StorageBuildsAMultipartUploader(t *testing.T) {
+	store, err := NewS3Storage(
+		context.Background(),
+		"http://127.0.0.1:9000",
+		"us-east-1",
+		"knot",
+		"knot_local_only_change_me",
+		"knot-media",
+	)
+	if err != nil {
+		t.Fatalf("NewS3Storage() error = %v, want nil", err)
+	}
+
+	if store.uploader == nil {
+		t.Fatal("S3Storage.uploader = nil, want a configured uploader")
+	}
+	if _, ok := store.uploader.(*manager.Uploader); !ok {
+		t.Errorf("S3Storage.uploader is %T, want *manager.Uploader", store.uploader)
 	}
 }

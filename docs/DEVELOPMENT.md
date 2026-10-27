@@ -224,6 +224,29 @@ KNOT_S3_BUCKET=knot-media
 The bucket must already exist, and the credentials are an R2 API token's key id and secret.
 R2's region is `auto`; MinIO ignores the value, so one default serves both.
 
+#### Large uploads use the multipart uploader
+
+`storage.Put` goes through `manager.Uploader` from
+`github.com/aws/aws-sdk-go-v2/feature/s3/manager`, not a bare `PutObject` (KNOT-037-fix2).
+Below the part size the manager issues exactly one `PutObject`, so a thumbnail or a poster
+behaves as it always did; above it the body is split into parts sent with bounded concurrency,
+and a failed part is retried with the SDK's exponential backoff instead of the whole file being
+restarted.
+
+The tuning is two constants in `internal/storage/s3.go` — `uploadPartSize` (8 MiB) and
+`uploadConcurrency` (3) — and the values were **measured on a slow link, not copied from the
+manager's defaults**. The defaults (5 MiB, five parts in flight) were slower on the same
+connection: parallel parts only split a saturated uplink into smaller pieces. What the uploader
+buys is not throughput, it is that a large upload no longer has to survive as one long-lived
+request.
+
+Two things to know before changing those numbers. A part size below S3's 5 MiB minimum is
+rejected by the store — MinIO enforces it too — so `TestS3StorageMultipartUploadRoundTrips`
+(a real 9 MiB upload read back byte for byte) is the test that catches it. And
+`feature/s3/manager` is **deprecated upstream** in favour of `feature/s3/transfermanager`;
+migrating is a follow-up. `S3Storage.uploader` is a one-method interface, so that swap touches
+one field and one constructor line.
+
 Because the data directory is on a named volume, `scripts/dev-down.sh` keeps every
 uploaded avatar and `scripts/dev-reset.sh` deletes it along with the databases.
 

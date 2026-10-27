@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -67,10 +68,16 @@ func main() {
 	// Local development convenience: the repository root .env is loaded into the
 	// process environment before any config is read. The path is relative to the
 	// working directory, which is backend/go for the documented `go run ./cmd/knot`,
-	// and a missing file is not an error — production sets real environment
-	// variables, and godotenv never overrides one that is already set, so a value
-	// exported by the shell always wins over the file.
-	_ = godotenv.Load("../../.env")
+	// and godotenv never overrides one that is already set, so a value exported by
+	// the shell always wins over the file. A missing file is not fatal — production
+	// sets real environment variables — but it is reported, because a swallowed
+	// load failure is indistinguishable from an empty .env at the call sites that
+	// depend on it.
+	if err := godotenv.Load("../../.env"); err != nil {
+		log.Printf("WARN: could not load .env file: %v", err)
+	} else {
+		log.Printf("INFO: loaded .env file")
+	}
 
 	if err := run(os.Args[1:]); err != nil {
 		// The logger is built inside run, so report failures on stderr.
@@ -576,10 +583,17 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
 		Handler: router.Handler(),
-		// These bounds protect the server from slow or stalled clients.
+		// These bounds protect the server from slow or stalled clients. Read and
+		// write are generous because this process proxies media bytes: a video
+		// upload or a large image through a slow mobile connection regularly
+		// exceeds the ten seconds that suffices for a JSON request, and cutting the
+		// handler off mid-body turned a slow transfer into an i/o timeout the
+		// client could not tell apart from a server fault. The header deadline
+		// still bounds an idle or stalling client before a request is read, and
+		// the idle deadline still reaps keep-alive connections.
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
+		ReadTimeout:       120 * time.Second,
+		WriteTimeout:      120 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
 

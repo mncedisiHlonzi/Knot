@@ -5,8 +5,9 @@ go 1.23
 require (
 	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/aws/aws-sdk-go-v2 v1.39.0
-	github.com/aws/aws-sdk-go-v2/config v1.31.0
-	github.com/aws/aws-sdk-go-v2/credentials v1.18.4
+	github.com/aws/aws-sdk-go-v2/config v1.31.4
+	github.com/aws/aws-sdk-go-v2/credentials v1.18.8
+	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.19.2
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.88.0
 	github.com/disintegration/imaging v1.6.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
