@@ -13,6 +13,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
+	transfertypes "github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
@@ -96,6 +97,14 @@ func NewS3Storage(ctx context.Context, endpoint, region, accessKey, secretKey, b
 	client := s3.NewFromConfig(cfg, func(options *s3.Options) {
 		options.BaseEndpoint = aws.String(endpoint)
 		options.UsePathStyle = true
+		// The SDK will not validate a multipart object's composite checksum on
+		// download — GetObject hard-codes IgnoreMultipartValidation — and it warns
+		// once per such read. Uploads are checksummed below, so what the warning
+		// reports is a read-path gap that cannot be closed from this layer; left on,
+		// it would print for every large media request forever and train readers to
+		// ignore warnings. The limitation is recorded in KNOT-ADR-091 instead
+		// (KNOT-037-fix4).
+		options.DisableLogOutputChecksumValidationSkipped = true
 	})
 
 	// The transfer client shares the S3 client, so it inherits its endpoint,
@@ -113,6 +122,18 @@ func NewS3Storage(ctx context.Context, endpoint, region, accessKey, secretKey, b
 		o.PartSizeBytes = uploadPartSize
 		o.MultipartUploadThreshold = uploadPartSize
 		o.Concurrency = uploadConcurrency
+		// Every upload carries a CRC32 that the store verifies per part, so
+		// integrity no longer rests on the transport alone. CRC32 rather than
+		// SHA256: the goal is detecting corruption in transit, not resisting an
+		// adversary who controls the bytes, and CRC32 is the cheapest algorithm R2
+		// supports. The SDK would add a checksum by default anyway; naming it makes
+		// the guarantee explicit instead of dependent on a default that could change
+		// (KNOT-037-fix4).
+		//
+		// The value is transfermanager's own ChecksumAlgorithm type, not
+		// service/s3/types: the two are distinct string types and cannot be
+		// assigned across each other.
+		o.ChecksumAlgorithm = transfertypes.ChecksumAlgorithmCrc32
 	})
 
 	return &S3Storage{client: client, uploader: uploader, bucket: bucket}, nil

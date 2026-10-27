@@ -8,7 +8,7 @@ How to set up and run the Knot foundation locally.
 | -------------- | ------------------ | ------- | ----------------------------------------------- |
 | Node.js        | 24                 | 20      | Mobile tooling and package manager              |
 | npm            | Bundled with Node.js | (from Node.js) | The only package manager used          |
-| Go             | 1.27               | 1.22    | Backend; `backend/go/go.mod` declares `go 1.22`  |
+| Go             | 1.27               | 1.24    | Backend; `backend/go/go.mod` declares `go 1.24`  |
 | Docker Desktop | Any recent version | n/a     | Local PostgreSQL + Redis + MinIO only (Docker Compose) |
 | Git            | Any recent version | n/a     | Version control                                 |
 | actionlint     | Optional           | 1.7.7   | Lints `.github/workflows/`; pinned in CI        |
@@ -21,9 +21,11 @@ backend always run on the host — there is deliberately no application containe
 Local tool versions and CI tool versions are **not** identical today:
 
 - **Node:** local development runs **Node 24**; CI pins **Node 20**.
-- **Go:** local development runs **Go 1.27**; `backend/go/go.mod` declares `go 1.23` and
-  CI installs **Go 1.23**. The directive moved from 1.22 to 1.23 with KNOT-031a because the
-  Resend Go SDK declares `go 1.23` in its own `go.mod`; `go get` raised ours automatically.
+- **Go:** local development runs **Go 1.27**; `backend/go/go.mod` declares `go 1.24` and
+  CI installs **Go 1.24**. The directive moved 1.22 → 1.23 with KNOT-031a because the Resend Go
+  SDK declares `go 1.23`, then 1.23 → 1.24 with KNOT-037-fix4 because
+  `feature/s3/transfermanager` v0.1.7 and later declare `go 1.24`. Both times `go get` raised
+  the directive and CI was moved with it.
 
 This drift is accepted for the foundation phase, but it means a green local run is **not**
 proof that CI will be green.
@@ -247,11 +249,23 @@ rejected by the store — MinIO enforces it too — so `TestS3StorageMultipartUp
 old `manager` package which compared the body against the part size; it is set explicitly
 here so an 8-16 MiB upload does not quietly revert to a single request.
 
-The dependency is pinned to `transfermanager v0.1.6` rather than `@latest` on purpose: v0.1.7
-and later require **Go 1.24** and CI pins **1.23**. Bumping the toolchain is a separate
-decision; until then, do not "helpfully" upgrade this module. `S3Storage.uploader` is a
-one-method interface, so the next migration touches one field, one constructor line and the
-test double.
+Every upload also carries a **CRC32 checksum**, set explicitly on the uploader
+(`Options.ChecksumAlgorithm`) rather than left to the SDK's default. The store validates it per
+part, so a corrupted transfer is rejected instead of silently stored. The value is
+transfermanager's own `types.ChecksumAlgorithm`, **not** `service/s3/types` — the two are
+distinct string types and cannot be assigned across each other.
+
+The dependency is on `transfermanager v0.5.0` (the latest release), which needs **Go 1.24**;
+that is why the CI jobs and `go.mod` moved to 1.24 in KNOT-037-fix4. Do not pin this back
+down without also moving the toolchain. `S3Storage.uploader` is a one-method interface, so the
+next migration touches one field, one constructor line and the test double.
+
+**One known limitation, deliberately silenced.** The SDK will not validate a multipart
+object's *composite* checksum on download — `GetObject` hard-codes `IgnoreMultipartValidation`
+— and warns about it on every such read. `s3.go` sets
+`DisableLogOutputChecksumValidationSkipped` so that line does not print once per media
+request; the gap it reports is real and is recorded in KNOT-ADR-091 rather than in a log line
+nobody can act on. Upload-side integrity is unaffected and is what the checksum above buys.
 
 #### The request log reports what the client received (KNOT-ADR-092)
 

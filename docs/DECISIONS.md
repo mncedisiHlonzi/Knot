@@ -3245,6 +3245,34 @@ v1.114 and `aws-sdk-go-v2` to v1.47. v0.1.6 keeps the `go` directive at 1.23 whi
 moving `service/s3` to v1.96.2. Removing that constraint is a toolchain decision, not a
 storage one.
 
+**Update (KNOT-037-fix4) — the constraint is removed.** The toolchain moved to **Go 1.24**
+in `go.mod` and in both CI jobs that install Go (`Backend (Go)` and `Workflows (actionlint)`;
+the workflow uses an explicit `go-version` string, not `go-version-file`, so both had to be
+edited). 1.24 is the minimum the dependency requires, not the newest available: the directive
+is a floor, and declaring a higher one than necessary would turn away contributors and CI
+images for no benefit. `transfermanager` then moved to **v0.5.0** (latest), dragging
+`service/s3` 1.96.2 → 1.114.5 and `aws-sdk-go-v2` 1.41.2 → 1.47.4. No source change was
+needed for the toolchain bump itself, and `MultipartUploadThreshold` is still set explicitly
+to the part size, so the silent-single-shot protection survives the upgrade.
+
+**Uploads now carry a checksum.** `Options.ChecksumAlgorithm` is set to **CRC32** on the
+uploader, so every part and the assembled object are checksummed and the store verifies them;
+integrity no longer rests on the transport alone. CRC32 rather than SHA256 because the goal is
+detecting corruption in transit, not resisting someone who controls the bytes, and it is the
+cheapest algorithm R2 supports. The value must be `feature/s3/transfermanager/types.ChecksumAlgorithm`,
+not `service/s3/types.ChecksumAlgorithm` — they are distinct string types. Verified live: a
+34.7 MB video stored `ChecksumCRC32` = `hGKdFQ==-5`, the composite form for five 8 MiB parts.
+
+**The `WARN Skipped validation of multipart checksum` is a *read*-path message, not an upload
+one.** It comes from output checksum validation: `GetObject` hard-codes
+`IgnoreMultipartValidation`, so the SDK declines to verify a composite checksum and says so.
+No uploader option can change that. `s3.go` therefore sets
+`DisableLogOutputChecksumValidationSkipped`, and the limitation is recorded here instead of
+being printed on every media request — a warning nobody can act on, on every read, teaches
+readers to ignore warnings. Stated plainly: **reads of multipart objects are not
+checksum-validated by the SDK**; uploads are. Closing the read gap needs either a part-level
+verification of our own or an SDK that supports composite validation, and is a follow-up.
+
 ---
 
 ## KNOT-ADR-092 — A request log reports what the client received, not what the handler intended
