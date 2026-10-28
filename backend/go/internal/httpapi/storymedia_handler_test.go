@@ -324,8 +324,15 @@ type storyMediaTestEnv struct {
 
 func newStoryMediaTestEnv(t *testing.T) *storyMediaTestEnv {
 	t.Helper()
+	return newStoryMediaTestEnvWith(t, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
 
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+// newStoryMediaTestEnvWith is newStoryMediaTestEnv with a detail cache and a
+// logger the caller supplies, so a test can assert both the invalidation an upload
+// or delete performs and the warning a failed one logs (KNOT-036-fix4).
+func newStoryMediaTestEnvWith(t *testing.T, details DetailCache, logger *slog.Logger) *storyMediaTestEnv {
+	t.Helper()
+
 	store := newMemoryMediaStore()
 	objects := newMemoryObjects()
 
@@ -334,9 +341,9 @@ func newStoryMediaTestEnv(t *testing.T) *storyMediaTestEnv {
 		t.Fatalf("storymedia.NewService() error = %v, want nil", err)
 	}
 
-	handler, err := NewStoryMediaHandler(service, logger)
+	handler, err := NewStoryMediaHandlerWithCaches(service, logger, Caches{Details: details})
 	if err != nil {
-		t.Fatalf("NewStoryMediaHandler() error = %v, want nil", err)
+		t.Fatalf("NewStoryMediaHandlerWithCaches() error = %v, want nil", err)
 	}
 
 	return &storyMediaTestEnv{handler: handler, service: service, store: store, objects: objects, logger: logger}

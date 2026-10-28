@@ -2893,6 +2893,16 @@ falls back to `url`. A version has no media of its own: `GET /versions/{id}` ret
 the media of the story it adapts, through the same projection, so the two arrays are
 identical.
 
+**Media writes invalidate the story detail (KNOT-036-fix4).** Uploading or deleting a
+media item deletes `knot:story:{id}` on the request path, so the detail's media array
+is never older than the write. Version keys are deliberately not touched (an upload
+cannot cheaply name every adaptation), so those expire on
+`KNOT_DETAIL_CACHE_TTL`. The mobile strip draws `thumbnail_url` for an image and
+`poster_url` for a video; the rule lives in
+`apps/mobile/src/screens/stories/mediaStripSource.ts`. An image without a thumbnail
+falls back to its original, while a video without a poster keeps the sunken
+placeholder — the original is an MP4, which an `Image` cannot draw.
+
 ## Testing Auth Locally
 
 Knot's authentication verifies addresses and resets passwords with links that are **emailed

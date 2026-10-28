@@ -3595,3 +3595,19 @@ show the story's media by re-reading the story.
   media strip in the story detail remains a MOBILE fix (it must render
   `thumbnail_url`/`poster_url`). The API now offers both on the story and version
   detail.
+
+**Update (KNOT-036-fix4) — the client draws the renditions, and media writes
+invalidate.** The URL gap above is closed, and so is the invalidation gap this
+section disclosed. On the client, `StoryMedia` now carries the three derivative
+fields and the media strip draws `thumbnail_url` for an image and `poster_url` for a
+video, with the rule in `screens/stories/mediaStripSource.ts`. Fallbacks are
+deliberate and differ by kind: an image falls back to its original, while a video
+WITHOUT a poster keeps the sunken placeholder, because a video's original is an MP4
+and an `Image` cannot draw it. Both the Story Detail and the Version Detail strips
+use the same helpers.
+
+On the server, a media upload or delete now deletes `knot:story:{id}` on the request
+path, so a story detail's media array is never older than the write. Version detail
+keys are deliberately NOT touched: a version inherits the story's media, but an
+upload cannot cheaply name every adaptation, so those keys expire on the existing
+TTL. Both invalidations are best-effort, like every other cache write.

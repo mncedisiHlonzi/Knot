@@ -314,12 +314,25 @@ func (d *DetailInvalidator) InvalidateForEntity(ctx context.Context, entityKind,
 
 	switch entityKind {
 	case string(reactions.EntityStory):
-		invalidateStoryDetail(ctx, d.logger, d.details, entityID)
+		d.InvalidateForStory(ctx, entityID)
 	case string(reactions.EntityVersion):
 		d.InvalidateForVersion(ctx, entityID)
 	case string(reactions.EntityComment):
 		d.InvalidateForComment(ctx, entityID)
 	}
+}
+
+// InvalidateForStory deletes a story's detail key.
+//
+// It is the whole rule for a story: the story's own detail is the only cached key
+// that carries its fields. Media writes use it directly — an upload or a delete
+// changes the media array the detail shows (KNOT-036-fix4).
+func (d *DetailInvalidator) InvalidateForStory(ctx context.Context, storyID string) {
+	if d == nil || storyID == "" {
+		return
+	}
+
+	invalidateStoryDetail(ctx, d.logger, d.details, storyID)
 }
 
 // InvalidateForVersion deletes a version's detail key and its parent story's.

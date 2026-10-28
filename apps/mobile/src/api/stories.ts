@@ -37,8 +37,23 @@ export type StoryMedia = {
   /**
    * The path on the API that serves the bytes. It is a relative path
    * (`/stories/{id}/media/{mid}/content`); resolve it against the API base URL.
+   * It always addresses the ORIGINAL upload: the renditions below are separate
+   * addresses, and the full-screen viewer keeps asking for this one (KNOT-037).
    */
   readonly url: string;
+  /**
+   * The generated renditions' paths, or null when this item has none (a row from
+   * before KNOT-037, or an upload whose decoder or FFmpeg failed). Each is the
+   * original's path with `?variant=` appended, so a client resolves it against
+   * the API base URL exactly like `url`. A client must fall back to `url`.
+   *
+   * Both optional and nullable because the API types describe the wire format
+   * optimistically: an older server omits them, and the client treats a missing
+   * field as absent (KNOT-036-fix4).
+   */
+  readonly thumbnail_url?: string | null;
+  readonly medium_url?: string | null;
+  readonly poster_url?: string | null;
 };
 
 /** A story as returned by the API. */

@@ -414,7 +414,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	// The identity service doubles as the batched author lookup every content
 	// handler enriches with, so a response names and pictures its authors without
 	// a query per row (KNOT-ADR-041).
-	storyMediaHandler, err := httpapi.NewStoryMediaHandler(storyMediaService, logger)
+	storyMediaHandler, err := httpapi.NewStoryMediaHandlerWithCaches(storyMediaService, logger, caches)
 	if err != nil {
 		return err
 	}

@@ -52,18 +52,36 @@ type StoryMediaService interface {
 // (KNOT-ADR-029).
 type StoryMediaHandler struct {
 	service StoryMediaService
+	// details drops the story's cached detail when its media changes: an upload or
+	// a delete changes the media array the detail response shows. Nil means the
+	// cache is switched off, and every call is a no-op (KNOT-036-fix4).
+	details *DetailInvalidator
 	logger  *slog.Logger
 }
 
 // NewStoryMediaHandler returns a handler backed by service.
 func NewStoryMediaHandler(service StoryMediaService, logger *slog.Logger) (*StoryMediaHandler, error) {
+	return NewStoryMediaHandlerWithCaches(service, logger, Caches{})
+}
+
+// NewStoryMediaHandlerWithCaches is NewStoryMediaHandler plus the Redis detail
+// cache (KNOT-036-fix4).
+//
+// Only the story key is invalidated. A version detail inherits the story's media
+// and carries its own cached copy, so a version key is left to expire rather than
+// fanned out to every adaptation — an upload cannot cheaply name them all.
+func NewStoryMediaHandlerWithCaches(service StoryMediaService, logger *slog.Logger, caches Caches) (*StoryMediaHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: story media handler requires a service")
 	}
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: story media handler requires a logger")
 	}
-	return &StoryMediaHandler{service: service, logger: logger}, nil
+	return &StoryMediaHandler{
+		service: service,
+		details: NewDetailInvalidator(caches.Details, nil, nil, logger),
+		logger:  logger,
+	}, nil
 }
 
 // storyMediaResponse is the public projection of a piece of story media. It is
@@ -182,6 +200,11 @@ func (h *StoryMediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The story's cached detail carries its media array, so a new item makes it
+	// stale. Best-effort: the upload has succeeded and the TTL heals a failed
+	// delete (KNOT-036-fix4).
+	h.details.InvalidateForStory(r.Context(), r.PathValue("id"))
+
 	writeJSON(w, http.StatusCreated, storyMediaEnvelope{Media: newStoryMediaResponse(created, r.PathValue("id"))})
 }
 
@@ -271,6 +294,10 @@ func (h *StoryMediaHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		h.writeServiceError(w, r, err)
 		return
 	}
+
+	// The story's cached detail still lists the deleted item, so it goes too. The
+	// path names the story, which is why no lookup is needed (KNOT-036-fix4).
+	h.details.InvalidateForStory(r.Context(), r.PathValue("id"))
 
 	w.WriteHeader(http.StatusNoContent)
 }
