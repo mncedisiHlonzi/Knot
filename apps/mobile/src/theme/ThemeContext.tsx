@@ -13,8 +13,8 @@
  */
 import React from 'react';
 
+import { loadAppearance, saveAppearance, type AppearanceMode } from './appearanceStorage';
 import { getColors, type ThemeColors, type ThemeName } from './colors';
-import { loadTheme, saveTheme } from './themeStorage';
 
 /**
  * The device appearance, as React Native's `Appearance.getColorScheme()` words
@@ -35,9 +35,16 @@ export type Theme = {
 
 /** What {@link useTheme} returns: the active theme plus the controls for it. */
 export type ThemeContextValue = Theme & {
-  /** Applies and persists a theme. */
+  /**
+   * How the mode was chosen: `system`, or an explicit `light` / `dark`
+   * (KNOT-020k). It is the value the Settings screen's Appearance rows show.
+   */
+  readonly mode: AppearanceMode;
+  /** Applies and persists a full appearance choice (system included). */
+  readonly setMode: (mode: AppearanceMode) => void;
+  /** Applies and persists an explicit mode. Shorthand for `setMode`. */
   readonly setTheme: (theme: ThemeName) => void;
-  /** Applies and persists the other theme. */
+  /** Applies and persists the other explicit mode. */
   readonly toggleTheme: () => void;
 };
 
@@ -57,7 +64,9 @@ export function themeFor(theme: ThemeName): Theme {
  * appearance, else light.
  *
  * Split out as a pure function so the rule can be tested without a provider, and
- * so `ThemeProvider` takes the whole decision as one argument.
+ * so `ThemeProvider` takes the whole decision as one argument. It is the
+ * two-value form the pre-KNOT-020k storage used; {@link resolveTheme} is the
+ * three-value rule the provider applies now.
  */
 export function resolveInitialTheme(
   stored: ThemeName | null,
@@ -71,6 +80,21 @@ export function resolveInitialTheme(
 }
 
 /**
+ * Resolves the mode to render: an explicit choice wins, and `system` follows the
+ * device appearance, defaulting to light when the device does not say.
+ *
+ * Pure so the three-value rule is testable without a provider, and so the
+ * provider's only job is to hold the mode.
+ */
+export function resolveTheme(mode: AppearanceMode, system: SystemColorScheme): ThemeName {
+  if (mode === 'system') {
+    return system === 'dark' ? 'dark' : 'light';
+  }
+
+  return mode;
+}
+
+/**
  * The context defaults to the light theme with no-op controls.
  *
  * That default IS the fallback the migration needs: a component rendered
@@ -80,6 +104,8 @@ export function resolveInitialTheme(
  */
 const ThemeContext = React.createContext<ThemeContextValue>({
   ...lightTheme,
+  mode: 'system',
+  setMode: () => undefined,
   setTheme: () => undefined,
   toggleTheme: () => undefined,
 });
@@ -144,19 +170,17 @@ export function ThemeProvider({
   systemTheme,
 }: {
   readonly children: React.ReactNode;
-  /** The device appearance on launch; see {@link resolveInitialTheme}. */
+  /** The device appearance; see {@link resolveTheme}. */
   readonly systemTheme?: SystemColorScheme;
 }): React.ReactElement {
-  const [theme, setThemeState] = React.useState<ThemeName>(() =>
-    resolveInitialTheme(null, systemTheme),
-  );
+  const [mode, setModeState] = React.useState<AppearanceMode>('system');
 
   React.useEffect(() => {
     let cancelled = false;
 
-    void loadTheme().then((stored) => {
+    void loadAppearance().then((stored) => {
       if (!cancelled && stored !== null) {
-        setThemeState(stored);
+        setModeState(stored);
       }
     });
 
@@ -165,20 +189,28 @@ export function ThemeProvider({
     };
   }, []);
 
-  const setTheme = React.useCallback((next: ThemeName) => {
-    setThemeState(next);
-    void saveTheme(next);
+  // An explicit choice wins; `system` reads the device appearance, which the root
+  // keeps live through an Appearance listener and passes down on every change.
+  const theme = resolveTheme(mode, systemTheme);
+
+  const setMode = React.useCallback((next: AppearanceMode) => {
+    setModeState(next);
+    void saveAppearance(next);
   }, []);
+
+  const setTheme = React.useCallback((next: ThemeName) => setMode(next), [setMode]);
 
   const value = React.useMemo<ThemeContextValue>(
     () => ({
       ...themeFor(theme),
+      mode,
+      setMode,
       setTheme,
       toggleTheme: () => {
-        setTheme(theme === 'dark' ? 'light' : 'dark');
+        setMode(theme === 'dark' ? 'light' : 'dark');
       },
     }),
-    [theme, setTheme],
+    [mode, setMode, setTheme, theme],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

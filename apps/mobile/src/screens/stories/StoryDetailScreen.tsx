@@ -520,7 +520,7 @@ export default function StoryDetailScreen({
             {media.length === 0 ? <View style={{ height: HEADER_BAND }} /> : null}
 
             <View style={styles.body}>
-              <PillarTag pillar={story.pillar} place={story.approximate_location} variant="plain" />
+              <PillarTag pillar={story.pillar} place={story.approximate_location} />
 
               <Text style={[typeScale.h1, styles.title]}>{story.title}</Text>
 

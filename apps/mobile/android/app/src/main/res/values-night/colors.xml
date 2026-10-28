@@ -1,0 +1,18 @@
+<resources>
+    <!-- Knot's canvas, `colors.bg.canvas` in src/theme/colors.ts, for the dark
+         appearance (KNOT-020k).
+
+         These are the PRE-MOUNT values only. A native theme cannot read the
+         appearance the reader chose inside the app, so Android resolves them from
+         the DEVICE appearance: a device in dark mode boots on a black canvas and
+         a device in light mode on a white one. Once React Native mounts, App.tsx's
+         <StatusBar>, the ThemeCrossfade and the app-local SystemBarsModule repaint
+         both bars from the active mode, including an explicit Light/Dark choice
+         that disagrees with the system. -->
+    <color name="knot_canvas">#000000</color>
+
+    <!-- The splash background, in the same canvas colour: a black room before
+         React Native mounts, so a dark-mode reader never sees a white flash
+         (KNOT-020k). -->
+    <color name="knot_splash_background">#000000</color>
+</resources>

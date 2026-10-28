@@ -1,4 +1,4 @@
-export { palette } from './palette';
+export { grey, palette } from './palette';
 export { colors, getColors } from './colors';
 export type { ThemeColors, ThemeName } from './colors';
 export {
@@ -6,11 +6,20 @@ export {
   darkTheme,
   lightTheme,
   resolveInitialTheme,
+  resolveTheme,
   themeFor,
   useTheme,
   useThemedStyles,
 } from './ThemeContext';
 export type { Theme, ThemeContextValue } from './ThemeContext';
+export type { SystemColorScheme } from './ThemeContext';
+export {
+  APPEARANCE_KEY,
+  clearAppearance,
+  loadAppearance,
+  saveAppearance,
+} from './appearanceStorage';
+export type { AppearanceMode } from './appearanceStorage';
 export { THEME_KEY, clearTheme, loadTheme, saveTheme } from './themeStorage';
 export {
   fonts,

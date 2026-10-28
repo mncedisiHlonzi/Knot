@@ -1,79 +1,115 @@
 /**
  * Raw palette values — the source of truth for every colour in the app.
  *
- * These are the literal swatches from `docs/design-reference/tokens.json`, for
- * both themes. Nothing in the UI reads them directly: screens use the semantic
- * aliases in `colors.ts`, which map a role (`bg.canvas`, `text.primary`) onto a
- * palette value. Keeping the raw values separate from the roles is what lets
- * KNOT-020i activate the dark theme without touching a single screen — it swaps
- * which palette `colors.ts` reads.
+ * ## The monochrome system (KNOT-020k)
  *
- * Knot is light-first (KNOT-020a): `colors.ts` reads `palette.light` today. The
- * dark palette is defined here now so the token layer supports both, but dark
- * activation is deferred to KNOT-020i.
+ * Knot is monochrome: pure black and pure white anchor each mode, and a neutral
+ * grey ramp carries everything between them. There is no accent colour. The
+ * indigo design reference is retired for colour — `docs/design-reference/tokens.json`
+ * still pins geometry, type, elevation and motion, but it no longer describes the
+ * palette (KNOT-ADR-096).
  *
- * Primary text (`ink900`) is pure: `#000000` on the light canvas and `#FFFFFF` on
- * the dark one, so a story body reads at maximum crispness the way X's does rather
- * than as a softened ink (KNOT-020k-fix19).
+ * {@link grey} is the primitive ramp: nine documented steps, light to dark. Most
+ * semantic values are one of those steps. A handful of values the contract names
+ * sit BETWEEN two steps (the dark body ink `#EDEDED`, the pressed fills, the
+ * tints); those are declared once in {@link between} so the specified value stays
+ * exact, and they are listed beside the ramp in `docs/DESIGN_SYSTEM.md`.
+ *
+ * Nothing in the UI reads this file directly: screens ask for a semantic role
+ * (`text.secondary`, `bg.canvas`) and `colors.ts` resolves it for the active mode.
+ * Keeping the raw values separate from the roles is what lets a mode switch
+ * repaint the whole app without touching a screen (KNOT-020i).
  *
  * Do not hard-code these hex values anywhere else; `palette.ts` is the one place
  * they are allowed to appear (enforced by the token parity test).
  */
+export const grey = {
+  50: '#FFFFFF',
+  100: '#F5F5F5',
+  200: '#E5E5E5',
+  300: '#BDBDBD',
+  400: '#8A8A8A',
+  500: '#555555',
+  600: '#111111',
+  700: '#1F1F1F',
+  950: '#000000',
+} as const;
+
+/**
+ * The neutral values the contract names that fall between two grey steps.
+ *
+ * Keeping them named (rather than inline in the two modes) makes the exception
+ * countable: five for dark surfaces and inks, four for the brand's pressed and
+ * tint states. `DESIGN_SYSTEM.md` lists them as the ramp's sub-steps, and a value
+ * may only reach the UI through a semantic role.
+ */
+const between = {
+  /** Dark body ink: between `grey.100` (#F5F5F5) and `grey.50` (#FFFFFF). */
+  darkBody: '#EDEDED',
+  /** Dark secondary ink: between `grey.300` (#BDBDBD) and `grey.400` (#8A8A8A). */
+  darkSecondary: '#A8A8A8',
+  /** Dark tertiary ink: between `grey.400` (#8A8A8A) and `grey.500` (#555555). */
+  darkTertiary: '#6E6E6E',
+  /** Dark strong rule: between `grey.500` (#555555) and `grey.600` (#111111). */
+  darkStrong: '#3D3D3D',
+  /** Dark sunken surface: between `grey.600` (#111111) and `grey.950` (#000000). */
+  darkSunken: '#0A0A0A',
+  /** Light pressed fill: between `grey.500` (#555555) and `grey.600` (#111111). */
+  lightPressed: '#333333',
+  /** Light tint surface: between `grey.100` (#F5F5F5) and `grey.50` (#FFFFFF). */
+  lightTint: '#F0F0F0',
+  /** Dark pressed fill: between `grey.50` (#FFFFFF) and `grey.100` (#F5F5F5). */
+  darkPressed: '#E0E0E0',
+  /** Dark tint surface: between `grey.700` (#1F1F1F) and `grey.600` (#111111). */
+  darkTint: '#1A1A1A',
+} as const;
+/**
+ * The two modes' raw values.
+ *
+ * Every neutral value is a {@link grey} step unless it appears in
+ * {@link between}. The state colours are the only chromatic values in the system:
+ * danger, success and warning must stay recognisable even in a monochrome app,
+ * and each is tuned to its mode's canvas.
+ */
 export const palette = {
+  /** Light mode: white canvas, black ink. */
   light: {
-    canvas: '#FFFFFF',
-    paper: '#FAFAFB',
-    sunken: '#F5F5F7',
-    line: '#E8EAEE',
-    ink900: '#000000',
-    ink700: '#334155',
-    ink500: '#64748B',
-    ink400: '#94A3B8',
-    indigo600: '#5B35E8',
-    indigo700: '#4723C4',
-    indigo500: '#7152F0',
-    indigo100: '#E9E4FD',
-    indigo50: '#F5F3FE',
-    heritageText: '#9A4A1F',
-    heritageFill: '#FBF1EA',
-    wonderText: '#0F5F73',
-    wonderFill: '#E8F3F6',
-    danger: '#C2362B',
+    canvas: grey[50],
+    sunken: grey[100],
+    raised: grey[50],
+    scrim: 'rgba(0, 0, 0, 0.5)',
+    inkPrimary: grey[950],
+    inkBody: grey[600],
+    inkSecondary: grey[500],
+    inkTertiary: grey[400],
+    inkInverse: grey[50],
+    line: grey[200],
+    lineStrong: grey[300],
+    brand: grey[950],
+    brandPressed: between.lightPressed,
+    brandTint: between.lightTint,
+    danger: '#B00020',
+    success: '#1B5E20',
+    warning: '#8A5300',
   },
-  /**
-   * Classic, neutral dark mode (KNOT-020k-fix18).
-   *
-   * Surfaces are pure or near-pure grey — black canvas, a lifted neutral panel,
-   * a recessed field tone, a neutral hairline — with no blue or violet cast. The
-   * previous ramp carried a navy cast in every surface, which is exactly what
-   * the founder asked to replace with the neutral dark theme of X/Twitter and
-   * LinkedIn.
-   *
-   * The accent roles are deliberately UNCHANGED (`indigoText` / `indigoFill` /
-   * `indigoOnTint`): the brand purple is an accent, not a surface, and in a dark
-   * theme it has to stay legible both as ink on black and as a fill under the
-   * black `text.onBrand` label. Light-mode `indigo600` (`#5B35E8`) is only about
-   * 3.1:1 against black, so it remains the light theme's fill.
-   */
+  /** Dark mode: black canvas, white ink. */
   dark: {
-    canvas: '#000000',
-    paper: '#16181C',
-    sheet: '#22252A',
-    sunken: '#1E2024',
-    line: '#2F3336',
-    ink900: '#FFFFFF',
-    ink700: '#71767B',
-    ink500: '#536471',
-    ink400: '#3F4448',
-    indigoText: '#9D8BFF',
-    indigoFill: '#6D4DF0',
-    indigoOnTint: '#B6A9FF',
-    indigo100: '#2A2350',
-    indigo50: '#1E1B38',
-    heritageText: '#E5A07A',
-    heritageFill: '#2B1D16',
-    wonderText: '#6BC4D8',
-    wonderFill: '#12262C',
-    danger: '#F4212E',
+    canvas: grey[950],
+    sunken: between.darkSunken,
+    raised: grey[600],
+    scrim: 'rgba(0, 0, 0, 0.7)',
+    inkPrimary: grey[50],
+    inkBody: between.darkBody,
+    inkSecondary: between.darkSecondary,
+    inkTertiary: between.darkTertiary,
+    inkInverse: grey[950],
+    line: grey[700],
+    lineStrong: between.darkStrong,
+    brand: grey[50],
+    brandPressed: between.darkPressed,
+    brandTint: between.darkTint,
+    danger: '#FF6B6B',
+    success: '#66BB6A',
+    warning: '#FFB74D',
   },
 } as const;

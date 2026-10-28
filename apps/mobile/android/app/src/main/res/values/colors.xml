@@ -1,8 +1,9 @@
 <resources>
-    <!-- Knot splash background — BRAND.md Purple (#7B3FE4). A solid brand
-         colour shown before React Native mounts; a proper splash is a future
-         task. -->
-    <color name="knot_splash_background">#7B3FE4</color>
+    <!-- The splash background, in the app's canvas colour. It used to be the
+         brand's purple (#7B3FE4); Knot is monochrome now, so the first frame of
+         the app is its own background rather than a coloured block (KNOT-020k).
+         `values-night/colors.xml` holds the dark pair. -->
+    <color name="knot_splash_background">#FFFFFF</color>
 
     <!-- The app's canvas, `colors.bg.canvas` in src/theme/colors.ts (which reads
          `palette.light.canvas`). Declared here as well because the system bars

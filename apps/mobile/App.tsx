@@ -24,8 +24,9 @@ import { versionsApi } from './src/api/versions';
 import { DEFAULT_LANGUAGE_CODE } from './src/config/language';
 import { isLanguageCode } from './src/data/languages';
 import { motion, ThemeProvider, useTheme, useThemedStyles } from './src/theme';
-import type { ThemeColors } from './src/theme';
+import type { SystemColorScheme, ThemeColors } from './src/theme';
 import { layout, spacing, typeScale } from './src/theme';
+import ThemeCrossfade from './src/motion/ThemeCrossfade';
 import { setNavigationBarColor } from './src/native/systemBars';
 import TabBar from './src/components/TabBar';
 import type { TabName } from './src/components/TabBar';
@@ -198,9 +199,27 @@ function preferredLanguage(user: User): string {
  * or register, so it survives a restart; signing out clears it (KNOT-ADR-024).
  */
 export default function App(): React.ReactElement {
+  // The device appearance, kept LIVE: `system` is one of the three appearance
+  // choices (KNOT-020k), so a reader who switches the OS between light and dark
+  // while the app is open must see it follow without a restart.
+  const [systemTheme, setSystemTheme] = useState<SystemColorScheme>(() =>
+    Appearance.getColorScheme(),
+  );
+
+  useEffect(() => {
+    const subscription = Appearance.addChangeListener(({ colorScheme }) => {
+      setSystemTheme(colorScheme);
+    });
+
+    return () => subscription.remove();
+  }, []);
+
   return (
-    <ThemeProvider systemTheme={Appearance.getColorScheme()}>
+    <ThemeProvider systemTheme={systemTheme}>
       <ThemedApp />
+      {/* Painted last so it covers every screen, and only while a mode change
+          is settling (KNOT-020k). */}
+      <ThemeCrossfade />
     </ThemeProvider>
   );
 }

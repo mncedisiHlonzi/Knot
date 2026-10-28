@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   FlatList,
   Image,
   Modal,
@@ -46,6 +47,7 @@ import {
   useThemedStyles,
 } from '../../theme';
 import type { ThemeColors } from '../../theme';
+import { useFade } from '../../motion/useFade';
 import { PLACEHOLDER_MEDIA_ASPECT_RATIO } from '../../utils/mediaFrame';
 import { useMediaAspectRatio } from '../../utils/useMediaAspectRatio';
 import { formatRelativeTime } from '../../utils/time';
@@ -303,6 +305,15 @@ export default function UserProfileScreen({
   // block straight away: the menu is where the action belongs, and choosing it
   // still runs the confirmation below (KNOT-020k-fix25).
   const [visitorMenuOpen, setVisitorMenuOpen] = useState(false);
+  // The visitor sheet fades in with the shared primitive (KNOT-020k). This is the
+  // successor of the profile's old options sheet, which Settings replaced
+  // (KNOT-020k-fix22).
+  const visitorFade = useFade(false);
+  useEffect(() => {
+    if (visitorMenuOpen) {
+      visitorFade.fadeIn();
+    }
+  }, [visitorFade, visitorMenuOpen]);
   const closeVisitorMenu = useCallback((): void => {
     setVisitorMenuOpen(false);
   }, []);
@@ -628,7 +639,7 @@ export default function UserProfileScreen({
                   )
                 ) : (
                   <View style={styles.cardPillar}>
-                    <PillarTag pillar={card.pillar} place={card.place} variant="plain" />
+                    <PillarTag pillar={card.pillar} place={card.place} />
                   </View>
                 )}
 
@@ -707,23 +718,25 @@ export default function UserProfileScreen({
         >
           {/* The card swallows its own taps, so choosing an action never falls
               through to the backdrop and closes the sheet first. */}
-          <Pressable style={styles.sheet} onPress={() => undefined}>
-            <View style={styles.sheetHandleArea}>
-              <View style={styles.sheetHandle} />
-            </View>
-            <View style={styles.sheetBody}>
-              <Button
-                variant="danger"
-                fullWidth
-                label="Block user"
-                onPress={() => {
-                  closeVisitorMenu();
-                  handleBlock();
-                }}
-              />
-              <Button variant="secondary" fullWidth label="Cancel" onPress={closeVisitorMenu} />
-            </View>
-          </Pressable>
+          <Animated.View style={[styles.sheet, { opacity: visitorFade.opacity }]}>
+            <Pressable style={styles.sheetBodyPressable} onPress={() => undefined}>
+              <View style={styles.sheetHandleArea}>
+                <View style={styles.sheetHandle} />
+              </View>
+              <View style={styles.sheetBody}>
+                <Button
+                  variant="danger"
+                  fullWidth
+                  label="Block user"
+                  onPress={() => {
+                    closeVisitorMenu();
+                    handleBlock();
+                  }}
+                />
+                <Button variant="secondary" fullWidth label="Cancel" onPress={closeVisitorMenu} />
+              </View>
+            </Pressable>
+          </Animated.View>
         </Pressable>
       </Modal>
     </View>
@@ -881,6 +894,11 @@ const createStyles = (colors: ThemeColors) =>
     sheetBody: {
       gap: spacing.sm,
       paddingHorizontal: spacing.lg,
+    },
+    // The animated card's inner press target: it only exists to swallow taps, so
+    // it carries no styling of its own (the card above it paints everything).
+    sheetBodyPressable: {
+      width: '100%',
     },
     sheetHandle: {
       backgroundColor: colors.border.hairline,

@@ -318,7 +318,6 @@ describe('StoryVersionScreen', () => {
     expect(findByType(tree, PillarTag)?.props).toMatchObject({
       pillar: story.pillar,
       place: story.approximate_location,
-      variant: 'plain',
     });
 
     // The first Pressable in the tree is now the carousel page (it opens the

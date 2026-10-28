@@ -1,0 +1,25 @@
+<resources>
+
+    <!-- The dark counterpart of values/styles.xml (KNOT-020k).
+
+         `AppTheme` keeps its parent; only the window-level colours change, because
+         everything else is painted by React Native. The two flags go FALSE: a
+         black status bar and a black navigation bar need LIGHT icons, which is the
+         opposite of what the light theme asks for.
+
+         Like the light file, these are the pre-mount defaults. The navigation bar
+         is repainted at runtime by the app-local SystemBarsModule
+         (src/native/systemBars.ts) whenever the active mode changes, so an
+         explicit Light choice on a dark device is still honoured once JavaScript
+         is running. -->
+    <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
+        <item name="android:windowBackground">@color/knot_splash_background</item>
+
+        <item name="android:statusBarColor">@color/knot_canvas</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">@color/knot_canvas</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+
+</resources>

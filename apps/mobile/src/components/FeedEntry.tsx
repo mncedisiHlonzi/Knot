@@ -518,7 +518,7 @@ export default function FeedEntry({
             adaptation reads as a story filed under a pillar. Which telling it is
             lives in the attribution row above (KNOT-022-fix1). */}
         <View style={styles.tagRow}>
-          <PillarTag pillar={story.pillar} place={story.place} variant="plain" />
+          <PillarTag pillar={story.pillar} place={story.place} />
         </View>
 
         <Text style={[typeScale.title, styles.title]}>{story.title}</Text>

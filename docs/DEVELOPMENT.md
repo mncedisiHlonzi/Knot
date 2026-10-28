@@ -3105,3 +3105,58 @@ KNOT_POSTGRES_DSN='postgres://knot:knot_only_change_me@localhost:5433/knot?sslmo
 
 `internal/auth/service_test.go` exercises every policy decision — the session cap, rotation,
 reuse detection, the verification window — against fake stores and a real in-process cache.
+
+## Colour, appearance and motion (KNOT-020k)
+
+**Never write a colour in a component.** A literal may only live in
+`apps/mobile/src/theme/palette.ts` (and the Android `res/values*/colors.xml`, which
+the native window paints before JavaScript runs). Adding a colour means:
+
+1. put the raw value in `palette.ts` — a grey step if it matches one, otherwise a
+   named entry beside the ramp — for **both** modes;
+2. expose it as a **semantic role** in `colors.ts` (never a raw key a screen would
+   reach for), keeping the deprecated aliases untouched;
+3. use the role (`colors.bg.raised`) from a screen.
+
+`src/theme/__tests__/tokens.test.ts` pins every specified value in both modes, so a
+typo or a one-sided addition fails the suite. The indigo `tokens.json` is no longer
+compared for colour; it still pins type, spacing, radius, elevation and motion.
+
+**Reading the theme.** Screens and components build their stylesheet per mode:
+
+```ts
+const createStyles = (colors: ThemeColors) => StyleSheet.create({ … });
+const styles = useThemedStyles(createStyles);
+```
+
+`useTheme()` gives `{ theme, mode, colors, setMode, setTheme, toggleTheme }` for
+anything that needs a colour inline (an icon tint, an `ActivityIndicator`). Do not
+import the module-scope `colors` export in a screen: it is the light fallback for
+code that renders outside the provider.
+
+**Changing the appearance.** `setMode('system' | 'light' | 'dark')` applies and
+persists. It is stored under `knot.appearance.v1`; a pre-KNOT-020k `knot.theme.v1`
+choice is adopted once. `mode` is what the Settings radio rows read, so a new
+surface that offers the choice should read `mode`/`setMode` rather than the resolved
+`theme`.
+
+**Motion.** Use the primitives in `src/motion/` rather than calling `Animated`
+ad hoc:
+
+- `usePressScale(enabled?)` → `{ scale, onPressIn, onPressOut }` for a control that
+  should shrink under the finger (`Button` and `Chip` already do);
+- `useFade(initialVisible?)` → `{ opacity, fadeIn, fadeOut(done) }` for overlay
+  content; `done` is where a modal unmounts after its exit;
+- `useCrossfade(isDark)` → the canvas overlay the root draws on a mode change.
+
+Each one snaps to a zero duration when `useReducedMotion()` is true, so never add a
+duration bypass — call the primitive and it inherits the preference.
+
+**Adding a Settings row.** `SettingsScreen` composes `Section` + `SettingRow` (an
+icon, a label, an optional value, a chevron) or `AppearanceRow` (a radio with a
+check). A new row is one `<SettingRow icon={…} label="…" onPress={…} />` inside the
+right `Section`; a row with no `onPress` is informational and draws no chevron.
+Groups are separated by whitespace and an overline heading — **no rules between
+rows** (KNOT-020k-fix23). A handler that needs a new destination is a prop on the
+screen, wired in `App.tsx` like the existing ones.
+

@@ -3629,3 +3629,82 @@ path, so a story detail's media array is never older than the write. Version det
 keys are deliberately NOT touched: a version inherits the story's media, but an
 upload cannot cheaply name every adaptation, so those keys expire on the existing
 TTL. Both invalidations are best-effort, like every other cache write.
+
+---
+
+## KNOT-ADR-096 — The app is monochrome, in two equal modes, with a real Appearance setting
+
+**Context.** The design pass was built on an indigo reference: a violet accent, a
+pillar per category (Wonder teal, Heritage rust), and a light-first palette with a
+dark palette bolted on at KNOT-020i. With the pass nearly complete the founder
+reversed the direction: "Black is undisputed premium." The accent, the category
+colours and the reference's swatches are all retired, and light and dark become two
+designs of equal standing rather than one design and its inversion.
+
+**Decision.**
+
+- **Monochrome only.** A neutral ramp (`grey.50` … `grey.950`) is the primitive
+  colour system; every semantic role resolves to a step, or — for the few values
+  the contract names that sit between steps — to a value declared beside the ramp
+  in `palette.ts`. There is no accent colour: `brand.primary` IS the mode's ink
+  (black in light, white in dark). The only chromatic tokens are `state.danger`,
+  `state.success` and `state.warning`, because a signal must stay recognisable.
+- **Two modes, chosen three ways.** `System`, `Light` and `Dark` are stored under
+  `knot.appearance.v1`; `System` is the default and follows the device live. The
+  pre-KNOT-020k `knot.theme.v1` choice is adopted once when no appearance has been
+  stored, so nobody loses an explicit choice. The provider resolves the mode, the
+  root keeps the device appearance current through an `Appearance` listener, and
+  the change crossfades the canvas.
+- **The pillar is bold text only.** `PillarTag` renders `Wonder · Manguzi` in bold
+  normal case in `text.primary`; there is no variant, no overline, no underline, no
+  mark and no pill. The category palette is gone, and the two pillars resolve to
+  the same ink.
+- **The indigo design reference is retired for colour.** `tokens.json` still pins
+  geometry, type, elevation and the motion curves, and the parity test keeps
+  checking those; the colour half of that test is replaced by a direct assertion of
+  the monochrome contract in both modes.
+- **The Settings screen is a first-class screen** (it became one in
+  KNOT-020k-fix22 and replaces the profile's options sheet). It hosts the
+  Appearance section as three radio rows — a two-state switch cannot express three
+  states — beside the account actions, About and Legal.
+- **Motion is a layer, not a sprinkle.** `src/motion/` owns `usePressScale`,
+  `useFade` and `useCrossfade`, each honouring `useReducedMotion` by snapping its
+  duration to zero. `react-native-reanimated` is not installed, so the primitives
+  use `Animated`; the token shape keeps the cubic-bezier tuples that `Animated`
+  consumes and adds the named curves and the three-step duration set beside them.
+
+**Alternatives Considered.**
+
+1. **Keep indigo as an accent and only neutralise the surfaces.** Rejected: the
+   founder's direction is monochrome, and one accent reintroduces exactly the
+   colour hierarchy the change removes.
+2. **A two-state Light/Dark switch, as shipped in KNOT-020k-fix22.** Rejected:
+   "follow the device" is a real preference a reader can hold, and it is lost the
+   moment a switch forces a side.
+3. **Reinterpret the pillar as a tinted label.** Rejected: the founder removed the
+   overline, the underline and the mark in the same instruction, so the pillar is
+   text and only text.
+4. **Add `react-native-reanimated` for the primitives.** Rejected for this task: no
+   new dependencies, and the shared `Animated` primitives are enough for a press, a
+   fade and a dissolve. Revisit if gesture-driven transitions are wanted.
+5. **Rename the grey contract to fit nine steps exactly.** Rejected: the contract
+   names fourteen distinct neutral values in two modes; honouring nine steps would
+   mean altering a specified hex, which is the one thing that must not drift. The
+   five in-between values are declared once and documented.
+
+**Consequences.**
+
+- Every screen changed appearance without a screen being edited: they already read
+  semantic roles, so re-resolving the palette repainted the app.
+- The **primary logo is a gradient** and is not tintable, and the standalone
+  logomark/wordmark ship only in their coloured forms, so the splash logo uses the
+  monochrome assets (now pure black/white) while the auth screens and the Feed
+  header keep the coloured mark until replacement SVGs exist.
+- The **native pre-mount theme follows the device**, not the app setting, because a
+  native theme cannot read a preference stored in AsyncStorage; the runtime
+  `SystemBarsModule` and the `<StatusBar>` correct both bars as soon as JavaScript
+  runs, so only the splash frame can disagree with an explicit choice.
+- A modal's exit animation is still the platform's: `visible={false}` removes the
+  window in the same frame, so `useFade` animates entry and hands the exit back to
+  the `Modal` (or to the caller, via `fadeOut(done)`).
+

@@ -1,17 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import {
-  ActivityIndicator,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  View,
-} from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import {
   ArrowLeft,
   Camera,
   CaretRight,
+  Check,
   Devices,
   FileText,
   Info,
@@ -19,6 +12,7 @@ import {
   Plant,
   Prohibit,
   ShieldCheck,
+  Sun,
   Trash,
   SignOut,
   type Icon,
@@ -142,42 +136,85 @@ function SettingRow({
 }
 
 /**
- * The theme preference: the current value and the switch that changes it.
+ * One Appearance choice: a leading glyph, the mode's name, and a check when it is
+ * the active choice.
  *
- * The switch is the control (it carries the accessible name and state); the row is
- * not separately pressable, so a tap on the label does nothing rather than
- * something ambiguous. The choice is a device preference stored outside the
- * account, so it applies at once and survives a restart (KNOT-ADR-077).
- *
- * There are two states — light and dark. The app follows the system appearance on
- * first launch and then remembers an explicit choice, so "System" is the initial
- * behaviour rather than a third value the switch can return to
- * (KNOT-020k-fix22).
+ * It is a radio, not a switch (KNOT-020k): there are three states — System, Light
+ * and Dark — and a switch can only say two. The whole row is the target, so a
+ * reader never has to hit the 20-point mark, and the check rides the trailing edge
+ * where a chevron would sit on an action row.
  */
-function ThemeRow(): React.ReactElement {
-  const { colors, theme, setTheme } = useTheme();
+function AppearanceRow({
+  icon,
+  label,
+  selected,
+  onPress,
+}: {
+  readonly icon: Icon;
+  readonly label: string;
+  readonly selected: boolean;
+  readonly onPress: () => void;
+}): React.ReactElement {
+  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
-  const isDark = theme === 'dark';
-  const valueLabel = isDark ? 'Dark' : 'Light';
+  const IconComponent = icon;
 
   return (
-    <View style={styles.row}>
-      <Moon color={colors.text.tertiary} size={20} weight="bold" />
-      <Text style={[typeScale.body, styles.rowLabel]} numberOfLines={1}>
-        Theme
-      </Text>
-      <Text style={[typeScale.caption, styles.rowValue]}>{valueLabel}</Text>
-      <Switch
-        value={isDark}
-        onValueChange={(next) => setTheme(next ? 'dark' : 'light')}
-        trackColor={{ false: colors.bg.sunken, true: colors.brand.primary }}
-        thumbColor={colors.bg.canvas}
-        ios_backgroundColor={colors.bg.sunken}
-        accessibilityRole="switch"
-        accessibilityLabel="Theme"
-        accessibilityValue={{ text: valueLabel }}
+    <Pressable
+      style={styles.row}
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityLabel={label}
+      accessibilityState={{ selected }}
+    >
+      <IconComponent
+        color={selected ? colors.text.primary : colors.text.tertiary}
+        size={20}
+        weight="bold"
       />
-    </View>
+      <Text
+        style={[typeScale.body, styles.rowLabel, selected ? styles.rowLabelSelected : null]}
+        numberOfLines={1}
+      >
+        {label}
+      </Text>
+      {selected ? <Check color={colors.brand.primary} size={20} weight="bold" /> : null}
+    </Pressable>
+  );
+}
+
+/**
+ * The Appearance setting: how the app chooses its mode.
+ *
+ * `System` is a real choice, not the absence of one: it follows the device and
+ * keeps following it while the app runs. Choosing Light or Dark pins the mode and
+ * persists it under `knot.appearance.v1`; the change applies on the tap, not on a
+ * restart (KNOT-020k, KNOT-ADR-096).
+ */
+function AppearanceSection(): React.ReactElement {
+  const { mode, setMode } = useTheme();
+
+  return (
+    <>
+      <AppearanceRow
+        icon={Devices}
+        label="System"
+        selected={mode === 'system'}
+        onPress={() => setMode('system')}
+      />
+      <AppearanceRow
+        icon={Sun}
+        label="Light"
+        selected={mode === 'light'}
+        onPress={() => setMode('light')}
+      />
+      <AppearanceRow
+        icon={Moon}
+        label="Dark"
+        selected={mode === 'dark'}
+        onPress={() => setMode('dark')}
+      />
+    </>
   );
 }
 
@@ -357,8 +394,8 @@ export default function SettingsScreen({
           <Text style={[typeScale.bodyS, styles.error]}>{avatarError}</Text>
         )}
 
-        <Section title="Preferences">
-          <ThemeRow />
+        <Section title="Appearance">
+          <AppearanceSection />
         </Section>
 
         <Section title="About">
@@ -444,6 +481,12 @@ const createStyles = (colors: ThemeColors) =>
     },
     rowLabelDanger: {
       color: colors.state.danger,
+    },
+    // The selected Appearance row is the full-strength ink; an unselected one is
+    // already primary, so selection is carried by the check and the glyph's ink
+    // rather than by a second text colour.
+    rowLabelSelected: {
+      color: colors.text.primary,
     },
     rowValue: {
       color: colors.text.tertiary,

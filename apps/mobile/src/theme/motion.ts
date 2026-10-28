@@ -36,4 +36,32 @@ export const motion = {
     screen: 280,
     max: 320,
   },
+  /**
+   * The named easings, for a driver that wants a curve by name rather than a
+   * tuple (a CSS-backed preview, a native animation spec, a screenshot harness).
+   * `easing` above stays the tuple form because that is what `Animated` consumes;
+   * the two describe the same three curves (KNOT-020k).
+   */
+  easingNames: {
+    standard: 'easeOutCubic',
+    enter: 'easeOut',
+    exit: 'easeIn',
+  },
+  /**
+   * The three durations the motion primitives use (KNOT-020k).
+   *
+   * `durations` above is the original five-step scale the screens animate with;
+   * this is the smaller set a shared primitive picks from, so a press, a fade and
+   * a crossfade stay in step with each other wherever they are used. Both resolve
+   * to milliseconds.
+   */
+  duration: {
+    short: 150,
+    medium: 250,
+    long: 400,
+  },
+  /** The scale a pressed control shrinks to (KNOT-020k). */
+  scale: {
+    press: 0.97,
+  },
 } as const;

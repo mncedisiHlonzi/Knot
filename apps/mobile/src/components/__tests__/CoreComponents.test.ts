@@ -7,6 +7,7 @@ import RootedBadge from '../RootedBadge';
 import TabBar from '../TabBar';
 import { ChatsCircle } from 'phosphor-react-native';
 import { fontWeights } from '../../theme';
+import { colors } from '../../theme';
 import {
   attributionParts,
   attributionSegments,
@@ -45,9 +46,10 @@ jest.mock('react', () => ({
 
 jest.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
-  // The motion pass (KNOT-020h) gave Button and Chip animated values. The
-  // animations themselves are visual and are not asserted; the stand-ins only
-  // have to exist so a direct call can render, exactly as the app would.
+  // Button and Chip animate through the shared press-scale primitive (KNOT-020k),
+  // which reads a React Native accessibility module this node-environment suite
+  // does not load. The primitive has its own suite; here it is a stand-in so a
+  // direct call can render.
   Animated: {
     Value: class {
       setValue(): void {}
@@ -72,6 +74,10 @@ jest.mock('react-native', () => ({
 // Only the icons still used by a component under test: TabBar (the tab glyphs)
 // and Chip (its remove affordance). ReactionBar's icons are the committed brand
 // SVGs now, mapped to a stub by jest.config.js (KNOT-020b-fix).
+jest.mock('../../motion/usePressScale', () => ({
+  usePressScale: () => ({ scale: 1, onPressIn: () => undefined, onPressOut: () => undefined }),
+}));
+
 jest.mock('phosphor-react-native', () => ({
   Bell: () => null,
   ChatsCircle: () => null,
@@ -159,19 +165,34 @@ describe('PillarTag', () => {
     expect(PillarTag({ pillar: 'wonder', place: '   ' })).toBeTruthy();
   });
 
-  // Item 1 (KNOT-020c-fix6): the plain variant must reset the pill's horizontal
-  // padding, so the tag sits flush with the avatar and the story text rather than
-  // starting a step in. There is no renderer, so the style array is inspected
-  // directly: the base style carries the pill's padding and the plain override
-  // zeroes it.
-  it('resets the horizontal padding in the plain variant', () => {
-    const plain = PillarTag({ pillar: 'wonder', variant: 'plain' }) as unknown as {
-      props: { style: readonly Record<string, unknown>[] };
+  // KNOT-020k: the pillar is bold text only — no overline, no underline, no
+  // letter-spacing, no mark, no pill, no background and no border.
+  it('renders the pillar and place as one bold primary-ink line', () => {
+    const element = PillarTag({ pillar: 'heritage', place: 'Oaxaca' }) as unknown as {
+      type: unknown;
+      props: { children: unknown; style: Record<string, unknown> };
     };
-    const applied = plain.props.style;
 
-    expect(applied[0]).toHaveProperty('paddingHorizontal');
-    expect(applied[applied.length - 1]).toMatchObject({ paddingHorizontal: 0 });
+    expect(element.props.children).toBe('Heritage · Oaxaca');
+    expect(Array.isArray(element.props.style)).toBe(false);
+    expect(element.props.style).toMatchObject({
+      color: colors.text.primary,
+      fontWeight: '700',
+    });
+    expect(element.props.style).not.toHaveProperty('textTransform');
+    expect(element.props.style).not.toHaveProperty('textDecorationLine');
+    // The caption composite's tracking is explicitly cancelled: no letter-spacing.
+    expect(element.props.style.letterSpacing).toBe(0);
+    expect(element.props.style).not.toHaveProperty('backgroundColor');
+    expect(element.props.style).not.toHaveProperty('borderWidth');
+  });
+
+  it('renders only the pillar when there is no place', () => {
+    const element = PillarTag({ pillar: 'wonder', place: '   ' }) as unknown as {
+      props: { children: unknown };
+    };
+
+    expect(element.props.children).toBe('Wonder');
   });
 });
 

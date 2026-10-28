@@ -1,9 +1,10 @@
-import React, { useCallback, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Animated, Modal, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { ImagePickerResponse, launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import { Camera, FilmStrip, Images, VideoCamera, type Icon } from 'phosphor-react-native';
 
 import type { MediaSource } from '../api/stories';
+import { useFade } from '../motion/useFade';
 import { MEDIA_LIMIT_MESSAGE } from '../utils/mediaLimit';
 import {
   elevation,
@@ -198,6 +199,16 @@ export default function MediaPickerSheet({
     [close, dragY],
   );
 
+  // The sheet fades in on open with the shared primitive (KNOT-020k). The fade
+  // OUT is left to the `Modal`: `visible={false}` removes the native window in the
+  // same frame, so a JS exit animation would be cut off — disclosed.
+  const fade = useFade(false);
+  useEffect(() => {
+    if (visible) {
+      fade.fadeIn();
+    }
+  }, [fade, visible]);
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
       <Pressable
@@ -206,7 +217,9 @@ export default function MediaPickerSheet({
         accessibilityRole="button"
         accessibilityLabel="Close the media picker"
       >
-        <Animated.View style={[styles.sheet, { transform: [{ translateY: dragY }] }]}>
+        <Animated.View
+          style={[styles.sheet, { opacity: fade.opacity, transform: [{ translateY: dragY }] }]}
+        >
           {/* The handle is the drag target: a downward fling dismisses the
               sheet, anything else springs it back. */}
           <View style={styles.handleArea} {...sheetPan.panHandlers}>

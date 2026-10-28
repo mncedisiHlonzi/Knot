@@ -3,40 +3,36 @@
  *
  * Each role maps onto a raw value from `palette.ts`, so a screen asks for
  * `colors.text.secondary` rather than a hex. This indirection is what makes the
- * palette swappable: {@link getColors} resolves a whole role set per theme and
- * caches it, so `colors` identity is stable for as long as the theme is.
+ * palette swappable: {@link getColors} resolves a whole role set per mode and
+ * caches it, so `colors` identity is stable for as long as the mode is.
  *
- * Both themes are live from KNOT-020i. Components do NOT import the static
- * `colors` object any more — they read the active set from `useTheme()` (or
- * build their stylesheets with `useThemedStyles`), because a stylesheet created
- * at module scope would freeze whichever palette was active when the module was
- * first loaded.
+ * ## The two modes (KNOT-020k)
  *
- * ## Mapping the dark palette
+ * Knot is monochrome. Both modes are equal citizens, and neither is derived from
+ * the other: `palette.light` and `palette.dark` name the same set of values, so a
+ * role is resolved by mode rather than by a transformation. The indigo design
+ * reference is retired for colour (KNOT-ADR-096).
  *
- * The dark palette in `tokens.json` names its indigo roles differently from the
- * light one — it has `indigoText`/`indigoFill`/`indigoOnTint` where light has
- * `indigo600/700/500` — because in a dark theme the accent used as *ink* and the
- * accent used as a *fill* need different luminances. {@link activePalette}
- * resolves both into the same role names, so every screen keeps asking for
- * `brand.primary`:
+ * The canonical roles are the brief's contract:
  *
- * - **`brand.primary`** is the accent as ink AND as a fill. Light uses
- *   `indigo600`; dark uses `indigoText` (a light lavender), which is legible as
- *   text on the dark canvas and a compliant fill under dark `text.onBrand`.
- * - **`brand.pressed`** is the pressed state. Light darkens (`indigo700`); dark
- *   BRIGHTENS (`indigoOnTint`), the usual dark-theme affordance.
+ *   bg.canvas, bg.sunken, bg.raised, bg.scrim
+ *   text.primary, text.body, text.secondary, text.tertiary, text.inverse
+ *   border.hairline, border.strong
+ *   brand.primary, brand.pressed, brand.tint
+ *   pillar.wonder, pillar.heritage
+ *   state.danger, state.success, state.warning
+ *
+ * Some roles the app already paints with are kept beside them, because they name
+ * a surface or an ink the contract does not: `bg.separator`, `bg.theater`,
+ * `text.onBrand`, `text.onMedia`, `text.disabled`, `border.divider`,
+ * `scrim.overlay`, `scrim.textShadow`. They resolve to the same monochrome values.
  *
  * ## Legacy aliases (deprecated)
  *
- * Before KNOT-020a the app was dark-first and `colors` exposed a different shape
- * (`brand.purple`, `bg.primary`, `border.subtle`, `gradient.*`, `state.error`,
- * …). Screens are NOT rewritten until their individual tasks (KNOT-020c onward),
- * so those old keys are kept here as **deprecated aliases** mapped onto the
- * nearest new palette value — the approach the brief recommends (option a). This
- * keeps every existing import resolving while the screens migrate to the new
- * semantic tokens. Expect minor visual shifts (the canvas flips to white) until
- * then; see docs/DESIGN_SYSTEM.md.
+ * Before KNOT-020a the app exposed a different shape (`brand.purple`,
+ * `bg.primary`, `border.subtle`, `gradient.*`, `state.error`, …). Those keys are
+ * kept as **deprecated aliases** mapped onto the nearest canonical role so every
+ * existing import keeps resolving; a new screen must not use them.
  *
  * Do not use the deprecated keys in new code.
  */
@@ -54,56 +50,40 @@ export type ThemeName = 'light' | 'dark';
  */
 type ActivePalette = {
   readonly canvas: string;
-  readonly paper: string;
-  readonly sheet: string;
   readonly sunken: string;
+  readonly raised: string;
+  readonly scrim: string;
+  readonly inkPrimary: string;
+  readonly inkBody: string;
+  readonly inkSecondary: string;
+  readonly inkTertiary: string;
+  readonly inkInverse: string;
   readonly line: string;
-  readonly ink900: string;
-  readonly ink700: string;
-  readonly ink500: string;
-  readonly ink400: string;
-  readonly indigo600: string;
-  readonly indigo700: string;
-  readonly indigo500: string;
-  readonly indigo100: string;
-  readonly indigo50: string;
-  readonly heritageText: string;
-  readonly heritageFill: string;
-  readonly wonderText: string;
-  readonly wonderFill: string;
+  readonly lineStrong: string;
+  readonly brand: string;
+  readonly brandPressed: string;
+  readonly brandTint: string;
   readonly danger: string;
-  readonly divider: string;
+  readonly success: string;
+  readonly warning: string;
 };
-
-/**
- * The `border.divider` role has no swatch in the design reference: the reference
- * draws the attribution rule with a colour it never names as a token. The light
- * value is the reference's field-border grey; the dark value is a neutral grey
- * one step lighter than the dark hairline, so the two rules stay distinguishable
- * there too without reintroducing the blue cast the old dark palette had.
- * Defining both here keeps the role owned by this layer, as it was before
- * (KNOT-023a).
- */
-const DIVIDER = { light: '#D5D9E0', dark: '#35393D' } as const;
 
 /**
  * The ink drawn over media, on a `scrim.overlay` chip or disc.
  *
- * It is white in BOTH themes, which is why it cannot be one of the palette's
- * ink roles: `text.onBrand` is the canvas colour (near-black once the dark
- * theme is active), and `text.primary` is the reading ink (near-black in light).
- * A scrim is the same translucent navy in both themes, so the ink on it must
- * stay the same light value too (KNOT-020j).
+ * It is white in BOTH modes. The scrim over a photo is black in both modes, so
+ * the ink on it must stay the same light value; unlike `text.inverse`, which is
+ * the canvas's opposite and therefore flips.
  */
 const ON_MEDIA = '#FFFFFF' as const;
 
 /**
  * The media viewer's backdrop, and the surface behind full-screen video.
  *
- * It is black in BOTH themes: a photo viewer is a theatre, and a white or
- * near-black canvas behind a photograph distorts how the image reads. Like
- * `text.onMedia`, it is a role this layer owns because no palette swatch means
- * "the room is dark" (KNOT-020k).
+ * It is black in BOTH modes: a photo viewer is a theatre, and a white canvas
+ * behind a photograph distorts how the image reads. Like `text.onMedia`, it is a
+ * role this layer owns because no palette value means "the room is dark"
+ * (KNOT-020k).
  */
 const THEATER = '#000000' as const;
 
@@ -114,169 +94,156 @@ const THEATER = '#000000' as const;
  * light glyph can still land on a light area of the image. A tight, low-alpha
  * shadow separates the two without reading as an effect (KNOT-020j).
  */
-const MEDIA_TEXT_SHADOW = 'rgba(15, 23, 42, 0.55)' as const;
+const MEDIA_TEXT_SHADOW = 'rgba(0, 0, 0, 0.55)' as const;
 
 /**
- * Flattens the raw palette for one theme into {@link ActivePalette}.
+ * Resolves the raw values for one mode.
  *
- * The dark palette is deliberately NOT merged over the light one: every role is
- * named explicitly, so adding a swatch to one theme can never silently inherit
- * from the other.
+ * Both modes name the same keys, so this is a lookup rather than a translation:
+ * a value added to one mode cannot silently inherit from the other.
  */
 function activePalette(theme: ThemeName): ActivePalette {
-  if (theme === 'light') {
-    const p = palette.light;
-    return { ...p, sheet: p.canvas, divider: DIVIDER.light };
-  }
-
-  const p = palette.dark;
-  return {
-    canvas: p.canvas,
-    paper: p.paper,
-    // A sheet floats over a dimmed backdrop, so it is lifted one step off the
-    // canvas rather than sharing it — the one dark-only surface in the design.
-    sheet: p.sheet,
-    sunken: p.sunken,
-    line: p.line,
-    ink900: p.ink900,
-    ink700: p.ink700,
-    ink500: p.ink500,
-    ink400: p.ink400,
-    indigo600: p.indigoText,
-    indigo700: p.indigoOnTint,
-    indigo500: p.indigoText,
-    indigo100: p.indigo100,
-    indigo50: p.indigo50,
-    heritageText: p.heritageText,
-    heritageFill: p.heritageFill,
-    wonderText: p.wonderText,
-    wonderFill: p.wonderFill,
-    danger: p.danger,
-    divider: DIVIDER.dark,
-  };
+  return theme === 'dark' ? palette.dark : palette.light;
 }
 
-/** Builds the full role set from a flattened palette. */
+/** Builds the full role set from one mode's raw values. */
 function buildColors(active: ActivePalette) {
   return {
-    // --- Semantic tokens (new) -------------------------------------------------
+    // --- Canonical semantic roles (KNOT-020k) ----------------------------------
     bg: {
+      /** The page behind everything: white in light, black in dark. */
       canvas: active.canvas,
-      paper: active.paper,
-      /**
-       * A surface that floats over a scrim — a bottom sheet or a modal card. In
-       * light it IS the canvas (the sheet already reads as lifted against the
-       * scrim); in dark it is one step lighter so it does not disappear into the
-       * dimmed backdrop behind it.
-       */
-      sheet: active.sheet,
+      /** A recessed surface — a field, a well, a placeholder tile. */
       sunken: active.sunken,
       /**
+       * A surface that floats above the canvas — a sheet, a modal card, a raised
+       * panel. In light it is the canvas value and separation comes from the
+       * scrim behind it or a hairline; in dark it is one step off the canvas so
+       * it does not disappear into the black (KNOT-020k).
+       */
+      raised: active.raised,
+      /**
+       * The translucent veil behind a modal, a sheet or a media chip. Black at
+       * half strength in light, heavier in dark, because a dark backdrop needs
+       * more separation from a black canvas (KNOT-020k).
+       */
+      scrim: active.scrim,
+      /**
        * The neutral that parts two full-width blocks — the feed's story-to-story
-       * rule and the rule under its tab row (KNOT-020k-fix19).
-       *
-       * It paints the same palette swatch as `border.hairline`, so the feed's rules
-       * and the rest of the chrome can never drift apart, and dark parity comes for
-       * free when the palette flips (KNOT-020i). The role is kept apart from
-       * `border.hairline` because it names the feed's block rhythm rather than a
-       * border on one view: the first rule is a `borderBottom` on the card, the
-       * second a 1pt `View` under the tabs.
+       * rule and the rule under its tab row (KNOT-020k-fix19). It paints the same
+       * value as `border.hairline`, so the rules can never drift apart.
        */
       separator: active.line,
       /**
-       * The full-screen media viewer's backdrop. Black in both themes, so a
-       * photograph or video is shown against the same room whatever the app's
-       * palette is (KNOT-020k).
+       * The full-screen media viewer's backdrop. Black in both modes, so a
+       * photograph or video is shown against the same room whatever the mode is
+       * (KNOT-020k).
        */
       theater: THEATER,
+      /** @deprecated use `bg.raised`. */
+      paper: active.raised,
+      /** @deprecated use `bg.raised`. */
+      sheet: active.raised,
       /** @deprecated use `bg.canvas`. */
       primary: active.canvas,
       /** @deprecated use `bg.sunken`. */
       secondary: active.sunken,
-      /** @deprecated use `bg.paper`. */
-      surface: active.paper,
-      /** @deprecated no inverse surface in light; a dark block. */
-      inverse: active.ink900,
+      /** @deprecated use `bg.raised`. */
+      surface: active.raised,
+      /** @deprecated no inverse surface; use `bg.sunken`. */
+      inverse: active.inkPrimary,
     },
     text: {
-      primary: active.ink900,
-      secondary: active.ink700,
-      tertiary: active.ink500,
-      disabled: active.ink400,
+      /** The mode's primary ink: black in light, white in dark. */
+      primary: active.inkPrimary,
+      /** Reading ink: one step softer than the primary, for story bodies. */
+      body: active.inkBody,
+      /** Supporting ink: timestamps, meta lines, secondary labels. */
+      secondary: active.inkSecondary,
+      /** The quietest ink: overlines, placeholders, decorative glyphs. */
+      tertiary: active.inkTertiary,
+      /** Ink that sits on the canvas's opposite — a brand fill, a scrim. */
+      inverse: active.inkInverse,
+      /** A disabled control's ink. */
+      disabled: active.lineStrong,
       /**
        * Text (or an icon) drawn on top of a `brand.primary` fill — a primary
-       * button, the elevated Create tab. It is the canvas colour so it reads as
-       * white while the app is light-first (KNOT-020b); it is a semantic role, not
-       * a raw hex, so the no-hardcoded-hex rule holds.
+       * button, the elevated Create tab. It is the inverse ink, so it reads
+       * white on black in light mode and black on white in dark mode
+       * (KNOT-020b, KNOT-020k).
        */
-      onBrand: active.canvas,
+      onBrand: active.inkInverse,
       /**
        * Text and glyphs drawn over media — a video timestamp, a "Video" tag, a
-       * multi-media count, a play or mute glyph. White in both themes because it
-       * always sits on `scrim.overlay`, which does not change with the theme
-       * (KNOT-020j).
+       * multi-media count, a play or mute glyph. White in both modes because it
+       * always sits on the black scrim (KNOT-020j).
        */
       onMedia: ON_MEDIA,
-      /** @deprecated use `text.primary`. */
-      inverse: active.ink900,
       /** @deprecated use `brand.primary`. */
-      brand: active.indigo600,
+      brand: active.brand,
     },
     border: {
+      /** The default 1pt rule: a horizontal separator or a field's edge. */
       hairline: active.line,
+      /** A heavier rule, and the boundary of a control that must read as one. */
+      strong: active.lineStrong,
       /**
        * The line drawn between two blocks *inside* one entry — the attribution
        * header and the author block — where a hairline would read as the entry's
-       * own edge. It is one step darker than `hairline` so the two never read as
+       * own edge. It is one step heavier than `hairline` so the two never read as
        * the same rule when they appear near each other (KNOT-023a).
-       *
-       * It has no palette swatch in the design reference; like `scrim.overlay`, it
-       * is a role this layer owns so the value stays defined in one place, per
-       * theme (see `DIVIDER` above).
        */
-      divider: active.divider,
+      divider: active.lineStrong,
       /** @deprecated use `border.hairline`. */
       subtle: active.line,
-      /** @deprecated use `border.hairline`. */
-      default: active.ink400,
+      /** @deprecated use `border.strong`. */
+      default: active.lineStrong,
     },
     brand: {
-      primary: active.indigo600,
-      pressed: active.indigo700,
-      focus: active.indigo500,
-      tint: active.indigo100,
-      surface: active.indigo50,
+      /** The brand's ink and fill: black in light, white in dark. */
+      primary: active.brand,
+      /** The pressed state: one step off the brand (light darkens, dark dims). */
+      pressed: active.brandPressed,
+      /** A quiet brand wash — a selected row, a held chip. */
+      tint: active.brandTint,
+      /** @deprecated no separate focus ring; use `brand.primary`. */
+      focus: active.brand,
+      /** @deprecated use `brand.tint`. */
+      surface: active.brandTint,
       /** @deprecated use `brand.primary`. */
-      purple: active.indigo600,
-      /** @deprecated no magenta in the new palette; use `brand.primary`. */
-      magenta: active.indigo600,
-      /** @deprecated use `brand.focus`. */
-      blue: active.indigo500,
+      purple: active.brand,
+      /** @deprecated use `brand.primary`. */
+      magenta: active.brand,
+      /** @deprecated use `brand.primary`. */
+      blue: active.brand,
     },
     pillar: {
-      heritage: { text: active.heritageText, fill: active.heritageFill },
-      wonder: { text: active.wonderText, fill: active.wonderFill },
+      /**
+       * A pillar is no longer a colour: both resolve to the mode's primary ink,
+       * so a pillar reads as bold text rather than as a tinted category
+       * (KNOT-020k, KNOT-ADR-096).
+       */
+      heritage: active.inkPrimary,
+      wonder: active.inkPrimary,
     },
     state: {
+      /** Destructive actions and errors. */
       danger: active.danger,
+      /** Confirmation — reserved for a success affordance. */
+      success: active.success,
+      /** Caution — reserved for a warning affordance. */
+      warning: active.warning,
       /** @deprecated use `state.danger`. */
       error: active.danger,
-      /** @deprecated not in the new palette; retained legacy value. */
-      success: '#16A34A',
-      /** @deprecated not in the new palette; retained legacy value. */
-      warning: '#D97706',
     },
     scrim: {
       /**
-       * The translucent navy drawn behind a small white-on-media chip (a media
-       * count, a "Video" tag). It is a scrim, not a surface: it is only ever
-       * painted over an image or a video placeholder, never on the canvas
-       * (KNOT-020c-fix).
-       *
-       * It lives here rather than as a literal on a screen so the value stays the
-       * one place an overlay colour is defined.
+       * The veil behind a modal, a sheet or a small chip drawn over media. It is
+       * a scrim, not a surface: it is only ever painted over something else,
+       * never on a bare canvas (KNOT-020c-fix). It is the same monochrome value
+       * as `bg.scrim`.
        */
-      overlay: 'rgba(15, 23, 42, 0.6)',
+      overlay: active.scrim,
       /**
        * The shadow under light text drawn on `overlay`, so the label stays
        * legible even where the media behind it is bright (KNOT-020j).
@@ -286,16 +253,16 @@ function buildColors(active: ActivePalette) {
 
     // --- Deprecated top-level aliases (KNOT-020a) ------------------------------
 
-    /** @deprecated a dark scrim behind modal sheets; unchanged by the new design. */
-    overlay: 'rgba(15, 23, 42, 0.7)',
+    /** @deprecated use `bg.scrim`. */
+    overlay: active.scrim,
 
     /** @deprecated gradient tokens are retired — see the no-UI-gradients rule. */
     gradient: {
-      primaryStart: active.indigo600,
-      primaryEnd: active.indigo500,
-      accentStart: active.indigo500,
-      accentEnd: active.indigo600,
-      warmStart: active.heritageText,
+      primaryStart: active.brand,
+      primaryEnd: active.brand,
+      accentStart: active.brand,
+      accentEnd: active.brand,
+      warmStart: active.brand,
       warmEnd: active.danger,
     },
   };

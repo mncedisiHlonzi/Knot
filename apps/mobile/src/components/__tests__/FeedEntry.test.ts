@@ -792,11 +792,10 @@ describe('FeedEntry version variant', () => {
     });
 
     // The pillar here is the story's, inherited, and the tag is exactly the one a
-    // story card draws: plain, with its place (KNOT-023, KNOT-022-fix1).
+    // story card draws: bold text, with its place (KNOT-023, KNOT-020k).
     const pillar = elementTypes(element);
     expect(pillar).toContain(PillarTag);
     expect(findElementByType(element, PillarTag)?.props?.pillar).toBe('heritage');
-    expect(findElementByType(element, PillarTag)?.props?.variant).toBe('plain');
     expect(findElementByType(element, PillarTag)?.props?.place).toBe('Oaxaca, Mexico');
 
     // The credit ends after the language: no "Version N" anywhere on the card

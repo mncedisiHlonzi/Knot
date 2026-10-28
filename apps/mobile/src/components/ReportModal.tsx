@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Modal,
   Pressable,
   ScrollView,
@@ -21,6 +22,7 @@ import {
 } from '../api/moderation';
 import { radius, spacing, typeScale, useTheme, useThemedStyles } from '../theme';
 import type { ThemeColors } from '../theme';
+import { useFade } from '../motion/useFade';
 
 type ReportModalProps = {
   /** Whether the modal is shown. */
@@ -57,6 +59,15 @@ export default function ReportModal({
 }: ReportModalProps): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
+  // The card fades in with the shared primitive (KNOT-020k); the backdrop is the
+  // Modal's own `animationType="fade"`. The fade OUT is left to the Modal for the
+  // same reason as the media picker: an unmounted window cannot animate.
+  const fade = useFade(false);
+  useEffect(() => {
+    if (visible) {
+      fade.fadeIn();
+    }
+  }, [fade, visible]);
   const [category, setCategory] = useState<ReportCategory>('harassment');
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -107,7 +118,7 @@ export default function ReportModal({
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={close}>
       <View style={styles.backdrop}>
-        <View style={styles.card}>
+        <Animated.View style={[styles.card, { opacity: fade.opacity }]}>
           <Text style={[typeScale.h2, styles.title]}>Report content</Text>
           <Text style={[typeScale.bodyS, styles.subtitle]}>
             Tell the moderators what is wrong. Reports are private.
@@ -167,7 +178,7 @@ export default function ReportModal({
               )}
             </Pressable>
           </View>
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );

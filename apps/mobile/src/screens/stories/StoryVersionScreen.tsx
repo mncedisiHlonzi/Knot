@@ -528,9 +528,7 @@ export default function StoryVersionScreen({
             {media.length === 0 ? <View style={{ height: HEADER_BAND }} /> : null}
 
             <View style={styles.body}>
-              {pillar === undefined ? null : (
-                <PillarTag pillar={pillar} place={place} variant="plain" />
-              )}
+              {pillar === undefined ? null : <PillarTag pillar={pillar} place={place} />}
 
               <Text style={[typeScale.h1, styles.title]}>{version.title}</Text>
 

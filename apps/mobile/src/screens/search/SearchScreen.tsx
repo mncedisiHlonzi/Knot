@@ -417,7 +417,7 @@ export default function SearchScreen({
 
               {item.pillar !== null ? (
                 <View style={styles.resultTag}>
-                  <PillarTag pillar={item.pillar} place={item.place} variant="plain" />
+                  <PillarTag pillar={item.pillar} place={item.place} />
                 </View>
               ) : place === '' ? null : (
                 <Text style={[typeScale.overline, styles.resultPlace]} numberOfLines={1}>

@@ -1,15 +1,8 @@
-import React, { useCallback, useRef } from 'react';
-import {
-  ActivityIndicator,
-  Animated,
-  Easing,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import React from 'react';
+import { ActivityIndicator, Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { motion, radius, spacing, typeScale, useTheme, useThemedStyles } from '../theme';
+import { usePressScale } from '../motion/usePressScale';
+import { radius, spacing, typeScale, useTheme, useThemedStyles } from '../theme';
 import type { ThemeColors } from '../theme';
 
 /** The four button presentations the design system offers. */
@@ -46,13 +39,6 @@ type ButtonProps = {
 /** The button's resting height, per the design system. */
 const HEIGHT = 48;
 
-/**
- * How far the button shrinks while a finger is down. Small enough to read as
- * contact rather than as a jump: the design direction asks for tactile feedback
- * through press states, not elevation changes.
- */
-const PRESS_SCALE = 0.97;
-
 export default function Button({
   label,
   onPress,
@@ -68,20 +54,10 @@ export default function Button({
   const styles = useThemedStyles(createStyles);
   const inactive = disabled || loading;
 
-  // The press scale is one native-driver timing per press, so it never touches
-  // the JS thread while the finger is down (KNOT-020h).
-  const scale = useRef(new Animated.Value(1)).current;
-  const animateScale = useCallback(
-    (toValue: number): void => {
-      Animated.timing(scale, {
-        toValue,
-        duration: motion.durations.micro,
-        easing: Easing.bezier(...motion.easing.standard),
-        useNativeDriver: true,
-      }).start();
-    },
-    [scale],
-  );
+  // The shared press-scale (KNOT-020k): one native-driver timing per press, the
+  // same amount and curve as every other control, and no motion at all when the
+  // reader prefers reduced motion.
+  const { scale, onPressIn, onPressOut } = usePressScale(!inactive);
 
   // The label (and the spinner) take the variant's colour; a disabled button uses
   // the disabled ink so it reads as unavailable even before the opacity is applied.
@@ -108,8 +84,8 @@ export default function Button({
     <Animated.View style={[fullWidth ? styles.fullWidth : null, { transform: [{ scale }] }]}>
       <Pressable
         onPress={onPress}
-        onPressIn={() => animateScale(PRESS_SCALE)}
-        onPressOut={() => animateScale(1)}
+        onPressIn={onPressIn}
+        onPressOut={onPressOut}
         disabled={inactive}
         style={({ pressed }) => [
           styles.base,

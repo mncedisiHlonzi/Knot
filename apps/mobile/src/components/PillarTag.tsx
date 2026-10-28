@@ -1,28 +1,17 @@
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text } from 'react-native';
 
-import { radius, spacing, typeScale, useTheme, useThemedStyles } from '../theme';
+import { fontWeights, typeScale, useThemedStyles } from '../theme';
 import type { ThemeColors } from '../theme';
 
 /** The two pillars every story is told under. */
 export type Pillar = 'wonder' | 'heritage';
 
-/** The two presentations a pillar tag can take. */
-export type PillarTagVariant = 'filled' | 'plain';
-
 type PillarTagProps = {
   /** Which pillar the content belongs to. */
   readonly pillar: Pillar;
-  /** An optional place, appended as " · PLACE" in the tertiary ink. */
+  /** An optional place, appended as " · {place}". */
   readonly place?: string | null;
-  /**
-   * `filled` (the default) is the pill on the pillar's own surface tint — the
-   * form the Story Detail and every other screen use today. `plain` drops the
-   * fill, the radius and the horizontal padding, leaving upper-cased pillar ink on
-   * the canvas, flush with the rest of the Feed entry, which is what the feed's
-   * design reference asks for (KNOT-020c-fix3, KNOT-020c-fix6).
-   */
-  readonly variant?: PillarTagVariant;
   /** Test identifier. */
   readonly testID?: string;
 };
@@ -34,66 +23,46 @@ const PILLAR_LABELS: Readonly<Record<Pillar, string>> = {
 };
 
 /**
- * The pillar tag: the label naming a story's pillar and, optionally, its place.
+ * The pillar line: the label naming a story's pillar and, optionally, its place.
  *
- * Wonder and Heritage each carry their own colour pair from the token layer, so
- * this is the one place the pillar palette is applied. The label is upper-cased by
- * the `overline` type style; the place is drawn in the quieter tertiary ink so the
- * pillar word stays the emphasis.
+ * It is **bold text and nothing else** (KNOT-020k, KNOT-ADR-096): no overline, no
+ * underline, no letter-spacing, no mark, no pill, no background and no border. The
+ * line reads `Wonder · Manguzi` in normal case, in the mode's primary ink, so a
+ * pillar frames a story the way a byline does rather than as a tinted category
+ * chip. The two pillars no longer carry colours of their own: the category palette
+ * was retired with the indigo design reference.
  *
- * The `filled` variant is a small pill on the pillar's surface tint. The `plain`
- * variant is the same text with no surface at all — no fill, no border, no radius
- * and no horizontal padding — so the feed reads as text on the canvas rather than
- * as a chip, and its left edge lines up with the avatar and the story text
- * (KNOT-020c-fix6).
+ * A caller with no place renders the pillar alone.
  */
-export default function PillarTag({
-  pillar,
-  place,
-  variant = 'filled',
-  testID,
-}: PillarTagProps): React.ReactElement {
-  const { colors } = useTheme();
+export default function PillarTag({ pillar, place, testID }: PillarTagProps): React.ReactElement {
   const styles = useThemedStyles(createStyles);
-  const pillarColors = colors.pillar[pillar];
   const placeText = typeof place === 'string' ? place.trim() : '';
-
-  const label = placeText === '' ? PILLAR_LABELS[pillar] : `${PILLAR_LABELS[pillar]}, ${placeText}`;
+  const label =
+    placeText === '' ? PILLAR_LABELS[pillar] : `${PILLAR_LABELS[pillar]} · ${placeText}`;
 
   return (
-    <View
-      style={[
-        styles.tag,
-        variant === 'plain' ? styles.plain : { backgroundColor: pillarColors.fill },
-      ]}
-      testID={testID}
-      accessibilityLabel={label}
-    >
-      <Text style={[typeScale.overline, { color: pillarColors.text }]} numberOfLines={1}>
-        {PILLAR_LABELS[pillar]}
-        {placeText !== '' ? <Text style={styles.place}>{` · ${placeText}`}</Text> : null}
-      </Text>
-    </View>
+    <Text style={styles.line} numberOfLines={1} testID={testID} accessibilityLabel={label}>
+      {label}
+    </Text>
   );
 }
 
+/**
+ * The line's style.
+ *
+ * `caption` is the nearest composite to the removed overline's size, at the bold
+ * weight the founder asked for, in the mode's primary ink. There is deliberately
+ * no `textTransform`, no `textDecorationLine` and no `letterSpacing`: the pillar is
+ * a sentence fragment, not a label.
+ */
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
-    place: {
-      color: colors.text.tertiary,
-    },
-    // No fill, no border, no radius and no horizontal padding: the tag becomes
-    // plain text on the canvas. The horizontal padding must be reset here because
-    // the base style carries the pill's `paddingHorizontal`; without this the tag
-    // starts a step in from the rest of the entry (KNOT-020c-fix6).
-    plain: {
-      alignSelf: 'flex-start',
-      paddingHorizontal: 0,
-    },
-    tag: {
-      alignSelf: 'flex-start',
-      borderRadius: radius.sm,
-      paddingHorizontal: spacing.sm,
-      paddingVertical: spacing.xs,
+    line: {
+      ...typeScale.caption,
+      color: colors.text.primary,
+      fontWeight: fontWeights.bold,
+      // The `caption` composite carries the design's tracking, which belongs to a
+      // label rather than to this line; the pillar reads as prose (KNOT-020k).
+      letterSpacing: 0,
     },
   });

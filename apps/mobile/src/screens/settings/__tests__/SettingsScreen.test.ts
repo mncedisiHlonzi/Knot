@@ -26,10 +26,16 @@ const mockProfile = {
 };
 
 let mockStateIndex = 0;
+const mockSetMode = jest.fn();
+const mockMode = { value: 'system' as 'system' | 'light' | 'dark' };
 
 jest.mock('react', () => ({
   ...jest.requireActual('react'),
-  useContext: () => jest.requireActual('../../../theme/ThemeContext').lightTheme,
+  useContext: () => ({
+    ...jest.requireActual('../../../theme/ThemeContext').lightTheme,
+    mode: mockMode.value,
+    setMode: mockSetMode,
+  }),
   useCallback: (callback: unknown) => callback,
   // The screen reads its profile header on mount; the suite never performs I/O.
   useEffect: () => undefined,
@@ -58,11 +64,13 @@ jest.mock('phosphor-react-native', () => ({
   CaretRight: () => null,
   FileText: () => null,
   Info: () => null,
+  Check: () => null,
   Moon: () => null,
   Plant: () => null,
   Prohibit: () => null,
   ShieldCheck: () => null,
   SignOut: () => null,
+  Sun: () => null,
 }));
 
 jest.mock('../../../components/MediaPickerSheet', () => ({
@@ -84,7 +92,7 @@ type ElementLike = {
  * is visible to the assertions below. React Native's host components are strings
  * and are left alone.
  */
-const LOCAL_COMPONENTS = new Set(['Section', 'SettingRow', 'ThemeRow']);
+const LOCAL_COMPONENTS = new Set(['Section', 'SettingRow', 'AppearanceRow', 'AppearanceSection']);
 
 /** Replaces each local component element with the element it returns. */
 function expand(node: unknown): unknown {
@@ -194,7 +202,7 @@ describe('SettingsScreen', () => {
     const text = renderedText(renderExpanded());
 
     expect(text).toContain('Account');
-    expect(text).toContain('Preferences');
+    expect(text).toContain('Appearance');
     expect(text).toContain('About');
     expect(text).toContain('Legal');
   });
@@ -304,12 +312,31 @@ describe('SettingsScreen', () => {
     expect(labels).toContain('Blocked users');
   });
 
-  it('states the current theme, and offers the preference as a switch', () => {
-    const text = renderedText(renderExpanded());
+  it('offers System, Light and Dark, and applies a choice on the tap', () => {
+    // The Appearance rows are radios, not a switch: three states cannot live on a
+    // two-state control (KNOT-020k).
+    const radios: ElementLike[] = [];
+    walk(renderExpanded(), (candidate) => {
+      if (candidate.props?.accessibilityRole === 'radio') {
+        radios.push(candidate);
+      }
+    });
 
-    expect(text).toContain('Theme');
-    // The light theme is the one the provider hands the component in this suite.
-    expect(text).toContain('Light');
+    expect(radios.map((radio) => radio.props?.accessibilityLabel)).toEqual([
+      'System',
+      'Light',
+      'Dark',
+    ]);
+
+    jest.clearAllMocks();
+    (radios[2]?.props?.onPress as () => void)();
+    expect(mockSetMode).toHaveBeenCalledWith('dark');
+
+    (radios[1]?.props?.onPress as () => void)();
+    expect(mockSetMode).toHaveBeenCalledWith('light');
+
+    (radios[0]?.props?.onPress as () => void)();
+    expect(mockSetMode).toHaveBeenCalledWith('system');
   });
 
   it('shows the app version and links the two legal pages', () => {

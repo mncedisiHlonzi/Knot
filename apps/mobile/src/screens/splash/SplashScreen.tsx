@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import Logo from '../../components/Logo';
 import TheThread from '../../components/TheThread';
-import { spacing, typeScale, useThemedStyles, type ThemeColors } from '../../theme';
+import { spacing, typeScale, useTheme, useThemedStyles, type ThemeColors } from '../../theme';
 
 /** The logo's height on the splash, per the design brief (KNOT-020c). */
 const LOGO_HEIGHT = 44;
@@ -24,10 +24,16 @@ const THREAD_LENGTH = 120;
  * (KNOT-020h); there is no spinner, and no other motion on the screen.
  */
 export default function SplashScreen(): React.ReactElement {
+  const { theme } = useTheme();
   const styles = useThemedStyles(createStyles);
+  // The logo is tinted to the mode: pure black on the light canvas, pure white on
+  // the dark one (KNOT-020k). The PRIMARY logo is a gradient and cannot be
+  // tinted, so the monochrome assets carry this screen.
+  const logoVariant = theme === 'dark' ? 'mono-light' : 'mono-dark';
+
   return (
     <View style={styles.container}>
-      <Logo height={LOGO_HEIGHT} />
+      <Logo height={LOGO_HEIGHT} variant={logoVariant} />
       <View style={styles.thread}>
         <TheThread length={THREAD_LENGTH} testID="splash-thread" />
       </View>

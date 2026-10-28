@@ -4,6 +4,7 @@ import { X } from 'phosphor-react-native';
 
 import { motion, radius, spacing, typeScale, useTheme, useThemedStyles } from '../theme';
 import type { ThemeColors } from '../theme';
+import { usePressScale } from '../motion/usePressScale';
 
 type ChipProps = {
   /** The chip's text. */
@@ -49,6 +50,9 @@ export default function Chip({
 }: ChipProps): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
+  // The same press-scale every control uses (KNOT-020k). A chip with no `onPress`
+  // is not a control, so it stays still.
+  const press = usePressScale(onPress !== undefined);
   const textColor = selected
     ? colors.brand.primary
     : variant === 'outline'
@@ -113,12 +117,15 @@ export default function Chip({
     styles.chip,
     variant === 'outline' ? styles.outline : null,
     { backgroundColor: fillColor },
+    { transform: [{ scale: press.scale }] },
   ];
 
   if (onPress !== undefined) {
     return (
       <AnimatedChip
         onPress={onPress}
+        onPressIn={press.onPressIn}
+        onPressOut={press.onPressOut}
         style={chipStyle}
         hitSlop={{ bottom: VERTICAL_HIT_SLOP, top: VERTICAL_HIT_SLOP }}
         accessibilityRole="button"
