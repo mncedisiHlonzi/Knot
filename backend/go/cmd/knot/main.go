@@ -497,7 +497,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	conversationsHandler, err := httpapi.NewConversationsHandlerWithRecorder(conversationsService, service, rootedService, reactionsService, logger, interactionService)
+	conversationsHandler, err := httpapi.NewConversationsHandlerWithCaches(conversationsService, service, rootedService, reactionsService, versionsService, logger, interactionService, caches)
 	if err != nil {
 		return err
 	}
@@ -524,7 +524,9 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	// The reactions handler owns the eight per-entity reaction routes. It uses the
 	// three content services only to resolve an entity's author and confirm it
 	// exists, and the notifications service to fire reaction.created (KNOT-ADR-050).
-	reactionsHandler, err := httpapi.NewReactionsHandlerWithRecorder(reactionsService, storiesService, versionsService, conversationsService, inquiriesService, notificationsService, logger, interactionService)
+	// It also receives the detail cache, because a toggle changes the counts a cached
+	// story or version detail shows (KNOT-036-fix2).
+	reactionsHandler, err := httpapi.NewReactionsHandlerWithCaches(reactionsService, storiesService, versionsService, conversationsService, inquiriesService, notificationsService, logger, interactionService, caches)
 	if err != nil {
 		return err
 	}

@@ -54,7 +54,10 @@ type ReactionsHandler struct {
 	inquiries     InquiriesService
 	notifier      ReactionsNotifier
 	recorder      InteractionRecorder
-	logger        *slog.Logger
+	// details drops the detail cache keys a toggle makes stale. Nil means the
+	// cache is switched off, and every call is a no-op (KNOT-036-fix2).
+	details *DetailInvalidator
+	logger  *slog.Logger
 }
 
 // NewReactionsHandler returns a handler. Each content service is used only to
@@ -65,14 +68,25 @@ type ReactionsHandler struct {
 // NewReactionsHandlerWithRecorder is the composition root's entry point
 // (KNOT-026).
 func NewReactionsHandler(reactionsService ReactionsService, storiesService StoriesService, versionsService VersionsService, conversationsService ConversationsService, inquiriesService InquiriesService, notifier ReactionsNotifier, logger *slog.Logger) (*ReactionsHandler, error) {
-	return NewReactionsHandlerWithRecorder(
-		reactionsService, storiesService, versionsService, conversationsService, inquiriesService, notifier, logger, nil,
+	return NewReactionsHandlerWithCaches(
+		reactionsService, storiesService, versionsService, conversationsService, inquiriesService, notifier, logger, nil, Caches{},
 	)
 }
 
 // NewReactionsHandlerWithRecorder is NewReactionsHandler plus the engagement
 // recorder. A nil recorder disables the log.
 func NewReactionsHandlerWithRecorder(reactionsService ReactionsService, storiesService StoriesService, versionsService VersionsService, conversationsService ConversationsService, inquiriesService InquiriesService, notifier ReactionsNotifier, logger *slog.Logger, recorder InteractionRecorder) (*ReactionsHandler, error) {
+	return NewReactionsHandlerWithCaches(
+		reactionsService, storiesService, versionsService, conversationsService, inquiriesService, notifier, logger, recorder, Caches{},
+	)
+}
+
+// NewReactionsHandlerWithCaches is NewReactionsHandlerWithRecorder plus the Redis
+// read caches (KNOT-036-fix2).
+//
+// A nil detail cache leaves the handler exactly as it was: a toggle still returns
+// the updated counts, and nothing is deleted.
+func NewReactionsHandlerWithCaches(reactionsService ReactionsService, storiesService StoriesService, versionsService VersionsService, conversationsService ConversationsService, inquiriesService InquiriesService, notifier ReactionsNotifier, logger *slog.Logger, recorder InteractionRecorder, caches Caches) (*ReactionsHandler, error) {
 	if reactionsService == nil {
 		return nil, fmt.Errorf("httpapi: reactions handler requires a reactions service")
 	}
@@ -102,6 +116,7 @@ func NewReactionsHandlerWithRecorder(reactionsService ReactionsService, storiesS
 		inquiries:     inquiriesService,
 		notifier:      notifier,
 		recorder:      recorder,
+		details:       NewDetailInvalidator(caches.Details, versionsService, conversationsService, logger),
 		logger:        logger,
 	}, nil
 }
@@ -255,6 +270,12 @@ func (h *ReactionsHandler) toggle(w http.ResponseWriter, r *http.Request, entity
 	if active && authorID != actorID {
 		_ = h.notifier.NotifyReactionCreated(r.Context(), authorID, actorID, string(entityType), string(reactionType), entityID)
 	}
+
+	// The toggle changed a detail response's counts, so the affected detail keys go
+	// before the response is written: the next reader sees the new count instead of
+	// one up to the TTL old (KNOT-036-fix2). Best-effort — the toggle has succeeded,
+	// and the TTL heals a failed delete.
+	h.details.InvalidateForEntity(r.Context(), string(entityType), entityID)
 
 	writeJSON(w, http.StatusOK, reactionCountsEnvelope{Reactions: newReactionCounts(summary)})
 }

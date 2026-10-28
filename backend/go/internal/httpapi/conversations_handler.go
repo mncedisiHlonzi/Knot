@@ -30,7 +30,10 @@ type ConversationsHandler struct {
 	rooted    RootedLookup
 	reactions ReactionsLookup
 	recorder  InteractionRecorder
-	logger    *slog.Logger
+	// details drops the detail cache keys a new comment makes stale. Nil means the
+	// cache is switched off, and every call is a no-op (KNOT-036-fix2).
+	details *DetailInvalidator
+	logger  *slog.Logger
 }
 
 // NewConversationsHandler returns a handler backed by service. The author lookup
@@ -43,12 +46,22 @@ type ConversationsHandler struct {
 // NewConversationsHandlerWithRecorder is the composition root's entry point
 // (KNOT-026).
 func NewConversationsHandler(service ConversationsService, authors AuthorLookup, rooted RootedLookup, reactions ReactionsLookup, logger *slog.Logger) (*ConversationsHandler, error) {
-	return NewConversationsHandlerWithRecorder(service, authors, rooted, reactions, logger, nil)
+	return NewConversationsHandlerWithCaches(service, authors, rooted, reactions, nil, logger, nil, Caches{})
 }
 
 // NewConversationsHandlerWithRecorder is NewConversationsHandler plus the
 // engagement recorder. A nil recorder disables the log.
 func NewConversationsHandlerWithRecorder(service ConversationsService, authors AuthorLookup, rooted RootedLookup, reactions ReactionsLookup, logger *slog.Logger, recorder InteractionRecorder) (*ConversationsHandler, error) {
+	return NewConversationsHandlerWithCaches(service, authors, rooted, reactions, nil, logger, recorder, Caches{})
+}
+
+// NewConversationsHandlerWithCaches is NewConversationsHandlerWithRecorder plus
+// the Redis detail cache (KNOT-036-fix2).
+//
+// versions is the lookup the invalidator uses to turn the version a comment was
+// written on into that version's story, whose comment_count just changed. A nil
+// cache leaves the handler exactly as it was.
+func NewConversationsHandlerWithCaches(service ConversationsService, authors AuthorLookup, rooted RootedLookup, reactions ReactionsLookup, versions VersionParentLookup, logger *slog.Logger, recorder InteractionRecorder, caches Caches) (*ConversationsHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: conversations handler requires a service")
 	}
@@ -64,7 +77,15 @@ func NewConversationsHandlerWithRecorder(service ConversationsService, authors A
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: conversations handler requires a logger")
 	}
-	return &ConversationsHandler{service: service, authors: authors, rooted: rooted, reactions: reactions, recorder: recorder, logger: logger}, nil
+	return &ConversationsHandler{
+		service:   service,
+		authors:   authors,
+		rooted:    rooted,
+		reactions: reactions,
+		recorder:  recorder,
+		details:   NewDetailInvalidator(caches.Details, versions, nil, logger),
+		logger:    logger,
+	}, nil
 }
 
 // createCommentRequest is the POST /versions/{id}/comments body.
@@ -197,6 +218,13 @@ func (h *ConversationsHandler) CreateComment(w http.ResponseWriter, r *http.Requ
 	// The comment is recorded against the version whose conversation it joins,
 	// which is the content that engaged the reader (KNOT-026).
 	recordInteraction(r.Context(), h.logger, h.recorder, authorID, interactionEntityVersion, created.VersionID, interactionComment)
+
+	// A comment changes what two cached details show: the version's (its thread) and
+	// the story's (its comment_count). InvalidateForVersion deletes exactly that
+	// pair, resolving the parent story from the version, so it is reused here rather
+	// than duplicating the rule (KNOT-036-fix2). Best-effort: the comment is stored,
+	// and the TTL heals a failed delete.
+	h.details.InvalidateForVersion(r.Context(), created.VersionID)
 
 	writeJSON(w, http.StatusCreated, commentEnvelope{Comment: response})
 }

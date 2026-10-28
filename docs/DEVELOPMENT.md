@@ -2833,11 +2833,32 @@ re-read on every hit, and a viewer who has blocked the author gets a 404 whether
 entry was cached or not. If a future field is reader-specific it must be re-applied
 in `cachedStoryDetail`/`cachedVersionDetail`, or the cache must be partitioned.
 
+**Invalidation rules (KNOT-036-fix2).** A write that changes a count deletes the
+detail keys the count appears in, before the response is written. The rules live in
+one place — `DetailInvalidator` in `internal/httpapi/detail_cache.go` — so a handler
+says "this entity changed" and never spells out a key:
+
+| Write | Keys deleted |
+| --- | --- |
+| reaction on a story | `knot:story:{id}` |
+| reaction on a version | `knot:version:{id}`, `knot:story:{parent_story_id}` |
+| reaction on a comment | `knot:version:{version_id}`, `knot:story:{parent_story_id}` |
+| comment on a version | `knot:version:{id}`, `knot:story:{parent_story_id}` |
+
+Comment reactions are refused with a 400 (KNOT-ADR-053), so that row is the
+dispatcher's rule rather than a live request; inquiries are not cached, so reacting
+to one deletes nothing. Every delete is **best-effort**: a Redis failure logs
+`detail cache invalidation failed` at Warn and the write still succeeds, because the
+TTL (`KNOT_DETAIL_CACHE_TTL`) is the backstop. To verify by hand, react to a story
+and check `TTL knot:story:{id}` immediately — it must be `-2` (absent) before the
+next read re-creates it.
+
 **Known gaps** (deliberate, see KNOT-ADR-093 and KNOT-ADR-094): there is no cursor
-on the cached feed path; deleting a story invalidates nothing (the read skips ids
+on the cached feed path; and deleting a story invalidates nothing (the read skips ids
 that no longer resolve, and a cached detail outlives the deletion by at most the
-TTL); and reaction or comment counts on a detail can be up to
-`KNOT_DETAIL_CACHE_TTL` stale, because those writes do not invalidate yet.
+TTL). Reaction and comment counts are invalidated on write, so a cached detail is no
+longer stale for those — a comment edited or deleted in place would still be, and
+there is no edit or delete route for either.
 
 ## Testing Auth Locally
 

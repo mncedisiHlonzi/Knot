@@ -3466,7 +3466,28 @@ That is the read a reader waits on, so it is the read worth caching.
 - **Invalidation is on write.** A publish deletes its own story key (hygiene: it
   cannot exist yet). An adaptation deletes the **parent story's** key, because
   `version_count` and `language_count` change, and the new version's key. Both run on
-  the request path so the next reader cannot see the old counts.
+  the request path so the next reader cannot see the old counts. A reaction toggle and
+  a comment creation delete the keys their counts appear in — see the update below.
+
+**Update (KNOT-036-fix2) — the count staleness is closed.** Every write that changes
+a count now deletes the affected detail keys before the response is written, through
+one `DetailInvalidator` in `httpapi/detail_cache.go`, so the key format and the
+parent rules live in one place and no handler spells out a key:
+
+| Write | Keys deleted |
+| --- | --- |
+| a reaction on a story | `knot:story:{id}` |
+| a reaction on a version | `knot:version:{id}`, `knot:story:{parent_story_id}` |
+| a reaction on a comment | `knot:version:{version_id}`, `knot:story:{parent_story_id}` |
+| a comment on a version | `knot:version:{id}`, `knot:story:{parent_story_id}` |
+
+The parent story is resolved from the version (one read: a version row names its
+story). Comment reactions are still refused with a 400 (KNOT-ADR-053), so that row
+is the dispatcher's rule rather than a reachable request today; bridge reactions no
+longer exist (KNOT-023), and the comment a bridge used to create is covered by the
+comment rule. Inquiries are not cached, so a reaction on one deletes nothing. Every
+delete is best-effort: a Redis failure is logged at Warn and never fails the write,
+and the TTL remains the backstop. This supersedes alternative 3.
 
 **Alternatives Considered.**
 
@@ -3495,8 +3516,10 @@ and limits are stated plainly:
   `cachedStoryDetail`/`cachedVersionDetail` (as `my_reactions` is), or the cache must
   be partitioned per reader, or dropped. This is the load-bearing constraint of this
   decision.
-- **Reaction and comment counts can be up to the TTL stale.** They are not
-  invalidated today; the TTL is what heals them.
+- **Reaction and comment counts on a detail are invalidated, not left to the TTL.**
+  A toggle or a comment deletes the affected keys on the request path (KNOT-036-fix2,
+  table above); a failed delete falls back to the ten-minute TTL. The cached copy of
+  a detail still cannot be older than a write that changed it.
 - **The cached feed page still has no cursor.** Pagination remains on the SQL path
   (KNOT-ADR-093), and the first page is the only cached one.
 - **Feed parity is conditional on the sets being complete.** A reader who has never

@@ -9,10 +9,13 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 
+	"github.com/knot/backend/internal/conversations"
 	"github.com/knot/backend/internal/moderation"
 	"github.com/knot/backend/internal/reactions"
+	"github.com/knot/backend/internal/versions"
 )
 
 // DetailCache is the HTTP layer's view of the story and version detail cache.
@@ -239,3 +242,181 @@ func (h *VersionsHandler) storeVersionDetail(ctx context.Context, response versi
 		)
 	}
 }
+
+// VersionParentLookup resolves a version to the story it belongs to. It is the
+// narrow slice of the versions service the invalidator needs, so the invalidator
+// can be driven by a stub whose only job is to answer that question.
+type VersionParentLookup interface {
+	GetVersion(ctx context.Context, id string) (versions.StoryVersion, error)
+}
+
+// CommentThreadLookup resolves a comment to its version and that version's story.
+// Both are already carried by conversations.Comment: GetComment populates
+// VersionID and StoryID, so resolving a comment costs one read, not two.
+type CommentThreadLookup interface {
+	GetComment(ctx context.Context, id string) (conversations.Comment, error)
+}
+
+// DetailInvalidator deletes the detail cache keys a content write makes stale.
+//
+// It exists so the key format and the parent-lookup rules live in one place: a
+// handler says "this entity changed" and does not have to know that a version key
+// implies its parent story, or that a comment implies both its version and that
+// version's story (KNOT-036-fix2).
+//
+// Every deletion is best-effort. A Redis failure is logged at Warn and never
+// returned: the write that triggered it has already succeeded, and the TTL is the
+// backstop (KNOT-ADR-094).
+//
+// A nil *DetailInvalidator is a valid "caching is switched off" value: every
+// method is a no-op, so a handler can call it unconditionally.
+type DetailInvalidator struct {
+	details  DetailCache
+	versions VersionParentLookup
+	comments CommentThreadLookup
+	logger   *slog.Logger
+}
+
+// NewDetailInvalidator returns an invalidator, or nil when there is no detail
+// cache to invalidate (the feature is switched off).
+func NewDetailInvalidator(details DetailCache, versions VersionParentLookup, comments CommentThreadLookup, logger *slog.Logger) *DetailInvalidator {
+	if details == nil {
+		return nil
+	}
+
+	return &DetailInvalidator{details: details, versions: versions, comments: comments, logger: logger}
+}
+
+// InvalidateForEntity deletes the detail keys a reaction on entityKind makes stale.
+//
+// The rules are the same for every write: the target's own detail key, plus its
+// parent's when the parent's counts include the target (KNOT-036-fix2).
+//
+//   - a story deletes `knot:story:{id}`;
+//   - a version deletes `knot:version:{id}` and `knot:story:{parent_story_id}`,
+//     because the story's version and language counts include it;
+//   - a comment deletes `knot:version:{version_id}` and
+//     `knot:story:{parent_story_id}`;
+//   - anything else (an inquiry, or a kind the detail cache does not hold) deletes
+//     nothing. Inquiries are not cached, so a reaction on one cannot make a cached
+//     detail stale.
+//
+// Bridge reactions no longer exist (KNOT-023 retired bridges), so there is no
+// bridge case: a bridge used to create a target comment, and the comment create
+// invalidation covers that path.
+func (d *DetailInvalidator) InvalidateForEntity(ctx context.Context, entityKind, entityID string) {
+	if d == nil || entityID == "" {
+		return
+	}
+
+	switch entityKind {
+	case string(reactions.EntityStory):
+		invalidateStoryDetail(ctx, d.logger, d.details, entityID)
+	case string(reactions.EntityVersion):
+		d.InvalidateForVersion(ctx, entityID)
+	case string(reactions.EntityComment):
+		d.InvalidateForComment(ctx, entityID)
+	}
+}
+
+// InvalidateForVersion deletes a version's detail key and its parent story's.
+//
+// The parent story is resolved through the versions service: a version row names
+// its story, so this is one read rather than a second cache lookup. A version
+// whose story cannot be resolved still has its own key deleted — the resolution
+// failure only costs the parent's key, which the TTL then heals.
+func (d *DetailInvalidator) InvalidateForVersion(ctx context.Context, versionID string) {
+	if d == nil || versionID == "" {
+		return
+	}
+
+	invalidateVersionDetail(ctx, d.logger, d.details, versionID)
+
+	storyID, err := d.parentStoryOfVersion(ctx, versionID)
+	if err != nil {
+		d.warn(ctx, "version", versionID, "the parent story could not be resolved", err)
+		return
+	}
+
+	invalidateStoryDetail(ctx, d.logger, d.details, storyID)
+}
+
+// InvalidateForComment deletes the comment's version key and that version's
+// story key.
+//
+// A comment is not itself cached, so there is no comment key to delete: the thread
+// a reader sees is the version detail's, and the comment count a reader sees is the
+// story detail's.
+func (d *DetailInvalidator) InvalidateForComment(ctx context.Context, commentID string) {
+	if d == nil || commentID == "" {
+		return
+	}
+	if d.comments == nil {
+		d.warn(ctx, "comment", commentID, "no comment lookup is wired", errNoDetailLookup)
+		return
+	}
+
+	comment, err := d.comments.GetComment(ctx, commentID)
+	if err != nil {
+		d.warn(ctx, "comment", commentID, "the comment's thread could not be resolved", err)
+		return
+	}
+
+	invalidateVersionDetail(ctx, d.logger, d.details, comment.VersionID)
+
+	storyID := comment.StoryID
+	if storyID == "" {
+		// CreateComment leaves StoryID empty because its response does not need it;
+		// a caller holding a freshly created comment therefore falls back to the
+		// version's own story pointer.
+		storyID, err = d.parentStoryOfVersion(ctx, comment.VersionID)
+		if err != nil {
+			d.warn(ctx, "comment", commentID, "the parent story could not be resolved", err)
+			return
+		}
+	}
+
+	invalidateStoryDetail(ctx, d.logger, d.details, storyID)
+}
+
+// parentStoryOfVersion resolves a version id to the story it belongs to.
+func (d *DetailInvalidator) parentStoryOfVersion(ctx context.Context, versionID string) (string, error) {
+	if versionID == "" {
+		return "", nil
+	}
+	if d.versions == nil {
+		return "", errNoDetailLookup
+	}
+
+	version, err := d.versions.GetVersion(ctx, versionID)
+	if err != nil {
+		return "", err
+	}
+
+	return version.StoryID, nil
+}
+
+// warn records a failed invalidation. The message is deliberately one string for
+// every branch, so an operator greps once, and the attributes say which entity and
+// why.
+func (d *DetailInvalidator) warn(ctx context.Context, entityKind, entityID, reason string, err error) {
+	if d.logger == nil {
+		return
+	}
+
+	attributes := []any{
+		slog.String("request_id", RequestIDFromContext(ctx)),
+		slog.String("entity_kind", entityKind),
+		slog.String("entity_id", entityID),
+		slog.String("reason", reason),
+	}
+	if err != nil {
+		attributes = append(attributes, slog.String("error", err.Error()))
+	}
+
+	d.logger.WarnContext(ctx, "detail cache invalidation failed", attributes...)
+}
+
+// errNoDetailLookup is the reason recorded when an invalidator was built without
+// the lookup a parent resolution needs.
+var errNoDetailLookup = errors.New("no detail-cache lookup is wired")
