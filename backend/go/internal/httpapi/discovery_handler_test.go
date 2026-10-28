@@ -557,7 +557,7 @@ func TestDiscoveryPlaceStoriesCarriesFeedEnrichment(t *testing.T) {
 		},
 	}}
 	lookups.stats = &fakeStoryStatsLookup{byStory: map[string]storystats.Counts{
-		storyID: {Versions: 4, Languages: 3, Comments: 14, Media: 1},
+		storyID: {Versions: 4, Languages: 3, RootComments: 14, Media: 1},
 	}}
 	lookups.reactions = &fakeReactionsLookup{
 		summaries: map[string]reactions.Summary{storyID: {RingsTrue: 2}},

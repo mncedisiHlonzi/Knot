@@ -18,13 +18,21 @@ import (
 func intPtr(value int) *int { return &value }
 
 // fakeStoryStatsLookup is a StoryStatsLookup a test can seed with per-story
-// counts. Left unseeded it is inert: every story reads as the zero Counts, which
-// is what a router assembled for another handler's tests wants.
+// counts and per-version comment counts. Left unseeded it is inert: every story
+// reads as the zero Counts, which is what a router assembled for another
+// handler's tests wants.
 type fakeStoryStatsLookup struct {
 	byStory map[string]storystats.Counts
-	err     error
+	// byVersion is the single-version comment count, keyed by version id: the
+	// read a version detail makes. A version absent from it answers zero.
+	byVersion map[string]int
+	err       error
+	// versionErr fails the single-version read only, so a test can prove the
+	// detail degrades to zero without disturbing the page read.
+	versionErr error
 
-	gotIDs []string
+	gotIDs        []string
+	gotVersionIDs []string
 }
 
 func (f *fakeStoryStatsLookup) CountsForStories(_ context.Context, storyIDs []string) (map[string]storystats.Counts, error) {
@@ -41,6 +49,28 @@ func (f *fakeStoryStatsLookup) CountsForStories(_ context.Context, storyIDs []st
 	}
 
 	return out, nil
+}
+
+func (f *fakeStoryStatsLookup) CommentCountForVersion(_ context.Context, versionID string) (int, error) {
+	f.gotVersionIDs = append(f.gotVersionIDs, versionID)
+	if f.versionErr != nil {
+		return 0, f.versionErr
+	}
+
+	// An explicit per-version answer wins; otherwise fall back to the batched map,
+	// the way the store answers both reads from the same rows. That keeps a test's
+	// detail read consistent with its page read unless it deliberately says
+	// otherwise (KNOT-036-fix5).
+	if count, ok := f.byVersion[versionID]; ok {
+		return count, nil
+	}
+	for _, counts := range f.byStory {
+		if count, ok := counts.CommentCountByVersion[versionID]; ok {
+			return count, nil
+		}
+	}
+
+	return 0, nil
 }
 
 // testStatsStoryID is a well-formed story id the stats tests share.
@@ -62,8 +92,10 @@ func TestStoryListCarriesAggregateCounts(t *testing.T) {
 			Height:    intPtr(1920),
 		},
 	}}
+	// The comment count is the ROOT version's thread: a story entry reports the
+	// conversation its own page opens, not the whole tree's (KNOT-036-fix5).
 	stats := &fakeStoryStatsLookup{byStory: map[string]storystats.Counts{
-		testStatsStoryID: {Versions: 4, Languages: 3, Comments: 14, Media: 5},
+		testStatsStoryID: {Versions: 4, Languages: 3, RootComments: 14, Media: 5},
 	}}
 
 	handler := newRouterWithLookups(t, logger, service, media, stats)
@@ -128,7 +160,7 @@ func TestStoryDetailCarriesAggregateCounts(t *testing.T) {
 
 	service := &fakeStoriesService{getResult: stories.Story{ID: testStatsStoryID, AuthorID: testUserID}}
 	stats := &fakeStoryStatsLookup{byStory: map[string]storystats.Counts{
-		testStatsStoryID: {Versions: 2, Languages: 2, Comments: 3},
+		testStatsStoryID: {Versions: 2, Languages: 2, RootComments: 3},
 	}}
 
 	handler := newRouterWithLookups(t, logger, service, &fakeStoryMediaLookup{}, stats)

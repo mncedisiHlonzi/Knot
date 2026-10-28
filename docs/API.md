@@ -654,9 +654,16 @@ one thumbnail without downloading every item's metadata. It is always an array, 
 aggregate counts, attached to both the feed and the detail by one batched read per count
 type (never a query per story). `version_count` is every version in the story's tree,
 including the root; `language_count` is the distinct languages across those versions;
-`comment_count` is every comment on any version, replies included; `media_count` is the
-number of attached media items. Zero is a real answer, so the fields are always present as
-integers (KNOT-020c-fix).
+`media_count` is the number of attached media items. Zero is a real answer, so the fields
+are always present as integers (KNOT-020c-fix).
+
+`comment_count` is **version-scoped**. On the story object — the story detail and a
+`story` entry in the feed — it is the number of comments on the story's **root
+version**: the conversation a reader reaches by tapping the thread. Comments on other
+versions are not counted, because they belong to those versions' conversations. Replies
+**are** counted, because the thread lists them (see
+[`GET /versions/{id}/comments`](#get-versionsidcomments)), so the number always equals
+the thread's length. It is never a total across the tree (KNOT-036-fix5).
 
 `first_media_type` is `"image"` or `"video"`, and `first_media_url` is the path on this
 API that serves the first media item's bytes — or both are `null` when the story has no
@@ -854,7 +861,8 @@ one card component can draw both. What differs:
 | `author_id` | the story's author | the **adapter**. The original author is named in `attribution_line` |
 | `language`, `title`, `body` | the root version's content | the adapter's own text |
 | `pillar`, `approximate_location`, `latitude`, `longitude`, `place_country`, `media_urls`, `media_count`, `first_media_*` | the story's own | **inherited from the story**: a version row carries no pillar, place, or media of its own (KNOT-ADR-030, KNOT-ADR-034) |
-| `version_count`, `language_count`, `comment_count` | the story's aggregates | the **story's** aggregates, so the entry can say how much adaptation it has |
+| `version_count`, `language_count` | the story's aggregates | the **story's** aggregates, so the entry can say how much adaptation it has |
+| `comment_count` | the **root version's** comments | **this version's** comments: the conversation the entry opens (KNOT-036-fix5) |
 | `reactions`, `my_reactions` | the story's | the **version's**: a reader reacts to the adaptation they are reading (KNOT-021) |
 | `recent_interactions` | the story's social proof: reactions on the story and comments on its **root version** | the adaptation's social proof: reactions and comments on the **version** itself |
 | `version_number` | absent | the entry's position in its lineage, counting the original as **1**, so a first adaptation is `2` |
@@ -867,6 +875,14 @@ one card component can draw both. What differs:
 [the attribution line](#the-attribution-line)). There is no `version_depth` on a feed
 entry because a feed entry is never a root, so its depth is at least 1; `version_number` is
 what a reader says out loud.
+
+`comment_count` is the one count an adaptation entry does **not** inherit from its story.
+A conversation is scoped to a version, so the entry reports the number of comments on the
+version it opens — top-level comments and replies alike, which is exactly the length of
+that version's thread and the number `GET /versions/{id}` reports for the same version
+(KNOT-036-fix5). A story entry reports its root version's count for the same reason.
+Previously the field carried every comment on any version, so an adaptation's card could
+show a number its own thread never contained.
 
 `version_number` is `0` and `attribution_line` is empty when the lineage could not be
 resolved. Attribution is enrichment: a page that cannot resolve a lineage is still served,
@@ -1230,7 +1246,20 @@ is `null`.
 
 ### GET /versions/{id}
 
-Returns **200** with `{ "version": { ... } }`.
+Returns **200** with `{ "version": { ... } }` — the [version object](#the-version-object)
+plus the two detail-only fields below. `POST /stories/{id}/adapt` and each entry of
+`GET /stories/{id}/tree` carry the version object without them.
+
+| Field           | Meaning                                                                                                                                                                                       |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `media`         | the adapted story's media, in display order, with the same derivative URLs the story detail carries (KNOT-036-fix3)                                                                            |
+| `comment_count` | the number of comments on **this** version — top-level comments and replies alike, i.e. the length of the thread below, and the same number a feed entry for this version reports (KNOT-036-fix5) |
+
+`comment_count` counts every comment whose `version_id` is this version, replies
+included: `GET /versions/{id}/comments` returns a version's top-level comments **and**
+their replies in one list, and the conversation header shows that list's length. It is
+read from the same aggregate read model the feed projects, so the card and the page can
+never disagree.
 
 **Errors:** `404 not_found` (no such version, or the id is not a UUID),
 `500 internal_error`.

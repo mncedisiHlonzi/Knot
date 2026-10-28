@@ -2,16 +2,20 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/knot/backend/internal/feedcache"
 	"github.com/knot/backend/internal/stories"
+	"github.com/knot/backend/internal/storystats"
 )
 
 // errCacheDown stands in for a Redis failure.
@@ -133,6 +137,14 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 // over store and the given Redis read caches.
 func newStoriesHandlerWithCaches(t *testing.T, store stories.StoryStore, caches Caches) http.Handler {
 	t.Helper()
+	return newStoriesHandlerWithCachesAndStats(t, store, caches, &fakeStoryStatsLookup{})
+}
+
+// newStoriesHandlerWithCachesAndStats is newStoriesHandlerWithCaches with an
+// explicit aggregate-counts lookup, so a test can assert the numbers a cached page
+// carries against the SQL page's (KNOT-036-fix5).
+func newStoriesHandlerWithCachesAndStats(t *testing.T, store stories.StoryStore, caches Caches, stats StoryStatsLookup) http.Handler {
+	t.Helper()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -146,7 +158,7 @@ func newStoriesHandlerWithCaches(t *testing.T, store stories.StoryStore, caches 
 		rooted:       &fakeRootedService{},
 		media:        &fakeStoryMediaLookup{},
 		reactions:    &fakeReactionsLookup{},
-		stats:        &fakeStoryStatsLookup{},
+		stats:        stats,
 		chains:       &fakeVersionChainLookup{},
 		interactions: &fakeInteractionsLookup{},
 		caches:       caches,
@@ -222,6 +234,115 @@ func TestFeedIsServedFromTheCache(t *testing.T) {
 	if state := feed.snapshot(); state.seedCalls != 0 {
 		t.Errorf("Seed calls = %d, want 0 for a cache hit", state.seedCalls)
 	}
+}
+
+// TestCachedFeedCarriesTheSameCommentCountsAsTheSQLFeed proves the two read paths
+// agree on the one number this task fixes (KNOT-036-fix5). The cached page resolves
+// its ids through the same branches the SQL feed uses and runs the same enrichment,
+// so a story entry reports its root version's count and an adaptation reports its
+// own -- identically on both paths.
+func TestCachedFeedCarriesTheSameCommentCountsAsTheSQLFeed(t *testing.T) {
+	const (
+		storyID   = "0d000000-0000-4000-8000-00000000000a"
+		rootID    = "0d000000-0000-4000-8000-00000000000b"
+		versionID = "0d000000-0000-4000-8000-00000000000c"
+	)
+
+	story := storyFixture(storyID, testUserID)
+	story.RootVersionID = rootID
+	version := stories.VersionFeedItem{
+		ID:              versionID,
+		StoryID:         storyID,
+		ParentVersionID: rootID,
+		AuthorID:        testUserID,
+		Language:        "zul",
+		Title:           "Imvula yokuqala",
+		Body:            "Ugogo wathi imvula yokuqala ikhumbula wonke amagama.",
+		Pillar:          stories.PillarWonder,
+		CreatedAt:       testNow.Add(time.Minute),
+		UpdatedAt:       testNow.Add(time.Minute),
+	}
+
+	stats := &fakeStoryStatsLookup{byStory: map[string]storystats.Counts{
+		storyID: {
+			Versions:              2,
+			Languages:             2,
+			RootComments:          2,
+			Comments:              5,
+			CommentCountByVersion: map[string]int{rootID: 2, versionID: 1},
+		},
+	}}
+
+	feed := &feedCacheRecorder{items: []feedcache.Item{
+		{ID: versionID, Kind: feedcache.KindVersion},
+		{ID: storyID, Kind: feedcache.KindStory},
+	}}
+	store := &memoryStoryStore{
+		stories:  []stories.Story{story},
+		versions: []stories.VersionFeedItem{version},
+	}
+	handler := newStoriesHandlerWithCachesAndStats(t, store, Caches{Feed: feed}, stats)
+
+	// The SQL path: an anonymous reader never touches the feed cache.
+	sqlRecorder := doStoryRequest(handler, http.MethodGet, "/stories", "", "")
+	if sqlRecorder.Code != http.StatusOK {
+		t.Fatalf("sql status = %d, want %d (body %s)", sqlRecorder.Code, http.StatusOK, sqlRecorder.Body.String())
+	}
+
+	// The cached path: the same page, resolved from cached ids.
+	cachedRecorder := doStoryRequest(handler, http.MethodGet, "/stories", "", testAccessToken)
+	if cachedRecorder.Code != http.StatusOK {
+		t.Fatalf("cached status = %d, want %d (body %s)", cachedRecorder.Code, http.StatusOK, cachedRecorder.Body.String())
+	}
+
+	sqlCounts := commentCountsByKind(t, sqlRecorder)
+	cachedCounts := commentCountsByKind(t, cachedRecorder)
+
+	if sqlCounts[feedKindStory] != 2 || sqlCounts[feedKindVersion] != 1 {
+		t.Errorf("sql comment counts = %v, want story 2 / version 1", sqlCounts)
+	}
+	if !reflect.DeepEqual(cachedCounts, sqlCounts) {
+		t.Errorf("cached comment counts = %v, want the sql page's %v", cachedCounts, sqlCounts)
+	}
+
+	// The cached page really was served from the cache, so this compared the two
+	// paths rather than the same path twice.
+	if store.listCalls != 1 {
+		t.Errorf("ListFeed calls = %d, want 1 (only the anonymous request)", store.listCalls)
+	}
+	if state := feed.snapshot(); state.readCalls != 1 {
+		t.Errorf("cache reads = %d, want 1 for the signed-in request", state.readCalls)
+	}
+}
+
+// commentCountsByKind projects a feed page's comment_count per entry kind, failing
+// when a kind is missing so a comparison cannot pass on two empty maps.
+func commentCountsByKind(t *testing.T, recorder *httptest.ResponseRecorder) map[string]int {
+	t.Helper()
+
+	var page feedPage
+	if err := json.Unmarshal(recorder.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode feed page: %v", err)
+	}
+
+	counts := make(map[string]int, 2)
+	for _, raw := range page.Items {
+		kind := feedKindOf(t, raw)
+
+		var entry struct {
+			CommentCount int `json:"comment_count"`
+		}
+		if err := json.Unmarshal(raw, &entry); err != nil {
+			t.Fatalf("decode %s entry: %v", kind, err)
+		}
+		counts[kind] = entry.CommentCount
+	}
+
+	if len(counts) != 2 {
+		t.Fatalf("comment counts = %v, want one entry of each kind", counts)
+	}
+
+	return counts
 }
 
 func TestFeedFallsBackToPostgresAndSeedsTheCache(t *testing.T) {

@@ -3429,6 +3429,24 @@ read instead of nine to eleven statements. The costs are real and stated:
   per story rather than once per read, but it is the first thing to index when the
   user table grows.
 
+**Scope note (KNOT-036-fix5) — a feed entry's comment count is version-scoped.** A
+conversation belongs to one **version**, and the endpoint a reader lands on
+(`GET /versions/{id}/comments`) lists only that version's comments. So the cached and
+queried pages must report the same thing the destination reports: `comment_count` on a
+feed entry is the number of **comments on that entry's version** — the story's root
+version for a story entry (a story IS its root), and the version itself for an adaptation
+entry. Previously the field carried every comment on any version of the story, which made
+an adaptation's card report the original's conversation. The count now comes from
+`internal/storystats`, grouped by `version_id`, and `GET /versions/{id}` reads the same
+model, so the feed number and the version detail number agree by construction. Replies
+are **included**: the thread returns a version's top-level comments and their replies in
+one list and its header counts that list, so counting only top-level comments would
+report a number the page it opens contradicts. This narrows the meaning of an existing
+field, not the feed's shape: the keys, the cache form, and the pagination are unchanged,
+and an already-cached page is corrected as its detail entries are re-resolved (the sets
+hold ids, not counts). The story-wide total survives only as an internal aggregate no
+response field reads.
+
 ---
 
 ## KNOT-ADR-094 — Detail responses are cached for ten minutes, and the feed carries adaptations

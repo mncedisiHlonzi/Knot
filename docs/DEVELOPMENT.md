@@ -2903,6 +2903,24 @@ cannot cheaply name every adaptation), so those expire on
 falls back to its original, while a video without a poster keeps the sunken
 placeholder — the original is an MP4, which an `Image` cannot draw.
 
+**A comment count is version-scoped (KNOT-036-fix5).** `comment_count` on a feed entry is
+the number of **comments on that entry's version** — the root version's thread for a story
+entry, the version's own thread for an adaptation. It comes from `internal/storystats`,
+whose comment query now groups by `version_id` and returns the root version's count
+alongside the per-version map; `internal/httpapi/enrich.go` projects
+`Counts.RootComments` for a story card and `Counts.CommentCountForVersion(id)` for an
+adaptation card, and `storystats.Store.CommentCountForVersion` answers the same question
+for `GET /versions/{id}` (the detail-only field), so the feed number and the detail number
+are one definition. **Replies are included.** `GET /versions/{id}/comments` returns a
+version's top-level comments and their replies in one list, and the conversation header
+shows that list's length, so a top-level-only count would report a number the page
+contradicts — the brief allowed either definition provided the destination agreed, and it
+agrees with "all comments on the version". `version_count`, `language_count`, and
+`media_count` stay story-scoped — they describe the story, not a conversation. A
+pre-existing cached **feed** page carries ids, not counts, so it is corrected the next
+time it is read; a cached **version detail** from before this change reports
+`comment_count: 0` until its ten-minute TTL expires or a comment invalidates it.
+
 ## Testing Auth Locally
 
 Knot's authentication verifies addresses and resets passwords with links that are **emailed

@@ -216,7 +216,9 @@ type storyResponse struct {
 	// aggregate counts, attached in one batched read (KNOT-020c-fix). Zero is a
 	// real answer (no comments yet), so they are ints rather than pointers and are
 	// always present, letting a feed entry render its meta row without a second
-	// request.
+	// request. CommentCount is the exception to "the story's": a conversation is
+	// scoped to a version, so it is the number of comments on the story's ROOT
+	// version, which is the thread the story opens (KNOT-036-fix5).
 	VersionCount  int `json:"version_count"`
 	LanguageCount int `json:"language_count"`
 	CommentCount  int `json:"comment_count"`
@@ -358,7 +360,9 @@ type feedVersionItem struct {
 	Reactions        reactionCountsResponse `json:"reactions"`
 	MyReactions      []string               `json:"my_reactions"`
 	// VersionCount, LanguageCount, and CommentCount describe the story, so the
-	// entry can say how much adaptation has already happened to it.
+	// entry can say how much adaptation has already happened to it. CommentCount is
+	// scoped to THIS version rather than the story: the entry opens a conversation,
+	// and a conversation belongs to one version (KNOT-036-fix5).
 	VersionCount  int `json:"version_count"`
 	LanguageCount int `json:"language_count"`
 	CommentCount  int `json:"comment_count"`
@@ -751,11 +755,15 @@ func newStoryResponse(story stories.Story) storyResponse {
 // It is the single-entity counterpart of the batched loop in List. The first
 // media fields are read from the response's own media, so the detail and the
 // feed agree on which item is first, and are null when the story has no media.
+//
+// The comment count is the ROOT version's thread, because the conversation a
+// story detail opens is its root version's conversation: counting every version
+// here stated a number the linked thread never showed (KNOT-036-fix5).
 func attachStoryCounts(response *storyResponse, lookup StoryStatsLookup, r *http.Request, logger *slog.Logger, storyID string) {
 	counts := storyStats(r.Context(), lookup, logger, []string{storyID})[storyID]
 	response.VersionCount = counts.Versions
 	response.LanguageCount = counts.Languages
-	response.CommentCount = counts.Comments
+	response.CommentCount = counts.RootComments
 	response.MediaCount = counts.Media
 
 	first := firstMediaFields(response.Media)

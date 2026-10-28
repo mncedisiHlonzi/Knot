@@ -433,7 +433,7 @@ func newRouterWithFeedLookups(t *testing.T, logger *slog.Logger, service Stories
 		versionsService = &fakeVersionsService{}
 	}
 
-	versionsHandler, err := NewVersionsHandlerWithMedia(versionsService, &fakeAuthorService{}, &fakeRootedService{}, &fakeReactionsLookup{}, logger, nil, lookups.caches, lookups.media)
+	versionsHandler, err := NewVersionsHandlerWithStats(versionsService, &fakeAuthorService{}, &fakeRootedService{}, &fakeReactionsLookup{}, logger, nil, lookups.caches, lookups.media, lookups.stats)
 	if err != nil {
 		t.Fatalf("NewVersionsHandler() error = %v, want nil", err)
 	}

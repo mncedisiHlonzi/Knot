@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/knot/backend/internal/storystats"
 	"github.com/knot/backend/internal/versions"
 )
 
@@ -200,8 +202,16 @@ func newVersionsHandlerWithService(t *testing.T, service VersionsService) http.H
 }
 
 // newVersionsRouter assembles the full router the way cmd/knot does, so the tests
-// exercise the real middleware chain and route table.
+// exercise the real middleware chain and route table. Its aggregate-counts lookup
+// is inert, so a version detail reports no comments; newVersionsRouterWithStats is
+// the variant a comment-count test uses (KNOT-036-fix5).
 func newVersionsRouter(t *testing.T, logger *slog.Logger, service VersionsService) http.Handler {
+	t.Helper()
+	return newVersionsRouterWithStats(t, logger, service, &fakeStoryStatsLookup{})
+}
+
+// newVersionsRouterWithStats is newVersionsRouter with an explicit counts lookup.
+func newVersionsRouterWithStats(t *testing.T, logger *slog.Logger, service VersionsService, stats StoryStatsLookup) http.Handler {
 	t.Helper()
 
 	authHandler, err := NewAuthHandler(&fakeAuthService{}, newTestLimiter(t), logger)
@@ -214,7 +224,7 @@ func newVersionsRouter(t *testing.T, logger *slog.Logger, service VersionsServic
 		t.Fatalf("NewStoriesHandler() error = %v, want nil", err)
 	}
 
-	versionsHandler, err := NewVersionsHandler(service, &fakeAuthorService{}, &fakeRootedService{}, &fakeReactionsLookup{}, logger)
+	versionsHandler, err := NewVersionsHandlerWithStats(service, &fakeAuthorService{}, &fakeRootedService{}, &fakeReactionsLookup{}, logger, nil, Caches{}, nil, stats)
 	if err != nil {
 		t.Fatalf("NewVersionsHandler() error = %v, want nil", err)
 	}
@@ -561,6 +571,74 @@ func TestGetVersionHappyPath(t *testing.T) {
 	}
 	if body.Version.Body == "" {
 		t.Error("body is empty, want the stored story text")
+	}
+}
+
+// versionDetailBody is the GET /versions/{id} body as a test reads it: the
+// version's own fields (promoted) plus the detail-only ones.
+type versionDetailBody struct {
+	Version struct {
+		versionResponse
+		Media        []storyMediaResponse `json:"media"`
+		CommentCount int                  `json:"comment_count"`
+	} `json:"version"`
+}
+
+// TestVersionDetailCarriesItsOwnCommentCount proves the version detail states the
+// number of comments on the version itself, from the same read model the feed
+// projects: the number a feed entry shows is the number the page it opens shows
+// (KNOT-036-fix5).
+func TestVersionDetailCarriesItsOwnCommentCount(t *testing.T) {
+	stats := &fakeStoryStatsLookup{byStory: map[string]storystats.Counts{
+		testStoryID: {
+			Versions:              2,
+			Languages:             2,
+			RootComments:          2,
+			Comments:              3,
+			CommentCountByVersion: map[string]int{testRootVersionID: 2, testAdaptationVersionID: 1},
+		},
+	}}
+	handler := newVersionsRouterWithStats(
+		t,
+		discardLogger(),
+		&fakeVersionsService{getResult: rootVersion()},
+		stats,
+	)
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/versions/"+testRootVersionID, "", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body versionDetailBody
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Version.CommentCount != 2 {
+		t.Errorf("comment_count = %d, want the root version's own 2", body.Version.CommentCount)
+	}
+	if len(stats.gotVersionIDs) != 1 || stats.gotVersionIDs[0] != testRootVersionID {
+		t.Errorf("count reads = %v, want the version that was opened", stats.gotVersionIDs)
+	}
+}
+
+// TestVersionDetailCommentCountSurvivesAFailedRead proves the count is enrichment:
+// a failed read is logged and answered as zero rather than failing the page.
+func TestVersionDetailCommentCountSurvivesAFailedRead(t *testing.T) {
+	stats := &fakeStoryStatsLookup{versionErr: errors.New("counts unavailable")}
+	handler := newVersionsRouterWithStats(t, discardLogger(), &fakeVersionsService{getResult: rootVersion()}, stats)
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/versions/"+testRootVersionID, "", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (a failed count must not fail the read)", recorder.Code, http.StatusOK)
+	}
+
+	var body versionDetailBody
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Version.CommentCount != 0 {
+		t.Errorf("comment_count = %d, want 0 after a failed read", body.Version.CommentCount)
 	}
 }
 

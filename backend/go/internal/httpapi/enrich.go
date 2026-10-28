@@ -583,13 +583,19 @@ func orEmptyInteractions(values []recentInteractionResponse) []recentInteraction
 }
 
 // StoryStatsLookup is the aggregate-counts enrichment dependency: one batched
-// read of the version, language, comment, and media counts for a set of stories.
+// read of the version, language, comment, and media counts for a set of stories,
+// plus the single-version comment count a version detail reports.
 //
 // It is deliberately narrower than the whole storystats store. A content handler
-// only decorates a story response with its counts, so it depends on the single
-// batched read that does that (KNOT-020c-fix).
+// only decorates a response with its counts, so it depends on the reads that do
+// that (KNOT-020c-fix, KNOT-036-fix5).
 type StoryStatsLookup interface {
 	CountsForStories(ctx context.Context, storyIDs []string) (map[string]storystats.Counts, error)
+	// CommentCountForVersion is the number of comments on one version, replies
+	// included: the same definition CountsForStories applies per version, so the
+	// feed entry and the version detail it opens can never disagree
+	// (KNOT-036-fix5).
+	CommentCountForVersion(ctx context.Context, versionID string) (int, error)
 }
 
 // storyStats loads the aggregate counts for a page of stories in one batched
@@ -620,6 +626,32 @@ func storyStats(ctx context.Context, lookup StoryStatsLookup, logger *slog.Logge
 	}
 
 	return counts
+}
+
+// versionCommentCount reads the number of comments on one version for a version
+// detail, which is the number the feed entry and the thread both show.
+//
+// It is enrichment like storyStats: a failed read is logged and answered as zero
+// rather than failing a page the reader can still use, and a nil lookup (a router
+// assembled without the counts dependency) answers zero rather than panicking.
+func versionCommentCount(ctx context.Context, lookup StoryStatsLookup, logger *slog.Logger, versionID string) int {
+	if lookup == nil || versionID == "" {
+		return 0
+	}
+
+	count, err := lookup.CommentCountForVersion(ctx, versionID)
+	if err != nil {
+		logger.WarnContext(
+			ctx,
+			"version comment count enrichment failed",
+			slog.String("request_id", RequestIDFromContext(ctx)),
+			slog.String("version_id", versionID),
+			slog.String("error", err.Error()),
+		)
+		return 0
+	}
+
+	return count
 }
 
 // storyPageLookups bundles the batched reads that decorate a page of story
@@ -708,7 +740,11 @@ func applyStoryCardFields(
 	entry := counts[item.ID]
 	item.VersionCount = entry.Versions
 	item.LanguageCount = entry.Languages
-	item.CommentCount = entry.Comments
+	// A story entry IS its root version, so its comment count is the root
+	// version's thread: the one a reader reaches by tapping the story. Counting
+	// the whole tree here was what made an adaptation's card report the original's
+	// conversation (KNOT-036-fix5).
+	item.CommentCount = entry.RootComments
 	item.MediaCount = entry.Media
 
 	first := firstMediaFields(item.Media)
@@ -873,10 +909,14 @@ func applyVersionCardFields(
 	item.AuthorRooted = rootedSummaries[item.AuthorID]
 
 	// The story's media and counts: an adaptation entry shows the story behind it.
+	// The COMMENT count is the exception, and it is the reason this task exists: a
+	// conversation is scoped to a version, so the card reports the comments on the
+	// version it opens rather than the story's whole thread across every version
+	// (KNOT-036-fix5).
 	entry := counts[item.StoryID]
 	item.VersionCount = entry.Versions
 	item.LanguageCount = entry.Languages
-	item.CommentCount = entry.Comments
+	item.CommentCount = entry.CommentCountForVersion(item.ID)
 	item.MediaCount = entry.Media
 
 	first := firstMediaFields(previews[item.StoryID])

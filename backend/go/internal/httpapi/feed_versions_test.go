@@ -93,7 +93,14 @@ func feedFixture(t *testing.T) (http.Handler, *memoryStoryStore, feedLookups) {
 			feedVersionID: {AddsSomethingNew: 2},
 		}},
 		stats: &fakeStoryStatsLookup{byStory: map[string]storystats.Counts{
-			feedStoryID: {Versions: 2, Languages: 2, Comments: 3, Media: 1},
+			feedStoryID: {
+				Versions:              2,
+				Languages:             2,
+				RootComments:          3,
+				Comments:              4,
+				Media:                 1,
+				CommentCountByVersion: map[string]int{feedRootVersionID: 3, feedVersionID: 1},
+			},
 		}},
 		interactions: &fakeInteractionsLookup{},
 		chains: &fakeVersionChainLookup{chains: map[string]versions.Chain{
@@ -221,8 +228,9 @@ func TestFeedCarriesAdaptationEntries(t *testing.T) {
 		t.Error("preview truncated = true, want false for a body inside the preview window")
 	}
 
-	// The story's media and counts describe the story, so an adaptation entry shows
-	// the story behind it.
+	// The story's media describe the story, so an adaptation entry shows the story
+	// behind it. Its COMMENT count does not: a conversation is scoped to a version,
+	// so the entry reports the comments on the version it opens (KNOT-036-fix5).
 	if adaptation.MediaCount != 1 {
 		t.Errorf("media count = %d, want the story's 1", adaptation.MediaCount)
 	}
@@ -232,11 +240,14 @@ func TestFeedCarriesAdaptationEntries(t *testing.T) {
 	if adaptation.FirstMediaURL == nil || !strings.Contains(*adaptation.FirstMediaURL, feedMediaID) {
 		t.Errorf("first media url = %v, want the story's media", adaptation.FirstMediaURL)
 	}
-	if adaptation.VersionCount != 2 || adaptation.LanguageCount != 2 || adaptation.CommentCount != 3 {
+	if adaptation.VersionCount != 2 || adaptation.LanguageCount != 2 {
 		t.Errorf(
-			"counts = %d/%d/%d, want the story's 2/2/3",
-			adaptation.VersionCount, adaptation.LanguageCount, adaptation.CommentCount,
+			"counts = %d/%d, want the story's 2/2",
+			adaptation.VersionCount, adaptation.LanguageCount,
 		)
+	}
+	if adaptation.CommentCount != 1 {
+		t.Errorf("comment count = %d, want the version's own 1, not the story's 4", adaptation.CommentCount)
 	}
 
 	// Reactions are the adaptation's own: a reader reacts to the version they are
@@ -266,6 +277,11 @@ func TestFeedCarriesAdaptationEntries(t *testing.T) {
 	if storyEntry.Reactions.RingsTrue != 5 {
 		t.Errorf("story reactions = %+v, want the story's own counts", storyEntry.Reactions)
 	}
+	// A story entry IS its root version, so its comment count is that version's
+	// thread -- never the whole tree's (KNOT-036-fix5).
+	if storyEntry.CommentCount != 3 {
+		t.Errorf("story comment count = %d, want the root version's 3", storyEntry.CommentCount)
+	}
 	if !storyEntry.CreatedAt.Equal(testNow.Add(-time.Minute)) {
 		t.Errorf("story created at = %v, want its own timestamp", storyEntry.CreatedAt)
 	}
@@ -282,6 +298,57 @@ func TestFeedCarriesAdaptationEntries(t *testing.T) {
 		if strings.Contains(string(raw), "attribution_line") {
 			t.Errorf("story entry = %s, want no attribution_line", raw)
 		}
+	}
+}
+
+// TestFeedCommentCountsAreVersionScoped is the core assertion of KNOT-036-fix5:
+// on one page, the story entry reports the comments on its ROOT version and the
+// adaptation entry reports the comments on ITSELF, neither reports the story-wide
+// total, and neither reports the other's number.
+//
+// The story-wide total (7 here) is deliberately larger than both, so a regression
+// to "every comment on the story" fails loudly instead of coincidentally
+// matching.
+func TestFeedCommentCountsAreVersionScoped(t *testing.T) {
+	handler, _, lookups := feedFixture(t)
+
+	// The handler holds this same lookup, so seeding it here reaches the request.
+	lookups.stats.(*fakeStoryStatsLookup).byStory[feedStoryID] = storystats.Counts{
+		Versions:              2,
+		Languages:             2,
+		RootComments:          2,
+		Comments:              7,
+		CommentCountByVersion: map[string]int{feedRootVersionID: 2, feedVersionID: 1},
+		Media:                 1,
+	}
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories", "", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body feedPage
+	decodeBody(t, recorder, &body)
+
+	storyEntries := feedStories(t, body)
+	if len(storyEntries) != 1 {
+		t.Fatalf("stories = %d, want 1", len(storyEntries))
+	}
+	if got := storyEntries[0].CommentCount; got != 2 {
+		t.Errorf("story entry comment_count = %d, want the root version's 2", got)
+	}
+
+	versionEntries := feedVersions(t, body)
+	if len(versionEntries) != 1 {
+		t.Fatalf("versions = %d, want 1", len(versionEntries))
+	}
+	if got := versionEntries[0].CommentCount; got != 1 {
+		t.Errorf("version entry comment_count = %d, want that version's own 1", got)
+	}
+
+	// Neither entry may report the tree's total: that was the bug.
+	if strings.Contains(recorder.Body.String(), `"comment_count":7`) {
+		t.Errorf("page = %s, want no entry reporting the story-wide total 7", recorder.Body.String())
 	}
 }
 

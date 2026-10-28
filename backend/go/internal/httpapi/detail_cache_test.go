@@ -295,14 +295,20 @@ func TestCachedVersionDetailIsServedWithoutTouchingTheDatabase(t *testing.T) {
 	const versionID = "0c000000-0000-4000-8000-000000000003"
 
 	details := newDetailCacheRecorder()
-	payload, err := json.Marshal(versionEnvelope{Version: versionResponse{
-		ID:          versionID,
-		StoryID:     "0b000000-0000-4000-8000-000000000002",
-		AuthorID:    testUserID,
-		Language:    "zul",
-		Title:       "Cached adaptation",
-		Body:        "Cached body.",
-		MyReactions: []string{},
+	// The stored payload is the detail envelope, comment count included: the count
+	// is part of the response, so a cache hit serves the number it stored rather
+	// than recomputing (or zeroing) it (KNOT-036-fix5).
+	payload, err := json.Marshal(versionDetailEnvelope{Version: versionDetailResponse{
+		versionResponse: versionResponse{
+			ID:          versionID,
+			StoryID:     "0b000000-0000-4000-8000-000000000002",
+			AuthorID:    testUserID,
+			Language:    "zul",
+			Title:       "Cached adaptation",
+			Body:        "Cached body.",
+			MyReactions: []string{},
+		},
+		CommentCount: 4,
 	}})
 	if err != nil {
 		t.Fatalf("marshal version payload: %v", err)
@@ -310,12 +316,13 @@ func TestCachedVersionDetailIsServedWithoutTouchingTheDatabase(t *testing.T) {
 	details.versions[versionID] = string(payload)
 
 	versionsService := &fakeVersionsService{}
+	stats := &fakeStoryStatsLookup{}
 	handler := newRouterWithFeedLookups(t, discardLogger(), &fakeStoriesService{}, feedLookups{
 		authors:      &fakeAuthorService{},
 		rooted:       &fakeRootedService{},
 		media:        &fakeStoryMediaLookup{},
 		reactions:    &fakeReactionsLookup{},
-		stats:        &fakeStoryStatsLookup{},
+		stats:        stats,
 		chains:       &fakeVersionChainLookup{},
 		interactions: &fakeInteractionsLookup{},
 		versions:     versionsService,
@@ -327,13 +334,19 @@ func TestCachedVersionDetailIsServedWithoutTouchingTheDatabase(t *testing.T) {
 		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
 
-	var envelope versionEnvelope
+	var envelope versionDetailBody
 	decodeBody(t, recorder, &envelope)
 	if envelope.Version.ID != versionID || envelope.Version.Title != "Cached adaptation" {
 		t.Errorf("version = %+v, want the cached payload", envelope.Version)
 	}
+	if envelope.Version.CommentCount != 4 {
+		t.Errorf("comment_count = %d, want the cached 4", envelope.Version.CommentCount)
+	}
 	if versionsService.getCalls != 0 {
 		t.Errorf("versions service reads = %d, want 0 (the cache answered)", versionsService.getCalls)
+	}
+	if len(stats.gotVersionIDs) != 0 {
+		t.Errorf("count reads = %v, want none on a cache hit", stats.gotVersionIDs)
 	}
 }
 

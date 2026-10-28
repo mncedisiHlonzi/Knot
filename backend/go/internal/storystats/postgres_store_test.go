@@ -199,19 +199,30 @@ func addMedia(t *testing.T, env integrationEnv, storyID string, count int) {
 	}
 }
 
-// TestPostgresStoreCountsForStories is the brief's scenario: a story with two
-// versions in two languages, three comments (two top-level, one reply), and five
-// media items (KNOT-020c-fix).
+// TestPostgresStoreCountsForStories is the brief's scenario for KNOT-036-fix5: one
+// story whose ROOT version carries two comments and whose adaptation carries one
+// comment plus a reply to it.
+//
+// **Replies are counted.** The brief asked for top-level comments only, on the
+// condition that the destination agrees; it does not. `GET /versions/{id}/comments`
+// returns a version's top-level comments AND their replies in one list, and the
+// conversation header shows that list's length, so a reply is one of the entries the
+// reader counts. Counting only top-level comments would make a card report 1 for a
+// thread that says 2. The brief's own rule — match the version detail exactly —
+// therefore wins, and the reply is included.
+//
+// So: root 2, adaptation 2 (1 comment + 1 reply), and no count ever spans versions.
 func TestPostgresStoreCountsForStories(t *testing.T) {
 	env := integrationSetup(t)
 
 	storyID := createStoryWithRootVersion(t, env, "eng")
-	addVersion(t, env, storyID, "zul")
+	adaptation := addVersion(t, env, storyID, "zul")
 
 	root := rootVersionID(t, env, storyID)
-	top := addComment(t, env, root, nil)
 	addComment(t, env, root, nil)
-	addComment(t, env, root, &top)
+	addComment(t, env, root, nil)
+	adaptationComment := addComment(t, env, adaptation, nil)
+	addComment(t, env, adaptation, &adaptationComment)
 
 	addMedia(t, env, storyID, 5)
 
@@ -220,9 +231,73 @@ func TestPostgresStoreCountsForStories(t *testing.T) {
 		t.Fatalf("CountsForStories() error = %v, want nil", err)
 	}
 
-	want := Counts{Versions: 2, Languages: 2, Comments: 3, Media: 5}
-	if got := counts[storyID]; got != want {
-		t.Errorf("counts = %+v, want %+v", got, want)
+	got := counts[storyID]
+	if got.Versions != 2 || got.Languages != 2 || got.Media != 5 {
+		t.Errorf(
+			"versions/languages/media = %d/%d/%d, want 2/2/5",
+			got.Versions, got.Languages, got.Media,
+		)
+	}
+
+	wantByVersion := map[string]int{root: 2, adaptation: 2}
+	if len(got.CommentCountByVersion) != len(wantByVersion) {
+		t.Fatalf("comment counts = %v, want %v", got.CommentCountByVersion, wantByVersion)
+	}
+	for versionID, want := range wantByVersion {
+		if count := got.CommentCountForVersion(versionID); count != want {
+			t.Errorf("comments on version %s = %d, want %d", versionID, count, want)
+		}
+	}
+
+	// The root version's thread is what a story entry reports, and the story-wide
+	// total is the sum across versions.
+	if got.RootComments != 2 {
+		t.Errorf("root comments = %d, want 2", got.RootComments)
+	}
+	if got.Comments != 4 {
+		t.Errorf("story-wide comments = %d, want 4 (2 root + 1 adaptation comment + 1 reply)", got.Comments)
+	}
+}
+
+// TestPostgresStoreCommentCountForVersion proves the single-version read agrees
+// with the batched map -- it is the read a version detail makes, so the two must
+// never disagree -- and that an unknown version is zero.
+func TestPostgresStoreCommentCountForVersion(t *testing.T) {
+	env := integrationSetup(t)
+
+	storyID := createStoryWithRootVersion(t, env, "eng")
+	adaptation := addVersion(t, env, storyID, "zul")
+	root := rootVersionID(t, env, storyID)
+
+	addComment(t, env, root, nil)
+	addComment(t, env, root, nil)
+	top := addComment(t, env, adaptation, nil)
+	addComment(t, env, adaptation, &top)
+
+	counts, err := env.store.CountsForStories(context.Background(), []string{storyID})
+	if err != nil {
+		t.Fatalf("CountsForStories() error = %v, want nil", err)
+	}
+
+	for _, versionID := range []string{root, adaptation} {
+		single, err := env.store.CommentCountForVersion(context.Background(), versionID)
+		if err != nil {
+			t.Fatalf("CommentCountForVersion(%s) error = %v, want nil", versionID, err)
+		}
+		if want := counts[storyID].CommentCountForVersion(versionID); single != want {
+			t.Errorf("CommentCountForVersion(%s) = %d, want the batched %d", versionID, single, want)
+		}
+	}
+
+	// The thread the reader opens is the number both reads agree on: two comments
+	// on the root, one comment plus its reply on the adaptation.
+	if count, err := env.store.CommentCountForVersion(context.Background(), adaptation); err != nil || count != 2 {
+		t.Errorf("CommentCountForVersion(adaptation) = %d, %v, want 2 (the comment and its reply)", count, err)
+	}
+
+	unknown := "00000000-0000-4000-8000-000000000000"
+	if count, err := env.store.CommentCountForVersion(context.Background(), unknown); err != nil || count != 0 {
+		t.Errorf("CommentCountForVersion(unknown) = %d, %v, want 0, nil", count, err)
 	}
 }
 
@@ -240,8 +315,12 @@ func TestPostgresStoreCountsForStoriesDefaultsToZero(t *testing.T) {
 		t.Fatalf("CountsForStories() error = %v, want nil", err)
 	}
 
-	if got := counts[storyID]; got != (Counts{Versions: 1, Languages: 1}) {
-		t.Errorf("counts = %+v, want one version in one language and no comments or media", got)
+	got := counts[storyID]
+	if got.Versions != 1 || got.Languages != 1 {
+		t.Errorf("versions/languages = %d/%d, want one version in one language", got.Versions, got.Languages)
+	}
+	if got.RootComments != 0 || got.Comments != 0 || len(got.CommentCountByVersion) != 0 || got.Media != 0 {
+		t.Errorf("counts = %+v, want no comments and no media", got)
 	}
 	if _, ok := counts[unknown]; ok {
 		t.Errorf("counts[%s] is present, want absent for a story with no rows", unknown)

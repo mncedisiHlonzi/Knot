@@ -25,11 +25,37 @@ type Counts struct {
 	Versions int
 	// Languages is the number of distinct languages across those versions.
 	Languages int
-	// Comments is the number of comments on every version of the story, replies
-	// included (KNOT-020c-fix).
+	// RootComments is the number of comments on the story's root version, replies
+	// included: the thread a reader reaches by tapping the story, and the number a
+	// story entry in the feed reports (KNOT-036-fix5).
+	RootComments int
+	// Comments is the number of comments across every version of the story, replies
+	// included. It is the sum of CommentCountByVersion and is kept as the story's
+	// own activity total; no response field reads it directly -- story and version
+	// entries both report a version-scoped count (KNOT-036-fix5).
 	Comments int
+	// CommentCountByVersion is the number of comments on each version of the
+	// story, keyed by version id. A version absent from the map has no comments,
+	// which a caller reads as zero.
+	//
+	// Replies ARE counted, because the thread does: GET /versions/{id}/comments
+	// returns a version's top-level comments and their replies in one list, and the
+	// conversation header shows that list's length. Counting only top-level comments
+	// would make a feed entry report a smaller number than the page it opens
+	// (KNOT-036-fix5).
+	CommentCountByVersion map[string]int
 	// Media is the number of media items attached to the story.
 	Media int
+}
+
+// CommentCountForVersion returns the number of comments on one version of the
+// story, replies included, and zero when the version is not part of its tree.
+//
+// It reads the per-version map rather than a story-wide total, so the number it
+// answers is exactly the thread the reader sees when they open that version
+// (KNOT-036-fix5). Reading a nil map is fine, so the zero Counts answers zero.
+func (c Counts) CommentCountForVersion(versionID string) int {
+	return c.CommentCountByVersion[versionID]
 }
 
 // Store is the read contract for story counts.
@@ -39,4 +65,8 @@ type Store interface {
 	// caller reads as the zero Counts. It is one grouped query per count type,
 	// never a query per story.
 	CountsForStories(ctx context.Context, storyIDs []string) (map[string]Counts, error)
+	// CommentCountForVersion returns the number of comments on one version,
+	// replies included: the count a version detail reports, so it can never
+	// disagree with the feed entry that leads to it (KNOT-036-fix5).
+	CommentCountForVersion(ctx context.Context, versionID string) (int, error)
 }

@@ -41,7 +41,11 @@ type VersionsHandler struct {
 	// of its own: it shows the media of the story it adapts, with the same
 	// derivative URLs the story detail carries (KNOT-036-fix3). Nil means "answer
 	// an empty media list".
-	media  StoryMediaLookup
+	media StoryMediaLookup
+	// stats reads the count a version detail reports. It is the SAME storystats
+	// read model the feed uses, so the number on a card and the number on the page
+	// it opens are one definition (KNOT-036-fix5). Nil answers zero.
+	stats  StoryStatsLookup
 	logger *slog.Logger
 }
 
@@ -78,6 +82,17 @@ func NewVersionsHandlerWithCaches(service VersionsService, authors AuthorLookup,
 // A version detail carries the media of the story it adapts, because a version has
 // none of its own. A nil lookup answers an empty media array rather than failing.
 func NewVersionsHandlerWithMedia(service VersionsService, authors AuthorLookup, rooted RootedLookup, reactions ReactionsLookup, logger *slog.Logger, recorder InteractionRecorder, caches Caches, media StoryMediaLookup) (*VersionsHandler, error) {
+	return NewVersionsHandlerWithStats(service, authors, rooted, reactions, logger, recorder, caches, media, nil)
+}
+
+// NewVersionsHandlerWithStats is NewVersionsHandlerWithMedia plus the aggregate
+// counts lookup (KNOT-036-fix5).
+//
+// A version detail reports the number of comments on ITSELF, so the number a feed
+// entry shows is the number the page it opens shows: one read model, one
+// definition. A nil lookup answers zero, which is what a router assembled for
+// another handler's tests wants; the composition root always passes the store.
+func NewVersionsHandlerWithStats(service VersionsService, authors AuthorLookup, rooted RootedLookup, reactions ReactionsLookup, logger *slog.Logger, recorder InteractionRecorder, caches Caches, media StoryMediaLookup, stats StoryStatsLookup) (*VersionsHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: versions handler requires a service")
 	}
@@ -101,6 +116,7 @@ func NewVersionsHandlerWithMedia(service VersionsService, authors AuthorLookup, 
 		recorder:  recorder,
 		caches:    caches,
 		media:     media,
+		stats:     stats,
 		logger:    logger,
 	}, nil
 }
@@ -170,13 +186,19 @@ type versionEnvelope struct {
 //
 // It is a separate type from versionResponse so the ADAPT and TREE responses keep
 // exactly the shape they had: adding a field to versionResponse would have put an
-// empty `media` key on every version in a tree. The embedded struct's fields are
-// promoted, so the JSON is the version's own fields plus `media`.
+// empty `media` (and a zero `comment_count`) key on every version in a tree. The
+// embedded struct's fields are promoted, so the JSON is the version's own fields
+// plus the detail-only ones.
 type versionDetailResponse struct {
 	versionResponse
 	// Media mirrors the story detail's media array, including thumbnail_url,
 	// medium_url, and poster_url for every item. It is always an array, never null.
 	Media []storyMediaResponse `json:"media"`
+	// CommentCount is the number of comments on THIS version, replies included:
+	// the thread the reader sees below, and the same number a feed entry for this
+	// version reports (KNOT-036-fix5). A reply counts because the thread lists it
+	// in the same list its header counts.
+	CommentCount int `json:"comment_count"`
 }
 
 // versionDetailEnvelope wraps a single version detail, and is also the shape the
@@ -350,6 +372,9 @@ func (h *VersionsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	detail := versionDetailResponse{
 		versionResponse: response,
 		Media:           storyMediaForDetail(r.Context(), h.media, h.logger, version.StoryID),
+		// The version's own conversation size, from the same read model the feed
+		// projects, so the card and the page can never disagree (KNOT-036-fix5).
+		CommentCount: versionCommentCount(r.Context(), h.stats, h.logger, version.ID),
 	}
 
 	h.storeVersionDetail(r.Context(), detail)
