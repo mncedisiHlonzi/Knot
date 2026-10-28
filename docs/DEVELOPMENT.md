@@ -2860,6 +2860,39 @@ TTL). Reaction and comment counts are invalidated on write, so a cached detail i
 longer stale for those — a comment edited or deleted in place would still be, and
 there is no edit or delete route for either.
 
+**Audience index (KNOT-036-fix3).** The fan-out's language rule runs against
+`users.preferred_languages`, which now has a GIN index (migration `0025`,
+KNOT-ADR-095). Two things to keep intact:
+
+- The query spells the rule `u.preferred_languages @> ARRAY[$2::text]`. The
+equivalent
+  `$2::text = ANY(u.preferred_languages)` cannot use the index — EXPLAIN stays a
+  sequential scan even with `enable_seqscan = off`.
+- The query keeps its two branches (`language_audience`, `place_audience`) UNIONed
+  rather than folded into one `OR`. The set is identical, but with an `OR` and a
+  correlated `EXISTS` the planner ignores every index.
+
+To see the plan by hand:
+
+```
+SET enable_seqscan = off;
+EXPLAIN (COSTS OFF)
+WITH ... -- copy the query from internal/feedcache/audience.go
+```
+
+On a small local table the planner still prefers sequential scans by cost; with
+seq scans disabled the language branch shows
+`Bitmap Index Scan on users_preferred_languages_gin`.
+
+**Derivative URLs on detail responses (KNOT-036-fix3).** Every item in a story or
+version detail's `media` array carries `thumbnail_url`, `medium_url`, and
+`poster_url` beside the original `url`. They are the same `/stories/{id}/media/{mid}/content?variant=…`
+paths the feed's `first_media_url` uses, and are `null` when the item has no
+rendition (a legacy row, or an upload whose decoder or FFmpeg failed) — the client
+falls back to `url`. A version has no media of its own: `GET /versions/{id}` returns
+the media of the story it adapts, through the same projection, so the two arrays are
+identical.
+
 ## Testing Auth Locally
 
 Knot's authentication verifies addresses and resets passwords with links that are **emailed

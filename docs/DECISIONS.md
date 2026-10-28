@@ -3528,3 +3528,70 @@ and limits are stated plainly:
   exactly as before.
 - **Deletion is still not invalidated.** A cached detail outlives a deleted story for
   at most the TTL, and a cached feed id that no longer resolves is skipped.
+
+---
+
+## KNOT-ADR-095 — Detail responses carry derivative media URLs, and the audience query is indexed
+
+**Context.** KNOT-037 generates a thumbnail, a medium rendition, and a video poster
+beside every upload, and KNOT-036-fix2 closed the detail cache's count staleness. Two
+gaps remained in the performance foundation. The feed audience query filtered readers
+by `users.preferred_languages` with no index, so every fan-out scanned `users`. And
+the version detail carried no media array at all, so an adaptation's page could only
+show the story's media by re-reading the story.
+
+**Decision.**
+
+- **A GIN index on `users.preferred_languages`** (migration `0025`). The audience
+  query's language rule is now `preferred_languages @> ARRAY[$2::text]`, the only
+  equivalent form PostgreSQL can answer with that index; `= ANY` stayed a
+  sequential scan even with `enable_seqscan = off`.
+- **The audience query is two indexable branches UNIONed** (`language_audience`,
+  `place_audience`) instead of one `OR`. The result set is identical — `UNION`
+  dedupes exactly as `OR` does, verified for every local user across five languages —
+  but each rule is now a branch the planner can index. With one `OR` whose other side
+  is a correlated `EXISTS`, the planner ignored every index.
+- **The story detail already carried the derivative URLs.** KNOT-037 added
+  `thumbnail_url`, `medium_url`, and `poster_url` to `storyMediaResponse`, which
+  `GET /stories/{id}` projects through; this task pins that contract with tests
+  rather than re-implementing it.
+- **The version detail now carries the story's media array**, projected through the
+  same `newStoryMediaResponse`, so an adaptation's page has the same thumbnails and
+  posters. It is a separate `versionDetailResponse` (in a `versionDetailEnvelope`) so
+  the ADAPT and TREE responses keep their exact shape and a tree does not fan out into
+  one media read per version.
+- **The feed's `first_media_url` is unchanged**: it was already the thumbnail.
+
+**Alternatives Considered.**
+
+1. **`CREATE INDEX CONCURRENTLY`.** Rejected: the migration runner applies each
+   migration inside a transaction, where CONCURRENTLY cannot run. The trade-off is a
+   SHARE lock that blocks writes to `users` while the index builds — milliseconds at
+   MVP size. A large-table deployment should add a concurrent path to the runner
+   rather than edit this migration.
+2. **Keeping the single `OR` query.** Rejected after EXPLAIN: with the `OR` and a
+   correlated `EXISTS`, the planner never chose an index even with `enable_seqscan =
+   off`, so the new index would have been dead weight.
+3. **Adding `media` to `versionResponse`.** Rejected: the same struct backs the ADAPT
+   and TREE responses, so every version in a tree would have gained an empty `media`
+   key, and the tree would have needed an N+1 media read to fill it.
+4. **Returning the original URL in the derivative fields when no rendition exists.**
+   Rejected: `null` is the contract KNOT-037 established, because a client can then
+   tell "no rendition" from "the rendition is the original" — and the original is
+   already in `url`.
+
+**Consequences.**
+
+- The language branch of the audience query is answered by
+  `users_preferred_languages_gin`, and the place branch by
+  `rooted_signals_one_primary_per_user`. On a six-row local table the planner still
+  prefers sequential scans by cost, which is correct; the index is used as soon as
+  the table is worth indexing.
+- A version detail costs one extra media read — the same read a story detail makes —
+  and caches it with the rest of the detail payload.
+- A media upload or delete invalidates neither detail key yet; both heal on the
+  ten-minute TTL. That gap predates this task and is a follow-up.
+- **The mobile app still reads only `url` from its `StoryMedia` type**, so the grey
+  media strip in the story detail remains a MOBILE fix (it must render
+  `thumbnail_url`/`poster_url`). The API now offers both on the story and version
+  detail.

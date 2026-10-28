@@ -31,6 +31,12 @@ type StoryMediaLookup interface {
 // unreadable. The result is always non-nil so the response carries [] rather than
 // null.
 func storyMediaForDetail(ctx context.Context, lookup StoryMediaLookup, logger *slog.Logger, storyID string) []storyMediaResponse {
+	if lookup == nil {
+		// A handler assembled without a media lookup still answers a story it can
+		// describe: an empty list beats a panic on a read path.
+		return []storyMediaResponse{}
+	}
+
 	media, err := lookup.ListMedia(ctx, storyID)
 	if err != nil {
 		logger.WarnContext(

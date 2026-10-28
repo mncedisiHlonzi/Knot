@@ -170,7 +170,7 @@ func invalidateVersionDetail(ctx context.Context, logger *slog.Logger, details D
 // rules: the block check comes from the request, and the reader's own reactions are
 // read fresh. Everything else in the payload — the attribution sentence, the depth,
 // the author, the Rooted summary — is public and shared.
-func (h *VersionsHandler) cachedVersionDetail(ctx context.Context, versionID string) (*versionResponse, bool) {
+func (h *VersionsHandler) cachedVersionDetail(ctx context.Context, versionID string) (*versionDetailResponse, bool) {
 	if h.caches.Details == nil || versionID == "" {
 		return nil, false
 	}
@@ -189,7 +189,10 @@ func (h *VersionsHandler) cachedVersionDetail(ctx context.Context, versionID str
 		return nil, false
 	}
 
-	var envelope versionEnvelope
+	// The stored payload is the DETAIL envelope, which carries the story's media
+	// array as well as the version fields (KNOT-036-fix3). Decoding it into the
+	// plain versionEnvelope would silently drop that array.
+	var envelope versionDetailEnvelope
 	if err := json.Unmarshal([]byte(payload), &envelope); err != nil {
 		h.logger.WarnContext(
 			ctx,
@@ -215,14 +218,14 @@ func (h *VersionsHandler) cachedVersionDetail(ctx context.Context, versionID str
 }
 
 // storeVersionDetail writes one version detail response into the cache.
-func (h *VersionsHandler) storeVersionDetail(ctx context.Context, response versionResponse) {
+func (h *VersionsHandler) storeVersionDetail(ctx context.Context, response versionDetailResponse) {
 	if h.caches.Details == nil || response.ID == "" {
 		return
 	}
 
 	response.MyReactions = []string{}
 
-	payload, err := json.Marshal(versionEnvelope{Version: response})
+	payload, err := json.Marshal(versionDetailEnvelope{Version: response})
 	if err != nil {
 		h.logger.WarnContext(
 			ctx,

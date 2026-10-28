@@ -86,6 +86,7 @@ nulled in either direction.
 | `users_email_key` | Unique constraint (btree)  | `email` | Prevents duplicate accounts; named so operational tooling can refer to it |
 | `users_deleted_at_idx` | Partial index (btree)  | `deleted_at` | Only rows with a deletion, because almost every row has none. Answers "is this account gone?" |
 | `users_purged_at_idx` | Partial index (btree)  | `deletion_scheduled_at` | `WHERE purged_at IS NULL AND deletion_scheduled_at IS NOT NULL`. Only unpurged accounts with a window, so it is as small as the set of pending deletions. Answers "which accounts are due?" in one range scan |
+| `users_preferred_languages_gin` | GIN (`array_ops`) | `preferred_languages` | Migration `0025`, KNOT-ADR-095. Serves the feed audience query's language rule (`preferred_languages @> ARRAY['eng']`). The `= ANY(...)` spelling cannot use it, so keep the containment form |
 
 The uniqueness rule is enforced in the database, not only in application code: a
 duplicate insert surfaces to the service as `identity.ErrEmailTaken`, which the API

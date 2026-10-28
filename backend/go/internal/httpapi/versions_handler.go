@@ -37,6 +37,11 @@ type VersionsHandler struct {
 	// adaptation is fanned out into, and the version detail store (KNOT-036-fix).
 	// Nil fields mean "take the database path".
 	caches Caches
+	// media reads the story's media for a version detail. A version has no media
+	// of its own: it shows the media of the story it adapts, with the same
+	// derivative URLs the story detail carries (KNOT-036-fix3). Nil means "answer
+	// an empty media list".
+	media  StoryMediaLookup
 	logger *slog.Logger
 }
 
@@ -64,6 +69,15 @@ func NewVersionsHandlerWithRecorder(service VersionsService, authors AuthorLooku
 // A nil cache leaves every behaviour unchanged: the version detail is the database
 // read it has always been, and a new adaptation is not fanned out.
 func NewVersionsHandlerWithCaches(service VersionsService, authors AuthorLookup, rooted RootedLookup, reactions ReactionsLookup, logger *slog.Logger, recorder InteractionRecorder, caches Caches) (*VersionsHandler, error) {
+	return NewVersionsHandlerWithMedia(service, authors, rooted, reactions, logger, recorder, caches, nil)
+}
+
+// NewVersionsHandlerWithMedia is NewVersionsHandlerWithCaches plus the story-media
+// lookup (KNOT-036-fix3).
+//
+// A version detail carries the media of the story it adapts, because a version has
+// none of its own. A nil lookup answers an empty media array rather than failing.
+func NewVersionsHandlerWithMedia(service VersionsService, authors AuthorLookup, rooted RootedLookup, reactions ReactionsLookup, logger *slog.Logger, recorder InteractionRecorder, caches Caches, media StoryMediaLookup) (*VersionsHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: versions handler requires a service")
 	}
@@ -79,7 +93,16 @@ func NewVersionsHandlerWithCaches(service VersionsService, authors AuthorLookup,
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: versions handler requires a logger")
 	}
-	return &VersionsHandler{service: service, authors: authors, rooted: rooted, reactions: reactions, recorder: recorder, caches: caches, logger: logger}, nil
+	return &VersionsHandler{
+		service:   service,
+		authors:   authors,
+		rooted:    rooted,
+		reactions: reactions,
+		recorder:  recorder,
+		caches:    caches,
+		media:     media,
+		logger:    logger,
+	}, nil
 }
 
 // createAdaptationRequest is the POST /stories/{id}/adapt body.
@@ -140,6 +163,26 @@ type versionResponse struct {
 // fields later without breaking clients.
 type versionEnvelope struct {
 	Version versionResponse `json:"version"`
+}
+
+// versionDetailResponse is GET /versions/{id}: the version plus the media of the
+// story it adapts, in display order (KNOT-036-fix3).
+//
+// It is a separate type from versionResponse so the ADAPT and TREE responses keep
+// exactly the shape they had: adding a field to versionResponse would have put an
+// empty `media` key on every version in a tree. The embedded struct's fields are
+// promoted, so the JSON is the version's own fields plus `media`.
+type versionDetailResponse struct {
+	versionResponse
+	// Media mirrors the story detail's media array, including thumbnail_url,
+	// medium_url, and poster_url for every item. It is always an array, never null.
+	Media []storyMediaResponse `json:"media"`
+}
+
+// versionDetailEnvelope wraps a single version detail, and is also the shape the
+// detail cache stores.
+type versionDetailEnvelope struct {
+	Version versionDetailResponse `json:"version"`
 }
 
 // treeResponse is the GET /stories/{id}/tree body. Versions is a flat adjacency
@@ -283,7 +326,7 @@ func (h *VersionsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// A repeat tap on the same adaptation is answered from Redis, with the reader's
 	// own signals and the block filter re-applied (KNOT-036-fix).
 	if cached, ok := h.cachedVersionDetail(r.Context(), versionID); ok {
-		writeJSON(w, http.StatusOK, versionEnvelope{Version: *cached})
+		writeJSON(w, http.StatusOK, versionDetailEnvelope{Version: *cached})
 		return
 	}
 
@@ -301,9 +344,17 @@ func (h *VersionsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	response.Reactions, response.MyReactions = reactionsForEntity(r.Context(), h.reactions, h.logger, reactions.EntityVersion, userID, version.ID)
 	response.AttributionLine, response.VersionDepth = h.attribution(r.Context(), version.ID)
 
-	h.storeVersionDetail(r.Context(), response)
+	// A version has no media of its own: the detail shows the media of the story it
+	// adapts, projected exactly as the story detail projects it, so an adaptation's
+	// page renders the same thumbnails and posters (KNOT-036-fix3).
+	detail := versionDetailResponse{
+		versionResponse: response,
+		Media:           storyMediaForDetail(r.Context(), h.media, h.logger, version.StoryID),
+	}
 
-	writeJSON(w, http.StatusOK, versionEnvelope{Version: response})
+	h.storeVersionDetail(r.Context(), detail)
+
+	writeJSON(w, http.StatusOK, versionDetailEnvelope{Version: detail})
 }
 
 // attribution resolves one version's chain and renders its sentence, returning

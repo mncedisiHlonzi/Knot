@@ -448,7 +448,9 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	versionsHandler, err := httpapi.NewVersionsHandlerWithCaches(versionsService, service, rootedService, reactionsService, logger, interactionService, caches)
+	// A version detail carries the media of the story it adapts, so the handler
+	// reads it through the same lookup the stories handler uses (KNOT-036-fix3).
+	versionsHandler, err := httpapi.NewVersionsHandlerWithMedia(versionsService, service, rootedService, reactionsService, logger, interactionService, caches, storyMediaService)
 	if err != nil {
 		return err
 	}

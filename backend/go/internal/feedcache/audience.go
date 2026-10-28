@@ -68,6 +68,23 @@ func NewPostgresAudience(pool *pgxpool.Pool) (*PostgresAudience, error) {
 // secondary signal is not a statement about where someone belongs today. Deleted
 // accounts are excluded, because their feed would never be read again.
 //
+// The two routing rules are written as two CTEs UNIONed together rather than one
+// OR. The audience is the same set -- UNION dedupes exactly as OR does -- but each
+// rule becomes a branch the planner can index on its own:
+//
+//   - language_audience uses `preferred_languages @> ARRAY[$2::text]`, the only
+//     form of the language test PostgreSQL can answer with the GIN index added in
+//     migration 0025. `$2::text = ANY(preferred_languages)` stays a sequential
+//     scan even with `enable_seqscan = off`, and an OR whose other side is a
+//     correlated EXISTS stops the planner from using any index at all
+//     (KNOT-036-fix3, KNOT-ADR-095).
+//   - place_audience joins rooted_signals, served by
+//     rooted_signals_one_primary_per_user.
+//
+// The outer join re-reads `users` for the final order, because LIMIT has to apply
+// after the dedupe. Keep this shape if the query is edited: folding the rules back
+// into one OR silently returns the audience query to a table scan.
+//
 // The ORDER BY is total (created_at, id) but has no pagination meaning: it exists
 // so the same audience always arrives in the same order, which makes a fan-out
 // reproducible when it is retried.
@@ -78,24 +95,34 @@ const audienceQuery = `
 		WHERE rs.user_id = $1::uuid
 			AND rs.is_primary = true
 		LIMIT 1
+	),
+	language_audience AS (
+		SELECT u.id
+		FROM users u
+		WHERE u.id <> $1::uuid
+			AND u.deleted_at IS NULL
+			AND u.preferred_languages @> ARRAY[$2::text]
+	),
+	place_audience AS (
+		SELECT u.id
+		FROM users u
+		JOIN rooted_signals rs
+			ON rs.user_id = u.id
+			AND rs.is_primary = true
+			AND (
+				rs.place = (SELECT place FROM author_signal)
+				OR rs.place_country = (SELECT place_country FROM author_signal)
+			)
+		WHERE u.id <> $1::uuid
+			AND u.deleted_at IS NULL
 	)
 	SELECT u.id::text
 	FROM users u
-	WHERE u.id <> $1::uuid
-		AND u.deleted_at IS NULL
-		AND (
-			$2::text = ANY(u.preferred_languages)
-			OR EXISTS (
-				SELECT 1
-				FROM rooted_signals rs
-				WHERE rs.user_id = u.id
-					AND rs.is_primary = true
-					AND (
-						rs.place = (SELECT place FROM author_signal)
-						OR rs.place_country = (SELECT place_country FROM author_signal)
-					)
-			)
-		)
+	JOIN (
+		SELECT id FROM language_audience
+		UNION
+		SELECT id FROM place_audience
+	) audience ON audience.id = u.id
 	ORDER BY u.created_at ASC, u.id ASC
 	LIMIT $3`
 
