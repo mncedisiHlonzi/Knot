@@ -351,9 +351,9 @@ describe('TabBar', () => {
     const badgeFor = (unreadCount: number): unknown => {
       const bar = TabBar({ activeTab: 'feed', onSelect, unreadCount });
       const notificationsTab = bar.props.children[4] as {
-        props: { children: readonly { props: { children: readonly unknown[] } }[] };
+        props: { children: { props: { children: readonly unknown[] } } };
       };
-      const glyph = notificationsTab.props.children[0];
+      const glyph = notificationsTab.props.children;
       return glyph.props.children[1];
     };
 
@@ -361,17 +361,50 @@ describe('TabBar', () => {
     expect(badgeFor(3)).not.toBeNull();
   });
 
-  // The visible label is shortened so it cannot truncate on a narrow device; the
-  // spoken label stays the full destination name (KNOT-020j-fix).
-  it('draws "Notice" for the notifications tab but announces "Notifications"', () => {
+  // The bar is text free since KNOT-020k-fix: no tab draws a label, so the only
+  // text in it is the unread count. The destination names survive as the spoken
+  // accessibility labels.
+  it('draws no visible label, and announces every destination', () => {
     const onSelect = (): void => undefined;
     const bar = TabBar({ activeTab: 'feed', onSelect });
-    const notificationsTab = bar.props.children[4] as {
-      props: { accessibilityLabel: string; children: readonly { props: { children: unknown } }[] };
+    const tabs = bar.props.children as readonly {
+      props: { accessibilityLabel: string; children: { type: unknown } };
+    }[];
+
+    expect(tabs).toHaveLength(5);
+    for (const tab of tabs) {
+      // One child — the glyph box — and it is not a Text.
+      expect(tab.props.children.type).not.toBe('Text');
+    }
+
+    expect(tabs[4]?.props.accessibilityLabel).toBe('Notifications');
+    expect(tabs[0]?.props.accessibilityLabel).toBe('Home');
+    expect(tabs[1]?.props.accessibilityLabel).toBe('Map');
+    expect(tabs[2]?.props.accessibilityLabel).toBe('Create story');
+  });
+
+  // A selected tab is a filled glyph in the primary ink; the rest are bold
+  // outlines in the tertiary ink. The two-tone rule is what makes the selection
+  // readable without a label (KNOT-020k-fix).
+  it('fills the selected glyph and outlines the others', () => {
+    const onSelect = (): void => undefined;
+    const bar = TabBar({ activeTab: 'discoveryMap', onSelect });
+
+    /** The glyph element a destination tab draws. */
+    const glyphFor = (index: number): { props: { color: string; weight: string } } => {
+      const tab = bar.props.children[index] as {
+        props: { children: { props: { children: readonly unknown[] } } };
+      };
+      return tab.props.children.props.children[0] as {
+        props: { color: string; weight: string };
+      };
     };
 
-    expect(notificationsTab.props.children[1].props.children).toBe('Notice');
-    expect(notificationsTab.props.accessibilityLabel).toBe('Notifications');
+    expect(glyphFor(1).props.weight).toBe('fill');
+    expect(glyphFor(1).props.color).toBe(colors.text.primary);
+
+    expect(glyphFor(0).props.weight).toBe('bold');
+    expect(glyphFor(0).props.color).toBe(colors.text.tertiary);
   });
 
   // The magnifier is the Feed header's search control, so Inquiries needed its own
@@ -381,11 +414,11 @@ describe('TabBar', () => {
     const bar = TabBar({ activeTab: 'feed', onSelect });
     const inquiriesTab = bar.props.children[3] as {
       props: {
-        children: readonly { props: { children: readonly { props: { icon: unknown } }[] } }[];
+        children: { props: { children: readonly { props: { icon: unknown } }[] } };
       };
     };
 
-    const glyph = inquiriesTab.props.children[0].props.children[0];
+    const glyph = inquiriesTab.props.children.props.children[0];
     expect(glyph.props.icon).toBe(ChatsCircle);
   });
 });

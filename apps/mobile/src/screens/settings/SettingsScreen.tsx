@@ -4,7 +4,7 @@ import {
   ArrowLeft,
   Camera,
   CaretRight,
-  Check,
+  DeviceMobile,
   Devices,
   FileText,
   Info,
@@ -12,9 +12,9 @@ import {
   Plant,
   Prohibit,
   ShieldCheck,
+  Star,
   Sun,
   Trash,
-  SignOut,
   type Icon,
 } from 'phosphor-react-native';
 
@@ -24,12 +24,19 @@ import { uploadAvatar } from '../../api/users';
 import Avatar from '../../components/Avatar';
 import Header from '../../components/Header';
 import MediaPickerSheet, { type PickedMedia } from '../../components/MediaPickerSheet';
-import RootedBadge from '../../components/RootedBadge';
 import { API_BASE_URL } from '../../config/api';
 import { APP_VERSION } from '../../config/app';
 import type { LegalDocument } from '../../data/legalDocuments';
-import { fontWeights, layout, spacing, typeScale, useTheme, useThemedStyles } from '../../theme';
-import type { ThemeColors } from '../../theme';
+import {
+  fontWeights,
+  layout,
+  radius,
+  spacing,
+  typeScale,
+  useTheme,
+  useThemedStyles,
+} from '../../theme';
+import type { AppearanceMode, ThemeColors } from '../../theme';
 
 /**
  * Resolves the profile's relative avatar path against the API base URL.
@@ -46,6 +53,14 @@ function avatarUri(path: string | null | undefined): string | undefined {
 type SettingsScreenProps = {
   /** The signed-in user's id, used to read their own profile header. */
   readonly userId: string;
+  /**
+   * The signed-in user's email address, drawn under their name in the header.
+   *
+   * It comes from the session rather than the profile endpoint: `ProfileUser` has
+   * no email field, and the person reading this screen is by definition the owner
+   * of the account (KNOT-020k-fix).
+   */
+  readonly email?: string;
   /** The signed-in user's access token, needed for the avatar upload. */
   readonly token: string;
   /** Called when the person returns to the profile. */
@@ -74,6 +89,10 @@ type SettingsScreenProps = {
  * informational row (the app version) never looks like a control that does nothing.
  * `busy` swaps the chevron for a spinner while the row's action is in flight, the
  * same affordance the profile's old options sheet used (KNOT-020g-fix).
+ *
+ * `divider` draws the hairline that parts it from the row above, inside a bento
+ * container. It is opt-in and never drawn on a group's first row, so the card's
+ * own top edge is the only rule above it (KNOT-020k-fix).
  */
 function SettingRow({
   icon,
@@ -81,6 +100,7 @@ function SettingRow({
   value,
   danger = false,
   busy = false,
+  divider = false,
   onPress,
 }: {
   readonly icon: Icon;
@@ -88,12 +108,14 @@ function SettingRow({
   readonly value?: string;
   readonly danger?: boolean;
   readonly busy?: boolean;
+  readonly divider?: boolean;
   readonly onPress?: () => void;
 }): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const IconComponent = icon;
   const tint = danger ? colors.state.danger : colors.text.tertiary;
+  const rowStyle = [styles.row, divider ? styles.rowDivider : null];
 
   const content = (
     <>
@@ -118,12 +140,12 @@ function SettingRow({
   );
 
   if (onPress === undefined) {
-    return <View style={styles.row}>{content}</View>;
+    return <View style={rowStyle}>{content}</View>;
   }
 
   return (
     <Pressable
-      style={styles.row}
+      style={rowStyle}
       onPress={onPress}
       disabled={busy}
       accessibilityRole="button"
@@ -136,104 +158,39 @@ function SettingRow({
 }
 
 /**
- * One Appearance choice: a leading glyph, the mode's name, and a check when it is
- * the active choice.
- *
- * It is a radio, not a switch (KNOT-020k): there are three states — System, Light
- * and Dark — and a switch can only say two. The whole row is the target, so a
- * reader never has to hit the 20-point mark, and the check rides the trailing edge
- * where a chevron would sit on an action row.
- */
-function AppearanceRow({
-  icon,
-  label,
-  selected,
-  onPress,
-}: {
-  readonly icon: Icon;
-  readonly label: string;
-  readonly selected: boolean;
-  readonly onPress: () => void;
-}): React.ReactElement {
-  const { colors } = useTheme();
-  const styles = useThemedStyles(createStyles);
-  const IconComponent = icon;
-
-  return (
-    <Pressable
-      style={styles.row}
-      onPress={onPress}
-      accessibilityRole="radio"
-      accessibilityLabel={label}
-      accessibilityState={{ selected }}
-    >
-      <IconComponent
-        color={selected ? colors.text.primary : colors.text.tertiary}
-        size={20}
-        weight="bold"
-      />
-      <Text
-        style={[typeScale.body, styles.rowLabel, selected ? styles.rowLabelSelected : null]}
-        numberOfLines={1}
-      >
-        {label}
-      </Text>
-      {selected ? <Check color={colors.brand.primary} size={20} weight="bold" /> : null}
-    </Pressable>
-  );
-}
-
-/**
- * The Appearance setting: how the app chooses its mode.
+ * The three appearance choices, in order.
  *
  * `System` is a real choice, not the absence of one: it follows the device and
  * keeps following it while the app runs. Choosing Light or Dark pins the mode and
  * persists it under `knot.appearance.v1`; the change applies on the tap, not on a
- * restart (KNOT-020k, KNOT-ADR-096).
+ * restart (KNOT-020k, KNOT-ADR-096). They are drawn as one horizontal row of
+ * pills rather than stacked radio rows, which is the bento shape the founder
+ * asked for (KNOT-020k-fix).
  */
-function AppearanceSection(): React.ReactElement {
-  const { mode, setMode } = useTheme();
+const APPEARANCE_CHOICES: readonly {
+  readonly mode: AppearanceMode;
+  readonly label: string;
+  readonly icon: Icon;
+}[] = [
+  { mode: 'system', label: 'System', icon: DeviceMobile },
+  { mode: 'light', label: 'Light', icon: Sun },
+  { mode: 'dark', label: 'Dark', icon: Moon },
+];
 
-  return (
-    <>
-      <AppearanceRow
-        icon={Devices}
-        label="System"
-        selected={mode === 'system'}
-        onPress={() => setMode('system')}
-      />
-      <AppearanceRow
-        icon={Sun}
-        label="Light"
-        selected={mode === 'light'}
-        onPress={() => setMode('light')}
-      />
-      <AppearanceRow
-        icon={Moon}
-        label="Dark"
-        selected={mode === 'dark'}
-        onPress={() => setMode('dark')}
-      />
-    </>
-  );
-}
+/** The glyph size inside an appearance pill. */
+const APPEARANCE_ICON_SIZE = 18;
 
-/** A titled group of rows: an overline heading above one continuous column. */
-function Section({
-  title,
-  children,
-}: {
-  readonly title: string;
-  readonly children: React.ReactNode;
-}): React.ReactElement {
+/** The glyph disc on the Rooted status card. */
+const STATUS_ICON_SIZE = 40;
+
+/** The glyph inside that disc. */
+const STATUS_GLYPH_SIZE = 20;
+
+/** A group heading above one bento container. */
+function SectionHeading({ title }: { readonly title: string }): React.ReactElement {
   const styles = useThemedStyles(createStyles);
 
-  return (
-    <View style={styles.section}>
-      <Text style={[typeScale.overline, styles.sectionTitle]}>{title}</Text>
-      <View style={styles.sectionBody}>{children}</View>
-    </View>
-  );
+  return <Text style={[typeScale.h3, styles.sectionTitle]}>{title}</Text>;
 }
 
 /**
@@ -254,17 +211,26 @@ function Section({
  *
  * The structure is the design system's: a canvas, `typeScale` composites,
  * semantic colour roles and 44-point minimum touch targets. No hex is written
- * here, and no row is carded or ruled — the groups are set apart by whitespace and
- * an overline heading, the way the rest of the app draws a quiet list
- * (KNOT-020k-fix23).
+ * here.
+ *
+ * The layout is the founder's **bento** treatment (KNOT-020k-fix): a centred
+ * profile block (avatar, name, email), a full-width Rooted status card, one
+ * rounded container per group with hairlines between its rows, a horizontal
+ * Appearance pill row, and a red text-only Sign out below every container. The
+ * containers are `bg.raised` with a hairline edge and a `radius.xxl` corner, so a
+ * group reads as one object rather than as a list of loose rows — and in light
+ * mode, where `bg.raised` is the canvas value, that edge is what separates the
+ * card from the page.
  *
  * The block at the top is the signed-in person's own header — avatar, name and
- * Rooted summary — read from the same profile endpoint the wall uses, so Settings
- * opens with the face it belongs to. It is enrichment: if that read fails the
- * screen still works, it just draws no header.
+ * email — read from the same profile endpoint the wall uses, so Settings opens
+ * with the face it belongs to. It is enrichment: if that read fails the screen
+ * still works, it just draws no header. The Rooted summary moved into the status
+ * card, where the reference puts it.
  */
 export default function SettingsScreen({
   userId,
+  email = '',
   token,
   onBack,
   onUserUpdated,
@@ -275,7 +241,7 @@ export default function SettingsScreen({
   onOpenLegal,
   onSignOut,
 }: SettingsScreenProps): React.ReactElement {
-  const { colors } = useTheme();
+  const { colors, mode, setMode } = useTheme();
   const styles = useThemedStyles(createStyles);
   // Declared first so the header's profile is the screen's first piece of state.
   const [profile, setProfile] = useState<ProfileUser | undefined>(undefined);
@@ -323,6 +289,10 @@ export default function SettingsScreen({
     [loadProfile, onUserUpdated, token],
   );
 
+  // The person's Rooted summary, or `null` when they have none — the status card
+  // says which of the two states it is drawing.
+  const rooted = profile?.rooted ?? null;
+
   return (
     <View style={styles.container}>
       <Header
@@ -340,9 +310,8 @@ export default function SettingsScreen({
       />
 
       <ScrollView contentContainerStyle={styles.content}>
-        {/* The signed-in person's own header, matching the top of the Profile
-            screen: the face on top, the name and the Rooted summary centred
-            underneath (KNOT-020k-fix25). Nothing here is a control. */}
+        {/* The signed-in person's own header: the face, the name and the
+            address, centred (KNOT-020k-fix). Nothing here is a control. */}
         {profile === undefined ? null : (
           <View style={styles.profileHeader}>
             {/* `Avatar` pins itself left (`alignSelf: 'flex-start'`) so it never
@@ -353,24 +322,84 @@ export default function SettingsScreen({
               <Avatar
                 uri={avatarUri(profile.avatar_url)}
                 displayName={profile.display_name}
-                size="xl"
+                size="lg"
               />
             </View>
             <Text style={[typeScale.h2, styles.profileName]} numberOfLines={1}>
               {profile.display_name}
             </Text>
-            {profile.rooted === null ? null : (
-              <View style={styles.profileRooted}>
-                <RootedBadge
-                  place={profile.rooted.place}
-                  durationBucket={profile.rooted.duration_bucket}
-                />
-              </View>
+            {email === '' ? null : (
+              <Text style={[typeScale.caption, styles.profileEmail]} numberOfLines={1}>
+                {email}
+              </Text>
             )}
           </View>
         )}
 
-        <Section title="Account">
+        {/* The status card: the person's Rooted standing, or the way to set it.
+            The whole card is the target — the pill on the right is its affordance,
+            not a second control (KNOT-020k-fix). */}
+        <Pressable
+          style={styles.statusCard}
+          onPress={onSetRooted}
+          accessibilityRole="button"
+          accessibilityLabel={rooted === null ? 'Set your Rooted place' : 'View your Rooted place'}
+        >
+          <View style={styles.statusIcon}>
+            <Star color={colors.text.onBrand} size={STATUS_GLYPH_SIZE} weight="fill" />
+          </View>
+          <View style={styles.statusText}>
+            <Text style={[typeScale.h3, styles.statusTitle]} numberOfLines={1}>
+              {rooted === null ? 'Become Rooted' : 'Rooted Status'}
+            </Text>
+            <Text style={[typeScale.caption, styles.statusSubtitle]} numberOfLines={1}>
+              {rooted === null ? 'Unlock advanced features' : `Rooted in ${rooted.place}`}
+            </Text>
+          </View>
+          <View style={styles.statusPill}>
+            <Text style={[typeScale.label, styles.statusPillLabel]}>
+              {rooted === null ? 'Set up' : 'View'}
+            </Text>
+          </View>
+        </Pressable>
+
+        <SectionHeading title="Appearance" />
+        <View style={[styles.card, styles.cardBody]}>
+          <View style={styles.pillRow}>
+            {APPEARANCE_CHOICES.map((choice) => {
+              const selected = mode === choice.mode;
+              const AppearanceIcon = choice.icon;
+              return (
+                <Pressable
+                  key={choice.mode}
+                  style={[styles.pill, selected ? styles.pillActive : styles.pillIdle]}
+                  onPress={() => setMode(choice.mode)}
+                  accessibilityRole="radio"
+                  accessibilityLabel={choice.label}
+                  accessibilityState={{ selected }}
+                >
+                  <AppearanceIcon
+                    color={selected ? colors.text.inverse : colors.text.primary}
+                    size={APPEARANCE_ICON_SIZE}
+                    weight="bold"
+                  />
+                  <Text
+                    style={[
+                      typeScale.label,
+                      selected ? styles.pillLabelActive : styles.pillLabelIdle,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {choice.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        </View>
+
+        <SectionHeading title="Account" />
+        <View style={styles.card}>
           <SettingRow
             icon={Camera}
             label="Edit avatar"
@@ -380,46 +409,59 @@ export default function SettingsScreen({
               setPickerVisible(true);
             }}
           />
-          <SettingRow icon={Plant} label="Set Rooted" onPress={onSetRooted} />
-          <SettingRow icon={Prohibit} label="Blocked users" onPress={onOpenBlockedUsers} />
+          <SettingRow divider icon={Plant} label="Set Rooted" onPress={onSetRooted} />
           {/* The device list (KNOT-ADR-084): where a person reviews and ends the
               sessions their account is signed in on. */}
-          <SettingRow icon={Devices} label="Sessions" onPress={onOpenSessions} />
-          {/* Destructive, and last in the section: it is the one row here that
+          <SettingRow divider icon={Devices} label="Sessions" onPress={onOpenSessions} />
+          {/* Destructive, and last in the group: it is the one row here that
               cannot be undone from this screen (KNOT-034). */}
-          <SettingRow icon={Trash} label="Delete account" danger onPress={onOpenDeleteAccount} />
-        </Section>
+          <SettingRow
+            divider
+            icon={Trash}
+            label="Delete account"
+            danger
+            onPress={onOpenDeleteAccount}
+          />
+        </View>
 
         {avatarError === undefined ? null : (
           <Text style={[typeScale.bodyS, styles.error]}>{avatarError}</Text>
         )}
 
-        <Section title="Appearance">
-          <AppearanceSection />
-        </Section>
+        <SectionHeading title="Privacy" />
+        <View style={styles.card}>
+          <SettingRow icon={Prohibit} label="Blocked users" onPress={onOpenBlockedUsers} />
+        </View>
 
-        <Section title="About">
+        <SectionHeading title="About" />
+        <View style={styles.card}>
           <SettingRow icon={Info} label="App version" value={`v${APP_VERSION}`} />
-        </Section>
-
-        {/* The documents are shipped with the app and read in place, so nothing
-            leaves Knot to read them (KNOT-035). */}
-        <Section title="Legal">
+          {/* The documents are shipped with the app and read in place, so nothing
+              leaves Knot to read them (KNOT-035). */}
           <SettingRow
+            divider
             icon={ShieldCheck}
             label="Privacy Policy"
             onPress={() => onOpenLegal('privacy')}
           />
           <SettingRow
+            divider
             icon={FileText}
             label="Terms of Service"
             onPress={() => onOpenLegal('terms')}
           />
-        </Section>
-
-        <View style={styles.signOut}>
-          <SettingRow icon={SignOut} label="Sign out" danger onPress={onSignOut} />
         </View>
+
+        {/* Sign out is an action on the session, not a setting, so it stands
+            outside every container as a quiet red line (KNOT-020k-fix). */}
+        <Pressable
+          style={styles.signOut}
+          onPress={onSignOut}
+          accessibilityRole="button"
+          accessibilityLabel="Sign out"
+        >
+          <Text style={[typeScale.button, styles.signOutLabel]}>Sign out</Text>
+        </Pressable>
       </ScrollView>
 
       <MediaPickerSheet
@@ -460,9 +502,8 @@ const createStyles = (colors: ThemeColors) =>
       width: 44,
     },
     // One row: a leading glyph, the label, an optional value, and the trailing
-    // control. Rows carry NO rule: the groups are told apart by whitespace and the
-    // overline heading above them, which is the quieter, more modern list the
-    // founder asked for (KNOT-020k-fix23).
+    // control. Rows sit inside a bento container, parted by a hairline — never a
+    // rule on the first row (KNOT-020k-fix).
     row: {
       alignItems: 'center',
       flexDirection: 'row',
@@ -470,6 +511,11 @@ const createStyles = (colors: ThemeColors) =>
       minHeight: 44,
       paddingHorizontal: layout.screenPaddingFeed,
       paddingVertical: spacing.md,
+    },
+    // The hairline that parts one row from the row above it, inside a container.
+    rowDivider: {
+      borderTopColor: colors.border.hairline,
+      borderTopWidth: 1,
     },
     // The label takes the body composite at the bold weight: a settings row is a
     // control, so it reads decisively without becoming a heading
@@ -482,27 +528,21 @@ const createStyles = (colors: ThemeColors) =>
     rowLabelDanger: {
       color: colors.state.danger,
     },
-    // The selected Appearance row is the full-strength ink; an unselected one is
-    // already primary, so selection is carried by the check and the glyph's ink
-    // rather than by a second text colour.
-    rowLabelSelected: {
-      color: colors.text.primary,
-    },
     rowValue: {
       color: colors.text.tertiary,
     },
-    // The header is a centred column, the shape the Profile wall opens with: an
-    // 88pt face, the name beneath it, then the Rooted summary (KNOT-020k-fix25,
-    // KNOT-020k-fix26).
+    // The header is a centred column: a 48pt face, the name beneath it, then the
+    // address (KNOT-020k-fix).
     profileHeader: {
       alignItems: 'center',
       paddingHorizontal: layout.screenPaddingFeed,
-      paddingVertical: spacing.lg,
+      paddingBottom: spacing.md,
+      paddingTop: spacing.lg,
     },
-    // `Avatar` and `RootedBadge` both position themselves (`alignSelf:
-    // 'flex-start'`), so each needs a box that shrinks to its content and is then
-    // centred. A *stretched* wrapper would not help: the child's own `alignSelf`
-    // wins inside it and the face would hug the left edge again (KNOT-020k-fix26).
+    // `Avatar` positions itself (`alignSelf: 'flex-start'`), so it needs a box that
+    // shrinks to its content and is then centred. A *stretched* wrapper would not
+    // help: the child's own `alignSelf` wins inside it and the face would hug the
+    // left edge again (KNOT-020k-fix26).
     profileAvatar: {
       alignSelf: 'center',
     },
@@ -511,25 +551,125 @@ const createStyles = (colors: ThemeColors) =>
       marginTop: spacing.md,
       textAlign: 'center',
     },
-    profileRooted: {
-      alignSelf: 'center',
-      marginTop: spacing.sm,
-    },
-    section: {
-      marginTop: spacing.xl,
-    },
-    sectionBody: {
-      marginTop: spacing.sm,
-    },
-    // The group heading: the design system's overline, in the tertiary ink, on the
-    // same gutter as the rows it names.
-    sectionTitle: {
+    profileEmail: {
       color: colors.text.tertiary,
-      paddingHorizontal: layout.screenPaddingFeed,
+      marginTop: spacing.xs,
+      textAlign: 'center',
     },
-    // Sign out stands apart from the groups above it: it is an action on the
-    // session, not a setting.
-    signOut: {
+    // The Rooted status card: a full-width raised surface with a hairline edge, the
+    // glyph disc on the left, the copy in the middle and the pill on the right
+    // (KNOT-020k-fix).
+    statusCard: {
+      alignItems: 'center',
+      backgroundColor: colors.bg.raised,
+      borderColor: colors.border.hairline,
+      borderRadius: radius.xxl,
+      borderWidth: 1,
+      flexDirection: 'row',
+      gap: spacing.md,
+      marginHorizontal: layout.screenPaddingFeed,
+      padding: spacing.lg,
+    },
+    // The glyph sits on a solid disc so the card opens with weight: a bare glyph
+    // would read as one more row icon.
+    statusIcon: {
+      alignItems: 'center',
+      backgroundColor: colors.brand.primary,
+      borderRadius: radius.pill,
+      height: STATUS_ICON_SIZE,
+      justifyContent: 'center',
+      width: STATUS_ICON_SIZE,
+    },
+    statusText: {
+      flex: 1,
+      gap: spacing.xs / 2,
+    },
+    statusTitle: {
+      color: colors.text.primary,
+    },
+    statusSubtitle: {
+      color: colors.text.tertiary,
+    },
+    // The pill is the card's affordance, not a second control: the whole card is
+    // the tap target, so this is drawn as a quiet sunken chip rather than a filled
+    // button (KNOT-020k-fix).
+    statusPill: {
+      alignItems: 'center',
+      backgroundColor: colors.bg.sunken,
+      borderRadius: radius.pill,
+      justifyContent: 'center',
+      minHeight: 32,
+      paddingHorizontal: spacing.md,
+    },
+    statusPillLabel: {
+      color: colors.text.primary,
+    },
+    // The group heading: an h3 in the primary ink, on the same gutter as the card it
+    // names (KNOT-020k-fix).
+    sectionTitle: {
+      color: colors.text.primary,
+      marginBottom: spacing.sm,
+      marginHorizontal: layout.screenPaddingFeed,
       marginTop: spacing.xl,
+    },
+    // One group of rows: a raised surface with a hairline edge and a large corner,
+    // so the group reads as one object. `overflow: 'hidden'` keeps a row's hairline
+    // and pressed fill inside the rounded edge (KNOT-020k-fix).
+    card: {
+      backgroundColor: colors.bg.raised,
+      borderColor: colors.border.hairline,
+      borderRadius: radius.xxl,
+      borderWidth: 1,
+      marginHorizontal: layout.screenPaddingFeed,
+      overflow: 'hidden',
+    },
+    // The Appearance container holds a single row of pills, so it is padded rather
+    // than rowed.
+    cardBody: {
+      padding: spacing.sm,
+    },
+    pillRow: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    // One appearance choice: an equal third of the row, pill shaped and 44 points
+    // tall, with the glyph beside the name.
+    pill: {
+      alignItems: 'center',
+      borderRadius: radius.pill,
+      flex: 1,
+      flexDirection: 'row',
+      gap: spacing.xs,
+      justifyContent: 'center',
+      minHeight: 44,
+      paddingHorizontal: spacing.sm,
+    },
+    // The selected pill is the primary fill with inverse ink; the rest are sunken
+    // with primary ink. This is the brief's bg.primary/text.inverse pair, named
+    // through the monochrome roles (KNOT-020k-fix).
+    pillActive: {
+      backgroundColor: colors.brand.primary,
+    },
+    pillIdle: {
+      backgroundColor: colors.bg.sunken,
+    },
+    pillLabelActive: {
+      color: colors.text.inverse,
+    },
+    pillLabelIdle: {
+      color: colors.text.primary,
+    },
+    // Sign out stands outside every container and apart from them: it is an action
+    // on the session, not a setting (KNOT-020k-fix).
+    signOut: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginHorizontal: layout.screenPaddingFeed,
+      marginTop: spacing.xl,
+      minHeight: 44,
+    },
+    signOutLabel: {
+      color: colors.state.danger,
+      textAlign: 'center',
     },
   });

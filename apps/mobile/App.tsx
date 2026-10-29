@@ -28,6 +28,7 @@ import type { SystemColorScheme, ThemeColors } from './src/theme';
 import { layout, spacing, typeScale } from './src/theme';
 import ThemeCrossfade from './src/motion/ThemeCrossfade';
 import { setNavigationBarColor } from './src/native/systemBars';
+import { IconScope } from './src/components/Icon';
 import TabBar from './src/components/TabBar';
 import type { TabName } from './src/components/TabBar';
 import MediaGalleryModal from './src/components/MediaGalleryModal';
@@ -216,10 +217,14 @@ export default function App(): React.ReactElement {
 
   return (
     <ThemeProvider systemTheme={systemTheme}>
-      <ThemedApp />
-      {/* Painted last so it covers every screen, and only while a mode change
-          is settling (KNOT-020k). */}
-      <ThemeCrossfade />
+      {/* Every Phosphor glyph under this scope is bold unless it asks for another
+          weight, so the whole app reads with one icon weight (KNOT-020k-fix). */}
+      <IconScope>
+        <ThemedApp />
+        {/* Painted last so it covers every screen, and only while a mode change
+            is settling (KNOT-020k). */}
+        <ThemeCrossfade />
+      </IconScope>
     </ThemeProvider>
   );
 }
@@ -928,6 +933,7 @@ function ThemedApp(): React.ReactElement {
         return (
           <SettingsScreen
             userId={current.user.id}
+            email={current.user.email}
             token={current.accessToken}
             onBack={handleBack}
             onUserUpdated={handleUserUpdated}

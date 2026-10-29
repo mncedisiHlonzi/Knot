@@ -1,8 +1,8 @@
 import { APP_VERSION } from '../../../config/app';
 import Avatar from '../../../components/Avatar';
 import Header from '../../../components/Header';
-import RootedBadge from '../../../components/RootedBadge';
 import SettingsScreen from '../SettingsScreen';
+import { colors, radius } from '../../../theme';
 
 /**
  * `SettingsScreen` is stateful (the header's profile, the avatar picker's
@@ -25,6 +25,11 @@ const mockProfile = {
   joined_at: '2026-01-01T00:00:00.000Z',
 };
 
+/** The profile the header reads in a given test; a test may swap out the Rooted
+ * summary to exercise the card's empty state (KNOT-020k-fix). */
+type MockProfile = typeof mockProfile;
+let mockProfileValue: MockProfile | (Omit<MockProfile, 'rooted'> & { rooted: null }) = mockProfile;
+
 let mockStateIndex = 0;
 const mockSetMode = jest.fn();
 const mockMode = { value: 'system' as 'system' | 'light' | 'dark' };
@@ -42,7 +47,7 @@ jest.mock('react', () => ({
   useState: (initial: unknown) => {
     const index = mockStateIndex;
     mockStateIndex += 1;
-    return [index === 0 ? mockProfile : initial, () => undefined];
+    return [index === 0 ? mockProfileValue : initial, () => undefined];
   },
 }));
 
@@ -62,15 +67,17 @@ jest.mock('phosphor-react-native', () => ({
   ArrowLeft: () => null,
   Camera: () => null,
   CaretRight: () => null,
+  DeviceMobile: () => null,
+  Devices: () => null,
   FileText: () => null,
   Info: () => null,
-  Check: () => null,
   Moon: () => null,
   Plant: () => null,
   Prohibit: () => null,
   ShieldCheck: () => null,
-  SignOut: () => null,
+  Star: () => null,
   Sun: () => null,
+  Trash: () => null,
 }));
 
 jest.mock('../../../components/MediaPickerSheet', () => ({
@@ -92,7 +99,7 @@ type ElementLike = {
  * is visible to the assertions below. React Native's host components are strings
  * and are left alone.
  */
-const LOCAL_COMPONENTS = new Set(['Section', 'SettingRow', 'AppearanceRow', 'AppearanceSection']);
+const LOCAL_COMPONENTS = new Set(['SectionHeading', 'SettingRow']);
 
 /** Replaces each local component element with the element it returns. */
 function expand(node: unknown): unknown {
@@ -159,6 +166,7 @@ function renderedText(element: unknown): string {
 
 const PROPS = {
   userId: 'user-1',
+  email: 'nomsa@example.com',
   token: 'token',
   onBack: () => undefined,
   onUserUpdated: () => undefined,
@@ -183,6 +191,11 @@ function renderExpanded(): ElementLike {
 }
 
 describe('SettingsScreen', () => {
+  beforeEach(() => {
+    mockProfileValue = mockProfile;
+    mockMode.value = 'system';
+  });
+
   it('is titled Settings and offers a way back', () => {
     const header = (() => {
       let found: ElementLike | undefined;
@@ -198,16 +211,16 @@ describe('SettingsScreen', () => {
     expect(header?.props?.left).toBeDefined();
   });
 
-  it('groups the account, the preferences, the About block and the legal documents', () => {
+  it('groups the account, the preferences, privacy and the About block', () => {
     const text = renderedText(renderExpanded());
 
     expect(text).toContain('Account');
     expect(text).toContain('Appearance');
+    expect(text).toContain('Privacy');
     expect(text).toContain('About');
-    expect(text).toContain('Legal');
   });
 
-  it('opens with the signed-in person’s face, name and Rooted summary', () => {
+  it('opens with the signed-in person’s face, name and address', () => {
     const screen = renderScreen();
     const byType = (type: unknown): ElementLike | undefined => {
       let found: ElementLike | undefined;
@@ -223,15 +236,30 @@ describe('SettingsScreen', () => {
     expect(avatar?.props?.displayName).toBe(mockProfile.display_name);
     // The relative path is resolved against the API base before it reaches Avatar.
     expect(avatar?.props?.uri).toBe(`http://localhost:8080${mockProfile.avatar_url}`);
-    // The face is the large one, so the block reads like the top of a profile.
-    expect(avatar?.props?.size).toBe('xl');
+    // 48 points (the `lg` size): the block is a header, not a profile wall.
+    expect(avatar?.props?.size).toBe('lg');
 
-    const rooted = byType(RootedBadge);
-    expect(rooted?.props?.place).toBe(mockProfile.rooted.place);
-    expect(rooted?.props?.durationBucket).toBe(mockProfile.rooted.duration_bucket);
+    // The name and the address are drawn as text by the screen itself.
+    const text = renderedText(expand(screen));
+    expect(text).toContain(mockProfile.display_name);
+    expect(text).toContain('nomsa@example.com');
+  });
 
-    // The name is drawn as text by the screen itself.
-    expect(renderedText(expand(screen))).toContain(mockProfile.display_name);
+  it('draws the Rooted status card with the place and a View pill', () => {
+    const text = renderedText(renderExpanded());
+
+    expect(text).toContain('Rooted Status');
+    expect(text).toContain('Rooted in Manguzi');
+    expect(text).toContain('View');
+  });
+
+  it('offers to set the Rooted place when the person has none', () => {
+    mockProfileValue = { ...mockProfile, rooted: null };
+    const text = renderedText(renderExpanded());
+
+    expect(text).toContain('Become Rooted');
+    expect(text).toContain('Unlock advanced features');
+    expect(text).toContain('Set up');
   });
 
   // The header is a centred column: the name and the Rooted summary sit under the
@@ -278,30 +306,37 @@ describe('SettingsScreen', () => {
     expect(avatarWrapperStyle).toMatchObject({ alignSelf: 'center' });
   });
 
-  it('separates its rows with whitespace instead of rules', () => {
-    // Expanding the rows hands back their real style objects, so the absence of a
-    // drawn divider is provable rather than assumed (KNOT-020k-fix23).
+  // The groups are bento containers: a raised surface with a hairline edge and a
+  // large corner, parted inside by hairlines rather than by whitespace alone
+  // (KNOT-020k-fix).
+  it('draws each group as a rounded card with hairlines between its rows', () => {
     const expanded = renderExpanded();
-    const ruleKeys = ['borderTopWidth', 'borderBottomWidth'];
-    let ruled = 0;
+    const parts: Record<string, unknown>[] = [];
 
     walk(expanded, (candidate) => {
       const style = candidate.props?.style;
-      const parts = Array.isArray(style) ? style : [style];
-      for (const part of parts) {
-        if (part === null || typeof part !== 'object') {
-          continue;
-        }
-        const record = part as Record<string, unknown>;
-        for (const key of ruleKeys) {
-          if (typeof record[key] === 'number' && record[key] !== 0) {
-            ruled += 1;
-          }
+      for (const part of Array.isArray(style) ? style : [style]) {
+        if (part !== null && typeof part === 'object') {
+          parts.push(part as Record<string, unknown>);
         }
       }
     });
 
-    expect(ruled).toBe(0);
+    // The status card and the four groups share one container shape.
+    const cards = parts.filter(
+      (part) =>
+        part.borderRadius === radius.xxl &&
+        part.borderWidth === 1 &&
+        part.backgroundColor === colors.bg.raised,
+    );
+    expect(cards).toHaveLength(5);
+
+    // Five rows are parted from the row above them: Set Rooted, Sessions and
+    // Delete account in Account, and the two legal rows in About.
+    const dividers = parts.filter(
+      (part) => part.borderTopWidth === 1 && part.borderTopColor === colors.border.hairline,
+    );
+    expect(dividers).toHaveLength(5);
   });
 
   it('offers every account action the profile sheet used to hold', () => {
@@ -339,6 +374,34 @@ describe('SettingsScreen', () => {
     expect(mockSetMode).toHaveBeenCalledWith('system');
   });
 
+  // The active pill is the primary fill with inverse ink; the other two are
+  // sunken with primary ink, so the choice reads in both modes (KNOT-020k-fix).
+  it('fills the active appearance pill and sinks the others', () => {
+    mockMode.value = 'dark';
+
+    const radios: ElementLike[] = [];
+    walk(renderExpanded(), (candidate) => {
+      if (candidate.props?.accessibilityRole === 'radio') {
+        radios.push(candidate);
+      }
+    });
+
+    const styleOf = (index: number): Record<string, unknown>[] => {
+      const style = radios[index]?.props?.style;
+      return (Array.isArray(style) ? style : [style]).filter(
+        (part): part is Record<string, unknown> => part !== null && typeof part === 'object',
+      );
+    };
+
+    expect(radios[2]?.props?.accessibilityState).toEqual({ selected: true });
+    expect(styleOf(2)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ backgroundColor: colors.brand.primary })]),
+    );
+    expect(styleOf(0)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ backgroundColor: colors.bg.sunken })]),
+    );
+  });
+
   it('shows the app version and links the two legal pages', () => {
     const screen = renderScreen();
     const byLabel = (label: string): ElementLike | undefined =>
@@ -361,11 +424,26 @@ describe('SettingsScreen', () => {
     expect(PROPS.onOpenLegal).toHaveBeenCalledWith('terms');
   });
 
-  it('ends with a destructive sign out', () => {
-    const signOut = rows(renderScreen()).find((row) => row.props?.label === 'Sign out');
+  it('ends with a red text sign out, outside the containers', () => {
+    const screen = renderScreen();
 
-    expect(signOut).toBeDefined();
-    expect(signOut?.props?.danger).toBe(true);
-    expect(typeof signOut?.props?.onPress).toBe('function');
+    // It is no longer an icon row: the danger ink carries it on its own.
+    expect(rows(screen).find((row) => row.props?.label === 'Sign out')).toBeUndefined();
+
+    let signOutLabelStyle: unknown;
+    let signOutControl: ElementLike | undefined;
+    walk(screen, (candidate) => {
+      if (candidate.props?.accessibilityLabel === 'Sign out') {
+        signOutControl = candidate;
+      }
+      if (candidate.type === 'Text' && candidate.props?.children === 'Sign out') {
+        signOutLabelStyle = candidate.props?.style;
+      }
+    });
+
+    expect(typeof signOutControl?.props?.onPress).toBe('function');
+    expect(signOutLabelStyle).toEqual(
+      expect.arrayContaining([expect.objectContaining({ color: colors.state.danger })]),
+    );
   });
 });

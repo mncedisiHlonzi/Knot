@@ -3,7 +3,6 @@ import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-nativ
 import { Bell, ChatsCircle, House, MapTrifold, Plus, type Icon } from 'phosphor-react-native';
 
 import {
-  fontWeights,
   motion,
   radius,
   spacing,
@@ -17,9 +16,13 @@ import type { ThemeColors } from '../theme';
 /** The five primary destinations of the app. */
 export type TabName = 'feed' | 'discoveryMap' | 'createStory' | 'inquiries' | 'notifications';
 
-/** One tab's definition: where it goes, its label, and the icon it is drawn with. */
+/** One tab's definition: where it goes, its spoken name, and the icon it is drawn with. */
 type TabDefinition = {
   readonly name: TabName;
+  /**
+   * The destination's name. It is never drawn — the bar is text free — and is read
+   * out by a screen reader in its place (KNOT-020k-fix).
+   */
   readonly label: string;
   readonly icon: Icon;
   /** The spoken label, when it differs from the visible one. */
@@ -30,16 +33,17 @@ type TabDefinition = {
 const TABS: readonly TabDefinition[] = [
   { name: 'feed', label: 'Home', icon: House },
   { name: 'discoveryMap', label: 'Map', icon: MapTrifold },
-  // The Create tab is the elevated centre button; its label is never drawn.
+  // The Create tab is the elevated centre button; its icon is the only thing drawn.
   { name: 'createStory', label: 'Create', icon: Plus, accessibilityLabel: 'Create story' },
   // Inquiries has its own mark: the magnifier was the same glyph as the Feed
   // header's search control, which made two different destinations look like one
   // action. `ChatsCircle` reads as an exchange of questions and answers, and is
   // clearly a destination rather than a control (KNOT-020j-fix).
   { name: 'inquiries', label: 'Inquiries', icon: ChatsCircle },
-  // The visible label is shortened to fit five equal tabs on a narrow device;
-  // the spoken label stays the full name (KNOT-020j-fix).
-  { name: 'notifications', label: 'Notice', icon: Bell, accessibilityLabel: 'Notifications' },
+  // The spoken label is the full destination name: the bar draws no text at all,
+  // so a screen reader is the only place the name is needed (KNOT-020j-fix,
+  // KNOT-020k-fix).
+  { name: 'notifications', label: 'Notifications', icon: Bell },
 ];
 
 type TabBarProps = {
@@ -57,13 +61,19 @@ type TabBarProps = {
 };
 
 /** The bar's height. The bottom safe-area inset is inherited from the app root. */
-const BAR_HEIGHT = 56;
+const BAR_HEIGHT = 64;
 
-/** The icon size drawn in each tab. */
-const ICON_SIZE = 24;
+/**
+ * The icon size drawn in each tab.
+ *
+ * 28 points is deliberately large: with no labels beneath them the glyphs carry
+ * the whole navigation, so they need to read at a glance rather than as small
+ * marks over captions (KNOT-020k-fix).
+ */
+const ICON_SIZE = 28;
 
 /** The diameter of the elevated Create button. */
-const CREATE_BUTTON_SIZE = 44;
+const CREATE_BUTTON_SIZE = 48;
 
 /**
  * How far the selected tab's glyph swells at the peak of its bounce, and how
@@ -89,7 +99,12 @@ function TabGlyph({
 }: {
   readonly icon: Icon;
   readonly color: string;
-  readonly weight: 'bold' | 'regular';
+  /**
+   * `fill` for the selected tab and `bold` for the rest: the two-tone rule pairs a
+   * solid glyph with an outline one, so selection reads without colour alone
+   * (KNOT-020k-fix).
+   */
+  readonly weight: 'bold' | 'fill';
   readonly active: boolean;
 }): React.ReactElement {
   const scale = useRef(new Animated.Value(1)).current;
@@ -136,18 +151,20 @@ function TabGlyph({
  * destination. Using no navigation dependency is deliberate; see KNOT-ADR-019.
  *
  * The five destinations are Home, Map, Create, Inquiries, and Notifications
- * (KNOT-020j), whose visible label is "Notice" so it fits an equal fifth of the
- * bar (KNOT-020j-fix). Inquiries is a destination in its own right — finding and
- * asking questions — rather than something reached from Create, which stays a
- * story composer (KNOT-ADR-058). Notifications took the fifth slot, and the bell
- * left the Feed's header, so the inbox has a permanent, always-reachable home; the
+ * (KNOT-020j). Inquiries is a destination in its own right — finding and asking
+ * questions — rather than something reached from Create, which stays a story
+ * composer (KNOT-ADR-058). Notifications took the fifth slot, and the bell left
+ * the Feed's header, so the inbox has a permanent, always-reachable home; the
  * profile it displaced is now the Feed header's avatar.
  *
- * Every tab is drawn with a Phosphor icon rather than a text glyph. The active tab
- * pairs the brand colour with the bold icon weight, so a selected tab reads
- * without colour alone. The Create tab is an elevated circular action in the brand
- * fill, matching the design reference. The bottom safe-area inset is not applied
- * here: the bar already sits inside the app root's `SafeAreaView` (KNOT-020b).
+ * The bar is **text free** (KNOT-020k-fix): no label is drawn under any glyph, so
+ * the icons sit on the bar's centre line and each tab keeps only a spoken name for
+ * a screen reader. The selected tab is drawn **filled** in the primary ink and the
+ * rest are **bold outlines** in the tertiary ink — a two-tone rule that reads
+ * without relying on colour alone. The Create tab stays an elevated disc, sunken
+ * at rest and filled when it is the active tab. The bottom safe-area inset is not
+ * applied here: the bar already sits inside the app root's `SafeAreaView`
+ * (KNOT-020b).
  */
 export default function TabBar({
   activeTab,
@@ -176,15 +193,19 @@ export default function TabBar({
               accessibilityState={{ selected: active }}
               accessibilityLabel={label}
             >
-              <View style={styles.createButton}>
-                <Plus color={colors.text.onBrand} size={ICON_SIZE} weight="bold" />
+              <View style={[styles.createButton, active ? styles.createButtonActive : null]}>
+                <Plus
+                  color={active ? colors.text.onBrand : colors.text.tertiary}
+                  size={ICON_SIZE}
+                  weight={active ? 'fill' : 'bold'}
+                />
               </View>
             </Pressable>
           );
         }
 
         const IconComponent = tab.icon;
-        const tint = active ? colors.brand.primary : colors.text.tertiary;
+        const tint = active ? colors.text.primary : colors.text.tertiary;
 
         return (
           <Pressable
@@ -199,7 +220,7 @@ export default function TabBar({
               <TabGlyph
                 icon={IconComponent}
                 color={tint}
-                weight={active ? 'bold' : 'regular'}
+                weight={active ? 'fill' : 'bold'}
                 active={active}
               />
               {unread > 0 ? (
@@ -210,12 +231,6 @@ export default function TabBar({
                 </View>
               ) : null}
             </View>
-            <Text
-              style={[typeScale.caption, styles.label, active ? styles.labelActive : null]}
-              numberOfLines={1}
-            >
-              {tab.label}
-            </Text>
           </Pressable>
         );
       })}
@@ -249,31 +264,29 @@ const createStyles = (colors: ThemeColors) =>
     },
     createButton: {
       alignItems: 'center',
-      backgroundColor: colors.brand.primary,
+      backgroundColor: colors.bg.sunken,
       borderRadius: radius.pill,
       height: CREATE_BUTTON_SIZE,
       justifyContent: 'center',
       width: CREATE_BUTTON_SIZE,
     },
+    // The elevated action fills when it is the active tab, the same two-tone rule
+    // the destination glyphs follow: solid for selected, outline for the rest
+    // (KNOT-020k-fix).
+    createButtonActive: {
+      backgroundColor: colors.brand.primary,
+    },
     // The glyph's own box, so the unread badge can hang off the bell's
-    // top-right corner without moving the label below it.
+    // top-right corner. There is no label beneath it any more, so the box is the
+    // whole tab's content (KNOT-020k-fix).
     glyph: {
       alignItems: 'center',
       justifyContent: 'center',
       position: 'relative',
     },
-    label: {
-      color: colors.text.tertiary,
-      textAlign: 'center',
-    },
-    labelActive: {
-      color: colors.brand.primary,
-      fontWeight: fontWeights.semibold,
-    },
     tab: {
       alignItems: 'center',
       flex: 1,
-      gap: spacing.xs,
       justifyContent: 'center',
       minHeight: 44,
     },

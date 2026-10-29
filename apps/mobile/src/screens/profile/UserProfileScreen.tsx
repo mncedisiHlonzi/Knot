@@ -15,7 +15,7 @@ import {
   type ImageLoadEventData,
   type NativeSyntheticEvent,
 } from 'react-native';
-import { ArrowLeft, DotsThree } from 'phosphor-react-native';
+import { ArrowLeft, DotsThree, Gear } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { blocksApi, describeModerationError } from '../../api/moderation';
@@ -467,9 +467,9 @@ export default function UserProfileScreen({
           ) : undefined
         }
         right={
-          // On your own wall the overflow control opens Settings; on somebody
-          // else's it opens a small action sheet, whose Block row then asks for
-          // confirmation (KNOT-020k-fix22, KNOT-020k-fix25).
+          // On your own wall the control is a gear that opens Settings; on somebody
+          // else's it stays an overflow button, whose action sheet asks before
+          // blocking (KNOT-020k-fix).
           <Pressable
             style={styles.iconButton}
             onPress={isOwnProfile ? onOpenSettings : () => setVisitorMenuOpen(true)}
@@ -479,6 +479,8 @@ export default function UserProfileScreen({
           >
             {!isOwnProfile && blocking ? (
               <ActivityIndicator size="small" color={colors.text.primary} />
+            ) : isOwnProfile ? (
+              <Gear color={colors.text.primary} size={24} weight="bold" />
             ) : (
               <DotsThree color={colors.text.primary} size={24} weight="bold" />
             )}
