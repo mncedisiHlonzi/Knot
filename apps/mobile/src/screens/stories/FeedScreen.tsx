@@ -22,6 +22,7 @@ import type { ViewerMedia, ViewerStory } from '../../components/MediaGalleryModa
 import Header from '../../components/Header';
 import Logomark from '../../components/Logomark';
 import ReportModal from '../../components/ReportModal';
+import { PlusIcon } from '../../components/TabIcons';
 import TheThread from '../../components/TheThread';
 import { API_BASE_URL } from '../../config/api';
 import {
@@ -102,6 +103,12 @@ type FeedScreenProps = {
   ) => void;
   /** Called when the person opens search. */
   readonly onOpenSearch: () => void;
+  /**
+   * Called when the composer row at the top of the feed is tapped, to open the
+   * story composer. Create used to be the bar's elevated tab; it is an overlay
+   * now, and this row is how it is reached (KNOT-020k-fix6).
+   */
+  readonly onCreateStory: () => void;
 };
 
 /**
@@ -115,9 +122,11 @@ type FeedScreenProps = {
  *
  * The layout pins everything but the list: the header and the five text tabs are
  * fixed siblings ABOVE the FlatList, so only the feed entries scroll beneath them
- * (the header is opaque and static — nothing about it is scroll-linked). The tab
- * row is a plain flex row of five equal-width tabs rather than a horizontal
- * scroller, so the labels are centred, never clipped, and never slide sideways.
+ * (the header is opaque and static — nothing about it is scroll-linked). The first
+ * row INSIDE the list is the composer, the place a story starts now that Create has
+ * left the tab bar (KNOT-020k-fix6). The tab row is a plain flex row of five
+ * equal-width tabs rather than a horizontal scroller, so the labels are centred,
+ * never clipped, and never slide sideways.
  * `For you` and `Latest` change the request's `feed_type`; the pillar and place
  * tabs stay a local selection until the API grows those filters (KNOT-027).
  *
@@ -138,6 +147,7 @@ export default function FeedScreen({
   onOpenProfile,
   onOpenMedia,
   onOpenSearch,
+  onCreateStory,
 }: FeedScreenProps): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -415,13 +425,40 @@ export default function FeedScreen({
         // The Thread is the feed's refresh indicator. It is drawn at the top of
         // the list content rather than inside the RefreshControl, because the
         // platform control owns the pull gesture and cannot host a custom
-        // indicator (KNOT-020h).
+        // indicator (KNOT-020h). The composer sits under it, still at the top of
+        // the content, so a refresh line reads above the feed's own first row
+        // (KNOT-020k-fix6).
         ListHeaderComponent={
-          refreshing ? (
-            <View style={styles.refreshingThread} testID="feed-thread">
-              <TheThread length={pageWidth} />
-            </View>
-          ) : null
+          <View>
+            {refreshing ? (
+              <View style={styles.refreshingThread} testID="feed-thread">
+                <TheThread length={pageWidth} />
+              </View>
+            ) : null}
+
+            {/* The composer: the feed's own answer to "what's on your mind?".
+                The face that is already in the header opens it, a sunken pill
+                carries the prompt, and the brand disc is the one indigo mark in
+                the row — the affordance Create used to be when it lived in the
+                bar (KNOT-020k-fix6). */}
+            <Pressable
+              style={styles.composer}
+              onPress={onCreateStory}
+              accessibilityRole="button"
+              accessibilityLabel="Create a story"
+              testID="feed-composer"
+            >
+              <Avatar uri={avatarUri} displayName={viewer.display_name} size="md" />
+              <View style={styles.composerField}>
+                <Text style={[typeScale.body, styles.composerPlaceholder]} numberOfLines={1}>
+                  Tell your story…
+                </Text>
+              </View>
+              <View style={styles.composerButton}>
+                <PlusIcon size={20} color={colors.text.onBrand} isActive={false} />
+              </View>
+            </Pressable>
+          </View>
         }
         refreshControl={
           <RefreshControl
@@ -693,6 +730,42 @@ const createStyles = (colors: ThemeColors) =>
     feedDivider: {
       backgroundColor: colors.bg.separator,
       height: 4,
+    },
+    // The composer row that opens the story composer: a face, a prompt and the
+    // brand disc, on the canvas, closed by the same 4pt band that parts two
+    // stories — so the row is the feed's first entry rather than a floating card
+    // (KNOT-020k-fix6).
+    composer: {
+      alignItems: 'center',
+      backgroundColor: colors.bg.canvas,
+      borderBottomColor: colors.bg.separator,
+      borderBottomWidth: 4,
+      flexDirection: 'row',
+      gap: spacing.md,
+      paddingHorizontal: layout.screenPaddingFeed,
+      paddingVertical: spacing.md,
+    },
+    // The prompt itself: a sunken pill at the 44pt touch height, so the row looks
+    // like an input without pretending to be one (it opens a screen).
+    composerField: {
+      backgroundColor: colors.bg.sunken,
+      borderRadius: radius.pill,
+      flex: 1,
+      height: 44,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.lg,
+    },
+    composerPlaceholder: {
+      color: colors.text.tertiary,
+    },
+    // The row's one accent: the brand disc the Create tab used to draw.
+    composerButton: {
+      alignItems: 'center',
+      backgroundColor: colors.brand.primary,
+      borderRadius: radius.pill,
+      height: 36,
+      justifyContent: 'center',
+      width: 36,
     },
     error: {
       color: colors.state.danger,

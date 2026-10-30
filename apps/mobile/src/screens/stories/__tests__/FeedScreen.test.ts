@@ -171,6 +171,7 @@ const SCREEN_PROPS = {
   onOpenProfile: () => undefined,
   onOpenMedia: () => undefined,
   onOpenSearch: () => undefined,
+  onCreateStory: () => undefined,
 };
 
 /** One render of the screen, with the state setters reset first. */
@@ -235,6 +236,42 @@ describe('FeedScreen card structure', () => {
     expect(divider).toBeDefined();
     expect(style?.backgroundColor).toBe(colors.bg.separator);
     expect(style?.height).toBe(4);
+  });
+});
+
+// Create moved out of the tab bar and into the feed itself (KNOT-020k-fix6), so
+// the composer is the list's first row: a face, a prompt, and the brand disc that
+// opens the composer screen.
+describe('FeedScreen composer', () => {
+  /** The composer element, read out of the list's header component. */
+  const composerFor = (tree: unknown): ElementLike | undefined => {
+    const list = findElementByType(tree, 'FlatList');
+    return findByTestID(list?.props?.ListHeaderComponent, 'feed-composer');
+  };
+
+  it('draws the composer at the top of the list, with the viewer’s face', () => {
+    const composer = composerFor(renderScreen());
+
+    expect(composer).toBeDefined();
+    expect(composer?.props?.accessibilityLabel).toBe('Create a story');
+    // The face that already sits in the header is the row's left-hand anchor.
+    expect(findInProps(composer, Avatar)?.props?.displayName).toBe('Nomsa Khan');
+  });
+
+  it('opens the story composer when the row is tapped', () => {
+    const onCreateStory = jest.fn();
+    const composer = composerFor(FeedScreen({ ...SCREEN_PROPS, onCreateStory }));
+
+    (composer?.props?.onPress as () => void)();
+
+    expect(onCreateStory).toHaveBeenCalledTimes(1);
+  });
+
+  it('closes the row with the same 4pt band that parts two stories', () => {
+    const style = composerFor(renderScreen())?.props?.style as Record<string, unknown> | undefined;
+
+    expect(style?.borderBottomWidth).toBe(4);
+    expect(style?.borderBottomColor).toBe(colors.bg.separator);
   });
 });
 

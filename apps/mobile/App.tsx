@@ -19,7 +19,7 @@ import type { AuthResponse, User } from './src/api/client';
 import { logout } from './src/api/auth';
 import { conversationsApi } from './src/api/conversations';
 import { Notification, notificationsApi } from './src/api/notifications';
-import { storiesApi, type Story } from './src/api/stories';
+import { storiesApi } from './src/api/stories';
 import { versionsApi } from './src/api/versions';
 import { DEFAULT_LANGUAGE_CODE } from './src/config/language';
 import { isLanguageCode } from './src/data/languages';
@@ -122,6 +122,7 @@ const EASING_EXIT = Easing.bezier(...motion.easing.exit);
 
 type Overlay =
   | { readonly name: 'detail'; readonly storyId: string }
+  | { readonly name: 'createStory' }
   | { readonly name: 'adapt'; readonly storyId: string; readonly parentVersionId: string }
   | { readonly name: 'tree'; readonly storyId: string }
   | { readonly name: 'storyVersion'; readonly versionId: string }
@@ -565,12 +566,6 @@ function ThemedApp(): React.ReactElement {
     setAuthMode('login');
   }
 
-  function handleStoryCreated(story: Story): void {
-    // Show the story the server actually stored, rather than assuming the form's
-    // contents are what was persisted.
-    setOverlays((current) => pushOverlay(current, { name: 'detail', storyId: story.id }));
-  }
-
   /**
    * Replaces the session's user after a profile change (an avatar upload). The
    * updated copy is written back to storage so it survives a restart.
@@ -611,14 +606,6 @@ function ThemedApp(): React.ReactElement {
                 }),
               )
             }
-          />
-        );
-      case 'createStory':
-        return (
-          <CreateStoryScreen
-            token={current.accessToken}
-            onCreated={handleStoryCreated}
-            onCancel={() => setTab('feed')}
           />
         );
       case 'inquiries':
@@ -672,6 +659,11 @@ function ThemedApp(): React.ReactElement {
             onOpenProfile={() => openUserProfile(current.user.id)}
             onOpenUserProfile={openUserProfile}
             onOpenMedia={openMediaViewer}
+            // The composer row at the top of the feed is where a story starts now
+            // that Create has left the tab bar (KNOT-020k-fix6).
+            onCreateStory={() =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'createStory' }))
+            }
           />
         );
     }
@@ -772,6 +764,20 @@ function ThemedApp(): React.ReactElement {
     }
 
     switch (overlay.name) {
+      // The composer is an overlay rather than a tab: it is a task you finish or
+      // abandon, not a place you live in, so it slides over the feed and the bar
+      // hides until it closes (KNOT-020k-fix6). Publishing replaces it with the
+      // story it stored, so back from that story returns to the feed.
+      case 'createStory':
+        return (
+          <CreateStoryScreen
+            token={current.accessToken}
+            onCreated={(story) =>
+              setOverlays((stack) => replaceOverlay(stack, { name: 'detail', storyId: story.id }))
+            }
+            onCancel={handleBack}
+          />
+        );
       case 'detail':
         return (
           <StoryDetailScreen

@@ -11,53 +11,43 @@ import {
   useThemedStyles,
 } from '../theme';
 import type { ThemeColors } from '../theme';
-import { BellIcon, ChatIcon, HomeIcon, MapIcon, PlusIcon } from './TabIcons';
+import { BellIcon, ChatIcon, HomeIcon, MapIcon } from './TabIcons';
 import type { TabIconProps } from './TabIcons';
 
-/** The five primary destinations of the app. */
-export type TabName = 'feed' | 'discoveryMap' | 'createStory' | 'inquiries' | 'notifications';
+/** The four primary destinations of the app. */
+export type TabName = 'feed' | 'discoveryMap' | 'inquiries' | 'notifications';
 
 /**
- * A tab glyph. Every one of the five is the founder's own SVG asset, rendered by
+ * A tab glyph. Every one of the four is the founder's own SVG asset, rendered by
  * `TabIcons` rather than borrowed from an icon library (KNOT-020k-fix5): a tab's
  * state is a prop (`isActive`) rather than a second glyph component, because one
  * component owns both cuts of its own shape.
  */
 type TabIcon = React.ComponentType<TabIconProps>;
 
-/** One tab's definition: where it goes, its spoken name, and the glyph it draws. */
+/** One tab's definition: where it goes, its drawn name, and the glyph it draws. */
 type TabDefinition = {
   readonly name: TabName;
-  /**
-   * The destination's name. It is never drawn — the bar is text free — and is read
-   * out by a screen reader in its place (KNOT-020k-fix).
-   */
+  /** The name drawn under the glyph, and the name a screen reader speaks. */
   readonly label: string;
   /** The destination's SVG asset, drawn through `TabIcons`. */
   readonly icon: TabIcon;
-  /** The spoken label, when it differs from the visible one. */
-  readonly accessibilityLabel?: string;
 };
 
-/** The tabs, in the order they appear left to right. */
+/**
+ * The tabs, in the order they appear left to right.
+ *
+ * Create is not one of them: it moved out of the bar to the composer row at the
+ * top of the Feed, so the four remaining destinations share the bar evenly
+ * (KNOT-020k-fix6).
+ */
 const TABS: readonly TabDefinition[] = [
   { name: 'feed', label: 'Home', icon: HomeIcon },
   { name: 'discoveryMap', label: 'Map', icon: MapIcon },
-  // The Create tab is the elevated centre button; its icon is the only thing drawn.
-  {
-    name: 'createStory',
-    label: 'Create',
-    icon: PlusIcon,
-    accessibilityLabel: 'Create story',
-  },
   // Inquiries has its own mark: a magnifier was the same glyph as the Feed
   // header's search control, which made two different destinations look like one
-  // action. A speech bubble reads as an exchange of questions and answers, and is
-  // clearly a destination rather than a control (KNOT-020j-fix).
+  // action (KNOT-020j-fix).
   { name: 'inquiries', label: 'Inquiries', icon: ChatIcon },
-  // The spoken label is the full destination name: the bar draws no text at all,
-  // so a screen reader is the only place the name is needed (KNOT-020j-fix,
-  // KNOT-020k-fix).
   { name: 'notifications', label: 'Notifications', icon: BellIcon },
 ];
 
@@ -81,14 +71,11 @@ const BAR_HEIGHT = 64;
 /**
  * The icon size drawn in each tab.
  *
- * 28 points, the size the bar has used since KNOT-020k-fix3. The supplied artwork
- * is drawn on a 512-unit grid, so it scales cleanly to any box; 28pt is what keeps
- * five glyphs and the elevated Create disc inside the 64pt bar (KNOT-020k-fix5).
+ * 24 points: a step down from the 28 the bar used while it was text free, so the
+ * glyph and its label both fit the 64pt bar without crowding each other
+ * (KNOT-020k-fix6). The artwork is on a 512-unit grid, so it scales cleanly.
  */
-const ICON_SIZE = 28;
-
-/** The diameter of the elevated Create button. */
-const CREATE_BUTTON_SIZE = 48;
+const ICON_SIZE = 24;
 
 /**
  * How far the selected tab's glyph swells at the peak of its bounce, and how
@@ -97,6 +84,15 @@ const CREATE_BUTTON_SIZE = 48;
  */
 const BOUNCE_PEAK = 1.12;
 const BOUNCE_START = 0.9;
+
+/**
+ * The smallest a label may shrink before it is truncated.
+ *
+ * "Notifications" is the longest name and the one that decides this: at four
+ * equal columns the caption fits on most phones, and where it does not the label
+ * gives up a fifth of its size rather than clipping (KNOT-020j).
+ */
+const LABEL_MIN_SCALE = 0.8;
 
 /**
  * One tab's glyph, with the selection bounce.
@@ -151,30 +147,30 @@ function TabGlyph({
 }
 
 /**
- * The hand-rolled bottom tab bar: five destinations, no library.
+ * The hand-rolled bottom tab bar: four destinations, no library.
  *
  * It is a plain row of buttons over the active screen. Non-tab screens (a story,
- * a question, a place, the composer's overlays) are pushed over the bar rather
- * than shown inside it, so the bar is only ever rendered for a primary
- * destination. Using no navigation dependency is deliberate; see KNOT-ADR-019.
+ * a question, a place, the composer) are pushed over the bar rather than shown
+ * inside it, so the bar is only ever rendered for a primary destination. Using no
+ * navigation dependency is deliberate; see KNOT-ADR-019.
  *
- * The five destinations are Home, Map, Create, Inquiries, and Notifications
- * (KNOT-020j). Inquiries is a destination in its own right — finding and asking
- * questions — rather than something reached from Create, which stays a story
- * composer (KNOT-ADR-058). Notifications took the fifth slot, and the bell left
- * the Feed's header, so the inbox has a permanent, always-reachable home; the
- * profile it displaced is now the Feed header's avatar.
+ * The four destinations are Home, Map, Inquiries, and Notifications. Inquiries is
+ * a destination in its own right — finding and asking questions — rather than
+ * something reached from Create (KNOT-ADR-058). Notifications took the slot after
+ * Inquiries, and the bell left the Feed's header, so the inbox has a permanent,
+ * always-reachable home; the profile it displaced is the Feed header's avatar.
  *
- * The bar is **text free** (KNOT-020k-fix): no label is drawn under any glyph, so
- * the icons sit on the bar's centre line and each tab keeps only a spoken name for
- * a screen reader. The glyphs are the founder's own SVGs (KNOT-020k-fix5): the
- * selected tab draws its solid (`*-fill`) cut in the primary ink and the rest draw
- * the outline cut in the tertiary ink — a two-tone rule that reads without relying
- * on colour alone. The Create tab stays an elevated disc, sunken at rest and filled
- * in the brand ink when it is the active tab, with the plus drawn in the disc's own
- * ink in both states (the set has one plus, and the disc behind it already carries
- * the selection). The bottom safe-area inset is not applied here: the bar already
- * sits inside the app root's `SafeAreaView` (KNOT-020b).
+ * Each tab draws its name under its glyph again (KNOT-020k-fix6): the bar is a
+ * quarter of the screen wide per destination, and a label is what makes a custom
+ * icon set legible at a glance. The selected tab pairs the primary ink with the
+ * solid (`*-fill`) cut of its asset, and every other tab pairs the tertiary ink
+ * with the outline cut — colour and weight together, so the selection never rests
+ * on hue alone. Creating a story is no longer a destination: the composer row at
+ * the top of the Feed owns it, which leaves four evenly spaced destinations and
+ * no elevated disc to crowd them (KNOT-020k-fix6).
+ *
+ * The bottom safe-area inset is not applied here: the bar already sits inside the
+ * app root's `SafeAreaView` (KNOT-020b).
  */
 export default function TabBar({
   activeTab,
@@ -189,36 +185,10 @@ export default function TabBar({
         const Icon = tab.icon;
         const active = tab.name === activeTab;
         const unread = tab.name === 'notifications' ? unreadCount : 0;
-        const label =
+        const spoken =
           tab.name === 'notifications' && unread > 0
             ? `Notifications, ${unread} unread`
-            : (tab.accessibilityLabel ?? tab.label);
-
-        // The Create tab is the elevated centre button; its icon is the only thing
-        // drawn. The plus keeps the disc's own ink in both states — the disc
-        // behind it already carries the selection, and the supplied icon set has
-        // only one plus (KNOT-020k-fix5).
-        if (tab.name === 'createStory') {
-          return (
-            <Pressable
-              key={tab.name}
-              style={styles.tab}
-              onPress={() => onSelect(tab.name)}
-              accessibilityRole="tab"
-              accessibilityState={{ selected: active }}
-              accessibilityLabel={label}
-            >
-              <View style={[styles.createButton, active ? styles.createButtonActive : null]}>
-                <Icon
-                  size={ICON_SIZE}
-                  color={active ? colors.text.onBrand : colors.text.tertiary}
-                  isActive={false}
-                />
-              </View>
-            </Pressable>
-          );
-        }
-
+            : tab.label;
         const tint = active ? colors.text.primary : colors.text.tertiary;
 
         return (
@@ -228,7 +198,7 @@ export default function TabBar({
             onPress={() => onSelect(tab.name)}
             accessibilityRole="tab"
             accessibilityState={{ selected: active }}
-            accessibilityLabel={label}
+            accessibilityLabel={spoken}
           >
             <View style={styles.glyph}>
               <TabGlyph icon={Icon} color={tint} active={active} />
@@ -240,6 +210,14 @@ export default function TabBar({
                 </View>
               ) : null}
             </View>
+            <Text
+              style={[typeScale.caption, styles.label, active ? styles.labelActive : null]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={LABEL_MIN_SCALE}
+            >
+              {tab.label}
+            </Text>
           </Pressable>
         );
       })}
@@ -271,32 +249,32 @@ const createStyles = (colors: ThemeColors) =>
       flexDirection: 'row',
       height: BAR_HEIGHT,
     },
-    createButton: {
-      alignItems: 'center',
-      backgroundColor: colors.bg.sunken,
-      borderRadius: radius.pill,
-      height: CREATE_BUTTON_SIZE,
-      justifyContent: 'center',
-      width: CREATE_BUTTON_SIZE,
-    },
-    // The elevated action fills when it is the active tab. The disc carries the
-    // selection, and the plus keeps the disc's own ink, so the pair reads as one
-    // control rather than as a glyph drawn on top of a glyph (KNOT-020k-fix5).
-    createButtonActive: {
-      backgroundColor: colors.brand.primary,
-    },
     // The glyph's own box, so the unread badge can hang off the bell's
-    // top-right corner. There is no label beneath it any more, so the box is the
-    // whole tab's content (KNOT-020k-fix).
+    // top-right corner without stretching the column that holds the label.
     glyph: {
       alignItems: 'center',
       justifyContent: 'center',
       position: 'relative',
     },
+    // The drawn name. It sits directly under the glyph, one 4pt step below it, in
+    // the caption composite — the smallest of the app's type steps, which is what
+    // a tab label should be — and takes the tab's ink with it.
+    label: {
+      color: colors.text.tertiary,
+      marginTop: spacing.xs,
+      textAlign: 'center',
+    },
+    labelActive: {
+      color: colors.text.primary,
+    },
+    // One tab, one quarter of the row: the glyph and its name are centred as a
+    // pair. The 44pt minimum keeps every tab a full touch target even though the
+    // content is smaller than that now that the label is back.
     tab: {
       alignItems: 'center',
       flex: 1,
       justifyContent: 'center',
       minHeight: 44,
+      paddingVertical: spacing.xs,
     },
   });

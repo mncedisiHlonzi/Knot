@@ -5,7 +5,7 @@ import EmptyState from '../EmptyState';
 import PillarTag from '../PillarTag';
 import RootedBadge from '../RootedBadge';
 import TabBar, { type TabName } from '../TabBar';
-import { BellIcon, ChatIcon, HomeIcon, MapIcon, PlusIcon } from '../TabIcons';
+import { BellIcon, ChatIcon, HomeIcon, MapIcon } from '../TabIcons';
 import { fontWeights } from '../../theme';
 import { colors } from '../../theme';
 import {
@@ -324,45 +324,60 @@ describe('TabBar', () => {
   /**
    * The SVG-asset element a tab draws, read by invoking the glyph component with
    * its own props — the same direct-call approach the rest of this suite uses,
-   * since there is no renderer. A destination wraps its glyph in the bouncing
-   * `TabGlyph`; the Create tab holds its plus directly inside the disc.
+   * since there is no renderer. A tab is now a glyph box plus a label, so the
+   * glyph is the box's only child.
    */
   const iconFor = (activeTab: TabName, index: number): TabIconElement => {
     const bar = TabBar({ activeTab, onSelect: () => undefined });
-    const tab = bar.props.children[index] as {
-      props: { children: { props: { children: unknown } } };
+    const tab = bar.props.children[index] as { props: { children: readonly unknown[] } };
+    // The box holds the bouncing glyph, plus the unread badge on Notifications.
+    const [glyphBox] = tab.props.children as readonly [{ props: { children: unknown } }];
+    const slot = glyphBox.props.children;
+    const glyph = (Array.isArray(slot) ? slot[0] : slot) as {
+      type: (props: unknown) => { props: { children: unknown } };
+      props: unknown;
     };
-    const slot = tab.props.children.props.children;
 
-    if (index === 2) {
-      return slot as TabIconElement;
-    }
-
-    const [glyph] = slot as readonly [
-      { type: (props: unknown) => { props: { children: unknown } }; props: unknown },
-    ];
     return glyph.type(glyph.props).props.children as TabIconElement;
   };
 
-  it('renders five tabs and never fires onSelect during render', () => {
+  /** The name drawn under one tab's glyph. */
+  const labelFor = (index: number): string => {
+    const bar = TabBar({ activeTab: 'feed', onSelect: () => undefined });
+    const tab = bar.props.children[index] as { props: { children: readonly unknown[] } };
+    const [, label] = tab.props.children as readonly [unknown, { props: { children: string } }];
+
+    return label.props.children;
+  };
+
+  /**
+   * The style array of one tab's label, so ink and weight can be read without a
+   * renderer.
+   */
+  const labelStyle = (index: number): readonly ({ color?: string } | null)[] => {
+    const bar = TabBar({ activeTab: 'feed', onSelect: () => undefined });
+    const tab = bar.props.children[index] as { props: { children: readonly unknown[] } };
+    const [, label] = tab.props.children as readonly [
+      unknown,
+      { props: { style: readonly ({ color?: string } | null)[] } },
+    ];
+
+    return label.props.style;
+  };
+
+  it('renders four tabs and never fires onSelect during render', () => {
     const onSelect = jest.fn();
     const element = TabBar({ activeTab: 'feed', onSelect });
 
-    expect(element.props.children).toHaveLength(5);
+    expect(element.props.children).toHaveLength(4);
     expect(onSelect).not.toHaveBeenCalled();
   });
 
-  // The fifth destination is Notifications, and Profile left the bar for the
-  // Feed header's avatar (KNOT-020j).
+  // Create left the bar for the composer row at the top of the feed, which leaves
+  // the four destinations sharing the width evenly (KNOT-020k-fix6).
   it('renders with each tab active', () => {
     const onSelect = (): void => undefined;
-    for (const tab of [
-      'feed',
-      'discoveryMap',
-      'createStory',
-      'inquiries',
-      'notifications',
-    ] as const) {
+    for (const tab of ['feed', 'discoveryMap', 'inquiries', 'notifications'] as const) {
       expect(TabBar({ activeTab: tab, onSelect })).toBeTruthy();
     }
   });
@@ -373,37 +388,44 @@ describe('TabBar', () => {
     /** The badge is the notification glyph box's second child. */
     const badgeFor = (unreadCount: number): unknown => {
       const bar = TabBar({ activeTab: 'feed', onSelect, unreadCount });
-      const notificationsTab = bar.props.children[4] as {
-        props: { children: { props: { children: readonly unknown[] } } };
+      const notificationsTab = bar.props.children[3] as {
+        props: { children: readonly { props: { children: readonly unknown[] } }[] };
       };
-      const glyph = notificationsTab.props.children;
-      return glyph.props.children[1];
+      const [glyphBox] = notificationsTab.props.children;
+      return glyphBox.props.children[1];
     };
 
     expect(badgeFor(0)).toBeNull();
     expect(badgeFor(3)).not.toBeNull();
   });
 
-  // The bar is text free since KNOT-020k-fix: no tab draws a label, so the only
-  // text in it is the unread count. The destination names survive as the spoken
-  // accessibility labels.
-  it('draws no visible label, and announces every destination', () => {
+  // Labels are back (KNOT-020k-fix6): a custom glyph set needs its names, so each
+  // tab draws one under its artwork and keeps the spoken label on the tab itself.
+  it('draws the destination name under every glyph, in the tab ink', () => {
+    expect([0, 1, 2, 3].map((index) => labelFor(index))).toEqual([
+      'Home',
+      'Map',
+      'Inquiries',
+      'Notifications',
+    ]);
+
     const onSelect = (): void => undefined;
     const bar = TabBar({ activeTab: 'feed', onSelect });
     const tabs = bar.props.children as readonly {
-      props: { accessibilityLabel: string; children: { type: unknown } };
+      props: { accessibilityLabel: string; children: readonly unknown[] };
     }[];
 
-    expect(tabs).toHaveLength(5);
-    for (const tab of tabs) {
-      // One child — the glyph box — and it is not a Text.
-      expect(tab.props.children.type).not.toBe('Text');
-    }
-
-    expect(tabs[4]?.props.accessibilityLabel).toBe('Notifications');
+    expect(tabs).toHaveLength(4);
     expect(tabs[0]?.props.accessibilityLabel).toBe('Home');
     expect(tabs[1]?.props.accessibilityLabel).toBe('Map');
-    expect(tabs[2]?.props.accessibilityLabel).toBe('Create story');
+    expect(tabs[2]?.props.accessibilityLabel).toBe('Inquiries');
+    expect(tabs[3]?.props.accessibilityLabel).toBe('Notifications');
+
+    // The active tab's label takes the primary ink; an idle one the tertiary ink
+    // with no override on top of it.
+    expect(labelStyle(0)[1]).toEqual(expect.objectContaining({ color: colors.text.tertiary }));
+    expect(labelStyle(0)[2]).toEqual({ color: colors.text.primary });
+    expect(labelStyle(1)[2]).toBeNull();
   });
 
   // The bar draws the founder's own SVG files through one component per
@@ -411,9 +433,8 @@ describe('TabBar', () => {
   it('draws a custom SVG glyph for every destination', () => {
     expect(iconFor('feed', 0).type).toBe(HomeIcon);
     expect(iconFor('feed', 1).type).toBe(MapIcon);
-    expect(iconFor('feed', 3).type).toBe(ChatIcon);
-    expect(iconFor('feed', 4).type).toBe(BellIcon);
-    expect(iconFor('feed', 2).type).toBe(PlusIcon);
+    expect(iconFor('feed', 2).type).toBe(ChatIcon);
+    expect(iconFor('feed', 3).type).toBe(BellIcon);
   });
 
   // The selected destination draws the solid cut in the primary ink and every
@@ -428,9 +449,10 @@ describe('TabBar', () => {
     expect(idle.props.isActive).toBe(false);
     expect(idle.props.color).toBe(colors.text.tertiary);
 
-    // 28pt in every state.
-    expect(idle.props.size).toBe(28);
-    expect(selected.props.size).toBe(28);
+    // 24pt in every state, a step down from 28 so the label fits under it
+    // (KNOT-020k-fix6).
+    expect(idle.props.size).toBe(24);
+    expect(selected.props.size).toBe(24);
   });
 
   // Exactly one tab is ever active, so the two-tone rule never shows two solid
@@ -439,8 +461,8 @@ describe('TabBar', () => {
     const destinations: readonly (readonly [TabName, number])[] = [
       ['feed', 0],
       ['discoveryMap', 1],
-      ['inquiries', 3],
-      ['notifications', 4],
+      ['inquiries', 2],
+      ['notifications', 3],
     ];
 
     for (const [activeTab, activeIndex] of destinations) {
@@ -450,22 +472,18 @@ describe('TabBar', () => {
 
       expect(activeIndexes).toEqual([activeIndex]);
     }
-
-    // The Create tab is never marked active: its disc carries the selection and
-    // the plus stays an outline in both states.
-    expect(iconFor('createStory', 2).props.isActive).toBe(false);
   });
 
   // The asset receives the bar's box and ink verbatim; the 512-unit grid and the
   // `currentColor` fill live in the SVG file itself (KNOT-020k-fix5).
-  it('invokes a destination glyph into a 28pt SVG in the idle ink', () => {
+  it('invokes a destination glyph into a 24pt SVG in the idle ink', () => {
     const glyph = iconFor('notifications', 0);
     const svg = (
       glyph.type as (props: unknown) => { type: unknown; props: Record<string, unknown> }
     )(glyph.props);
 
-    expect(svg.props.width).toBe(28);
-    expect(svg.props.height).toBe(28);
+    expect(svg.props.width).toBe(24);
+    expect(svg.props.height).toBe(24);
     expect(svg.props.color).toBe(colors.text.tertiary);
     expect(svg.props.testID).toBe('tab-icon-home-outline');
   });
@@ -481,45 +499,14 @@ describe('TabBar', () => {
 
     expect(svg.props.testID).toBe('tab-icon-map-fill');
     expect(svg.props.color).toBe(colors.text.primary);
-    expect(svg.props.width).toBe(28);
-  });
-
-  // The Create disc is the one glyph that does not follow the ink rule: it sits on
-  // its own fill, so the disc's colour changes and the plus keeps the disc's own
-  // ink in both states (KNOT-020k-fix5).
-  it('swaps the Create disc fill and keeps the plus outlined', () => {
-    type Disc = {
-      props: {
-        style: readonly ({ backgroundColor?: string } | null)[];
-        children: TabIconElement;
-      };
-    };
-
-    const discFor = (activeTab: TabName): Disc => {
-      const bar = TabBar({ activeTab, onSelect: () => undefined });
-      return (bar.props.children[2] as { props: { children: Disc } }).props.children;
-    };
-
-    const idle = discFor('feed');
-    expect(idle.props.style[0]?.backgroundColor).toBe(colors.bg.sunken);
-    expect(idle.props.style[1]).toBeNull();
-    expect(idle.props.children.type).toBe(PlusIcon);
-    expect(idle.props.children.props.isActive).toBe(false);
-    expect(idle.props.children.props.color).toBe(colors.text.tertiary);
-
-    const active = discFor('createStory');
-    expect(active.props.style[1]?.backgroundColor).toBe(colors.brand.primary);
-    expect(active.props.children.type).toBe(PlusIcon);
-    expect(active.props.children.props.isActive).toBe(false);
-    expect(active.props.children.props.color).toBe(colors.text.onBrand);
-    expect(active.props.children.props.size).toBe(28);
+    expect(svg.props.width).toBe(24);
   });
 
   // The magnifier is the Feed header's search control, so Inquiries needed its own
   // mark rather than looking like a second search action (KNOT-020j-fix).
   it('draws a conversation glyph for Inquiries', () => {
-    expect(iconFor('notifications', 3).type).toBe(ChatIcon);
-    expect(iconFor('inquiries', 3).props.isActive).toBe(true);
+    expect(iconFor('notifications', 2).type).toBe(ChatIcon);
+    expect(iconFor('inquiries', 2).props.isActive).toBe(true);
   });
 });
 
