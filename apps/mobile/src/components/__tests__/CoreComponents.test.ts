@@ -5,6 +5,7 @@ import EmptyState from '../EmptyState';
 import PillarTag from '../PillarTag';
 import RootedBadge from '../RootedBadge';
 import TabBar from '../TabBar';
+import { DEFAULT_ICON_WEIGHT } from '../Icon';
 import { ChatsCircle } from 'phosphor-react-native';
 import { fontWeights } from '../../theme';
 import { colors } from '../../theme';
@@ -82,6 +83,7 @@ jest.mock('phosphor-react-native', () => ({
   Bell: () => null,
   ChatsCircle: () => null,
   House: () => null,
+  IconContext: { Consumer: 'IconContext.Consumer' },
   MapTrifold: () => null,
   Plus: () => null,
   X: () => null,
@@ -383,9 +385,9 @@ describe('TabBar', () => {
     expect(tabs[2]?.props.accessibilityLabel).toBe('Create story');
   });
 
-  // A selected tab is a filled glyph in the primary ink; the rest are bold
+  // A selected tab is a filled glyph in the primary ink; the rest are light
   // outlines in the tertiary ink. The two-tone rule is what makes the selection
-  // readable without a label (KNOT-020k-fix).
+  // readable without a label (KNOT-020k-fix, KNOT-020k-fix2).
   it('fills the selected glyph and outlines the others', () => {
     const onSelect = (): void => undefined;
     const bar = TabBar({ activeTab: 'discoveryMap', onSelect });
@@ -403,8 +405,51 @@ describe('TabBar', () => {
     expect(glyphFor(1).props.weight).toBe('fill');
     expect(glyphFor(1).props.color).toBe(colors.text.primary);
 
-    expect(glyphFor(0).props.weight).toBe('bold');
+    // The idle weight is the app-wide default, not a value of its own.
+    expect(DEFAULT_ICON_WEIGHT).toBe('light');
+    expect(glyphFor(0).props.weight).toBe(DEFAULT_ICON_WEIGHT);
     expect(glyphFor(0).props.color).toBe(colors.text.tertiary);
+  });
+
+  // The Create disc is the one glyph that does not follow the two-tone rule: a
+  // light stroke would vanish against its own fill, so it keeps a `regular` plus
+  // at rest and thickens to `bold` on the solid brand disc (KNOT-020k-fix2).
+  it('draws the Create plus at regular when idle and bold when active', () => {
+    const onSelect = (): void => undefined;
+
+    const createTabFor = (
+      activeTab: 'feed' | 'createStory',
+    ): {
+      disc: { props: { style: readonly ({ backgroundColor?: string } | null)[] } };
+      plus: { props: { color: string; size: number; weight: string } };
+    } => {
+      const bar = TabBar({ activeTab, onSelect });
+      const tab = bar.props.children[2] as {
+        props: {
+          children: {
+            props: {
+              style: readonly ({ backgroundColor?: string } | null)[];
+              children: { props: { color: string; size: number; weight: string } };
+            };
+          };
+        };
+      };
+      return { disc: tab.props.children, plus: tab.props.children.props.children };
+    };
+
+    const idle = createTabFor('feed');
+    expect(idle.disc.props.style[0]?.backgroundColor).toBe(colors.bg.sunken);
+    expect(idle.disc.props.style[1]).toBeNull();
+    expect(idle.plus.props.weight).toBe('regular');
+    expect(idle.plus.props.color).toBe(colors.text.tertiary);
+
+    const active = createTabFor('createStory');
+    expect(active.disc.props.style[1]?.backgroundColor).toBe(colors.brand.primary);
+    expect(active.plus.props.weight).toBe('bold');
+    expect(active.plus.props.color).toBe(colors.text.onBrand);
+
+    // The glyph grew with the lighter strokes (28 -> 30).
+    expect(idle.plus.props.size).toBe(30);
   });
 
   // The magnifier is the Feed header's search control, so Inquiries needed its own

@@ -4,12 +4,18 @@ import { IconContext, type IconProps, type IconWeight } from 'phosphor-react-nat
 /**
  * The weight every Phosphor glyph in the app is drawn at unless it says otherwise.
  *
- * Phosphor's own default is `regular`, which reads as a hairline at the sizes Knot
- * draws icons (14-28 points) — too light for the monochrome design, where a glyph
- * carries the whole meaning of a control. `bold` is the app's base weight
- * (KNOT-020k-fix).
+ * Phosphor's own default is `regular`. Knot draws its icons at 14-30 points, where
+ * `regular` still reads as a mechanical, uniform line; `light` is the fine,
+ * geometric outline the design calls for, and the app pairs it with a `fill`
+ * wherever a glyph has to read as *selected* rather than merely present
+ * (KNOT-020k-fix2).
+ *
+ * A lighter stroke loses weight before it loses legibility, so where a glyph
+ * carries meaning on its own the size carries the contrast back: the tab bar's
+ * glyphs grew to 30 points, and the Create disc keeps `regular` against its
+ * sunken fill (KNOT-020k-fix2).
  */
-export const DEFAULT_ICON_WEIGHT: IconWeight = 'bold';
+export const DEFAULT_ICON_WEIGHT: IconWeight = 'light';
 
 /**
  * The context value `IconScope` publishes.
@@ -30,7 +36,7 @@ type IconScopeProps = {
 };
 
 /**
- * The app-wide icon wrapper: every Phosphor glyph under it defaults to the bold
+ * The app-wide icon wrapper: every Phosphor glyph under it defaults to the light
  * weight.
  *
  * Knot imports its icons from `phosphor-react-native` directly in ~26 files, so a
@@ -38,16 +44,15 @@ type IconScopeProps = {
  * that is the same everywhere. Phosphor reads an `IconContext` fallback for the
  * weight, and an icon's own `weight` prop still wins, so:
  *
- *   - a bare `<House />`             draws bold;
+ *   - a bare `<House />`             draws light;
  *   - a `<MapPin weight="fill" />`   keeps its fill;
  *   - the tab bar's selected glyph   asks for `fill` explicitly.
  *
  * That is the whole strategy: one provider at the root, no import churn, and every
- * deliberate weight still honoured (KNOT-020k-fix).
+ * deliberate weight still honoured (KNOT-020k-fix, KNOT-020k-fix2).
  *
  * It is mounted inside the theme provider and outside every screen, including the
- * splash and the auth flow, so there is no subtree where icons fall back to the
- * thin default.
+ * splash and the auth flow, so every screen draws the same weight.
  */
 export function IconScope({ children }: IconScopeProps): React.ReactElement {
   return <IconContext.Provider value={ICON_CONTEXT_VALUE}>{children}</IconContext.Provider>;

@@ -12,6 +12,7 @@ import {
   useThemedStyles,
 } from '../theme';
 import type { ThemeColors } from '../theme';
+import { DEFAULT_ICON_WEIGHT } from './Icon';
 
 /** The five primary destinations of the app. */
 export type TabName = 'feed' | 'discoveryMap' | 'createStory' | 'inquiries' | 'notifications';
@@ -66,11 +67,13 @@ const BAR_HEIGHT = 64;
 /**
  * The icon size drawn in each tab.
  *
- * 28 points is deliberately large: with no labels beneath them the glyphs carry
+ * 30 points is deliberately large: with no labels beneath them the glyphs carry
  * the whole navigation, so they need to read at a glance rather than as small
- * marks over captions (KNOT-020k-fix).
+ * marks over captions. The extra two points over the bold era's 28 are there for
+ * the fine-line weight — an outline at `light` needs more size than a `bold`
+ * stroke to hold the same visual weight (KNOT-020k-fix, KNOT-020k-fix2).
  */
-const ICON_SIZE = 28;
+const ICON_SIZE = 30;
 
 /** The diameter of the elevated Create button. */
 const CREATE_BUTTON_SIZE = 48;
@@ -82,6 +85,12 @@ const CREATE_BUTTON_SIZE = 48;
  */
 const BOUNCE_PEAK = 1.12;
 const BOUNCE_START = 0.9;
+
+/**
+ * The weight a destination's glyph is drawn at: the app-wide fine line when the
+ * tab is idle, and a solid fill when it is the selected one.
+ */
+type TabGlyphWeight = typeof DEFAULT_ICON_WEIGHT | 'fill';
 
 /**
  * One tab's glyph, with the selection bounce.
@@ -100,11 +109,11 @@ function TabGlyph({
   readonly icon: Icon;
   readonly color: string;
   /**
-   * `fill` for the selected tab and `bold` for the rest: the two-tone rule pairs a
-   * solid glyph with an outline one, so selection reads without colour alone
-   * (KNOT-020k-fix).
+   * `fill` for the selected tab and the app default (`light`) for the rest: the
+   * two-tone rule pairs a solid glyph with a fine outline, so selection reads
+   * without colour alone (KNOT-020k-fix, KNOT-020k-fix2).
    */
-  readonly weight: 'bold' | 'fill';
+  readonly weight: TabGlyphWeight;
   readonly active: boolean;
 }): React.ReactElement {
   const scale = useRef(new Animated.Value(1)).current;
@@ -160,11 +169,12 @@ function TabGlyph({
  * The bar is **text free** (KNOT-020k-fix): no label is drawn under any glyph, so
  * the icons sit on the bar's centre line and each tab keeps only a spoken name for
  * a screen reader. The selected tab is drawn **filled** in the primary ink and the
- * rest are **bold outlines** in the tertiary ink — a two-tone rule that reads
+ * rest are **fine light outlines** in the tertiary ink — a two-tone rule that reads
  * without relying on colour alone. The Create tab stays an elevated disc, sunken
- * at rest and filled when it is the active tab. The bottom safe-area inset is not
- * applied here: the bar already sits inside the app root's `SafeAreaView`
- * (KNOT-020b).
+ * at rest with a `regular` plus and filled in the brand ink with a `bold` plus
+ * when it is the active tab, because a light stroke would disappear against the
+ * solid disc. The bottom safe-area inset is not applied here: the bar already sits
+ * inside the app root's `SafeAreaView` (KNOT-020b, KNOT-020k-fix2).
  */
 export default function TabBar({
   activeTab,
@@ -197,7 +207,7 @@ export default function TabBar({
                 <Plus
                   color={active ? colors.text.onBrand : colors.text.tertiary}
                   size={ICON_SIZE}
-                  weight={active ? 'fill' : 'bold'}
+                  weight={active ? 'bold' : 'regular'}
                 />
               </View>
             </Pressable>
@@ -220,7 +230,7 @@ export default function TabBar({
               <TabGlyph
                 icon={IconComponent}
                 color={tint}
-                weight={active ? 'fill' : 'bold'}
+                weight={active ? 'fill' : DEFAULT_ICON_WEIGHT}
                 active={active}
               />
               {unread > 0 ? (
@@ -272,7 +282,9 @@ const createStyles = (colors: ThemeColors) =>
     },
     // The elevated action fills when it is the active tab, the same two-tone rule
     // the destination glyphs follow: solid for selected, outline for the rest
-    // (KNOT-020k-fix).
+    // (KNOT-020k-fix). The glyph weight carries the rest of the contrast —
+    // `regular` against the sunken fill, `bold` against the brand fill
+    // (KNOT-020k-fix2).
     createButtonActive: {
       backgroundColor: colors.brand.primary,
     },

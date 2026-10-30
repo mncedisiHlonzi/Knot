@@ -119,7 +119,9 @@ function SettingRow({
 
   const content = (
     <>
-      <IconComponent color={tint} size={20} weight="bold" />
+      {/* No explicit weight: the row glyphs inherit the app-wide fine line
+          (KNOT-020k-fix2). */}
+      <IconComponent color={tint} size={20} />
       <Text
         style={[typeScale.body, styles.rowLabel, danger ? styles.rowLabelDanger : null]}
         numberOfLines={1}
@@ -134,7 +136,7 @@ function SettingRow({
       {busy ? (
         <ActivityIndicator size="small" color={colors.text.tertiary} />
       ) : onPress === undefined ? null : (
-        <CaretRight color={colors.text.tertiary} size={20} weight="bold" />
+        <CaretRight color={colors.text.tertiary} size={20} />
       )}
     </>
   );
@@ -381,7 +383,6 @@ export default function SettingsScreen({
                   <AppearanceIcon
                     color={selected ? colors.text.inverse : colors.text.primary}
                     size={APPEARANCE_ICON_SIZE}
-                    weight="bold"
                   />
                   <Text
                     style={[
