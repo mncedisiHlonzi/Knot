@@ -5,6 +5,7 @@ import FeedEntry from '../../../components/FeedEntry';
 import Header from '../../../components/Header';
 import { colors } from '../../../theme';
 import FeedScreen from '../FeedScreen';
+import { PROMPTS, nextPromptIndex, promptAt, promptIndexForPillar } from '../feedPrompt';
 
 /**
  * `FeedScreen` owns the feed's layout and the two hide entry points. This project
@@ -32,6 +33,22 @@ jest.mock('react', () => ({
 
 jest.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
+  // The prompt card draws the shared Button and Chip, which build their animated
+  // wrappers at module scope (KNOT-020k-fix7).
+  Animated: {
+    Value: class {
+      setValue(): void {}
+      interpolate(): number {
+        return 0;
+      }
+    },
+    View: 'Animated.View',
+    createAnimatedComponent: <T>(component: T): T => component,
+    loop: () => ({ start: () => undefined, stop: () => undefined }),
+    spring: () => ({ start: () => undefined, stop: () => undefined }),
+    timing: () => ({ start: () => undefined, stop: () => undefined }),
+  },
+  Easing: { bezier: () => (progress: number) => progress },
   FlatList: 'FlatList',
   Modal: 'Modal',
   Pressable: 'Pressable',
@@ -43,12 +60,14 @@ jest.mock('react-native', () => ({
 }));
 
 jest.mock('phosphor-react-native', () => ({
+  ArrowsClockwise: () => null,
   Bell: () => null,
   DotsThree: () => null,
   EyeSlash: () => null,
   Flag: () => null,
   Images: () => null,
   MagnifyingGlass: () => null,
+  PencilSimple: () => null,
   ShareNetwork: () => null,
   X: () => null,
 }));
@@ -242,36 +261,106 @@ describe('FeedScreen card structure', () => {
 // Create moved out of the tab bar and into the feed itself (KNOT-020k-fix6), so
 // the composer is the list's first row: a face, a prompt, and the brand disc that
 // opens the composer screen.
-describe('FeedScreen composer', () => {
-  /** The composer element, read out of the list's header component. */
-  const composerFor = (tree: unknown): ElementLike | undefined => {
+// The composer row is gone (KNOT-020k-fix7). In its place the feed heads the list
+// with a writing prompt: a family overline, the question, a primary "Write it"
+// action and the two pillar chips.
+describe('FeedScreen prompt card', () => {
+  /** The PromptCard element in the list's header component (not yet called). */
+  const cardElementFor = (tree: unknown): ElementLike | undefined => {
     const list = findElementByType(tree, 'FlatList');
-    return findByTestID(list?.props?.ListHeaderComponent, 'feed-composer');
+    return findElement(list?.props?.ListHeaderComponent, (props) => {
+      return typeof props.onShuffle === 'function' && typeof props.onWrite === 'function';
+    });
   };
 
-  it('draws the composer at the top of the list, with the viewer’s face', () => {
-    const composer = composerFor(renderScreen());
+  /** The card's own tree, by calling the component the list header holds. */
+  const cardFor = (tree: unknown): ElementLike | undefined => {
+    const element = cardElementFor(tree);
+    if (element === undefined) {
+      return undefined;
+    }
+    return (element.type as (props: unknown) => ElementLike)(element.props);
+  };
 
-    expect(composer).toBeDefined();
-    expect(composer?.props?.accessibilityLabel).toBe('Create a story');
-    // The face that already sits in the header is the row's left-hand anchor.
-    expect(findInProps(composer, Avatar)?.props?.displayName).toBe('Nomsa Khan');
+  /** The single state updater a tap produced, so its effect can be applied. */
+  const lastUpdater = (): ((index: number) => number) | undefined => {
+    const writes = mockStateSetters.flatMap((setter) => setter.mock.calls);
+    const updaters = writes
+      .map(([value]) => value)
+      .filter((value): value is (index: number) => number => typeof value === 'function');
+
+    return updaters[updaters.length - 1];
+  };
+
+  it('heads the list with a prompt from the compiled list', () => {
+    const element = cardElementFor(renderScreen());
+
+    expect(element).toBeDefined();
+    expect(element?.props?.prompt).toBe(PROMPTS[0]);
   });
 
-  it('opens the story composer when the row is tapped', () => {
+  it('draws the family overline, the question, the action and both pillar chips', () => {
+    const card = cardFor(renderScreen());
+
+    expect(findByTestID(card, 'feed-prompt')).toBeDefined();
+    expect(findByTestID(card, 'feed-prompt-text')).toBeDefined();
+    expect(findByTestID(card, 'feed-prompt-shuffle')).toBeDefined();
+
+    const write = findByTestID(card, 'feed-prompt-write');
+    expect(write?.props?.label).toBe('Write it');
+
+    // The chips name both pillars, and the one the prompt belongs to is selected.
+    expect(findByTestID(card, 'feed-prompt-chip-wonder')?.props?.label).toBe('Wonder');
+    expect(findByTestID(card, 'feed-prompt-chip-heritage')?.props?.label).toBe('Heritage');
+    expect(findByTestID(card, 'feed-prompt-chip-wonder')?.props?.selected).toBe(true);
+    expect(findByTestID(card, 'feed-prompt-chip-heritage')?.props?.selected).toBe(false);
+  });
+
+  // Both the button and the question open the composer: the button is the labelled
+  // affordance, the question the larger target.
+  it('opens the story composer from the button and from the question', () => {
     const onCreateStory = jest.fn();
-    const composer = composerFor(FeedScreen({ ...SCREEN_PROPS, onCreateStory }));
+    const card = cardFor(FeedScreen({ ...SCREEN_PROPS, onCreateStory }));
 
-    (composer?.props?.onPress as () => void)();
+    (findByTestID(card, 'feed-prompt-write')?.props?.onPress as () => void)();
+    (findByTestID(card, 'feed-prompt-text')?.props?.onPress as () => void)();
 
-    expect(onCreateStory).toHaveBeenCalledTimes(1);
+    expect(onCreateStory).toHaveBeenCalledTimes(2);
   });
 
-  it('closes the row with the same 4pt band that parts two stories', () => {
-    const style = composerFor(renderScreen())?.props?.style as Record<string, unknown> | undefined;
+  it('deals the next prompt when the shuffle is tapped', () => {
+    const card = cardFor(renderScreen());
 
-    expect(style?.borderBottomWidth).toBe(4);
-    expect(style?.borderBottomColor).toBe(colors.bg.separator);
+    (findByTestID(card, 'feed-prompt-shuffle')?.props?.onPress as () => void)();
+
+    const updater = lastUpdater();
+    expect(updater).toBeDefined();
+    expect(updater?.(0)).toBe(nextPromptIndex(0));
+    // Never the prompt already on screen.
+    expect(updater?.(0)).not.toBe(0);
+  });
+
+  it('deals the next prompt of the chosen pillar when a chip is tapped', () => {
+    const card = cardFor(renderScreen());
+
+    (findByTestID(card, 'feed-prompt-chip-heritage')?.props?.onPress as () => void)();
+
+    const next = lastUpdater()?.(0);
+    expect(next).toBe(promptIndexForPillar(0, 'heritage'));
+    expect(promptAt(next ?? 0).pillar).toBe('heritage');
+  });
+
+  // The row that fix6 added is gone, not merely hidden.
+  it('no longer draws the old composer row', () => {
+    const list = findElementByType(renderScreen(), 'FlatList');
+
+    expect(findByTestID(list?.props?.ListHeaderComponent, 'feed-composer')).toBeUndefined();
+    expect(
+      findElement(
+        list?.props?.ListHeaderComponent,
+        (props) => props.accessibilityLabel === 'Create a story',
+      ),
+    ).toBeUndefined();
   });
 });
 

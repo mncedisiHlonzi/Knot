@@ -10,19 +10,28 @@ import {
   View,
   useWindowDimensions,
 } from 'react-native';
-import { EyeSlash, Flag, MagnifyingGlass, type Icon } from 'phosphor-react-native';
+import {
+  ArrowsClockwise,
+  EyeSlash,
+  Flag,
+  MagnifyingGlass,
+  PencilSimple,
+  type Icon,
+} from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { FEED_PAGE_SIZE, type FeedItem, storiesApi } from '../../api/stories';
 import Avatar from '../../components/Avatar';
+import Button from '../../components/Button';
+import Chip from '../../components/Chip';
 import ConfirmSheet from '../../components/ConfirmSheet';
 import EmptyState from '../../components/EmptyState';
 import FeedEntry from '../../components/FeedEntry';
 import type { ViewerMedia, ViewerStory } from '../../components/MediaGalleryModal';
 import Header from '../../components/Header';
 import Logomark from '../../components/Logomark';
+import type { Pillar } from '../../components/PillarTag';
 import ReportModal from '../../components/ReportModal';
-import { PlusIcon } from '../../components/TabIcons';
 import TheThread from '../../components/TheThread';
 import { API_BASE_URL } from '../../config/api';
 import {
@@ -41,6 +50,15 @@ import {
   type ViewableItemsInfo,
   activeViewableKey,
 } from '../../utils/viewability';
+import {
+  PROMPT_PILLARS,
+  nextPromptIndex,
+  promptAt,
+  promptIndexForPillar,
+  promptPillarLabel,
+  promptPillarName,
+  type FeedPrompt,
+} from './feedPrompt';
 
 /** The logomark's size in the feed header. */
 const LOGOMARK_SIZE = 32;
@@ -104,9 +122,9 @@ type FeedScreenProps = {
   /** Called when the person opens search. */
   readonly onOpenSearch: () => void;
   /**
-   * Called when the composer row at the top of the feed is tapped, to open the
-   * story composer. Create used to be the bar's elevated tab; it is an overlay
-   * now, and this row is how it is reached (KNOT-020k-fix6).
+   * Called when the prompt card's call to action is used: the "Write it" button or
+   * the prompt itself. Create used to be the bar's elevated tab and then a simple
+   * composer row; it is the prompt card now (KNOT-020k-fix6, KNOT-020k-fix7).
    */
   readonly onCreateStory: () => void;
 };
@@ -123,10 +141,10 @@ type FeedScreenProps = {
  * The layout pins everything but the list: the header and the five text tabs are
  * fixed siblings ABOVE the FlatList, so only the feed entries scroll beneath them
  * (the header is opaque and static — nothing about it is scroll-linked). The first
- * row INSIDE the list is the composer, the place a story starts now that Create has
- * left the tab bar (KNOT-020k-fix6). The tab row is a plain flex row of five
- * equal-width tabs rather than a horizontal scroller, so the labels are centred,
- * never clipped, and never slide sideways.
+ * row INSIDE the list is the writing prompt, the place a story starts now that
+ * Create has left the tab bar (KNOT-020k-fix7). The tab row is a plain flex row of
+ * five equal-width tabs rather than a horizontal scroller, so the labels are
+ * centred, never clipped, and never slide sideways.
  * `For you` and `Latest` change the request's `feed_type`; the pillar and place
  * tabs stay a local selection until the API grows those filters (KNOT-027).
  *
@@ -176,6 +194,9 @@ export default function FeedScreen({
   // and the sheet's "Hide this post" row both arm this; nothing leaves the feed
   // until the person answers.
   const [pendingHideId, setPendingHideId] = useState<string | undefined>(undefined);
+  // Which prompt the card is showing. One index, wrapped by `feedPrompt`, so a
+  // shuffle or a pillar chip needs no copy of the list (KNOT-020k-fix7).
+  const [promptIndex, setPromptIndex] = useState(0);
   // The Thread spans the list while a pull-to-refresh is in flight (KNOT-020h).
   const { width: pageWidth } = useWindowDimensions();
 
@@ -190,6 +211,16 @@ export default function FeedScreen({
   /** Flips the feed-wide mute setting; every video follows it. */
   const toggleMute = useCallback((): void => {
     setIsMuted((current) => !current);
+  }, []);
+
+  /** Deals the next prompt — a rotation, so it never repeats the one on screen. */
+  const shufflePrompt = useCallback((): void => {
+    setPromptIndex((current) => nextPromptIndex(current));
+  }, []);
+
+  /** Deals the next prompt of one pillar, which is what a chip tap means. */
+  const selectPromptPillar = useCallback((pillar: Pillar): void => {
+    setPromptIndex((current) => promptIndexForPillar(current, pillar));
   }, []);
 
   // The header avatar. The API sends an avatar as a relative path, so it is
@@ -425,9 +456,9 @@ export default function FeedScreen({
         // The Thread is the feed's refresh indicator. It is drawn at the top of
         // the list content rather than inside the RefreshControl, because the
         // platform control owns the pull gesture and cannot host a custom
-        // indicator (KNOT-020h). The composer sits under it, still at the top of
-        // the content, so a refresh line reads above the feed's own first row
-        // (KNOT-020k-fix6).
+        // indicator (KNOT-020h). The prompt card sits under it, still at the top
+        // of the content, so a refresh line reads above the feed's own first row
+        // (KNOT-020k-fix7).
         ListHeaderComponent={
           <View>
             {refreshing ? (
@@ -436,28 +467,12 @@ export default function FeedScreen({
               </View>
             ) : null}
 
-            {/* The composer: the feed's own answer to "what's on your mind?".
-                The face that is already in the header opens it, a sunken pill
-                carries the prompt, and the brand disc is the one indigo mark in
-                the row — the affordance Create used to be when it lived in the
-                bar (KNOT-020k-fix6). */}
-            <Pressable
-              style={styles.composer}
-              onPress={onCreateStory}
-              accessibilityRole="button"
-              accessibilityLabel="Create a story"
-              testID="feed-composer"
-            >
-              <Avatar uri={avatarUri} displayName={viewer.display_name} size="md" />
-              <View style={styles.composerField}>
-                <Text style={[typeScale.body, styles.composerPlaceholder]} numberOfLines={1}>
-                  Tell your story…
-                </Text>
-              </View>
-              <View style={styles.composerButton}>
-                <PlusIcon size={20} color={colors.text.onBrand} isActive={false} />
-              </View>
-            </Pressable>
+            <PromptCard
+              prompt={promptAt(promptIndex)}
+              onWrite={onCreateStory}
+              onShuffle={shufflePrompt}
+              onSelectPillar={selectPromptPillar}
+            />
           </View>
         }
         refreshControl={
@@ -604,6 +619,102 @@ export default function FeedScreen({
   );
 }
 
+/** The shuffle glyph on the prompt card's top row. */
+const SHUFFLE_ICON_SIZE = 18;
+
+/** The pencil on the card's call to action. */
+const WRITE_ICON_SIZE = 18;
+
+/**
+ * The writing prompt at the top of the feed (KNOT-020k-fix7).
+ *
+ * It replaces the plain composer row: instead of asking an empty "what's on your
+ * mind?", it asks one specific question, which is a much easier thing to answer.
+ * The card carries the question's family (an overline and a 6pt mark), the
+ * question itself at the second-largest type step, and two ways forward — the
+ * primary "Write it" action, or a pillar chip that deals the next prompt of that
+ * family. The shuffle deals the next prompt of any family.
+ *
+ * Both the question and the button open the composer: the button is the labelled
+ * affordance, and the question is the larger target for a thumb that lands on the
+ * text first. Nothing here talks to the network — the prompts are compiled into the
+ * app (`feedPrompt.ts`) and choosing one only moves an index.
+ *
+ * It is local to this file rather than a shared component, because the feed is the
+ * only place a prompt is drawn (the same choice the options sheet below makes).
+ */
+function PromptCard({
+  prompt,
+  onWrite,
+  onShuffle,
+  onSelectPillar,
+}: {
+  readonly prompt: FeedPrompt;
+  readonly onWrite: () => void;
+  readonly onShuffle: () => void;
+  readonly onSelectPillar: (pillar: Pillar) => void;
+}): React.ReactElement {
+  const { colors } = useTheme();
+  const styles = useThemedStyles(createStyles);
+
+  return (
+    <View style={styles.promptCard} testID="feed-prompt">
+      <View style={styles.promptTop}>
+        <View style={styles.promptFamily}>
+          <View style={styles.promptDot} />
+          {/* `typeScale.overline` carries the uppercasing, so the copy stays
+              sentence case in the source. */}
+          <Text style={[typeScale.overline, styles.promptFamilyText]}>
+            {promptPillarLabel(prompt.pillar)}
+          </Text>
+        </View>
+        <Pressable
+          style={styles.promptShuffle}
+          onPress={onShuffle}
+          hitSlop={spacing.sm}
+          accessibilityRole="button"
+          accessibilityLabel="Show another prompt"
+          testID="feed-prompt-shuffle"
+        >
+          <ArrowsClockwise size={SHUFFLE_ICON_SIZE} color={colors.text.tertiary} weight="bold" />
+        </Pressable>
+      </View>
+
+      <Pressable
+        onPress={onWrite}
+        accessibilityRole="button"
+        accessibilityLabel={`Write about this prompt: ${prompt.text}`}
+        testID="feed-prompt-text"
+      >
+        <Text style={[typeScale.h2, styles.promptText]}>{prompt.text}</Text>
+      </Pressable>
+
+      <View style={styles.promptActions}>
+        <Button
+          label="Write it"
+          onPress={onWrite}
+          accessibilityLabel="Write a story from this prompt"
+          leadingIcon={
+            <PencilSimple size={WRITE_ICON_SIZE} color={colors.text.onBrand} weight="bold" />
+          }
+          testID="feed-prompt-write"
+        />
+        <View style={styles.promptChips}>
+          {PROMPT_PILLARS.map((pillar) => (
+            <Chip
+              key={pillar}
+              label={promptPillarName(pillar)}
+              selected={pillar === prompt.pillar}
+              onPress={() => onSelectPillar(pillar)}
+              testID={`feed-prompt-chip-${pillar}`}
+            />
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+}
+
 /**
  * The post options sheet: the actions a reader can take on one feed entry — hide
  * it from this feed, or report it to the moderators.
@@ -731,41 +842,69 @@ const createStyles = (colors: ThemeColors) =>
       backgroundColor: colors.bg.separator,
       height: 4,
     },
-    // The composer row that opens the story composer: a face, a prompt and the
-    // brand disc, on the canvas, closed by the same 4pt band that parts two
-    // stories — so the row is the feed's first entry rather than a floating card
-    // (KNOT-020k-fix6).
-    composer: {
-      alignItems: 'center',
-      backgroundColor: colors.bg.canvas,
-      borderBottomColor: colors.bg.separator,
-      borderBottomWidth: 4,
-      flexDirection: 'row',
+    // The prompt card: the one framed surface in the feed, and the only place a
+    // radius is drawn on it (KNOT-020k-fix7). It sits on the raised surface with a
+    // hairline rather than a shadow — the design system's rule — and its inset is
+    // the feed's own 12pt step, so it reads as a card among edge-to-edge stories.
+    promptCard: {
+      backgroundColor: colors.bg.raised,
+      borderColor: colors.border.hairline,
+      borderRadius: radius.xxl,
+      borderWidth: 1,
       gap: spacing.md,
-      paddingHorizontal: layout.screenPaddingFeed,
-      paddingVertical: spacing.md,
+      margin: spacing.md,
+      padding: spacing.lg,
     },
-    // The prompt itself: a sunken pill at the 44pt touch height, so the row looks
-    // like an input without pretending to be one (it opens a screen).
-    composerField: {
-      backgroundColor: colors.bg.sunken,
-      borderRadius: radius.pill,
-      flex: 1,
-      height: 44,
-      justifyContent: 'center',
-      paddingHorizontal: spacing.lg,
-    },
-    composerPlaceholder: {
-      color: colors.text.tertiary,
-    },
-    // The row's one accent: the brand disc the Create tab used to draw.
-    composerButton: {
+    // The overline row: the family's dot and name on the left, the shuffle on the
+    // right.
+    promptTop: {
       alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+    },
+    promptFamily: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.xs,
+    },
+    // The 6pt mark that pairs with the overline's ink; the pillar's colour is the
+    // one accent the card carries.
+    promptDot: {
       backgroundColor: colors.brand.primary,
       borderRadius: radius.pill,
-      height: 36,
+      height: 6,
+      width: 6,
+    },
+    promptFamilyText: {
+      color: colors.text.primary,
+    },
+    // 32pt of box with an 8pt hit slop, so the small glyph still has a 48pt target
+    // without making the top row as tall as the button below it.
+    promptShuffle: {
+      alignItems: 'center',
+      height: 32,
       justifyContent: 'center',
-      width: 36,
+      width: 32,
+    },
+    // The question is the card's body: the screen's second-largest step, in the
+    // primary ink, so it is the first thing read after the tab row.
+    promptText: {
+      color: colors.text.primary,
+    },
+    // The action row: the button is the anchor and never shrinks; the chips take
+    // the rest and wrap rather than clipping on a narrow phone.
+    promptActions: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.sm,
+      justifyContent: 'space-between',
+    },
+    promptChips: {
+      flexDirection: 'row',
+      flexShrink: 1,
+      flexWrap: 'wrap',
+      gap: spacing.xs,
+      justifyContent: 'flex-end',
     },
     error: {
       color: colors.state.danger,

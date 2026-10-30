@@ -30,6 +30,14 @@ type ButtonProps = {
   readonly loadingIndicator?: React.ReactNode;
   /** Stretches the button to its container's width. */
   readonly fullWidth?: boolean;
+  /**
+   * An optional glyph drawn before the label.
+   *
+   * The caller supplies it already sized and coloured, because only the caller
+   * knows which variant's ink the glyph has to match. Omitted, the button draws
+   * exactly as it always has (KNOT-020k-fix7).
+   */
+  readonly leadingIcon?: React.ReactNode;
   /** Overrides the accessibility label. Defaults to the visible label. */
   readonly accessibilityLabel?: string;
   /** Test identifier. */
@@ -47,6 +55,7 @@ export default function Button({
   loading = false,
   loadingIndicator,
   fullWidth = false,
+  leadingIcon,
   accessibilityLabel,
   testID,
 }: ButtonProps): React.ReactElement {
@@ -109,6 +118,7 @@ export default function Button({
         accessibilityState={{ disabled: inactive, busy: loading }}
         testID={testID}
       >
+        {leadingIcon === undefined ? null : <View style={styles.leadingIcon}>{leadingIcon}</View>}
         <Text
           style={[
             typeScale.button,
@@ -148,6 +158,13 @@ const createStyles = (colors: ThemeColors) =>
     },
     label: {
       textAlign: 'center',
+    },
+    // The glyph rides with the label, one small step before it, and takes no room
+    // when the caller supplies none.
+    leadingIcon: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: spacing.sm,
     },
     // The label keeps its place in the layout while loading, so the button's width
     // does not jump when the spinner appears.

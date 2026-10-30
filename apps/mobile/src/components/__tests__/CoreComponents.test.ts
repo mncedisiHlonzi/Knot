@@ -103,6 +103,32 @@ describe('Button', () => {
     expect(Button({ label: 'Go', onPress, loading: true })).toBeTruthy();
     expect(Button({ label: 'Go', onPress, fullWidth: true })).toBeTruthy();
   });
+
+  // KNOT-020k-fix7: the feed's prompt card needs a pencil beside its label, so the
+  // button grew an optional leading slot. It is additive — with no glyph the row
+  // is exactly what it always was, with no placeholder taking up room.
+  it('places a caller-supplied leading glyph before the label', () => {
+    const childrenOf = (element: { props: { children?: unknown } }): readonly unknown[] => {
+      const wrapper = element.props.children as { props?: { children?: unknown } };
+      return (wrapper.props?.children ?? []) as readonly unknown[];
+    };
+
+    const withGlyph = Button({
+      label: 'Write it',
+      onPress: () => undefined,
+      leadingIcon: 'PENCIL',
+    });
+    const [glyph, label] = childrenOf(withGlyph) as readonly [
+      { type: unknown; props: { children: unknown } },
+      { props: { children: string } },
+    ];
+
+    expect(glyph.type).toBe('View');
+    expect(glyph.props.children).toBe('PENCIL');
+    expect(label.props.children).toBe('Write it');
+
+    expect(childrenOf(Button({ label: 'Write it', onPress: () => undefined }))[0]).toBeNull();
+  });
 });
 
 describe('Chip', () => {
