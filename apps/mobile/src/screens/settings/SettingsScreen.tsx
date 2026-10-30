@@ -119,8 +119,7 @@ function SettingRow({
 
   const content = (
     <>
-      {/* No explicit weight: the row glyphs inherit the app-wide fine line
-          (KNOT-020k-fix2). */}
+      {/* No explicit weight: the row glyphs inherit the app-wide weight. */}
       <IconComponent color={tint} size={20} />
       <Text
         style={[typeScale.body, styles.rowLabel, danger ? styles.rowLabelDanger : null]}

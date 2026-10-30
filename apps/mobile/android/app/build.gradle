@@ -117,3 +117,20 @@ dependencies {
         implementation jscFlavor
     }
 }
+
+/**
+ * Icon fonts (KNOT-020k-fix3).
+ *
+ * `react-native-vector-icons` ships each icon family as a font, and autolinking
+ * covers the native module but not the assets: a font only reaches the APK if it
+ * is copied into `assets/fonts`, which is what the package's `fonts.gradle` does.
+ *
+ * Only Ionicons is listed. The package defaults to copying every family it ships
+ * (thirty-odd fonts, several megabytes) and the app draws from Ionicons alone —
+ * the rest of the UI uses Phosphor, which renders through `react-native-svg` and
+ * needs no font at all. Add a name here if another family is ever adopted.
+ */
+project.ext.vectoricons = [
+    iconFontNames: ["Ionicons.ttf"]
+]
+apply from: file("../../node_modules/react-native-vector-icons/fonts.gradle")

@@ -4,9 +4,7 @@ import Chip from '../Chip';
 import EmptyState from '../EmptyState';
 import PillarTag from '../PillarTag';
 import RootedBadge from '../RootedBadge';
-import TabBar from '../TabBar';
-import { DEFAULT_ICON_WEIGHT } from '../Icon';
-import { ChatsCircle } from 'phosphor-react-native';
+import TabBar, { type TabName } from '../TabBar';
 import { fontWeights } from '../../theme';
 import { colors } from '../../theme';
 import {
@@ -72,21 +70,23 @@ jest.mock('react-native', () => ({
   View: 'View',
 }));
 
-// Only the icons still used by a component under test: TabBar (the tab glyphs)
-// and Chip (its remove affordance). ReactionBar's icons are the committed brand
-// SVGs now, mapped to a stub by jest.config.js (KNOT-020b-fix).
+// Only the icon still used by a component under test: Chip's remove affordance.
+// ReactionBar's icons are the committed brand SVGs now, mapped to a stub by
+// jest.config.js (KNOT-020b-fix). The bottom bar's Ionicons are stubbed below.
 jest.mock('../../motion/usePressScale', () => ({
   usePressScale: () => ({ scale: 1, onPressIn: () => undefined, onPressOut: () => undefined }),
 }));
 
 jest.mock('phosphor-react-native', () => ({
-  Bell: () => null,
-  ChatsCircle: () => null,
-  House: () => null,
-  IconContext: { Consumer: 'IconContext.Consumer' },
-  MapTrifold: () => null,
-  Plus: () => null,
   X: () => null,
+}));
+
+// The bottom bar draws Ionicons instead of Phosphor (KNOT-020k-fix3). The package
+// ships no TypeScript declarations and its entry pulls React Native's Flow source
+// in, so it is a string stand-in here — the same shape a real element yields.
+jest.mock('react-native-vector-icons/Ionicons', () => ({
+  __esModule: true,
+  default: 'Ionicons',
 }));
 
 jest.mock('../../config/api', () => ({ API_BASE_URL: 'http://localhost:8080' }));
@@ -323,6 +323,31 @@ describe('EmptyState', () => {
 });
 
 describe('TabBar', () => {
+  type IoniconElement = { type: unknown; props: { name: string; size: number; color: string } };
+
+  /**
+   * The Ionicons element a tab draws, read by invoking the glyph component with its
+   * own props — the same direct-call approach the rest of this suite uses, since
+   * there is no renderer. A destination wraps its glyph in the bouncing `TabGlyph`;
+   * the Create tab holds its plus directly inside the disc.
+   */
+  const ioniconFor = (activeTab: TabName, index: number): IoniconElement => {
+    const bar = TabBar({ activeTab, onSelect: () => undefined });
+    const tab = bar.props.children[index] as {
+      props: { children: { props: { children: unknown } } };
+    };
+    const slot = tab.props.children.props.children;
+
+    if (index === 2) {
+      return slot as IoniconElement;
+    }
+
+    const [glyph] = slot as readonly [
+      { type: (props: unknown) => { props: { children: unknown } }; props: unknown },
+    ];
+    return glyph.type(glyph.props).props.children as IoniconElement;
+  };
+
   it('renders five tabs and never fires onSelect during render', () => {
     const onSelect = jest.fn();
     const element = TabBar({ activeTab: 'feed', onSelect });
@@ -385,86 +410,77 @@ describe('TabBar', () => {
     expect(tabs[2]?.props.accessibilityLabel).toBe('Create story');
   });
 
-  // A selected tab is a filled glyph in the primary ink; the rest are light
-  // outlines in the tertiary ink. The two-tone rule is what makes the selection
-  // readable without a label (KNOT-020k-fix, KNOT-020k-fix2).
-  it('fills the selected glyph and outlines the others', () => {
-    const onSelect = (): void => undefined;
-    const bar = TabBar({ activeTab: 'discoveryMap', onSelect });
+  // The bar draws Ionicons (KNOT-020k-fix3): the selected tab the solid `-sharp`
+  // cut in the primary ink, every other tab the outline cut in the tertiary ink.
+  // The two-tone rule is what makes the selection readable without a label.
+  it('draws the sharp cut for the selected tab and the outline for the rest', () => {
+    expect(ioniconFor('discoveryMap', 1).type).toBe('Ionicons');
+    expect(ioniconFor('discoveryMap', 1).props.name).toBe('map-sharp');
+    expect(ioniconFor('discoveryMap', 1).props.color).toBe(colors.text.primary);
 
-    /** The glyph element a destination tab draws. */
-    const glyphFor = (index: number): { props: { color: string; weight: string } } => {
-      const tab = bar.props.children[index] as {
-        props: { children: { props: { children: readonly unknown[] } } };
-      };
-      return tab.props.children.props.children[0] as {
-        props: { color: string; weight: string };
-      };
-    };
+    // Home is idle here, so it draws the outline in the tertiary ink.
+    expect(ioniconFor('notifications', 0).props.name).toBe('home-outline');
+    expect(ioniconFor('notifications', 0).props.color).toBe(colors.text.tertiary);
 
-    expect(glyphFor(1).props.weight).toBe('fill');
-    expect(glyphFor(1).props.color).toBe(colors.text.primary);
-
-    // The idle weight is the app-wide default, not a value of its own.
-    expect(DEFAULT_ICON_WEIGHT).toBe('light');
-    expect(glyphFor(0).props.weight).toBe(DEFAULT_ICON_WEIGHT);
-    expect(glyphFor(0).props.color).toBe(colors.text.tertiary);
+    // 28pt: the size the bar used before the fine-line experiment.
+    expect(ioniconFor('notifications', 0).props.size).toBe(28);
   });
 
-  // The Create disc is the one glyph that does not follow the two-tone rule: a
-  // light stroke would vanish against its own fill, so it keeps a `regular` plus
-  // at rest and thickens to `bold` on the solid brand disc (KNOT-020k-fix2).
-  it('draws the Create plus at regular when idle and bold when active', () => {
-    const onSelect = (): void => undefined;
+  // Every destination pairs an outline with a solid glyph, so the two-tone rule
+  // covers the whole bar rather than only the tab under test (KNOT-020k-fix3).
+  it('pairs an outline and a solid glyph for every destination', () => {
+    const pairs = [
+      ['feed', 0, 'home-outline', 'home-sharp'],
+      ['discoveryMap', 1, 'map-outline', 'map-sharp'],
+      ['createStory', 2, 'add', 'add-sharp'],
+      ['inquiries', 3, 'chatbubbles-outline', 'chatbubbles-sharp'],
+      ['notifications', 4, 'notifications-outline', 'notifications-sharp'],
+    ] as const;
 
-    const createTabFor = (
-      activeTab: 'feed' | 'createStory',
-    ): {
-      disc: { props: { style: readonly ({ backgroundColor?: string } | null)[] } };
-      plus: { props: { color: string; size: number; weight: string } };
-    } => {
-      const bar = TabBar({ activeTab, onSelect });
-      const tab = bar.props.children[2] as {
-        props: {
-          children: {
-            props: {
-              style: readonly ({ backgroundColor?: string } | null)[];
-              children: { props: { color: string; size: number; weight: string } };
-            };
-          };
-        };
+    // A tab other than the one under test, so the idle draw is the outline cut.
+    const otherTab = (index: number): TabName => (index === 4 ? 'feed' : 'notifications');
+
+    for (const [activeTab, index, idle, selected] of pairs) {
+      expect(ioniconFor(otherTab(index), index).props.name).toBe(idle);
+      expect(ioniconFor(activeTab, index).props.name).toBe(selected);
+    }
+  });
+
+  // The Create disc is the one glyph that does not follow the ink rule: it sits on
+  // its own fill, so the disc's colour changes and the plus keeps the disc's own
+  // ink in both states (KNOT-020k-fix3).
+  it('swaps the Create plus with the disc', () => {
+    type Disc = {
+      props: {
+        style: readonly ({ backgroundColor?: string } | null)[];
+        children: IoniconElement;
       };
-      return { disc: tab.props.children, plus: tab.props.children.props.children };
     };
 
-    const idle = createTabFor('feed');
-    expect(idle.disc.props.style[0]?.backgroundColor).toBe(colors.bg.sunken);
-    expect(idle.disc.props.style[1]).toBeNull();
-    expect(idle.plus.props.weight).toBe('regular');
-    expect(idle.plus.props.color).toBe(colors.text.tertiary);
+    const discFor = (activeTab: TabName): Disc => {
+      const bar = TabBar({ activeTab, onSelect: () => undefined });
+      return (bar.props.children[2] as { props: { children: Disc } }).props.children;
+    };
 
-    const active = createTabFor('createStory');
-    expect(active.disc.props.style[1]?.backgroundColor).toBe(colors.brand.primary);
-    expect(active.plus.props.weight).toBe('bold');
-    expect(active.plus.props.color).toBe(colors.text.onBrand);
+    const idle = discFor('feed');
+    expect(idle.props.style[0]?.backgroundColor).toBe(colors.bg.sunken);
+    expect(idle.props.style[1]).toBeNull();
+    expect(idle.props.children.type).toBe('Ionicons');
+    expect(idle.props.children.props.name).toBe('add');
+    expect(idle.props.children.props.color).toBe(colors.text.tertiary);
 
-    // The glyph grew with the lighter strokes (28 -> 30).
-    expect(idle.plus.props.size).toBe(30);
+    const active = discFor('createStory');
+    expect(active.props.style[1]?.backgroundColor).toBe(colors.brand.primary);
+    expect(active.props.children.props.name).toBe('add-sharp');
+    expect(active.props.children.props.color).toBe(colors.text.onBrand);
+    expect(active.props.children.props.size).toBe(28);
   });
 
   // The magnifier is the Feed header's search control, so Inquiries needed its own
   // mark rather than looking like a second search action (KNOT-020j-fix).
   it('draws a conversation glyph, not a magnifier, for Inquiries', () => {
-    const onSelect = (): void => undefined;
-    const bar = TabBar({ activeTab: 'feed', onSelect });
-    const inquiriesTab = bar.props.children[3] as {
-      props: {
-        children: { props: { children: readonly { props: { icon: unknown } }[] } };
-      };
-    };
-
-    const glyph = inquiriesTab.props.children.props.children[0];
-    expect(glyph.props.icon).toBe(ChatsCircle);
+    expect(ioniconFor('notifications', 3).props.name).toBe('chatbubbles-outline');
+    expect(ioniconFor('inquiries', 3).props.name).toBe('chatbubbles-sharp');
   });
 });
 
