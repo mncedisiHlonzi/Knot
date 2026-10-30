@@ -68,6 +68,7 @@ jest.mock('phosphor-react-native', () => ({
   Images: () => null,
   MagnifyingGlass: () => null,
   PencilSimple: () => null,
+  Plus: () => null,
   ShareNetwork: () => null,
   X: () => null,
 }));
@@ -306,6 +307,10 @@ describe('FeedScreen prompt card', () => {
     expect(findByTestID(card, 'feed-prompt-text')).toBeDefined();
     expect(findByTestID(card, 'feed-prompt-shuffle')).toBeDefined();
 
+    // The overline names the kind of story the prompt asks for (KNOT-020k-fix8).
+    expect(findElement(card, (props) => props.children === 'Wonder story')).toBeDefined();
+    expect(findElement(card, (props) => props.children === 'Wonder prompt')).toBeUndefined();
+
     const write = findByTestID(card, 'feed-prompt-write');
     expect(write?.props?.label).toBe('Write it');
 
@@ -314,6 +319,12 @@ describe('FeedScreen prompt card', () => {
     expect(findByTestID(card, 'feed-prompt-chip-heritage')?.props?.label).toBe('Heritage');
     expect(findByTestID(card, 'feed-prompt-chip-wonder')?.props?.selected).toBe(true);
     expect(findByTestID(card, 'feed-prompt-chip-heritage')?.props?.selected).toBe(false);
+
+    // Heavier than a filter chip, and the chosen one is a solid surface while the
+    // other keeps only its hairline (KNOT-020k-fix8).
+    expect(findByTestID(card, 'feed-prompt-chip-wonder')?.props?.textScale).toBe('button');
+    expect(findByTestID(card, 'feed-prompt-chip-wonder')?.props?.variant).toBe('default');
+    expect(findByTestID(card, 'feed-prompt-chip-heritage')?.props?.variant).toBe('outline');
   });
 
   // Both the button and the question open the composer: the button is the labelled
@@ -376,6 +387,34 @@ describe('FeedScreen header', () => {
     // The avatar is the tappable route to the signed-in person's profile
     // (KNOT-020j): the bell it replaced has moved to the tab bar.
     expect(typeof avatar?.props?.onPress).toBe('function');
+  });
+
+  // Create moved from the composer row into the header's action pair
+  // (KNOT-020k-fix8), so writing is reachable from anywhere in the feed.
+  it('draws the create control in the header, beside search', () => {
+    const header = findElementByType(renderScreen(), Header);
+    const create = findElement(
+      header?.props?.right,
+      (props) => props.accessibilityLabel === 'Create a story',
+    );
+
+    expect(create).toBeDefined();
+    expect(typeof create?.props?.onPress).toBe('function');
+    // A full 44pt target, like the search control it sits beside.
+    expect(create?.props?.style).toMatchObject({ height: 44, width: 44 });
+  });
+
+  it('opens the composer from the header create control', () => {
+    const onCreateStory = jest.fn();
+    const header = findElementByType(FeedScreen({ ...SCREEN_PROPS, onCreateStory }), Header);
+    const create = findElement(
+      header?.props?.right,
+      (props) => props.accessibilityLabel === 'Create a story',
+    );
+
+    (create?.props?.onPress as () => void)();
+
+    expect(onCreateStory).toHaveBeenCalledTimes(1);
   });
 });
 

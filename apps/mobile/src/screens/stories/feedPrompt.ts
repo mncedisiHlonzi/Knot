@@ -125,11 +125,13 @@ export function promptIndexForPillar(index: number, pillar: Pillar): number {
 /**
  * The word the card's overline shows for a pillar.
  *
- * It is written in sentence case because `typeScale.overline` carries the
- * uppercasing and the letter-spacing, so the copy stays readable in the source.
+ * It says "story", not "prompt": the prompt is the question, and the family is the
+ * kind of story it is asking for (KNOT-020k-fix8). It is written in sentence case
+ * because `typeScale.overline` carries the uppercasing and the letter-spacing, so
+ * the copy stays readable in the source.
  */
 export function promptPillarLabel(pillar: Pillar): string {
-  return pillar === 'wonder' ? 'Wonder prompt' : 'Heritage prompt';
+  return pillar === 'wonder' ? 'Wonder story' : 'Heritage story';
 }
 
 /** The word a pillar chip shows. */

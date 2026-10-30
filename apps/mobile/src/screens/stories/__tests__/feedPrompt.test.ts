@@ -80,9 +80,10 @@ describe('feedPrompt', () => {
   });
 
   it('names the pillar for the overline and the chips', () => {
-    // Sentence case: `typeScale.overline` supplies the uppercasing.
-    expect(promptPillarLabel('wonder')).toBe('Wonder prompt');
-    expect(promptPillarLabel('heritage')).toBe('Heritage prompt');
+    // Sentence case: `typeScale.overline` supplies the uppercasing. The family is
+    // the kind of story, not the prompt itself (KNOT-020k-fix8).
+    expect(promptPillarLabel('wonder')).toBe('Wonder story');
+    expect(promptPillarLabel('heritage')).toBe('Heritage story');
     expect(promptPillarName('wonder')).toBe('Wonder');
     expect(promptPillarName('heritage')).toBe('Heritage');
   });

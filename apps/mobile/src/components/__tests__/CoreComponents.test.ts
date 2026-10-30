@@ -8,6 +8,7 @@ import TabBar, { type TabName } from '../TabBar';
 import { BellIcon, ChatIcon, HomeIcon, MapIcon } from '../TabIcons';
 import { fontWeights } from '../../theme';
 import { colors } from '../../theme';
+import { typeScale } from '../../theme';
 import {
   attributionParts,
   attributionSegments,
@@ -146,6 +147,24 @@ describe('Chip', () => {
     expect(Chip({ label: 'Wonder', onPress, onRemove })).toBeTruthy();
     expect(onPress).not.toHaveBeenCalled();
     expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  // KNOT-020k-fix8: a chip that is a choice rather than a filter can ask for a
+  // heavier label step by name. The default stays exactly what it was.
+  it('draws the label at the requested type step, caption by default', () => {
+    const labelStyle = (props: { textScale?: 'caption' | 'label' | 'button' }): unknown => {
+      const chip = Chip({ label: 'Wonder', ...props }) as unknown as {
+        props: {
+          children: { props: { children: readonly { props: { style: readonly unknown[] } }[] } };
+        };
+      };
+      // The chip's content is one fragment: [leading icon, label, remove].
+      return chip.props.children.props.children[1].props.style[0];
+    };
+
+    expect(labelStyle({})).toBe(typeScale.caption);
+    expect(labelStyle({ textScale: 'label' })).toBe(typeScale.label);
+    expect(labelStyle({ textScale: 'button' })).toBe(typeScale.button);
   });
 });
 

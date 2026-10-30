@@ -16,6 +16,7 @@ import {
   Flag,
   MagnifyingGlass,
   PencilSimple,
+  Plus,
   type Icon,
 } from 'phosphor-react-native';
 
@@ -382,6 +383,20 @@ export default function FeedScreen({
           }
           right={
             <View style={styles.headerActions}>
+              {/* Create sits first in the action pair, the slot the composer row
+                  used to fill: writing is the feed's primary action, so it takes
+                  the primary ink while the search glyph beside it stays quiet
+                  (KNOT-020k-fix8). It opens the same overlay the prompt card's
+                  "Write it" does. */}
+              <Pressable
+                style={styles.iconButton}
+                onPress={onCreateStory}
+                accessibilityRole="button"
+                accessibilityLabel="Create a story"
+                testID="feed-create"
+              >
+                <Plus color={colors.text.primary} size={ICON_SIZE} weight="bold" />
+              </Pressable>
               {/* Search stays a glyph control beside the avatar, the pair the
                   header carries now that the bell has moved to the tab bar
                   (KNOT-020j). */}
@@ -700,15 +715,24 @@ function PromptCard({
           testID="feed-prompt-write"
         />
         <View style={styles.promptChips}>
-          {PROMPT_PILLARS.map((pillar) => (
-            <Chip
-              key={pillar}
-              label={promptPillarName(pillar)}
-              selected={pillar === prompt.pillar}
-              onPress={() => onSelectPillar(pillar)}
-              testID={`feed-prompt-chip-${pillar}`}
-            />
-          ))}
+          {PROMPT_PILLARS.map((pillar) => {
+            const chosen = pillar === prompt.pillar;
+
+            return (
+              <Chip
+                key={pillar}
+                label={promptPillarName(pillar)}
+                // The two pillars are a choice, not a filter, so they read at the
+                // button step and the chosen one is a solid surface rather than
+                // merely tinted (KNOT-020k-fix8).
+                textScale="button"
+                selected={chosen}
+                variant={chosen ? 'default' : 'outline'}
+                onPress={() => onSelectPillar(pillar)}
+                testID={`feed-prompt-chip-${pillar}`}
+              />
+            );
+          })}
         </View>
       </View>
     </View>

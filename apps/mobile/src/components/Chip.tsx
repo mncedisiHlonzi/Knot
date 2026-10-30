@@ -17,6 +17,15 @@ type ChipProps = {
   readonly onRemove?: () => void;
   /** `default` is a sunken fill; `outline` is a transparent fill with a hairline. */
   readonly variant?: 'default' | 'outline';
+  /**
+   * The label's type step. Defaults to `caption`, the chip's usual size.
+   *
+   * A chip that is a primary choice rather than a filter reads one or two steps
+   * heavier: the feed's prompt card asks for `button` so its two pillars are
+   * legible beside a full-size action (KNOT-020k-fix8). It is a step name, not a
+   * style object, so a caller cannot fork the chip's typography.
+   */
+  readonly textScale?: 'caption' | 'label' | 'button';
   /** An optional leading icon. */
   readonly icon?: React.ReactNode;
   /** Test identifier. */
@@ -45,6 +54,7 @@ export default function Chip({
   onPress,
   onRemove,
   variant = 'default',
+  textScale = 'caption',
   icon,
   testID,
 }: ChipProps): React.ReactElement {
@@ -53,6 +63,12 @@ export default function Chip({
   // The same press-scale every control uses (KNOT-020k). A chip with no `onPress`
   // is not a control, so it stays still.
   const press = usePressScale(onPress !== undefined);
+  const labelType =
+    textScale === 'button'
+      ? typeScale.button
+      : textScale === 'label'
+        ? typeScale.label
+        : typeScale.caption;
   const textColor = selected
     ? colors.brand.primary
     : variant === 'outline'
@@ -95,7 +111,7 @@ export default function Chip({
           {icon}
         </Animated.View>
       ) : null}
-      <Text style={[typeScale.caption, { color: textColor }]} numberOfLines={1}>
+      <Text style={[labelType, { color: textColor }]} numberOfLines={1}>
         {label}
       </Text>
       {onRemove !== undefined ? (
