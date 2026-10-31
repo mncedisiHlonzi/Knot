@@ -149,7 +149,12 @@ type Overlay =
       readonly pillarCounts: Readonly<Record<string, number>>;
     }
   | { readonly name: 'inquiry'; readonly inquiryId: string }
-  | { readonly name: 'askInquiry' }
+  /**
+   * The ask form, optionally opened with the place and-or the starter phrase the
+   * Inquiries hero already carries, so the composer continues the thought instead
+   * of starting from nothing (KNOT-020k-fix9).
+   */
+  | { readonly name: 'askInquiry'; readonly place?: string; readonly title?: string }
   | { readonly name: 'search' }
   | { readonly name: 'blockedUsers' }
   | { readonly name: 'settings' }
@@ -619,7 +624,17 @@ function ThemedApp(): React.ReactElement {
             onOpenInquiry={(inquiryId) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'inquiry', inquiryId }))
             }
-            onAsk={() => setOverlays((stack) => pushOverlay(stack, { name: 'askInquiry' }))}
+            // The hero's "Ask" carries the place that was typed and a starter chip
+            // carries its opening words into the composer (KNOT-020k-fix9).
+            onAsk={(seed) =>
+              setOverlays((stack) =>
+                pushOverlay(stack, {
+                  name: 'askInquiry',
+                  place: seed?.place,
+                  title: seed?.title,
+                }),
+              )
+            }
             onOpenUserProfile={openUserProfile}
           />
         );
@@ -907,6 +922,8 @@ function ThemedApp(): React.ReactElement {
           <AskInquiryScreen
             token={current.accessToken}
             defaultLanguage={preferredLanguage(current.user)}
+            initialPlace={overlay.place}
+            initialTitle={overlay.title}
             onAsked={(inquiryId) =>
               setOverlays((stack) => replaceOverlay(stack, { name: 'inquiry', inquiryId }))
             }

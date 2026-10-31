@@ -1,8 +1,11 @@
+import { Plus } from 'phosphor-react-native';
+
 import type { FeedItem } from '../../../api/stories';
 import Avatar from '../../../components/Avatar';
 import ConfirmSheet from '../../../components/ConfirmSheet';
 import FeedEntry from '../../../components/FeedEntry';
 import Header from '../../../components/Header';
+import Logomark from '../../../components/Logomark';
 import { colors } from '../../../theme';
 import FeedScreen from '../FeedScreen';
 import { PROMPTS, nextPromptIndex, promptAt, promptIndexForPillar } from '../feedPrompt';
@@ -415,6 +418,27 @@ describe('FeedScreen header', () => {
     (create?.props?.onPress as () => void)();
 
     expect(onCreateStory).toHaveBeenCalledTimes(1);
+  });
+
+  // The create glyph is quiet now: it carries the same tertiary ink as the search
+  // glyph beside it, so the two read as one family instead of one shouting.
+  it('draws the create glyph in the quiet ink', () => {
+    const header = findElementByType(renderScreen(), Header);
+    const glyph = findElementByType(header?.props?.right, Plus);
+
+    expect(glyph).toBeDefined();
+    expect(glyph?.props?.color).toBe(colors.text.tertiary);
+    expect(glyph?.props?.weight).toBe('bold');
+  });
+
+  // The mark is the monochrome cut in the primary ink: pure black on the light
+  // canvas, pure white on the dark one (KNOT-020k-fix9).
+  it('draws the logomark in a single ink that follows the theme', () => {
+    const header = findElementByType(renderScreen(), Header);
+    const mark = findInProps(header?.props?.left, Logomark);
+
+    expect(mark).toBeDefined();
+    expect(mark?.props?.color).toBe(colors.text.primary);
   });
 });
 

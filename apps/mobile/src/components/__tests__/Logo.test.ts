@@ -21,6 +21,21 @@ describe('Logomark', () => {
       expect(Logomark({ variant })).toBeTruthy();
     }
   });
+
+  // A `color` draws the single-ink cut: the mark takes the ink it is handed, so the
+  // Feed header can ask for pure black in light mode and pure white in dark mode
+  // from one theme role (KNOT-020k-fix9).
+  it('tints the whole mark when given one ink', () => {
+    const element = Logomark({ size: 40, color: '#000000' });
+
+    expect(element.props.color).toBe('#000000');
+    expect(element.props.width).toBe(40);
+    expect(element.props.height).toBe(40);
+  });
+
+  it('leaves the gradient mark untinted when given no ink', () => {
+    expect(Logomark({}).props.color).toBeUndefined();
+  });
 });
 
 describe('Wordmark', () => {

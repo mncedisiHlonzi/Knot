@@ -2371,6 +2371,28 @@ row and then tells the place's Rooted users, logging and swallowing any failure,
 `CreateAnswer` commits the answer and its `answer_count` increment in one transaction before
 notifying the asker (KNOT-ADR-038).
 
+### The Inquiries hero (KNOT-020k-fix9)
+
+`InquiryListScreen` opens on a hero rather than on its title: the `h1` invitation
+("What are you curious about?"), a one-sentence explanation, a `Which place?`
+underline field with a pin and a primary **Ask** beside it, and a horizontally
+scrolling row of starter chips ("Why do people…", "What is the name of…", "Who
+taught you…"). It is the list's `ListHeaderComponent`, so the questions take the
+screen as soon as the reader scrolls.
+
+Two mechanical points:
+
+- **One field, two explicit actions.** `Ask` opens the composer seeded with the typed
+  place; a starter chip opens it seeded with the chip's opening words (plus the place,
+  if one is typed). The same field still narrows the list, but only through a
+  `Show questions about …` chip that appears once there is something to apply — the
+  feed endpoint's exact-place filter is unchanged.
+- **The seed travels as overlay payload.** `App.tsx`'s `askInquiry` overlay carries
+  `place?`/`title?`, and `AskInquiryScreen` accepts them as optional
+  `initialPlace`/`initialTitle`. A seeded place is TYPED TEXT, not a resolved
+  coordinate: `selectedPlace` stays null, so the picker still owns the structured
+  pair that the API stores.
+
 ### Migration `0014`: inquiries, and two widened CHECKs
 
 `migrations/0014_inquiries.{up,down}.sql` adds `inquiries` and `inquiry_answers`, three indexes

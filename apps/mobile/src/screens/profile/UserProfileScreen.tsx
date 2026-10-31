@@ -527,11 +527,16 @@ export default function UserProfileScreen({
                   </View>
                 ) : null}
 
-                <Text style={[typeScale.caption, styles.joined]}>
+                {/* The two metadata lines read as FACT rather than as a whisper:
+                    `label` is 13/16 bold where `caption` was 12/16 at 600, and the
+                    ink is the secondary rather than the tertiary one
+                    (KNOT-020k-fix9). The founder reads the old pair as too light
+                    under the name. */}
+                <Text style={[typeScale.label, styles.joined]}>
                   {`Joined ${formatRelativeTime(profile.joined_at)}`}
                 </Text>
 
-                <Text style={[typeScale.caption, tabularNums, styles.stats]}>
+                <Text style={[typeScale.label, tabularNums, styles.stats]}>
                   {statsLine(profileStats(activities))}
                 </Text>
 
@@ -862,8 +867,11 @@ const createStyles = (colors: ThemeColors) =>
       justifyContent: 'center',
       width: 44,
     },
+    // "Joined …": the secondary ink, because a join date is a fact about the
+    // person rather than a hint (KNOT-020k-fix9). The type step comes from
+    // `typeScale.label` at the call site.
     joined: {
-      color: colors.text.tertiary,
+      color: colors.text.secondary,
       marginTop: spacing.md,
     },
     name: {

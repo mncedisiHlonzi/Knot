@@ -88,11 +88,22 @@ const BOUNCE_START = 0.9;
 /**
  * The smallest a label may shrink before it is truncated.
  *
- * "Notifications" is the longest name and the one that decides this: at four
- * equal columns the caption fits on most phones, and where it does not the label
- * gives up a fifth of its size rather than clipping (KNOT-020j).
+ * "Notifications" is the longest name, but at 10pt it fits its quarter of the bar
+ * on every phone the app targets, so this only guards an unusually long
+ * accessibility-size override (KNOT-020j, KNOT-020k-fix9).
  */
 const LABEL_MIN_SCALE = 0.8;
+
+/**
+ * The drawn label's size, in points.
+ *
+ * One step below the `caption` composite's 12 (KNOT-020k-fix9): the founder reads
+ * the names under the glyphs as slightly too large next to the 24pt artwork, and
+ * a tab label is a signpost rather than text to read. The `caption` composite still
+ * supplies the family, weight and line box, so this overrides the SIZE only and
+ * the label keeps the design system's typography — it is not a second type style.
+ */
+const LABEL_FONT_SIZE = 10;
 
 /**
  * One tab's glyph, with the selection bounce.
@@ -256,11 +267,13 @@ const createStyles = (colors: ThemeColors) =>
       justifyContent: 'center',
       position: 'relative',
     },
-    // The drawn name. It sits directly under the glyph, one 4pt step below it, in
-    // the caption composite — the smallest of the app's type steps, which is what
-    // a tab label should be — and takes the tab's ink with it.
+    // The drawn name. It sits directly under the glyph, one 4pt step below it, and
+    // is drawn at 10pt (`LABEL_FONT_SIZE`) rather than the caption composite's 12,
+    // so the name reads as a caption under the artwork instead of competing with
+    // it (KNOT-020k-fix9). It takes the tab's ink with it.
     label: {
       color: colors.text.tertiary,
+      fontSize: LABEL_FONT_SIZE,
       marginTop: spacing.xs,
       textAlign: 'center',
     },

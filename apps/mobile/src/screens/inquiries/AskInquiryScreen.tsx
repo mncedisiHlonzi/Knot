@@ -26,6 +26,18 @@ type AskInquiryScreenProps = {
   readonly token: string;
   /** The language to start with, from the user's preferences. */
   readonly defaultLanguage: string;
+  /**
+   * The place the person was already looking at when they chose to ask, if any.
+   * The Inquiries hero hands its place field over, so the form opens where the
+   * thought began (KNOT-020k-fix9). It seeds the typed text only: a typed place is
+   * not a resolved coordinate, so the picker still owns the structured pair.
+   */
+  readonly initialPlace?: string;
+  /**
+   * The opening words a starter chip handed over, if any — a beginning for the
+   * title field, not a finished question (KNOT-020k-fix9).
+   */
+  readonly initialTitle?: string;
   /** Called with the created inquiry's id once the server has stored it. */
   readonly onAsked: (inquiryId: string) => void;
   /** Called when the person abandons the form. */
@@ -49,15 +61,19 @@ type AskInquiryScreenProps = {
 export default function AskInquiryScreen({
   token,
   defaultLanguage,
+  initialPlace,
+  initialTitle,
   onAsked,
   onCancel,
 }: AskInquiryScreenProps): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
-  const [title, setTitle] = useState('');
+  // A seeded title is only a beginning: the field is editable and the person is
+  // expected to finish the sentence (KNOT-020k-fix9).
+  const [title, setTitle] = useState(initialTitle ?? '');
   const [body, setBody] = useState('');
   const [language, setLanguage] = useState(defaultLanguage);
-  const [locationText, setLocationText] = useState('');
+  const [locationText, setLocationText] = useState(initialPlace ?? '');
   const [selectedPlace, setSelectedPlace] = useState<PickedPlace | null>(null);
 
   const [submitting, setSubmitting] = useState(false);

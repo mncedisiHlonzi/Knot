@@ -4,10 +4,12 @@ import {
   FlatList,
   Pressable,
   RefreshControl,
+  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { MapPin } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { INQUIRY_PAGE_SIZE, Inquiry, inquiriesApi } from '../../api/inquiries';
@@ -17,7 +19,14 @@ import Chip from '../../components/Chip';
 import EmptyState from '../../components/EmptyState';
 import Header from '../../components/Header';
 import Input from '../../components/Input';
-import { layout, spacing, typeScale, useThemedStyles, type ThemeColors } from '../../theme';
+import {
+  layout,
+  spacing,
+  typeScale,
+  useTheme,
+  useThemedStyles,
+  type ThemeColors,
+} from '../../theme';
 import { answerCountLabel } from '../../utils/inquiry';
 
 /**
@@ -38,13 +47,43 @@ function inquiryMetaLabel(inquiry: Inquiry): string {
   return language === '' ? count : `${count} · ${language}`;
 }
 
+/**
+ * What the person already has in mind when they leave this screen for the ask
+ * form: the place they typed, the starter phrase they tapped, or both. Nothing is
+ * sent from here — the composer opens seeded and editable (KNOT-020k-fix9).
+ */
+export type InquiryDraftSeed = {
+  /** The place the question is about. */
+  readonly place?: string;
+  /** The opening words to put in the question's title field. */
+  readonly title?: string;
+};
+
+/** The hero's headline: the screen's reason to exist, in the largest type. */
+const HERO_HEADLINE = 'What are you curious about?';
+
+/** The hero's one-sentence explanation of what an inquiry is. */
+const HERO_SUBTITLE = 'Ask about a place, a tradition or a word. People rooted there will answer.';
+
+/**
+ * The starter phrases drawn as chips under the hero.
+ *
+ * They are openings, not questions: a tap puts the phrase in the composer's title
+ * field and the person finishes the sentence — which is the same thing a friend
+ * does when they hand you a beginning (KNOT-020k-fix9).
+ */
+const STARTERS = ['Why do people…', 'What is the name of…', 'Who taught you…'] as const;
+
 type InquiryListScreenProps = {
   /** The signed-in user's access token, so a page can carry their own reaction highlights. */
   readonly token: string;
   /** Called when a question is tapped. */
   readonly onOpenInquiry: (inquiryId: string) => void;
-  /** Called when the person wants to ask a question. */
-  readonly onAsk: () => void;
+  /**
+   * Called when the person wants to ask a question, optionally carrying the place
+   * they typed and-or the starter phrase they tapped into the composer.
+   */
+  readonly onAsk: (seed?: InquiryDraftSeed) => void;
   /** Called when a question's author is tapped. */
   readonly onOpenUserProfile: (userId: string) => void;
 };
@@ -63,7 +102,9 @@ type InquiryListScreenProps = {
  *
  * An optional place filter narrows the page to one place. It is an exact match on
  * the spelling the asker gave, so the field is a filter to type a place into, not
- * a search to browse.
+ * a search to browse. The same field is the hero's "Which place?" — one place, two
+ * explicit actions: "Ask" starts a question about it, "Show questions about …"
+ * narrows the list to it (KNOT-020k-fix9).
  */
 export default function InquiryListScreen({
   token,
@@ -71,6 +112,7 @@ export default function InquiryListScreen({
   onAsk,
   onOpenUserProfile,
 }: InquiryListScreenProps): React.ReactElement {
+  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const [inquiries, setInquiries] = useState<readonly Inquiry[]>([]);
   const [nextCursor, setNextCursor] = useState('');
@@ -146,23 +188,37 @@ export default function InquiryListScreen({
   // rather than fired on every keystroke.
   const filterPending = draftTrimmed !== '' && draftTrimmed !== place;
 
+  /** Opens the ask form, carrying the place already typed into it. */
+  const askAboutPlace = useCallback((): void => {
+    onAsk(draftTrimmed === '' ? undefined : { place: draftTrimmed });
+  }, [draftTrimmed, onAsk]);
+
+  /**
+   * Opens the ask form from a starter phrase.
+   *
+   * A starter is an opening, not a question, so it lands in the composer's title
+   * field where the person can finish it. The place typed above travels with it,
+   * because a starter is no more specific than the sentence it begins.
+   */
+  const startFrom = useCallback(
+    (starter: string): void => {
+      onAsk({
+        title: starter,
+        ...(draftTrimmed === '' ? {} : { place: draftTrimmed }),
+      });
+    },
+    [draftTrimmed, onAsk],
+  );
+
   return (
     <View style={styles.screen}>
       <Header title="Inquiries" />
-
-      {/* The screen's primary action, on its own line under the header rather
-          than as a text link in the header's corner. It is a full-width primary
-          `Button`, so asking a question is the loudest thing on the screen — the
-          one thing a reader came here to do (KNOT-020g-fix13). The header keeps
-          only the centred title, which is where the reference puts it. */}
-      <View style={styles.askBar}>
-        <Button variant="primary" fullWidth label="Ask a question" onPress={onAsk} />
-      </View>
 
       <FlatList
         data={inquiries}
         keyExtractor={(inquiry) => inquiry.id}
         contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -172,44 +228,75 @@ export default function InquiryListScreen({
           />
         }
         ListHeaderComponent={
-          <View>
-            <Text style={[typeScale.bodyS, styles.subtitle]}>
-              Questions people have about places, answered by the people who know them.
-            </Text>
+          <View style={styles.hero}>
+            {/* The screen opens with the QUESTION rather than with its title: the
+                tab bar already says where you are, so the first thing a reader
+                meets is the invitation to ask (KNOT-020k-fix9). */}
+            <Text style={[typeScale.h1, styles.heroHeadline]}>{HERO_HEADLINE}</Text>
+            <Text style={[typeScale.body, styles.heroSubtitle]}>{HERO_SUBTITLE}</Text>
 
-            <View style={styles.filter}>
-              <Input
-                label="Place"
-                value={draftPlace}
-                onChangeText={setDraftPlace}
-                autoCapitalize="words"
-                returnKeyType="search"
-                accessibilityLabel="Filter the list by place"
-                placeholder="Filter by place, e.g. Manguzi"
-              />
-              {filterPending || place !== '' ? (
-                <View style={styles.filterChips}>
-                  {filterPending ? (
-                    <Chip
-                      label="Apply filter"
-                      variant="outline"
-                      selected
-                      onPress={() => setPlace(draftTrimmed)}
-                    />
-                  ) : null}
-                  {place !== '' ? (
-                    <Chip
-                      label={`Clear the ${place} filter`}
-                      variant="outline"
-                      onPress={() => {
-                        setDraftPlace('');
-                        setPlace('');
-                      }}
-                    />
-                  ) : null}
-                </View>
-              ) : null}
+            {/* One field and one action: say which place, then ask. The field
+                keeps the app's underline treatment with a pin at its leading edge
+                so it reads as a place rather than as a search box. */}
+            <View style={styles.askRow}>
+              <View style={styles.askField}>
+                <Input
+                  value={draftPlace}
+                  onChangeText={setDraftPlace}
+                  autoCapitalize="words"
+                  returnKeyType="search"
+                  accessibilityLabel="Which place is your question about?"
+                  placeholder="Which place?"
+                  leadingIcon={<MapPin color={colors.text.tertiary} size={20} />}
+                />
+              </View>
+              <Button variant="primary" label="Ask" onPress={askAboutPlace} />
             </View>
+
+            {/* The starters: three ways in, when the person knows the shape of the
+                question but not how to begin it. They scroll sideways rather than
+                wrap, so the hero keeps a single line of rhythm at any width. */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.starters}
+              contentContainerStyle={styles.startersContent}
+            >
+              {STARTERS.map((starter) => (
+                <Chip
+                  key={starter}
+                  label={starter}
+                  variant="outline"
+                  onPress={() => startFrom(starter)}
+                />
+              ))}
+            </ScrollView>
+
+            {/* Narrowing the list is a second, quieter action on the same field.
+                It only appears once there is something to narrow by, so the hero
+                at rest is the headline, the field and the starters. */}
+            {filterPending || place !== '' ? (
+              <View style={styles.filterChips}>
+                {filterPending ? (
+                  <Chip
+                    label={`Show questions about ${draftTrimmed}`}
+                    variant="outline"
+                    selected
+                    onPress={() => setPlace(draftTrimmed)}
+                  />
+                ) : null}
+                {place !== '' ? (
+                  <Chip
+                    label={`Clear the ${place} filter`}
+                    variant="outline"
+                    onPress={() => {
+                      setDraftPlace('');
+                      setPlace('');
+                    }}
+                  />
+                ) : null}
+              </View>
+            ) : null}
 
             {error !== undefined ? (
               <Text style={[typeScale.bodyS, styles.error]}>{error}</Text>
@@ -280,12 +367,17 @@ export default function InquiryListScreen({
 
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
-    // The Ask action's band: the screen's gutter, with the list's own spacing below
-    // it, so the button reads as chrome above the content rather than as the first
-    // list row.
-    askBar: {
-      paddingBottom: spacing.md,
-      paddingHorizontal: layout.screenPaddingFeed,
+    // The field and its button: one line. The row is bottom-aligned so the button's
+    // 48pt box sits on the field's underline rather than floating above it
+    // (KNOT-020k-fix9).
+    askField: {
+      flex: 1,
+    },
+    askRow: {
+      alignItems: 'flex-end',
+      flexDirection: 'row',
+      gap: spacing.sm,
+      marginTop: spacing.lg,
     },
     content: {
       paddingBottom: spacing.xxxl,
@@ -295,17 +387,28 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.state.danger,
       marginTop: spacing.md,
     },
-    filter: {
-      gap: spacing.sm,
-      marginTop: spacing.md,
-    },
     filterChips: {
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: spacing.sm,
+      marginTop: spacing.sm,
     },
     footer: {
       paddingVertical: spacing.lg,
+    },
+    // The hero: the invitation to ask, then the field, the action and the starters.
+    // It is the list's header rather than pinned chrome, so the questions take the
+    // screen as soon as the person scrolls (KNOT-020k-fix9).
+    hero: {
+      paddingBottom: spacing.md,
+      paddingTop: spacing.sm,
+    },
+    heroHeadline: {
+      color: colors.text.primary,
+    },
+    heroSubtitle: {
+      color: colors.text.secondary,
+      marginTop: spacing.sm,
     },
     // One question: the overline, the title, up to two lines of the body, then the
     // asker's attribution and the answer tally, closed by the Feed's 4pt separator
@@ -348,8 +451,15 @@ const createStyles = (colors: ThemeColors) =>
     spinner: {
       marginVertical: spacing.lg,
     },
-    subtitle: {
-      color: colors.text.secondary,
-      marginTop: spacing.sm,
+    // The starter chips scroll sideways inside the screen gutter: the scroller pulls
+    // back to the canvas edge and the chips re-apply the gutter, so the row bleeds
+    // naturally instead of stopping short (KNOT-020k-fix9).
+    starters: {
+      marginHorizontal: -layout.screenPaddingFeed,
+      marginTop: spacing.md,
+    },
+    startersContent: {
+      gap: spacing.sm,
+      paddingHorizontal: layout.screenPaddingFeed,
     },
   });

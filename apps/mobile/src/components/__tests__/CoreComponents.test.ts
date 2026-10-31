@@ -473,6 +473,13 @@ describe('TabBar', () => {
     expect(labelStyle(1)[2]).toBeNull();
   });
 
+  // The names were a step too large beside the 24pt artwork (KNOT-020k-fix9), so the
+  // label overrides the caption composite's size — and only its size: the family and
+  // weight still come from `typeScale.caption`.
+  it('draws the label a step below the caption size', () => {
+    expect(labelStyle(0)[1]).toEqual(expect.objectContaining({ fontSize: 10 }));
+  });
+
   // The bar draws the founder's own SVG files through one component per
   // destination, in bar order, so no icon library is involved (KNOT-020k-fix5).
   it('draws a custom SVG glyph for every destination', () => {
