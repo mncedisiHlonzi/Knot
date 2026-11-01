@@ -600,10 +600,11 @@ and the pillar it belongs to.
       "size_bytes": 204800,
       "display_order": 0,
       "created_at": "2026-10-09T18:26:37.134182+02:00",
-      "url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content",
-      "thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb&format=avif",
-      "thumbnail_url_fallback": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb&format=webp",
-      "medium_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=medium",
+      "status": "ready",
+      "url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=display",
+      "thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb",
+      "thumbnail_url_fallback": null,
+      "medium_url": null,
       "poster_url": null
     }
   ],
@@ -1030,7 +1031,13 @@ message `a story may have at most 10 media items`, and nothing is stored. The ca
 enforced inside the insert, under a lock on the story row, so two uploads arriving at once
 cannot both take the last slot (KNOT-ADR-054). Deleting an item frees a slot immediately.
 
-**201** — `{ "media": { ... } }`, the stored item.
+**202** — `{ "media": { ... } }`, the row that was created, with `"status": "processing"`.
+
+The upload is **accepted, not finished**: the bytes are spooled to disk, the row is written,
+and a background worker (at most five at once) produces the derivatives and flips the row to
+`ready` (or `failed`). That is what keeps a 100 MiB video from holding the request open
+(KNOT-037-fix7). Poll the item — `GET /stories/{id}/media` carries `status` — until it is
+`ready`; a content address answers **202** while it is `processing`.
 
 **Errors:** `400 invalid_request` (not multipart, or no `file` field), `400 validation_error`
 (a bad `source`, or the story already holds 10 items), `401 unauthorized`, `403 forbidden`
@@ -1048,10 +1055,11 @@ Returns **200** with the story's media, in display order:
       "id": "...",
       "media_type": "image",
       "source": "camera",
-      "url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content",
-      "thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb&format=avif",
-      "thumbnail_url_fallback": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb&format=webp",
-      "medium_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=medium",
+      "status": "ready",
+      "url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=display",
+      "thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb",
+      "thumbnail_url_fallback": null,
+      "medium_url": null,
       "poster_url": null
     }
   ]
@@ -1060,18 +1068,21 @@ Returns **200** with the story's media, in display order:
 
 `media` is always an array, never `null`. A story that does not exist is `404 not_found`.
 
-**`url` is always the original upload**, because that is what a full-screen viewer reads.
-`thumbnail_url`, `medium_url`, and `poster_url` address the generated renditions
-(KNOT-037) and are `null` when this item has none — an image upload whose bytes could not
-be decoded, a video the system has no FFmpeg for, or a row written before migration
-`0024`. A client that wants a rendition must fall back to `url` when they are null.
+**`status`** is `processing`, `ready`, or `failed`. Only a `ready` item has bytes to serve:
+while it is `processing` every content address answers **202** with `Retry-After`, and a
+`failed` item answers **404** because nothing is coming (KNOT-037-fix7).
 
-**The thumbnail exists in two formats** (KNOT-037-fix6). `thumbnail_url` is the **AVIF**
-file: the smallest bytes at the same quality. `thumbnail_url_fallback` is the same picture
-as **WebP**, for a device without an AVIF decoder, and is `null` when the item has no WebP
-file. Both addresses are safe to load even when the server has to substitute codec: a
-missing format is answered with the other one, and a row written before the dual-format
-ladder is answered with its JPEG thumbnail. Thumbnails are at most **800px** wide.
+**`url` is the full rendition**, not an upload: since KNOT-037-fix7 the pipeline stores
+**derivatives only**. For an image it is the 2048px **AVIF display** (`?variant=display`); for
+a video it is the 1080p **H.264 stream** (`?variant=stream`), whose index is at the front of
+the file so playback starts immediately. A row written before that change answers with its
+original upload instead, which is why old media keeps working.
+
+**`thumbnail_url` is the feed card's image** — a 400px **WebP** (`?variant=thumb`) — and is
+`null` for a video: a video autoplays in the feed, so no cover is generated at all
+(KNOT-037-fix7). `thumbnail_url_fallback`, `medium_url`, and `poster_url` only exist on a row
+written by an earlier pipeline (KNOT-037-fix6 and before); a new item returns `null` for all
+three.
 
 **Errors:** `404 not_found`, `500 internal_error`.
 
@@ -1080,28 +1091,32 @@ ladder is answered with its JPEG thumbnail. Thumbnails are at most **800px** wid
 Streams the bytes with the stored `Content-Type`, `Cache-Control: public, max-age=3600`,
 `Accept-Ranges: bytes`, and `X-Content-Type-Options: nosniff`.
 
-**The `variant` parameter.** An optional `variant` query value asks for a generated
-rendition instead of the original upload (KNOT-037):
+**The `variant` parameter.** An optional `variant` query value asks for a specific
+rendition (KNOT-037, KNOT-037-fix7):
 
 | `variant` | Serves | Content type |
 | --- | --- | --- |
-| absent | The original upload | The stored type (`image/jpeg`, `image/png`, `image/webp`, `video/mp4`, `video/quicktime`) |
-| `thumb` | The feed thumbnail, max 800px wide | `image/avif` (default), `image/webp` with `format=webp`, or `image/jpeg` for a row written before the dual-format ladder |
-| `medium` | The story-detail rendition, max 1200px wide | `image/jpeg` |
-| `poster` | A video's poster frame, max 400px wide | `image/jpeg` |
+| absent | The item's primary object (the display AVIF or the stream MP4) | The type its key names |
+| `display` | An image's 2048px AVIF display | `image/avif` |
+| `stream` | A video's 1080p H.264 stream, index first (`+faststart`) | `video/mp4` |
+| `thumb` | The feed thumbnail, max 400px wide | `image/webp` |
+| `medium` | A legacy story-detail rendition, max 1200px wide (older rows only) | `image/jpeg` |
+| `poster` | A legacy video poster frame (older rows only) | `image/jpeg` |
 
-**The `format` parameter** selects a thumbnail's codec (KNOT-037-fix6): `avif` (the
-default when the parameter is absent) or `webp`. It is only meaningful with
-`variant=thumb`; combining it with any other variant, or sending an unrecognised value,
-is `400 invalid_request` rather than a silent substitution. The response's `Content-Type`
-is always the type of the file that was actually served, so a WebP request that fell back
-to the AVIF sibling answers `image/avif`. A missing format degrades in this order:
-requested codec, the other codec, a legacy JPEG thumbnail, then the original.
+`display` and `stream` are the row's **primary object**, so they honour `Range` like any
+file. `thumb`, `medium`, and `poster` are small and are sent whole.
 
-A variant the item does not have — `poster` on an image, or any variant on a row whose
-pipeline did not run — is answered with **the original**, so a missing rendition never
-hides the media. Renditions are small and are sent whole; `Range` applies to the original.
-An unrecognised `variant` is `400 invalid_request` rather than a silent full-size response.
+**A `processing` item answers 202.** While the background worker has not finished, every
+variant answers **202 Accepted** with `Retry-After` and no body — the bytes are coming, so a
+404 would be a lie. A `failed` item answers **404**, because nothing is coming.
+
+**The `format` parameter** is still accepted with `variant=thumb` (an older client sends it)
+but no longer selects a file: the thumbnail is the WebP. An unknown value, or `format` with
+any other variant, is `400 invalid_request` rather than a silent substitution.
+
+A variant the item does not have is answered with **the primary object**, so a missing
+rendition never hides the media. An unrecognised `variant` is `400 invalid_request` rather
+than a silent full-size response.
 
 **Range support.** A valid single-range `Range: bytes=start-end` header (also `bytes=start-`
 and `bytes=-suffix`) is answered **206 Partial Content** with a `Content-Range` header and
@@ -1111,7 +1126,8 @@ answered **200** (KNOT-ADR-032). Multi-range requests are treated as unusable.
 A media id that does not exist — or a row whose object is missing — returns `404 not_found`.
 
 **Errors:** `400 invalid_request` (an unknown `variant`, an unknown `format`, or `format`
-without `variant=thumb`), `404 not_found`, `500 internal_error`.
+without `variant=thumb`), `404 not_found` (missing, or processing failed), `500
+internal_error`, and **202** while processing.
 
 ### DELETE /stories/{id}/media/{mid}
 

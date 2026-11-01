@@ -166,33 +166,43 @@ Deleting a media row does **not** remove the object from the bucket in the conso
 until the `DELETE` endpoint is called; a row and its object are removed together by
 `DELETE /stories/{id}/media/{mid}`, which also removes that item's renditions.
 
-#### Media renditions (KNOT-037, dual-format thumbnails in KNOT-037-fix6)
+#### Media renditions (KNOT-037; derivatives-only async pipeline since KNOT-037-fix7)
 
-Every image upload is also rendered as a feed thumbnail in **two formats** — AVIF and WebP,
-both max 800px wide at quality 80 — plus a story-detail rendition (JPEG, max 1200px wide,
-quality 85); every video upload gets a poster frame (JPEG, max 400px wide) taken a fifth of
-the way in. The objects are named `<uuid>_thumb.avif`, `<uuid>_thumb.webp`,
-`<uuid>_medium.jpg` and `<uuid>_poster.jpg` inside the same `story-media/<story id>/`
-folder, and the row records the thumbnail, medium and poster keys in `thumbnail_key`,
-`medium_key` and `poster_key` (migration `0024`). `thumbnail_key` names the AVIF file; the
-WebP key is derived from it, so one column covers both.
+**The bucket holds derivatives and nothing else.** An upload is never stored: an image
+becomes a 2048px **AVIF display** (`<uuid>_display.avif`, quality 80) and a 400px **WebP
+thumbnail** (`<uuid>_thumb.webp`, quality 80); a video is transcoded to a 1080p **H.264
+stream** (`<uuid>_stream.mp4`, CRF 23, preset medium, AAC 128k, yuv420p,
+`-movflags +faststart`). No cover frame is generated for a video — it autoplays in the feed,
+so a still would be a second copy of the same content.
 
-Renditions are served by the same content endpoint with `?variant=thumb|medium|poster`,
-and a thumbnail also takes `&format=avif|webp`:
+**Processing is asynchronous.** `POST /stories/{id}/media` spools the body to a temporary
+file, writes the row with `status = 'processing'`, and answers **202** immediately. A
+background goroutine then takes one of `MaxConcurrentProcessing` (5) semaphore slots,
+produces the renditions, uploads them, records `status = 'ready'` and the served object's
+size, and deletes the temporary file. A failure marks the row `failed` and logs the reason;
+anything already uploaded is removed so half an item is never left behind. Queued jobs hold
+disk, not memory.
+
+The rows record the objects in `storage_key` (the display AVIF or the stream MP4) and
+`thumbnail_key` (the WebP, images only). `medium_key` and `poster_key` are retired and left
+NULL — rows written before this change keep theirs and are still served. Migration `0026`
+adds `status`; its default is `ready`, which is what every pre-existing row is.
+
+Renditions are served by the same content endpoint: `?variant=display|stream|thumb`
+(plus the legacy `medium|poster`):
 
 ```bash
-# The AVIF thumbnail (the default), the WebP fallback, and the medium rendition
-curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=thumb&format=avif"
-curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=thumb&format=webp"
-curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=medium"
-# A poster on an image has none, so this answers with the ORIGINAL (200, image/png)
-curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=poster"
+# The display AVIF, the stream MP4, and the WebP feed thumbnail
+curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=display"
+curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=stream"
+curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=thumb"
+# Still processing? 202 with Retry-After. Failed? 404. Ready? 200 and the bytes.
 ```
 
-A failed rendition is a `WARN` in the log and nothing else: the original is already stored
-and every reader falls back to it, so a missing decoder or a missing FFmpeg never fails an
-upload. A thumbnail request that names a format the item does not have is answered with the
-other codec (then with a legacy JPEG thumbnail), so an address a client holds keeps working.
+`display` and `stream` are the row's primary object, so `Range` applies to them and a video
+can seek; the thumbnail is sent whole. A failed job is an `ERROR` line whose `media_id`
+identifies the row, and the row stays `failed` rather than pretending the upload never
+happened.
 
 **Both thumbnail encoders are pure Go**: `github.com/chai2010/webp` (libwebp compiled in)
 and `github.com/gen2brain/avif` (libavif compiled to WASM, run by `wazero`). Nothing native

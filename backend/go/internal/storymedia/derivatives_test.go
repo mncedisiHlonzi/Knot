@@ -6,7 +6,6 @@ import (
 	"errors"
 	"image"
 	"image/color"
-	"image/jpeg"
 	"image/png"
 	"os"
 	"os/exec"
@@ -51,18 +50,6 @@ func transparentPNG(t *testing.T, size int) []byte {
 	return buffer.Bytes()
 }
 
-// decodeJPEG decodes a rendition so a test can read its pixels and dimensions.
-func decodeJPEG(t *testing.T, data []byte) image.Image {
-	t.Helper()
-
-	img, err := jpeg.Decode(bytes.NewReader(data))
-	if err != nil {
-		t.Fatalf("decoding the rendition as JPEG: %v", err)
-	}
-
-	return img
-}
-
 // decodeAVIF decodes an AVIF rendition.
 func decodeAVIF(t *testing.T, data []byte) image.Image {
 	t.Helper()
@@ -101,78 +88,53 @@ func renditionFor(t *testing.T, renditions []Rendition, variant Variant, format 
 	return Rendition{}
 }
 
-func TestImageDerivativesScaleDownAndKeepAspectRatio(t *testing.T) {
+func TestImageDerivativesProduceDisplayAndThumbnail(t *testing.T) {
 	renditions, err := ImageDerivatives(testPNG(t, 1000, 500))
 	if err != nil {
 		t.Fatalf("ImageDerivatives() error = %v, want nil", err)
 	}
-	if len(renditions) != 3 {
-		t.Fatalf("renditions = %d, want an AVIF thumbnail, a WebP thumbnail, and a medium", len(renditions))
+	if len(renditions) != 2 {
+		t.Fatalf("renditions = %d, want a display rendition and a thumbnail", len(renditions))
 	}
 
-	// The order is the ladder: AVIF first, then the WebP fallback, then the medium.
-	avifThumbnail := renditionFor(t, renditions, VariantThumb, FormatAVIF)
-	webpThumbnail := renditionFor(t, renditions, VariantThumb, FormatWebP)
-	medium := renditionFor(t, renditions, VariantMedium, FormatJPEG)
+	display := renditionFor(t, renditions, VariantDisplay, FormatAVIF)
+	thumbnail := renditionFor(t, renditions, VariantThumb, FormatWebP)
 
-	// 1000x500 scaled to an 800 max width is 800x400.
-	thumbnailCases := []struct {
-		name      string
-		rendition Rendition
-		decode    func(*testing.T, []byte) image.Image
-	}{
-		{name: "avif", rendition: avifThumbnail, decode: decodeAVIF},
-		{name: "webp", rendition: webpThumbnail, decode: decodeWebP},
+	// 1000x500 is narrower than the 2048 cap, so the display keeps its own size.
+	if bounds := decodeAVIF(t, display.Body).Bounds(); bounds.Dx() != 1000 || bounds.Dy() != 500 {
+		t.Errorf("display = %dx%d, want the source's 1000x500", bounds.Dx(), bounds.Dy())
 	}
-	for _, testCase := range thumbnailCases {
-		bounds := testCase.decode(t, testCase.rendition.Body).Bounds()
-		if bounds.Dx() != ThumbnailMaxWidth || bounds.Dy() != 400 {
-			t.Errorf("%s thumbnail = %dx%d, want %dx400", testCase.name, bounds.Dx(), bounds.Dy(), ThumbnailMaxWidth)
-		}
-		if testCase.rendition.Width != ThumbnailMaxWidth || testCase.rendition.Height != 400 {
-			t.Errorf("reported %s thumbnail size = %dx%d, want %dx400",
-				testCase.name, testCase.rendition.Width, testCase.rendition.Height, ThumbnailMaxWidth)
-		}
+	if display.Width != 1000 || display.Height != 500 {
+		t.Errorf("reported display size = %dx%d, want 1000x500", display.Width, display.Height)
 	}
 
-	// 1000 is narrower than the medium's 1200, so it is re-encoded at its own size
-	// rather than upscaled.
-	if got := decodeJPEG(t, medium.Body).Bounds(); got.Dx() != 1000 || got.Dy() != 500 {
-		t.Errorf("medium = %dx%d, want the source's 1000x500", got.Dx(), got.Dy())
+	// The thumbnail is capped at 400 wide: 1000x500 becomes 400x200.
+	if bounds := decodeWebP(t, thumbnail.Body).Bounds(); bounds.Dx() != ThumbnailMaxWidth || bounds.Dy() != 200 {
+		t.Errorf("thumbnail = %dx%d, want %dx200", bounds.Dx(), bounds.Dy(), ThumbnailMaxWidth)
 	}
 
-	// The content type and the key extension follow the format, so a file is never
+	// The suffix, extension and content type follow the variant, so a file is never
 	// stored as one codec and served as another.
-	wanted := map[Format]struct {
-		contentType string
-		extension   string
-	}{
-		FormatAVIF: {avifContentType, avifExtension},
-		FormatWebP: {webpContentType, webpExtension},
-		FormatJPEG: {jpegContentType, jpegExtension},
+	if display.Suffix != displaySuffix || display.Extension != avifExtension || display.ContentType != avifContentType {
+		t.Errorf("display = (%q, %q, %q), want (%q, %q, %q)",
+			display.Suffix, display.Extension, display.ContentType, displaySuffix, avifExtension, avifContentType)
 	}
-	for format, want := range wanted {
-		got := map[Format]Rendition{FormatAVIF: avifThumbnail, FormatWebP: webpThumbnail, FormatJPEG: medium}[format]
-		if got.ContentType != want.contentType {
-			t.Errorf("%s content type = %q, want %q", format, got.ContentType, want.contentType)
-		}
-		if got.Extension != want.extension {
-			t.Errorf("%s extension = %q, want %q", format, got.Extension, want.extension)
-		}
+	if thumbnail.Suffix != thumbnailSuffix || thumbnail.Extension != webpExtension || thumbnail.ContentType != webpContentType {
+		t.Errorf("thumbnail = (%q, %q, %q), want (%q, %q, %q)",
+			thumbnail.Suffix, thumbnail.Extension, thumbnail.ContentType, thumbnailSuffix, webpExtension, webpContentType)
+	}
+}
+
+func TestImageDerivativesCapTheDisplayAt2048(t *testing.T) {
+	renditions, err := ImageDerivatives(testPNG(t, 2200, 1100))
+	if err != nil {
+		t.Fatalf("ImageDerivatives() error = %v, want nil", err)
 	}
 
-	if avifThumbnail.Suffix != thumbnailSuffix || webpThumbnail.Suffix != thumbnailSuffix {
-		t.Errorf("thumbnail suffixes = %q, %q, want both %q",
-			avifThumbnail.Suffix, webpThumbnail.Suffix, thumbnailSuffix)
-	}
-	if medium.Suffix != mediumSuffix {
-		t.Errorf("medium suffix = %q, want %q", medium.Suffix, mediumSuffix)
-	}
-
-	// AVIF at this effort is the point of the task: it must not be the larger file.
-	if len(avifThumbnail.Body) >= len(webpThumbnail.Body) {
-		t.Errorf("avif thumbnail = %d bytes, want fewer than the webp thumbnail's %d",
-			len(avifThumbnail.Body), len(webpThumbnail.Body))
+	// 2200x1100 scaled to a 2048 max width is 2048x1024.
+	display := renditionFor(t, renditions, VariantDisplay, FormatAVIF)
+	if got := decodeAVIF(t, display.Body).Bounds(); got.Dx() != DisplayMaxWidth || got.Dy() != 1024 {
+		t.Errorf("display = %dx%d, want %dx1024", got.Dx(), got.Dy(), DisplayMaxWidth)
 	}
 }
 
@@ -186,10 +148,8 @@ func TestImageDerivativesNeverUpscale(t *testing.T) {
 		var bounds image.Rectangle
 		if rendition.Format == FormatAVIF {
 			bounds = decodeAVIF(t, rendition.Body).Bounds()
-		} else if rendition.Format == FormatWebP {
-			bounds = decodeWebP(t, rendition.Body).Bounds()
 		} else {
-			bounds = decodeJPEG(t, rendition.Body).Bounds()
+			bounds = decodeWebP(t, rendition.Body).Bounds()
 		}
 		if bounds.Dx() != 300 || bounds.Dy() != 200 {
 			t.Errorf("%s/%s = %dx%d, want the source's 300x200",
@@ -204,10 +164,11 @@ func TestImageDerivativesScaleAPortraitByWidth(t *testing.T) {
 		t.Fatalf("ImageDerivatives() error = %v, want nil", err)
 	}
 
-	// A tall image is still constrained by width, so 900x1350 becomes 800x1200.
-	thumbnail := renditionFor(t, renditions, VariantThumb, FormatAVIF)
-	if got := decodeAVIF(t, thumbnail.Body).Bounds(); got.Dx() != ThumbnailMaxWidth || got.Dy() != 1200 {
-		t.Errorf("thumbnail = %dx%d, want %dx1200", got.Dx(), got.Dy(), ThumbnailMaxWidth)
+	// A tall image is still constrained by width, so the 400px thumbnail of
+	// 900x1350 is 400x600.
+	thumbnail := renditionFor(t, renditions, VariantThumb, FormatWebP)
+	if got := decodeWebP(t, thumbnail.Body).Bounds(); got.Dx() != ThumbnailMaxWidth || got.Dy() != 600 {
+		t.Errorf("thumbnail = %dx%d, want %dx600", got.Dx(), got.Dy(), ThumbnailMaxWidth)
 	}
 }
 
@@ -217,21 +178,25 @@ func TestImageDerivativesFlattenTransparencyOntoWhite(t *testing.T) {
 		t.Fatalf("ImageDerivatives() error = %v, want nil", err)
 	}
 
-	// The AVIF thumbnail is checked because it is the file the feed loads: neither
-	// codec is asked to keep alpha, so an unflattened picture would go black.
-	r, g, b, _ := decodeAVIF(t, renditionFor(t, renditions, VariantThumb, FormatAVIF).Body).At(100, 100).RGBA()
-	// Both codecs are lossy, so near-white rather than exactly white.
-	for name, channel := range map[string]uint32{"red": r, "green": g, "blue": b} {
-		if channel>>8 < 245 {
-			t.Errorf("%s channel = %d, want near-white (255) where the source was transparent", name, channel>>8)
-		}
+	// Neither encoder is asked to keep alpha, so an unflattened picture would go
+	// black — check both files the pipeline stores.
+	cases := []struct {
+		name   string
+		body   []byte
+		decode func(*testing.T, []byte) image.Image
+	}{
+		{name: "display", body: renditionFor(t, renditions, VariantDisplay, FormatAVIF).Body, decode: decodeAVIF},
+		{name: "thumbnail", body: renditionFor(t, renditions, VariantThumb, FormatWebP).Body, decode: decodeWebP},
 	}
 
-	// The WebP fallback must agree with it.
-	r, g, b, _ = decodeWebP(t, renditionFor(t, renditions, VariantThumb, FormatWebP).Body).At(100, 100).RGBA()
-	for name, channel := range map[string]uint32{"red": r, "green": g, "blue": b} {
-		if channel>>8 < 245 {
-			t.Errorf("%s channel = %d in the webp fallback, want near-white (255)", name, channel>>8)
+	for _, testCase := range cases {
+		r, g, b, _ := testCase.decode(t, testCase.body).At(100, 100).RGBA()
+		// Both codecs are lossy, so near-white rather than exactly white.
+		for name, channel := range map[string]uint32{"red": r, "green": g, "blue": b} {
+			if channel>>8 < 245 {
+				t.Errorf("%s: %s channel = %d, want near-white (255) where the source was transparent",
+					testCase.name, name, channel>>8)
+			}
 		}
 	}
 }
@@ -242,27 +207,18 @@ func TestImageDerivativesRejectsUndecodableBytes(t *testing.T) {
 	}
 }
 
-func TestPosterOffsetIsAFifthOfTheDuration(t *testing.T) {
-	threeSeconds := 3000
-	cases := []struct {
-		name       string
-		durationMS *int
-		want       int
-	}{
-		{name: "known duration", durationMS: &threeSeconds, want: 600},
-		{name: "unknown duration", durationMS: nil, want: 0},
-		{name: "zero duration", durationMS: intPointer(0), want: 0},
-		{name: "negative duration", durationMS: intPointer(-5), want: 0},
+// decodePNG decodes a PNG, which is what the transcode test asks FFmpeg to write
+// when it pulls a frame out of the stream.
+func decodePNG(t *testing.T, data []byte) image.Image {
+	t.Helper()
+
+	img, err := png.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("decoding the PNG: %v", err)
 	}
 
-	for _, testCase := range cases {
-		if got := posterOffsetMS(testCase.durationMS); got != testCase.want {
-			t.Errorf("%s: posterOffsetMS() = %d, want %d", testCase.name, got, testCase.want)
-		}
-	}
+	return img
 }
-
-func intPointer(value int) *int { return &value }
 
 func TestParseVariant(t *testing.T) {
 	cases := []struct {
@@ -272,6 +228,8 @@ func TestParseVariant(t *testing.T) {
 	}{
 		{raw: "", want: "", wantOK: true},
 		{raw: "thumb", want: VariantThumb, wantOK: true},
+		{raw: "display", want: VariantDisplay, wantOK: true},
+		{raw: "stream", want: VariantStream, wantOK: true},
 		{raw: " medium ", want: VariantMedium, wantOK: true},
 		{raw: "poster", want: VariantPoster, wantOK: true},
 		{raw: "huge", want: "", wantOK: false},
@@ -286,58 +244,85 @@ func TestParseVariant(t *testing.T) {
 	}
 }
 
-// TestExtractPosterFrameNeedsFFmpeg pins the missing-prerequisite path. It runs on
-// machines without FFmpeg (which is the case in this checkout) and skips where
-// FFmpeg is installed, because there the error can never occur.
-func TestExtractPosterFrameNeedsFFmpeg(t *testing.T) {
-	if _, err := exec.LookPath(ffmpegBinary); err == nil {
-		t.Skip("FFmpeg is installed; the missing-prerequisite path cannot be exercised")
-	}
+// TestTranscodeToStreamNeedsFFmpeg pins the missing-prerequisite path. Emptying
+// PATH makes the lookup fail whatever the machine has installed, so the test is
+// deterministic instead of skipping itself away.
+func TestTranscodeToStreamNeedsFFmpeg(t *testing.T) {
+	t.Setenv("PATH", "")
 
-	_, err := ExtractPosterFrame(context.Background(), []byte("not a video"), 0)
-	if !errors.Is(err, ErrPosterUnavailable) {
-		t.Fatalf("ExtractPosterFrame() error = %v, want ErrPosterUnavailable", err)
+	err := TranscodeToStream(context.Background(), "in.mp4", "out.mp4")
+	if !errors.Is(err, ErrFFmpegUnavailable) {
+		t.Fatalf("TranscodeToStream() error = %v, want ErrFFmpegUnavailable", err)
 	}
 }
 
-// TestExtractPosterFrame renders a frame from a generated clip. It needs FFmpeg
-// twice — once to build the clip and once to extract the frame — so it skips
-// wherever FFmpeg is absent.
-func TestExtractPosterFrame(t *testing.T) {
+// TestTranscodeToStreamWritesAFastStartStream builds a real clip with FFmpeg,
+// transcodes it, and proves the two properties the feed depends on: the index
+// (`moov`) comes BEFORE the media data (that is what `+faststart` buys, and what
+// lets a player start on the first bytes it receives), and the width is capped at
+// StreamMaxWidth (KNOT-037-fix7).
+func TestTranscodeToStreamWritesAFastStartStream(t *testing.T) {
 	binary, err := exec.LookPath(ffmpegBinary)
 	if err != nil {
 		t.Skip("FFmpeg is not installed")
 	}
 
 	dir := t.TempDir()
-	clip := filepath.Join(dir, "clip.mp4")
+	input := filepath.Join(dir, "clip.mp4")
 	build := exec.Command(
 		binary, "-y",
 		"-f", "lavfi",
-		"-i", "testsrc=size=640x360:rate=10:duration=1",
+		// Taller than the cap in width, so the scale filter has work to do.
+		"-i", "testsrc=size=1440x2560:rate=10:duration=1",
+		"-f", "lavfi",
+		"-i", "sine=frequency=440:duration=1",
+		"-c:v", "libx264",
 		"-pix_fmt", "yuv420p",
-		clip,
+		"-c:a", "aac",
+		"-shortest",
+		input,
 	)
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building a test clip: %v: %s", err, output)
 	}
 
-	video, err := os.ReadFile(clip)
-	if err != nil {
-		t.Fatalf("reading the test clip: %v", err)
+	output := filepath.Join(dir, "stream.mp4")
+	if err := TranscodeToStream(context.Background(), input, output); err != nil {
+		t.Fatalf("TranscodeToStream() error = %v, want nil", err)
 	}
 
-	frame, err := ExtractPosterFrame(context.Background(), video, 0)
+	data, err := os.ReadFile(output)
 	if err != nil {
-		t.Fatalf("ExtractPosterFrame() error = %v, want nil", err)
+		t.Fatalf("reading the stream: %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatal("the stream is empty")
+	}
+	if got := string(data[4:8]); got != "ftyp" {
+		t.Errorf("stream starts with %q, want an MP4 ftyp box", got)
 	}
 
-	bounds := decodeJPEG(t, frame).Bounds()
-	if bounds.Dx() != PosterMaxWidth {
-		t.Errorf("poster width = %d, want %d", bounds.Dx(), PosterMaxWidth)
+	moov := bytes.Index(data, []byte("moov"))
+	mdat := bytes.Index(data, []byte("mdat"))
+	if moov < 0 || mdat < 0 {
+		t.Fatalf("stream boxes: moov=%d mdat=%d, want both present", moov, mdat)
 	}
-	// 640x360 at 400 wide is 225 high; `-2` rounds it to an even number.
-	if bounds.Dy() < 200 || bounds.Dy() > 250 {
-		t.Errorf("poster height = %d, want roughly 225", bounds.Dy())
+	if moov > mdat {
+		t.Errorf("moov at %d is after mdat at %d; the index must be at the front (+faststart)", moov, mdat)
+	}
+
+	// The width cap is checked by decoding one frame of the result.
+	frame := filepath.Join(dir, "frame.png")
+	extract := exec.Command(binary, "-y", "-i", output, "-frames:v", "1", frame)
+	if output, err := extract.CombinedOutput(); err != nil {
+		t.Fatalf("extracting a frame: %v: %s", err, output)
+	}
+	still, err := os.ReadFile(frame)
+	if err != nil {
+		t.Fatalf("reading the frame: %v", err)
+	}
+	bounds := decodePNG(t, still).Bounds()
+	if bounds.Dx() != StreamMaxWidth {
+		t.Errorf("stream width = %d, want %d", bounds.Dx(), StreamMaxWidth)
 	}
 }

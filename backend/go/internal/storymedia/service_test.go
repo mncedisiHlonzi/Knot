@@ -8,7 +8,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -42,6 +46,9 @@ type fakeStore struct {
 	// countOverride, when set, is what CountMedia reports regardless of the map, so
 	// a test can place a story at or over the cap without inserting rows.
 	countOverride *int
+
+	// statusCalls records every SetStatus call, in order (KNOT-037-fix7).
+	statusCalls []Status
 
 	gotCreate StoryMedia
 }
@@ -154,6 +161,24 @@ func (s *fakeStore) CountMedia(_ context.Context, storyID string) (int, error) {
 	return count, nil
 }
 
+// SetStatus records a pipeline transition and applies it to the stored row, so a
+// reader sees the same state the worker reported (KNOT-037-fix7).
+func (s *fakeStore) SetStatus(_ context.Context, id string, status Status, sizeBytes int64) error {
+	media, ok := s.media[id]
+	if !ok {
+		return ErrNotFound
+	}
+
+	s.statusCalls = append(s.statusCalls, status)
+	media.Status = status
+	if sizeBytes > 0 {
+		media.SizeBytes = sizeBytes
+	}
+	s.media[id] = media
+
+	return nil
+}
+
 // fakeObjects is an in-memory Storage.
 type fakeObjects struct {
 	objects   map[string][]byte
@@ -214,13 +239,18 @@ func (o *fakeObjects) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-// fakeLogger records the warnings the service emits.
+// fakeLogger records the warnings and errors the service emits.
 type fakeLogger struct {
 	warnings []string
+	errors   []string
 }
 
 func (l *fakeLogger) WarnContext(_ context.Context, msg string, args ...any) {
 	l.warnings = append(l.warnings, msg)
+}
+
+func (l *fakeLogger) ErrorContext(_ context.Context, msg string, args ...any) {
+	l.errors = append(l.errors, msg)
 }
 
 func newTestService(t *testing.T, store StoryMediaStore, objects Storage) (*Service, *fakeLogger) {
@@ -272,7 +302,7 @@ func TestCreateMediaSuccess(t *testing.T) {
 	objects := newFakeObjects()
 	service, _ := newTestService(t, store, objects)
 
-	created, err := service.CreateMedia(context.Background(), validInput())
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 300, 200))
 	if err != nil {
 		t.Fatalf("CreateMedia() error = %v, want nil", err)
 	}
@@ -289,11 +319,15 @@ func TestCreateMediaSuccess(t *testing.T) {
 	if !strings.HasPrefix(created.StorageKey, StoryMediaKeyPrefix(storyID)) {
 		t.Errorf("storage key = %q, want the story's prefix", created.StorageKey)
 	}
-	if !strings.HasSuffix(created.StorageKey, ".png") {
-		t.Errorf("storage key = %q, want a .png extension", created.StorageKey)
+	// The row's primary object is the derivative the pipeline writes, not the
+	// upload (KNOT-037-fix7).
+	if !strings.HasSuffix(created.StorageKey, "_display.avif") {
+		t.Errorf("storage key = %q, want a display avif", created.StorageKey)
 	}
+
+	service.WaitForProcessing()
 	if _, ok := objects.objects[created.StorageKey]; !ok {
-		t.Error("the object was not written to storage")
+		t.Error("the display rendition was not written to storage")
 	}
 }
 
@@ -455,18 +489,23 @@ func TestCreateMediaValidationFailures(t *testing.T) {
 	}
 }
 
-func TestCreateMediaRollsBackObjectOnStoreFailure(t *testing.T) {
+// TestCreateMediaLeavesTheBucketAloneWhenTheRowCannotBeWritten pins the order of
+// the new pipeline: the row is written first and nothing is uploaded until the
+// worker runs, so a failed insert cannot orphan an object (KNOT-037-fix7).
+func TestCreateMediaLeavesTheBucketAloneWhenTheRowCannotBeWritten(t *testing.T) {
 	store := newFakeStore()
 	store.createErr = errors.New("insert exploded")
 	objects := newFakeObjects()
 	service, _ := newTestService(t, store, objects)
 
-	if _, err := service.CreateMedia(context.Background(), validInput()); err == nil {
+	if _, err := service.CreateMedia(context.Background(), imageInput(t, 300, 200)); err == nil {
 		t.Fatal("CreateMedia() error = nil, want an error")
 	}
 
-	if len(objects.deleted) != 1 {
-		t.Errorf("deleted objects = %d, want the orphaned object removed once", len(objects.deleted))
+	service.WaitForProcessing()
+	if len(objects.objects) != 0 || len(objects.deleted) != 0 {
+		t.Errorf("objects = %d, deletions = %d, want the bucket untouched (nothing was ever put)",
+			len(objects.objects), len(objects.deleted))
 	}
 }
 
@@ -538,10 +577,11 @@ func TestDeleteMediaRejectsStranger(t *testing.T) {
 	objects := newFakeObjects()
 	service, _ := newTestService(t, store, objects)
 
-	created, err := service.CreateMedia(context.Background(), validInput())
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 300, 200))
 	if err != nil {
 		t.Fatalf("CreateMedia() error = %v", err)
 	}
+	service.WaitForProcessing()
 
 	if err := service.DeleteMedia(context.Background(), created.ID, otherID); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("DeleteMedia(stranger) error = %v, want ErrForbidden", err)
@@ -594,12 +634,23 @@ func TestStreamMediaFullAndRange(t *testing.T) {
 	objects := newFakeObjects()
 	service, _ := newTestService(t, store, objects)
 
+	// A row whose primary object is its upload: that is the shape of a row written
+	// before KNOT-037-fix7, and the shape the Range path is about.
 	payload := []byte("0123456789abcdefghij")
-	in := validInput()
-	in.SizeBytes = int64(len(payload))
-	in.Body = bytes.NewReader(payload)
+	key := StoryMediaKeyPrefix(storyID) + "original.png"
+	objects.objects[key] = payload
 
-	created, err := service.CreateMedia(context.Background(), in)
+	created, err := store.CreateMedia(context.Background(), StoryMedia{
+		StoryID:      storyID,
+		UploaderID:   authorID,
+		StorageKey:   key,
+		MediaType:    MediaTypeImage,
+		MimeType:     "image/png",
+		Source:       MediaSourceCamera,
+		SizeBytes:    int64(len(payload)),
+		Status:       StatusReady,
+		DisplayOrder: -1,
+	})
 	if err != nil {
 		t.Fatalf("CreateMedia() error = %v", err)
 	}
@@ -709,9 +760,9 @@ func imageInput(t *testing.T, width, height int) CreateMediaInput {
 	return in
 }
 
-// videoInput is a create input carrying bytes the poster extractor is asked for.
-// The bytes are deliberately not a real video: the extractor is stubbed, so only
-// the type and the offset matter.
+// videoInput is a create input carrying bytes the video pipeline is asked to
+// transcode. The bytes are not a real video unless a test replaces them: most
+// tests stub the processor, so only the type and metadata matter.
 func videoInput(t *testing.T, durationMS *int) CreateMediaInput {
 	t.Helper()
 
@@ -727,7 +778,77 @@ func videoInput(t *testing.T, durationMS *int) CreateMediaInput {
 	}
 }
 
-func TestCreateMediaStoresImageDerivatives(t *testing.T) {
+// blockingProcessor returns a processor that signals when it starts and waits for
+// release, so a test can observe the row while its derivatives are still missing.
+func blockingProcessor() (processor, <-chan struct{}, chan<- struct{}) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+
+	return func(context.Context, processJob) (int64, error) {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		<-release
+		return 0, nil
+	}, started, release
+}
+
+func TestCreateMediaReturnsBeforeTheDerivativesExist(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, logger := newTestService(t, store, objects)
+
+	process, started, release := blockingProcessor()
+	service.processMedia = process
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 300, 200))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+
+	// The response describes what is coming: the keys are minted, but nothing is in
+	// the bucket and the row says it is still working (KNOT-037-fix7).
+	if created.Status != StatusProcessing {
+		t.Errorf("status = %q, want %q", created.Status, StatusProcessing)
+	}
+	if !strings.HasSuffix(created.StorageKey, "_display.avif") {
+		t.Errorf("storage key = %q, want a display avif", created.StorageKey)
+	}
+	if created.ThumbnailKey == nil || !strings.HasSuffix(*created.ThumbnailKey, "_thumb.webp") {
+		t.Errorf("thumbnail key = %v, want a webp thumbnail", created.ThumbnailKey)
+	}
+	if created.MediumKey != nil || created.PosterKey != nil {
+		t.Errorf("medium/poster keys = (%v, %v), want nil: the pipeline writes neither",
+			created.MediumKey, created.PosterKey)
+	}
+	if len(objects.objects) != 0 {
+		t.Errorf("objects = %d, want none until the worker runs", len(objects.objects))
+	}
+
+	// A content request in this window must be told to wait, not shown a broken
+	// image.
+	if _, _, _, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, "", newRangeRequest("")); !errors.Is(err, ErrProcessing) {
+		t.Errorf("StreamMedia(processing) error = %v, want ErrProcessing", err)
+	}
+
+	<-started
+	close(release)
+	service.WaitForProcessing()
+
+	stored, err := store.GetMedia(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetMedia() error = %v", err)
+	}
+	if stored.Status != StatusReady {
+		t.Errorf("status after the job = %q, want %q", stored.Status, StatusReady)
+	}
+	if len(logger.errors) != 0 {
+		t.Errorf("errors = %v, want none", logger.errors)
+	}
+}
+
+func TestCreateMediaProcessesAnImageIntoDisplayAndThumbnail(t *testing.T) {
 	store := newFakeStore()
 	objects := newFakeObjects()
 	service, logger := newTestService(t, store, objects)
@@ -736,145 +857,240 @@ func TestCreateMediaStoresImageDerivatives(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateMedia() error = %v, want nil", err)
 	}
+	service.WaitForProcessing()
 
-	if created.ThumbnailKey == nil {
-		t.Fatal("thumbnail key = nil, want a key on the stored row")
-	}
-	if created.MediumKey == nil {
-		t.Fatal("medium key = nil, want a key on the stored row")
-	}
-	if created.PosterKey != nil {
-		t.Error("poster key is set for an image, want nil")
-	}
-
-	base := strings.TrimSuffix(created.StorageKey, ".png")
-	if want := base + "_thumb.avif"; *created.ThumbnailKey != want {
-		t.Errorf("thumbnail key = %q, want %q", *created.ThumbnailKey, want)
-	}
-	if want := base + "_medium.jpg"; *created.MediumKey != want {
-		t.Errorf("medium key = %q, want %q", *created.MediumKey, want)
-	}
-
-	// The WebP fallback has no column of its own: it is derived from the AVIF key.
-	webpKey, ok := created.ThumbnailWebPKey()
-	if !ok {
-		t.Fatal("ThumbnailWebPKey() = false, want the key derived from the avif thumbnail")
-	}
-	if want := base + "_thumb.webp"; webpKey != want {
-		t.Errorf("derived webp key = %q, want %q", webpKey, want)
-	}
-
-	// Both thumbnail files and the medium are objects in the same bucket as the
-	// original.
-	thumbnail, ok := objects.objects[*created.ThumbnailKey]
-	if !ok {
-		t.Fatal("the avif thumbnail object was not written")
-	}
-	if _, ok := objects.objects[webpKey]; !ok {
-		t.Fatal("the webp thumbnail object was not written")
-	}
-	if _, ok := objects.objects[*created.MediumKey]; !ok {
-		t.Fatal("the medium object was not written")
-	}
-	if got := decodeAVIF(t, thumbnail).Bounds().Dx(); got != ThumbnailMaxWidth {
-		t.Errorf("stored thumbnail width = %d, want %d", got, ThumbnailMaxWidth)
-	}
-
-	// A successful pipeline is silent.
-	if len(logger.warnings) != 0 {
-		t.Errorf("warnings = %v, want none", logger.warnings)
-	}
-}
-
-func TestCreateMediaStoresAVideoPoster(t *testing.T) {
-	store := newFakeStore()
-	objects := newFakeObjects()
-	service, logger := newTestService(t, store, objects)
-
-	var gotOffset int
-	service.extractPoster = func(_ context.Context, _ []byte, offsetMS int) ([]byte, error) {
-		gotOffset = offsetMS
-		return testPNG(t, 400, 225), nil
-	}
-
-	duration := 3000
-	created, err := service.CreateMedia(context.Background(), videoInput(t, &duration))
+	stored, err := store.GetMedia(context.Background(), created.ID)
 	if err != nil {
-		t.Fatalf("CreateMedia() error = %v, want nil", err)
+		t.Fatalf("GetMedia() error = %v", err)
+	}
+	if stored.Status != StatusReady {
+		t.Fatalf("status = %q, want %q", stored.Status, StatusReady)
 	}
 
-	// 20% into three seconds.
-	if gotOffset != 600 {
-		t.Errorf("poster offset = %d ms, want 600", gotOffset)
-	}
-	if created.PosterKey == nil {
-		t.Fatal("poster key = nil, want a key on the stored row")
-	}
-	if created.ThumbnailKey != nil || created.MediumKey != nil {
-		t.Error("an image rendition key is set for a video, want only the poster")
+	// Two files and nothing else: the upload itself is never stored.
+	if len(objects.objects) != 2 {
+		t.Fatalf("objects = %d, want the display and the thumbnail only", len(objects.objects))
 	}
 
-	base := strings.TrimSuffix(created.StorageKey, ".mp4")
-	if want := base + "_poster.jpg"; *created.PosterKey != want {
-		t.Errorf("poster key = %q, want %q", *created.PosterKey, want)
+	display, ok := objects.objects[stored.StorageKey]
+	if !ok {
+		t.Fatalf("the display object %q was not written", stored.StorageKey)
 	}
-	if _, ok := objects.objects[*created.PosterKey]; !ok {
-		t.Error("the poster object was not written")
+	// 1000 wide is under the 2048 cap, so the display keeps its own size.
+	if got := decodeAVIF(t, display).Bounds().Dx(); got != 1000 {
+		t.Errorf("display width = %d, want the source's 1000", got)
 	}
-	if len(logger.warnings) != 0 {
-		t.Errorf("warnings = %v, want none", logger.warnings)
+
+	thumbnailKey, ok := stored.ThumbnailWebPKey()
+	if !ok {
+		t.Fatal("ThumbnailWebPKey() = false, want the stored webp thumbnail")
+	}
+	thumbnail, ok := objects.objects[thumbnailKey]
+	if !ok {
+		t.Fatalf("the thumbnail object %q was not written", thumbnailKey)
+	}
+	if got := decodeWebP(t, thumbnail).Bounds().Dx(); got != ThumbnailMaxWidth {
+		t.Errorf("thumbnail width = %d, want %d", got, ThumbnailMaxWidth)
+	}
+
+	if len(logger.errors) != 0 {
+		t.Errorf("errors = %v, want none", logger.errors)
 	}
 }
 
-func TestCreateMediaSurvivesAFailedPoster(t *testing.T) {
+func TestCreateMediaMarksAFailedJob(t *testing.T) {
 	store := newFakeStore()
 	objects := newFakeObjects()
 	service, logger := newTestService(t, store, objects)
 
-	service.extractPoster = func(context.Context, []byte, int) ([]byte, error) {
-		return nil, ErrPosterUnavailable
+	service.processMedia = func(context.Context, processJob) (int64, error) {
+		return 0, errors.New("ffmpeg said no")
 	}
 
 	created, err := service.CreateMedia(context.Background(), videoInput(t, nil))
 	if err != nil {
-		t.Fatalf("CreateMedia() error = %v, want nil when the poster fails", err)
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+	service.WaitForProcessing()
+
+	stored, err := store.GetMedia(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetMedia() error = %v", err)
+	}
+	if stored.Status != StatusFailed {
+		t.Errorf("status = %q, want %q", stored.Status, StatusFailed)
+	}
+	if len(logger.errors) == 0 {
+		t.Error("a failed job must be logged")
+	}
+	if len(objects.objects) != 0 {
+		t.Errorf("objects = %d, want none", len(objects.objects))
 	}
 
-	if created.PosterKey != nil {
-		t.Error("poster key is set after a failed extraction, want nil")
-	}
-	if _, ok := objects.objects[created.StorageKey]; !ok {
-		t.Error("the original was not stored")
-	}
-	if len(logger.warnings) == 0 {
-		t.Error("the failed poster was not logged")
+	// A failed row has nothing coming, so it is reported as missing rather than as
+	// "still processing" — otherwise a client would poll forever.
+	if _, _, _, err := service.StreamMedia(context.Background(), created.ID, VariantStream, "", newRangeRequest("")); !errors.Is(err, ErrProcessingFailed) {
+		t.Errorf("StreamMedia(failed) error = %v, want ErrProcessingFailed", err)
 	}
 }
 
-func TestCreateMediaSurvivesAnUndecodableImage(t *testing.T) {
+func TestCreateMediaFailsOnAnUndecodableImage(t *testing.T) {
 	store := newFakeStore()
 	objects := newFakeObjects()
 	service, logger := newTestService(t, store, objects)
 
-	// validInput() carries bytes that are not an image, so decoding must fail and
-	// the upload must still succeed.
+	// validInput() carries bytes that are not an image, so the real pipeline cannot
+	// produce a display or a thumbnail.
 	created, err := service.CreateMedia(context.Background(), validInput())
 	if err != nil {
-		t.Fatalf("CreateMedia() error = %v, want nil when decoding fails", err)
+		t.Fatalf("CreateMedia() error = %v, want nil: the row is accepted and fails later", err)
 	}
+	service.WaitForProcessing()
 
-	if created.ThumbnailKey != nil || created.MediumKey != nil {
-		t.Error("derivative keys are set after a decode failure, want nil")
+	stored, err := store.GetMedia(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetMedia() error = %v", err)
 	}
-	if _, ok := objects.objects[created.StorageKey]; !ok {
-		t.Error("the original was not stored")
+	if stored.Status != StatusFailed {
+		t.Errorf("status = %q, want %q", stored.Status, StatusFailed)
 	}
-	if len(logger.warnings) == 0 {
-		t.Error("the failed derivative was not logged")
+	if len(objects.objects) != 0 {
+		t.Errorf("objects = %d, want none", len(objects.objects))
+	}
+	if len(logger.errors) == 0 {
+		t.Error("the decode failure was not logged")
 	}
 }
 
-func TestStreamMediaServesAThumbnail(t *testing.T) {
+// TestCreateMediaTranscodesAVideo proves the video half of the pipeline end to
+// end: one object, named as the row says, and it is an MP4.
+func TestCreateMediaTranscodesAVideo(t *testing.T) {
+	binary, err := exec.LookPath(ffmpegBinary)
+	if err != nil {
+		t.Skip("FFmpeg is not installed")
+	}
+
+	dir := t.TempDir()
+	clip := filepath.Join(dir, "clip.mp4")
+	build := exec.Command(binary, "-y",
+		"-f", "lavfi", "-i", "testsrc=size=320x240:rate=10:duration=1",
+		"-pix_fmt", "yuv420p", clip,
+	)
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building a test clip: %v: %s", err, output)
+	}
+	payload, err := os.ReadFile(clip)
+	if err != nil {
+		t.Fatalf("reading the test clip: %v", err)
+	}
+
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, logger := newTestService(t, store, objects)
+
+	duration := 1000
+	in := videoInput(t, &duration)
+	in.Body = bytes.NewReader(payload)
+	in.SizeBytes = int64(len(payload))
+
+	created, err := service.CreateMedia(context.Background(), in)
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+	service.WaitForProcessing()
+
+	stored, err := store.GetMedia(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetMedia() error = %v", err)
+	}
+	if stored.Status != StatusReady {
+		t.Fatalf("status = %q, want %q (errors: %v)", stored.Status, StatusReady, logger.errors)
+	}
+
+	// A video has no cover and no medium: one object, the stream (KNOT-037-fix7).
+	if stored.ThumbnailKey != nil || stored.MediumKey != nil || stored.PosterKey != nil {
+		t.Errorf("thumbnail/medium/poster keys = (%v, %v, %v), want all nil for a video",
+			stored.ThumbnailKey, stored.MediumKey, stored.PosterKey)
+	}
+	if !strings.HasSuffix(stored.StorageKey, "_stream.mp4") {
+		t.Errorf("storage key = %q, want a stream mp4", stored.StorageKey)
+	}
+	if len(objects.objects) != 1 {
+		t.Fatalf("objects = %d, want the stream only", len(objects.objects))
+	}
+
+	stream, ok := objects.objects[stored.StorageKey]
+	if !ok {
+		t.Fatalf("the stream object %q was not written", stored.StorageKey)
+	}
+	if len(stream) < 12 || string(stream[4:8]) != "ftyp" {
+		t.Errorf("the stream does not start with an MP4 ftyp box")
+	}
+}
+
+// TestProcessingIsCappedByTheSemaphore proves the worker runs at most
+// MaxConcurrentProcessing jobs at once, and that the rest queue up rather than
+// being dropped (KNOT-037-fix7).
+func TestProcessingIsCappedByTheSemaphore(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, _ := newTestService(t, store, objects)
+
+	if got := cap(service.semaphore); got != MaxConcurrentProcessing {
+		t.Fatalf("semaphore capacity = %d, want %d", got, MaxConcurrentProcessing)
+	}
+
+	var mu sync.Mutex
+	running, peak := 0, 0
+	release := make(chan struct{})
+	service.processMedia = func(context.Context, processJob) (int64, error) {
+		mu.Lock()
+		running++
+		if running > peak {
+			peak = running
+		}
+		mu.Unlock()
+
+		<-release
+
+		mu.Lock()
+		running--
+		mu.Unlock()
+		return 0, nil
+	}
+
+	for i := 0; i < MaxConcurrentProcessing+2; i++ {
+		if _, err := service.CreateMedia(context.Background(), imageInput(t, 200, 100)); err != nil {
+			t.Fatalf("CreateMedia(%d) error = %v, want nil", i, err)
+		}
+	}
+
+	// Wait for the cap to be reached, then give any extra goroutine a moment to
+	// start: without the semaphore the peak would climb past the cap here.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		mu.Lock()
+		reached := peak
+		mu.Unlock()
+		if reached >= MaxConcurrentProcessing || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	got := peak
+	mu.Unlock()
+	if got != MaxConcurrentProcessing {
+		t.Errorf("peak concurrency = %d, want exactly %d", got, MaxConcurrentProcessing)
+	}
+
+	close(release)
+	service.WaitForProcessing()
+}
+
+func TestStreamMediaServesTheThumbnail(t *testing.T) {
 	store := newFakeStore()
 	objects := newFakeObjects()
 	service, _ := newTestService(t, store, objects)
@@ -883,63 +1099,64 @@ func TestStreamMediaServesAThumbnail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateMedia() error = %v, want nil", err)
 	}
+	service.WaitForProcessing()
 
 	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, "", newRangeRequest(""))
 	if err != nil {
 		t.Fatalf("StreamMedia(thumb) error = %v, want nil", err)
 	}
 
+	thumbnailKey, ok := created.ThumbnailWebPKey()
+	if !ok {
+		t.Fatal("ThumbnailWebPKey() = false, want the stored webp thumbnail")
+	}
+
 	served, _ := io.ReadAll(body)
-	want := objects.objects[*created.ThumbnailKey]
+	want := objects.objects[thumbnailKey]
 	if !bytes.Equal(served, want) {
 		t.Error("StreamMedia(thumb) did not serve the stored thumbnail")
 	}
 	if total != int64(len(want)) {
 		t.Errorf("total = %d, want the rendition's %d bytes", total, len(want))
 	}
-	// With no format asked for, the answer is the primary codec.
-	if mimeType != avifContentType {
-		t.Errorf("mime = %q, want %q", mimeType, avifContentType)
-	}
-	// A rendition is smaller than the original, which is the point of serving it.
-	if total >= created.SizeBytes {
-		t.Errorf("rendition size = %d, want less than the original's %d", total, created.SizeBytes)
-	}
-}
-
-func TestStreamMediaServesTheWebPFallback(t *testing.T) {
-	store := newFakeStore()
-	objects := newFakeObjects()
-	service, _ := newTestService(t, store, objects)
-
-	created, err := service.CreateMedia(context.Background(), imageInput(t, 1000, 500))
-	if err != nil {
-		t.Fatalf("CreateMedia() error = %v, want nil", err)
-	}
-
-	webpKey, ok := created.ThumbnailWebPKey()
-	if !ok {
-		t.Fatal("ThumbnailWebPKey() = false, want a derived key")
-	}
-
-	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, FormatWebP, newRangeRequest(""))
-	if err != nil {
-		t.Fatalf("StreamMedia(thumb, webp) error = %v, want nil", err)
-	}
-
-	served, _ := io.ReadAll(body)
-	if want := objects.objects[webpKey]; !bytes.Equal(served, want) {
-		t.Error("StreamMedia(thumb, webp) did not serve the webp file")
-	}
-	if total != int64(len(objects.objects[webpKey])) {
-		t.Errorf("total = %d, want the webp file's %d bytes", total, len(objects.objects[webpKey]))
-	}
 	if mimeType != webpContentType {
 		t.Errorf("mime = %q, want %q", mimeType, webpContentType)
 	}
 }
 
-func TestStreamMediaFallsBackToTheOtherFormat(t *testing.T) {
+// TestStreamMediaServesTheThumbnailForAnyRequestedFormat pins the KNOT-037-fix7
+// contract: the feed thumbnail is a WebP, so `format` no longer selects a second
+// file. It is still accepted (an older client sends it) and answers with the bytes
+// that exist, under the type they really are.
+func TestStreamMediaServesTheThumbnailForAnyRequestedFormat(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, _ := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 300, 200))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+	service.WaitForProcessing()
+
+	thumbnailKey, _ := created.ThumbnailWebPKey()
+	for _, format := range []Format{"", FormatAVIF, FormatWebP} {
+		body, _, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, format, newRangeRequest(""))
+		if err != nil {
+			t.Fatalf("StreamMedia(thumb, %q) error = %v, want nil", format, err)
+		}
+
+		served, _ := io.ReadAll(body)
+		if !bytes.Equal(served, objects.objects[thumbnailKey]) {
+			t.Errorf("format %q: did not serve the stored webp thumbnail", format)
+		}
+		if mimeType != webpContentType {
+			t.Errorf("format %q: mime = %q, want %q", format, mimeType, webpContentType)
+		}
+	}
+}
+
+func TestStreamMediaServesTheDisplay(t *testing.T) {
 	store := newFakeStore()
 	objects := newFakeObjects()
 	service, _ := newTestService(t, store, objects)
@@ -948,27 +1165,49 @@ func TestStreamMediaFallsBackToTheOtherFormat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateMedia() error = %v, want nil", err)
 	}
+	service.WaitForProcessing()
 
-	webpKey, ok := created.ThumbnailWebPKey()
-	if !ok {
-		t.Fatal("ThumbnailWebPKey() = false, want a derived key")
-	}
-
-	// The WebP file is gone, so a WebP request is answered with the AVIF sibling
-	// rather than with the full-size original.
-	delete(objects.objects, webpKey)
-
-	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, FormatWebP, newRangeRequest(""))
+	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantDisplay, "", newRangeRequest(""))
 	if err != nil {
-		t.Fatalf("StreamMedia(thumb, webp) error = %v, want the avif sibling", err)
+		t.Fatalf("StreamMedia(display) error = %v, want nil", err)
 	}
 
 	served, _ := io.ReadAll(body)
-	if want := objects.objects[*created.ThumbnailKey]; !bytes.Equal(served, want) {
-		t.Error("the fallback did not serve the avif thumbnail")
+	if want := objects.objects[created.StorageKey]; !bytes.Equal(served, want) {
+		t.Error("StreamMedia(display) did not serve the display rendition")
 	}
-	if total != int64(len(objects.objects[*created.ThumbnailKey])) {
-		t.Errorf("total = %d, want the avif file's %d bytes", total, len(objects.objects[*created.ThumbnailKey]))
+	if total != int64(len(objects.objects[created.StorageKey])) {
+		t.Errorf("total = %d, want the display's %d bytes", total, len(objects.objects[created.StorageKey]))
+	}
+	if mimeType != avifContentType {
+		t.Errorf("mime = %q, want %q", mimeType, avifContentType)
+	}
+}
+
+func TestStreamMediaFallsBackToTheDisplayWhenTheThumbnailIsMissing(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, _ := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 300, 200))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+	service.WaitForProcessing()
+
+	// The thumbnail object is gone, so the display is the next best picture rather
+	// than a 404.
+	thumbnailKey, _ := created.ThumbnailWebPKey()
+	delete(objects.objects, thumbnailKey)
+
+	body, _, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, "", newRangeRequest(""))
+	if err != nil {
+		t.Fatalf("StreamMedia(thumb, missing object) error = %v, want the display", err)
+	}
+
+	served, _ := io.ReadAll(body)
+	if !bytes.Equal(served, objects.objects[created.StorageKey]) {
+		t.Error("the fallback did not serve the display rendition")
 	}
 	if mimeType != avifContentType {
 		t.Errorf("mime = %q, want the codec actually served, %q", mimeType, avifContentType)
@@ -984,20 +1223,17 @@ func TestStreamMediaServesALegacyJPEGThumbnail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateMedia() error = %v, want nil", err)
 	}
+	service.WaitForProcessing()
 
-	// A row written before KNOT-037-fix6 keeps a JPEG thumbnail key and has no
-	// modern sibling objects. Asking for AVIF or WebP must still answer with that
-	// small file rather than with the full-size original.
-	legacyKey := strings.TrimSuffix(*created.ThumbnailKey, avifExtension) + jpegExtension
-	objects.objects[legacyKey] = []byte("legacy jpeg thumbnail bytes")
+	// A row written before KNOT-037-fix7 keeps a JPEG thumbnail key and its original
+	// upload as the primary object. Asking for a thumbnail must still answer with
+	// that small file rather than with the full-size original.
+	legacyThumb := strings.TrimSuffix(*created.ThumbnailKey, webpExtension) + jpegExtension
+	objects.objects[legacyThumb] = []byte("legacy jpeg thumbnail bytes")
 
 	stored := store.media[created.ID]
-	stored.ThumbnailKey = &legacyKey
+	stored.ThumbnailKey = &legacyThumb
 	store.media[created.ID] = stored
-
-	if _, ok := stored.ThumbnailWebPKey(); ok {
-		t.Fatal("ThumbnailWebPKey() = true for a legacy jpeg thumbnail, want false")
-	}
 
 	for _, format := range []Format{"", FormatAVIF, FormatWebP} {
 		body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, format, newRangeRequest(""))
@@ -1006,48 +1242,15 @@ func TestStreamMediaServesALegacyJPEGThumbnail(t *testing.T) {
 		}
 
 		served, _ := io.ReadAll(body)
-		if !bytes.Equal(served, objects.objects[legacyKey]) {
+		if !bytes.Equal(served, objects.objects[legacyThumb]) {
 			t.Errorf("format %q: the fallback did not serve the legacy thumbnail", format)
 		}
-		if total != int64(len(objects.objects[legacyKey])) {
-			t.Errorf("format %q: total = %d, want the legacy thumbnail's %d", format, total, len(objects.objects[legacyKey]))
+		if total != int64(len(objects.objects[legacyThumb])) {
+			t.Errorf("format %q: total = %d, want the legacy thumbnail's %d", format, total, len(objects.objects[legacyThumb]))
 		}
 		if mimeType != jpegContentType {
 			t.Errorf("format %q: mime = %q, want the legacy thumbnail's %q", format, mimeType, jpegContentType)
 		}
-	}
-}
-
-func TestStreamMediaFallsBackWhenTheRenditionObjectIsMissing(t *testing.T) {
-	store := newFakeStore()
-	objects := newFakeObjects()
-	service, _ := newTestService(t, store, objects)
-
-	created, err := service.CreateMedia(context.Background(), imageInput(t, 1000, 500))
-	if err != nil {
-		t.Fatalf("CreateMedia() error = %v, want nil", err)
-	}
-
-	// The row still names the keys, but every rendition object is gone.
-	delete(objects.objects, *created.ThumbnailKey)
-	if webpKey, ok := created.ThumbnailWebPKey(); ok {
-		delete(objects.objects, webpKey)
-	}
-
-	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, "", newRangeRequest(""))
-	if err != nil {
-		t.Fatalf("StreamMedia(thumb, missing object) error = %v, want the original", err)
-	}
-
-	served, _ := io.ReadAll(body)
-	if !bytes.Equal(served, objects.objects[created.StorageKey]) {
-		t.Error("the fallback did not serve the original")
-	}
-	if total != created.SizeBytes {
-		t.Errorf("total = %d, want the original's %d", total, created.SizeBytes)
-	}
-	if mimeType != created.MimeType {
-		t.Errorf("mime = %q, want the original's %q", mimeType, created.MimeType)
 	}
 }
 
@@ -1056,23 +1259,25 @@ func TestStreamMediaFallsBackForAVariantTheRowDoesNotHave(t *testing.T) {
 	objects := newFakeObjects()
 	service, _ := newTestService(t, store, objects)
 
-	created, err := service.CreateMedia(context.Background(), imageInput(t, 1000, 500))
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 300, 200))
 	if err != nil {
 		t.Fatalf("CreateMedia() error = %v, want nil", err)
 	}
+	service.WaitForProcessing()
 
-	// An image has no poster, so asking for one must still return the picture.
-	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantPoster, "", newRangeRequest(""))
+	// A new row has no poster, so asking for one must still return a picture: its
+	// primary object, served as the type its key names rather than the upload's.
+	body, _, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantPoster, "", newRangeRequest(""))
 	if err != nil {
-		t.Fatalf("StreamMedia(poster on an image) error = %v, want the original", err)
+		t.Fatalf("StreamMedia(poster on an image) error = %v, want the primary object", err)
 	}
 
 	served, _ := io.ReadAll(body)
 	if !bytes.Equal(served, objects.objects[created.StorageKey]) {
-		t.Error("the fallback did not serve the original")
+		t.Error("the fallback did not serve the primary object")
 	}
-	if total != created.SizeBytes || mimeType != created.MimeType {
-		t.Errorf("served %d bytes as %q, want the original's %d as %q", total, mimeType, created.SizeBytes, created.MimeType)
+	if mimeType != avifContentType {
+		t.Errorf("mime = %q, want the served object's type %q", mimeType, avifContentType)
 	}
 }
 
@@ -1085,6 +1290,7 @@ func TestDeleteMediaRemovesTheDerivatives(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateMedia() error = %v, want nil", err)
 	}
+	service.WaitForProcessing()
 
 	if err := service.DeleteMedia(context.Background(), created.ID, authorID); err != nil {
 		t.Fatalf("DeleteMedia() error = %v, want nil", err)
@@ -1096,5 +1302,8 @@ func TestDeleteMediaRemovesTheDerivatives(t *testing.T) {
 		if _, ok := objects.objects[key]; ok {
 			t.Errorf("object %q still present after deleting the media", key)
 		}
+	}
+	if len(objects.objects) != 0 {
+		t.Errorf("objects = %d, want none", len(objects.objects))
 	}
 }

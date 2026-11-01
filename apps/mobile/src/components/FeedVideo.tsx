@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SpeakerHigh, SpeakerSlash } from 'phosphor-react-native';
-import Video, { type OnLoadData, type OnProgressData } from 'react-native-video';
+import Video, { type BufferConfig, type OnLoadData, type OnProgressData } from 'react-native-video';
 
 import {
   mediaOverlayText,
@@ -26,6 +26,26 @@ const MUTE_ICON_SIZE = 22;
 
 /** A no-op mute handler, for a caller that draws no mute control. */
 const NOOP = (): void => undefined;
+
+/**
+ * How much of a NEXT-IN-LINE video the player may buffer while it is still paused.
+ *
+ * The platform prepares a player as soon as it is mounted, but its default buffer
+ * is sized for a video that is about to play. Asking for a deeper buffer is what
+ * makes the handover instant: by the time this entry becomes active its first
+ * seconds are already downloaded, so playback starts on the first frame instead of
+ * on a spinner (KNOT-037-fix7).
+ *
+ * ExoPlayer (Android) honours these; AVPlayer (iOS) prepares the item on mount and
+ * ignores the numbers, so the mount itself is the iOS preload.
+ */
+const PRELOAD_BUFFER_CONFIG: BufferConfig = {
+  minBufferMs: 2000,
+  maxBufferMs: 15000,
+  bufferForPlaybackMs: 1000,
+  bufferForPlaybackAfterRebufferMs: 2000,
+  backBufferDurationMs: 0,
+};
 
 type FeedVideoProps = {
   /** The resolved, absolute URL of the video. */
@@ -72,6 +92,13 @@ type FeedVideoProps = {
    * bottom-right corner in both cases.
    */
   readonly durationPosition?: 'top-right' | 'bottom-left';
+  /**
+   * True only for the entry immediately AFTER the active one: the screen is telling
+   * this player to prepare itself. The video stays mounted and paused, buffers its
+   * first seconds, and makes no sound; it never advances the badge. Defaults to
+   * `false` (KNOT-037-fix7).
+   */
+  readonly isNextInLine?: boolean;
   /** Test identifier. */
   readonly testID?: string;
 };
@@ -111,6 +138,7 @@ export default function FeedVideo({
   durationMs,
   showTag = true,
   durationPosition = 'top-right',
+  isNextInLine = false,
   testID,
 }: FeedVideoProps): React.ReactElement {
   const { colors } = useTheme();
@@ -165,6 +193,9 @@ export default function FeedVideo({
   }, []);
 
   const playing = isVisible;
+  // A next-in-line player is mounted and paused on purpose: that is what lets the
+  // platform prepare and buffer it before it is scrolled into view (KNOT-037-fix7).
+  const preloading = isNextInLine && !playing;
   const progressLabel = formatProgress(currentSeconds, durationSeconds);
 
   return (
@@ -185,9 +216,14 @@ export default function FeedVideo({
           source={{ uri }}
           style={styles.video}
           paused={!playing}
-          muted={isMuted}
+          // Only the player that is actually playing follows the screen-wide mute
+          // setting; a preloading one is always silent, so a stray buffer can never
+          // make a sound from an entry nobody is watching yet.
+          muted={playing ? isMuted : true}
           repeat
           resizeMode="cover"
+          // A deeper buffer for the next entry, so the handover is instant.
+          bufferConfig={preloading ? PRELOAD_BUFFER_CONFIG : undefined}
           onLoad={handleLoad}
           // Progress is only subscribed while this video is the visible entry:
           // the timer that drives it is wasted work on a paused preview, and a

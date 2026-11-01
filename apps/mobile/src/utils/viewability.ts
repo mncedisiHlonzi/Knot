@@ -43,3 +43,31 @@ export function activeViewableKey(info: ViewableItemsInfo): string | undefined {
   const first = info.viewableItems[0];
   return first === undefined ? undefined : String(first.key);
 }
+
+/**
+ * The key of the item AFTER the active one, so a list can prepare it before it is
+ * on screen.
+ *
+ * The feed hands this to the next video's player, which stays mounted and paused so
+ * the platform can buffer its first seconds; by the time it becomes the active item
+ * the bytes are already there and playback starts immediately (KNOT-037-fix7).
+ *
+ * It answers `undefined` when nothing is active, when the active key is not in the
+ * list any more (an entry was hidden), or when it is the last item — there is
+ * nothing ahead of the end.
+ */
+export function nextKeyAfter(
+  keys: readonly string[],
+  activeKey: string | undefined,
+): string | undefined {
+  if (activeKey === undefined) {
+    return undefined;
+  }
+
+  const index = keys.indexOf(activeKey);
+  if (index < 0 || index + 1 >= keys.length) {
+    return undefined;
+  }
+
+  return keys[index + 1];
+}

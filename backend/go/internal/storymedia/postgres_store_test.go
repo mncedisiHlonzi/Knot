@@ -134,6 +134,7 @@ func newIntegrationMedia(env integrationEnv, name string, order int) StoryMedia 
 		Width:        &width,
 		Height:       &height,
 		SizeBytes:    1234,
+		Status:       StatusProcessing,
 		DisplayOrder: order,
 	}
 }

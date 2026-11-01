@@ -159,6 +159,48 @@ describe('FeedVideo playback', () => {
   });
 });
 
+describe('FeedVideo preloading', () => {
+  /**
+   * The next-in-line entry keeps its player mounted and paused: mounting is what
+   * makes the platform prepare the file, and the deeper buffer is what makes the
+   * handover instant when it becomes the active entry (KNOT-037-fix7).
+   */
+  it('mounts the next-in-line player, paused, with a deeper buffer', () => {
+    const video = firstOfType(render({ uri: URI, isNextInLine: true }), 'Video');
+
+    expect(video).toBeDefined();
+    expect(video?.props?.source).toEqual({ uri: URI });
+    expect(video?.props?.paused).toBe(true);
+    expect(video?.props?.bufferConfig).toBeDefined();
+  });
+
+  it('leaves every other player on the platform default buffer', () => {
+    const idle = firstOfType(render({ uri: URI }), 'Video');
+    expect(idle?.props?.bufferConfig).toBeUndefined();
+  });
+
+  it('still plays only the visible entry when that entry is also next in line', () => {
+    const video = firstOfType(render({ uri: URI, isVisible: true, isNextInLine: true }), 'Video');
+
+    expect(video?.props?.paused).toBe(false);
+    // A playing entry keeps the platform default: the preload buffer is for the
+    // paused one ahead of it.
+    expect(video?.props?.bufferConfig).toBeUndefined();
+  });
+
+  it('keeps a preloading player silent whatever the feed-wide mute says', () => {
+    const video = firstOfType(render({ uri: URI, isMuted: false, isNextInLine: true }), 'Video');
+
+    expect(video?.props?.muted).toBe(true);
+  });
+
+  it('follows the feed-wide mute once the entry is playing', () => {
+    const video = firstOfType(render({ uri: URI, isVisible: true, isMuted: false }), 'Video');
+
+    expect(video?.props?.muted).toBe(false);
+  });
+});
+
 describe('FeedVideo timestamp', () => {
   it('counts against the clip once the duration is known', () => {
     const tree = render({ uri: URI, isVisible: true, durationMs: 76_000 });

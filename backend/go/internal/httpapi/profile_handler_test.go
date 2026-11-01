@@ -399,8 +399,8 @@ func TestGetProfileAttachesStoryMediaPreview(t *testing.T) {
 	}
 
 	story := body.Activities[0].Payload
-	if story.FirstMediaType != "image" || !strings.HasSuffix(story.MediaPreviewURL, "/content") {
-		t.Errorf("story media = %q/%q, want the first item's image type and content path", story.FirstMediaType, story.MediaPreviewURL)
+	if story.FirstMediaType != "image" || !strings.HasSuffix(story.MediaPreviewURL, "/content?variant=display") {
+		t.Errorf("story media = %q/%q, want the first item's image type and display address", story.FirstMediaType, story.MediaPreviewURL)
 	}
 	if story.FirstMediaWidth == nil || *story.FirstMediaWidth != 900 || story.FirstMediaHeight == nil || *story.FirstMediaHeight != 1600 {
 		t.Errorf("story media dimensions = %v/%v, want 900/1600", story.FirstMediaWidth, story.FirstMediaHeight)

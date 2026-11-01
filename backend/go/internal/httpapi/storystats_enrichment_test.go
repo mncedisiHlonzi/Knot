@@ -134,8 +134,8 @@ func TestStoryListCarriesAggregateCounts(t *testing.T) {
 	if got.FirstMediaType == nil || *got.FirstMediaType != "video" {
 		t.Errorf("first_media_type = %v, want video", got.FirstMediaType)
 	}
-	if got.FirstMediaURL == nil || !strings.HasSuffix(*got.FirstMediaURL, "/content") {
-		t.Errorf("first_media_url = %v, want the media content path", got.FirstMediaURL)
+	if got.FirstMediaURL == nil || !strings.HasSuffix(*got.FirstMediaURL, "/content?variant=stream") {
+		t.Errorf("first_media_url = %v, want the stream address", got.FirstMediaURL)
 	}
 	// The dimensions travel with the preview so a feed entry can frame the media
 	// at its natural ratio instead of a fixed one (KNOT-020g-fix5).

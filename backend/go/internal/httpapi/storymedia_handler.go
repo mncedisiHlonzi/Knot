@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/knot/backend/internal/storymedia"
@@ -33,6 +34,12 @@ const (
 	// storyMediaCacheControl lets a browser or an intermediary reuse a media
 	// object for an hour. Story media is part of a public story.
 	storyMediaCacheControl = "public, max-age=3600"
+
+	// storyMediaRetryAfter is how long an item that is still processing asks a
+	// client to wait before trying again, in seconds. It is a hint, not a promise:
+	// a 20 MiB video transcode can outlast it, and a client should keep retrying
+	// while it still sees 202 (KNOT-037-fix7).
+	storyMediaRetryAfter = "3"
 )
 
 // StoryMediaService is the slice of the storymedia service that the HTTP layer
@@ -98,28 +105,28 @@ type storyMediaResponse struct {
 	SizeBytes    int64     `json:"size_bytes"`
 	DisplayOrder int       `json:"display_order"`
 	CreatedAt    time.Time `json:"created_at"`
-	// URL is the path on this API that serves the bytes. It is relative, so the
-	// client resolves it against its own API base URL. It always addresses the
-	// ORIGINAL upload: the renditions below are separate addresses, and a client
-	// that wants the full-size picture keeps asking for this one (KNOT-037).
+	// Status says whether the derivatives exist yet: `processing`, `ready`, or
+	// `failed`. A client that reads a processing item shows a placeholder rather
+	// than a broken frame, and may poll (KNOT-037-fix7).
+	Status string `json:"status"`
+	// URL is the path on this API that serves the item's full rendition. It is
+	// relative, so the client resolves it against its own API base URL. Since
+	// KNOT-037-fix7 that is the DISPLAY AVIF for an image and the STREAM MP4 for a
+	// video — there is no stored original to address any more. A row written before
+	// that change answers with its original upload instead.
 	URL string `json:"url"`
-	// ThumbnailURL, MediumURL, and PosterURL address the generated renditions, or
-	// are null when this item has none (no decoder, no FFmpeg, or a row older than
-	// migration 0024). A client must fall back to URL. Each is the same path as URL
-	// with `?variant=` appended (the thumbnail adds `&format=`), so nothing about
-	// the bucket reaches the client (KNOT-ADR-029).
-	//
-	// ThumbnailURL asks for AVIF, the smallest file at the same quality
-	// (KNOT-037-fix6). A device with no AVIF decoder uses ThumbnailURLFallback
-	// instead; when that is null the AVIF address is still safe to load, because
-	// the server answers a missing format with the other codec (and, for a row
-	// written before the dual-format ladder, with the JPEG thumbnail).
+	// ThumbnailURL is the feed card's image: a 400px WebP, or null for a video,
+	// which autoplays and therefore has no cover (KNOT-037-fix7).
 	ThumbnailURL *string `json:"thumbnail_url"`
-	// ThumbnailURLFallback is the same thumbnail as WebP, or null when this item
-	// has no WebP rendition.
+	// ThumbnailURLFallback is the sibling codec of a thumbnail written by
+	// KNOT-037-fix6 (an AVIF thumbnail with a WebP file beside it). It is always
+	// null for an item produced since KNOT-037-fix7, whose thumbnail is already
+	// WebP.
 	ThumbnailURLFallback *string `json:"thumbnail_url_fallback"`
-	MediumURL            *string `json:"medium_url"`
-	PosterURL            *string `json:"poster_url"`
+	// MediumURL and PosterURL address renditions that only exist on a row written
+	// before KNOT-037-fix7; both stay in the payload so those items keep working.
+	MediumURL *string `json:"medium_url"`
+	PosterURL *string `json:"poster_url"`
 }
 
 // storyMediaEnvelope wraps a single item, so the response shape can gain sibling
@@ -210,11 +217,14 @@ func (h *StoryMediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The story's cached detail carries its media array, so a new item makes it
-	// stale. Best-effort: the upload has succeeded and the TTL heals a failed
+	// stale. Best-effort: the upload has been recorded and the TTL heals a failed
 	// delete (KNOT-036-fix4).
 	h.details.InvalidateForStory(r.Context(), r.PathValue("id"))
 
-	writeJSON(w, http.StatusCreated, storyMediaEnvelope{Media: newStoryMediaResponse(created, r.PathValue("id"))})
+	// 202: the row exists, the derivatives do not yet. A background worker produces
+	// them and flips the row to ready, which is what keeps a 100 MiB video upload
+	// from holding the request open (KNOT-037-fix7).
+	writeJSON(w, http.StatusAccepted, storyMediaEnvelope{Media: newStoryMediaResponse(created, r.PathValue("id"))})
 }
 
 // List handles GET /stories/{id}/media. The route is public.
@@ -251,6 +261,11 @@ func (h *StoryMediaHandler) List(w http.ResponseWriter, r *http.Request) {
 // default) or `webp` (KNOT-037-fix6). A codec the item does not have falls back to
 // the other one, so the address a client holds keeps working. `format` with any
 // other variant is rejected rather than ignored.
+//
+// A row whose derivatives are still being generated answers **202 Accepted** with
+// no body (and `Retry-After`), because the bytes are coming: reporting 404 would
+// tell the client the media never existed. A row whose processing failed answers
+// 404, because nothing is coming (KNOT-037-fix7).
 func (h *StoryMediaHandler) Content(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
@@ -277,6 +292,16 @@ func (h *StoryMediaHandler) Content(w http.ResponseWriter, r *http.Request) {
 
 	body, total, mimeType, err := h.service.StreamMedia(r.Context(), r.PathValue("mid"), variant, format, r)
 	if err != nil {
+		switch {
+		case errors.Is(err, storymedia.ErrProcessing):
+			w.Header().Set("Retry-After", storyMediaRetryAfter)
+			w.WriteHeader(http.StatusAccepted)
+			return
+		case errors.Is(err, storymedia.ErrProcessingFailed):
+			writeError(w, http.StatusNotFound, codeNotFound, "media is not available")
+			return
+		}
+
 		h.writeServiceError(w, r, err)
 		return
 	}
@@ -400,42 +425,67 @@ func (h *StoryMediaHandler) writeFailure(w http.ResponseWriter, r *http.Request,
 // the story the item belongs to, which the item's URL is built from.
 func newStoryMediaResponse(media storymedia.StoryMedia, storyID string) storyMediaResponse {
 	return storyMediaResponse{
-		ID:                   media.ID,
-		MediaType:            string(media.MediaType),
-		Source:               string(media.Source),
-		MimeType:             media.MimeType,
-		Width:                media.Width,
-		Height:               media.Height,
-		DurationMS:           media.DurationMS,
-		SizeBytes:            media.SizeBytes,
-		DisplayOrder:         media.DisplayOrder,
-		CreatedAt:            media.CreatedAt,
-		URL:                  storyMediaURL(storyID, media.ID),
-		ThumbnailURL:         storyMediaThumbnailURL(storyID, media.ID, media, storymedia.FormatAVIF),
-		ThumbnailURLFallback: storyMediaThumbnailURL(storyID, media.ID, media, storymedia.FormatWebP),
+		ID:           media.ID,
+		MediaType:    string(media.MediaType),
+		Source:       string(media.Source),
+		MimeType:     media.MimeType,
+		Width:        media.Width,
+		Height:       media.Height,
+		DurationMS:   media.DurationMS,
+		SizeBytes:    media.SizeBytes,
+		DisplayOrder: media.DisplayOrder,
+		CreatedAt:    media.CreatedAt,
+		Status:       string(media.Status),
+		URL:          storyMediaFullURL(storyID, media),
+		// A video has no cover: it autoplays, so a thumbnail would be a second copy
+		// of the same content (KNOT-037-fix7).
+		ThumbnailURL:         storyMediaImageThumbnailURL(storyID, media),
+		ThumbnailURLFallback: storyMediaThumbnailFallbackURL(storyID, media),
 		MediumURL:            storyMediaVariantURL(storyID, media.ID, media.MediumKey, storymedia.VariantMedium),
 		PosterURL:            storyMediaVariantURL(storyID, media.ID, media.PosterKey, storymedia.VariantPoster),
 	}
 }
 
-// storyMediaThumbnailURL builds the address of one thumbnail format, or nil when
-// the item cannot answer it.
+// storyMediaFullURL is the address of an item's full rendition: the display AVIF
+// for an image, the stream MP4 for a video.
 //
-// AVIF is offered whenever the row has any thumbnail at all: a row written before
-// the dual-format ladder has a JPEG one, and the server answers an AVIF request
-// with it rather than with the original. WebP is offered only when the row really
-// has a WebP rendition, because there is nothing for it to add otherwise.
-func storyMediaThumbnailURL(storyID, mediaID string, media storymedia.StoryMedia, format storymedia.Format) *string {
+// It is what a full-screen viewer opens. A row written before KNOT-037-fix7 has no
+// such rendition and answers with its original upload instead, so the address is
+// correct for both generations of row.
+func storyMediaFullURL(storyID string, media storymedia.StoryMedia) string {
+	variant := storymedia.VariantDisplay
+	if media.MediaType == storymedia.MediaTypeVideo {
+		variant = storymedia.VariantStream
+	}
+
+	return storyMediaURL(storyID, media.ID) + "?variant=" + string(variant)
+}
+
+// storyMediaImageThumbnailURL is the feed card's image address, or nil for a video.
+func storyMediaImageThumbnailURL(storyID string, media storymedia.StoryMedia) *string {
+	if media.MediaType != storymedia.MediaTypeImage {
+		return nil
+	}
 	if _, ok := media.DerivativeKey(storymedia.VariantThumb); !ok {
 		return nil
 	}
-	if format == storymedia.FormatWebP {
-		if _, ok := media.ThumbnailWebPKey(); !ok {
-			return nil
-		}
+
+	url := storyMediaURL(storyID, media.ID) + "?variant=" + string(storymedia.VariantThumb)
+	return &url
+}
+
+// storyMediaThumbnailFallbackURL is the AVIF thumbnail's WebP sibling, which only
+// a row written by KNOT-037-fix6 has. A thumbnail produced since KNOT-037-fix7 is
+// already WebP, so there is no second file to offer.
+func storyMediaThumbnailFallbackURL(storyID string, media storymedia.StoryMedia) *string {
+	if media.ThumbnailKey == nil || !strings.HasSuffix(*media.ThumbnailKey, ".avif") {
+		return nil
+	}
+	if _, ok := media.ThumbnailWebPKey(); !ok {
+		return nil
 	}
 
-	url := storyMediaURL(storyID, mediaID) + "?variant=" + string(storymedia.VariantThumb) + "&format=" + string(format)
+	url := storyMediaURL(storyID, media.ID) + "?variant=" + string(storymedia.VariantThumb) + "&format=webp"
 	return &url
 }
 

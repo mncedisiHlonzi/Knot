@@ -83,17 +83,24 @@ func TestStoryDetailMediaCarriesDerivativeURLs(t *testing.T) {
 
 	item := body.Story.Media[0]
 	original := "/stories/" + testDetailMediaStoryID + "/media/" + testDetailMediaItemID + "/content"
-	if item.URL != original {
-		t.Errorf("url = %q, want %q", item.URL, original)
+	// The full address is the STREAM: this fixture is a video, and since
+	// KNOT-037-fix7 a video's primary object is its stream rendition.
+	if want := original + "?variant=stream"; item.URL != want {
+		t.Errorf("url = %q, want %q", item.URL, want)
+	}
+
+	// A video has no cover any more: it autoplays, so the thumbnail address is
+	// null even though this row still carries a poster frame (KNOT-037-fix7).
+	if item.ThumbnailURL != nil {
+		t.Errorf("thumbnail_url = %q, want null for a video", *item.ThumbnailURL)
 	}
 
 	for name, expectation := range map[string]struct {
 		got  *string
 		want string
 	}{
-		"thumbnail_url": {item.ThumbnailURL, original + "?variant=thumb&format=avif"},
-		"medium_url":    {item.MediumURL, original + "?variant=medium"},
-		"poster_url":    {item.PosterURL, original + "?variant=poster"},
+		"medium_url": {item.MediumURL, original + "?variant=medium"},
+		"poster_url": {item.PosterURL, original + "?variant=poster"},
 	} {
 		if expectation.got == nil {
 			t.Errorf("%s = null, want a rendition URL", name)
@@ -104,17 +111,20 @@ func TestStoryDetailMediaCarriesDerivativeURLs(t *testing.T) {
 		}
 	}
 
-	// This fixture's thumbnail key is a legacy JPEG, so there is no WebP file to
-	// offer as a fallback (KNOT-037-fix6).
+	// A video never advertises a thumbnail fallback.
 	if item.ThumbnailURLFallback != nil {
-		t.Errorf("thumbnail_url_fallback = %q, want null for a jpeg-only thumbnail", *item.ThumbnailURLFallback)
+		t.Errorf("thumbnail_url_fallback = %q, want null", *item.ThumbnailURLFallback)
 	}
 }
 
 // TestStoryThumbnailFallbackIsTheWebPSibling proves a row written by the
-// dual-format pipeline advertises both files: AVIF first, WebP as the fallback.
+// KNOT-037-fix6 pipeline advertises both thumbnail files: the AVIF thumbnail and
+// the WebP sibling beside it.
 func TestStoryThumbnailFallbackIsTheWebPSibling(t *testing.T) {
 	media := mediaWithDerivatives()
+	// An image whose thumbnail is the AVIF written by KNOT-037-fix6.
+	media.MediaType = storymedia.MediaTypeImage
+	media.StorageKey = storymedia.StoryMediaKeyPrefix(testDetailMediaStoryID) + "upload_display.avif"
 	thumb := storymedia.StoryMediaKeyPrefix(testDetailMediaStoryID) + "upload_thumb.avif"
 	media.ThumbnailKey = &thumb
 
@@ -140,8 +150,11 @@ func TestStoryThumbnailFallbackIsTheWebPSibling(t *testing.T) {
 
 	item := body.Story.Media[0]
 	base := "/stories/" + testDetailMediaStoryID + "/media/" + testDetailMediaItemID + "/content"
-	if item.ThumbnailURL == nil || *item.ThumbnailURL != base+"?variant=thumb&format=avif" {
-		t.Errorf("thumbnail_url = %v, want the avif address", item.ThumbnailURL)
+	if want := base + "?variant=display"; item.URL != want {
+		t.Errorf("url = %q, want %q", item.URL, want)
+	}
+	if item.ThumbnailURL == nil || *item.ThumbnailURL != base+"?variant=thumb" {
+		t.Errorf("thumbnail_url = %v, want the thumbnail address", item.ThumbnailURL)
 	}
 	if item.ThumbnailURLFallback == nil || *item.ThumbnailURLFallback != base+"?variant=thumb&format=webp" {
 		t.Errorf("thumbnail_url_fallback = %v, want the webp address", item.ThumbnailURLFallback)
@@ -226,11 +239,17 @@ func TestVersionDetailCarriesTheStoryMediaDerivatives(t *testing.T) {
 	}
 
 	item := body.Version.Media[0]
-	if item.ThumbnailURL == nil || item.PosterURL == nil || item.MediumURL == nil {
-		t.Fatalf("derivatives = (%v, %v, %v), want all three",
-			item.ThumbnailURL, item.MediumURL, item.PosterURL)
+	// A video carries no cover since KNOT-037-fix7, but the poster and medium
+	// renditions the row still names keep being advertised.
+	if item.ThumbnailURL != nil {
+		t.Errorf("thumbnail_url = %q, want null for a video", *item.ThumbnailURL)
 	}
-	if want := item.URL + "?variant=poster"; *item.PosterURL != want {
+	if item.PosterURL == nil || item.MediumURL == nil {
+		t.Fatalf("derivatives = (%v, %v), want the poster and the medium",
+			item.PosterURL, item.MediumURL)
+	}
+	base := "/stories/" + testDetailMediaStoryID + "/media/" + testDetailMediaItemID + "/content"
+	if want := base + "?variant=poster"; *item.PosterURL != want {
 		t.Errorf("poster_url = %q, want %q", *item.PosterURL, want)
 	}
 }

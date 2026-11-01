@@ -228,6 +228,25 @@ func (m *memoryMediaStore) DeleteMedia(_ context.Context, id string) error {
 	return nil
 }
 
+// SetStatus applies a pipeline transition, so a later read sees what the worker
+// reported (KNOT-037-fix7).
+func (m *memoryMediaStore) SetStatus(_ context.Context, id string, status storymedia.Status, sizeBytes int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	media, ok := m.media[id]
+	if !ok {
+		return storymedia.ErrNotFound
+	}
+	media.Status = status
+	if sizeBytes > 0 {
+		media.SizeBytes = sizeBytes
+	}
+	m.media[id] = media
+
+	return nil
+}
+
 func (m *memoryMediaStore) StoryAuthor(_ context.Context, storyID string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -465,18 +484,47 @@ func postMedia(router http.Handler, storyID string, body *bytes.Buffer, contentT
 
 // uploadMedia performs a full successful upload and returns the created item.
 // It fails the test if the upload did not answer 201.
+// uploadMedia posts one item and waits for its derivatives, so a test that reads
+// the bytes afterwards sees a ready row. The response itself is 202: the work is
+// queued, not done (KNOT-037-fix7).
 func (e *storyMediaTestEnv) uploadMedia(t *testing.T, router http.Handler, data []byte, source string) storyMediaResponse {
+	t.Helper()
+
+	created := e.postMedia(t, router, data, source)
+	e.service.WaitForProcessing()
+
+	return created
+}
+
+// postMedia posts one item and returns the 202 response without waiting for the
+// background work, which is what a processing-state test needs.
+func (e *storyMediaTestEnv) postMedia(t *testing.T, router http.Handler, data []byte, source string) storyMediaResponse {
 	t.Helper()
 
 	body, contentType := mediaUpload(t, data, source, nil)
 	recorder := postMedia(router, testMediaStoryID, body, contentType, testAccessToken)
-	if recorder.Code != http.StatusCreated {
-		t.Fatalf("upload status = %d, want %d (body %s)", recorder.Code, http.StatusCreated, recorder.Body.String())
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("upload status = %d, want %d (body %s)", recorder.Code, http.StatusAccepted, recorder.Body.String())
 	}
 
 	var envelope storyMediaEnvelope
 	decodeBody(t, recorder, &envelope)
 	return envelope.Media
+}
+
+// storedDerivative returns the bytes of the object whose key ends with suffix, so
+// a test can compare what the API served against what the worker wrote.
+func (e *storyMediaTestEnv) storedDerivative(t *testing.T, suffix string) []byte {
+	t.Helper()
+
+	for key, data := range e.objects.objects {
+		if strings.HasSuffix(key, suffix) {
+			return data
+		}
+	}
+
+	t.Fatalf("no object ending in %q was stored", suffix)
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -505,13 +553,17 @@ func TestStoryMediaCreateHappyPath(t *testing.T) {
 	body, contentType := mediaUpload(t, pngImage(t), string(storymedia.MediaSourceCamera), map[string]string{"width": "2", "height": "2"})
 
 	recorder := postMedia(router, testMediaStoryID, body, contentType, testAccessToken)
-	if recorder.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusCreated, recorder.Body.String())
+	// 202: the row is accepted and the derivatives are queued (KNOT-037-fix7).
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusAccepted, recorder.Body.String())
 	}
 
 	var envelope storyMediaEnvelope
 	decodeBody(t, recorder, &envelope)
 
+	if envelope.Media.Status != string(storymedia.StatusProcessing) {
+		t.Errorf("status = %q, want %q", envelope.Media.Status, storymedia.StatusProcessing)
+	}
 	if envelope.Media.MediaType != string(storymedia.MediaTypeImage) {
 		t.Errorf("media_type = %q, want image", envelope.Media.MediaType)
 	}
@@ -530,14 +582,16 @@ func TestStoryMediaCreateHappyPath(t *testing.T) {
 	if envelope.Media.Height == nil || *envelope.Media.Height != 2 {
 		t.Errorf("height = %v, want 2", envelope.Media.Height)
 	}
-	wantURL := "/stories/" + testMediaStoryID + "/media/" + envelope.Media.ID + "/content"
+
+	// The address names the display rendition, not the upload: there is no stored
+	// original any more (KNOT-037-fix7).
+	wantURL := "/stories/" + testMediaStoryID + "/media/" + envelope.Media.ID + "/content?variant=display"
 	if envelope.Media.URL != wantURL {
 		t.Errorf("url = %q, want %q", envelope.Media.URL, wantURL)
 	}
 	if !strings.HasPrefix(envelope.Media.URL, "/stories/") {
 		t.Errorf("url = %q, want a relative path", envelope.Media.URL)
 	}
-
 }
 
 // TestStoryMediaCreateWithoutDimensionsStoresNulls proves the dimensions are
@@ -552,8 +606,8 @@ func TestStoryMediaCreateWithoutDimensionsStoresNulls(t *testing.T) {
 	body, contentType := mediaUpload(t, pngImage(t), string(storymedia.MediaSourceGallery), nil)
 
 	recorder := postMedia(router, testMediaStoryID, body, contentType, testAccessToken)
-	if recorder.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusCreated, recorder.Body.String())
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusAccepted, recorder.Body.String())
 	}
 
 	var envelope storyMediaEnvelope
@@ -757,15 +811,17 @@ func TestStoryMediaContentServesBytes(t *testing.T) {
 	env := newStoryMediaTestEnv(t)
 	router := env.router(t, testMediaAuthorID)
 
-	data := pngImage(t)
-	created := env.uploadMedia(t, router, data, "camera")
+	created := env.uploadMedia(t, router, pngImage(t), "camera")
+	display := env.storedDerivative(t, "_display.avif")
 
 	recorder := doRequest(router, http.MethodGet, created.URL, "")
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
 	}
-	if got := recorder.Header().Get("Content-Type"); got != "image/png" {
-		t.Errorf("content type = %q, want image/png", got)
+	// The address names the display AVIF, and it is served AS an AVIF — not as the
+	// PNG that was uploaded (KNOT-037-fix7).
+	if got := recorder.Header().Get("Content-Type"); got != "image/avif" {
+		t.Errorf("content type = %q, want image/avif", got)
 	}
 	if got := recorder.Header().Get("Accept-Ranges"); got != "bytes" {
 		t.Errorf("accept-ranges = %q, want bytes", got)
@@ -773,8 +829,8 @@ func TestStoryMediaContentServesBytes(t *testing.T) {
 	if got := recorder.Header().Get("Cache-Control"); got != storyMediaCacheControl {
 		t.Errorf("cache-control = %q, want %q", got, storyMediaCacheControl)
 	}
-	if !bytes.Equal(recorder.Body.Bytes(), data) {
-		t.Errorf("body = %d bytes, want the %d stored bytes", recorder.Body.Len(), len(data))
+	if !bytes.Equal(recorder.Body.Bytes(), display) {
+		t.Errorf("body = %d bytes, want the %d stored bytes", recorder.Body.Len(), len(display))
 	}
 }
 
@@ -782,9 +838,8 @@ func TestStoryMediaContentRangeRequest(t *testing.T) {
 	env := newStoryMediaTestEnv(t)
 	router := env.router(t, testMediaAuthorID)
 
-	// A PNG padded so the object is comfortably longer than the range.
-	data := append(pngImage(t), make([]byte, 400)...)
-	created := env.uploadMedia(t, router, data, "gallery")
+	created := env.uploadMedia(t, router, pngImage(t), "gallery")
+	data := env.storedDerivative(t, "_display.avif")
 
 	request := httptest.NewRequest(http.MethodGet, created.URL, nil)
 	request.Header.Set("Range", "bytes=0-99")
@@ -810,8 +865,8 @@ func TestStoryMediaContentRangeSuffixAndOpenEnded(t *testing.T) {
 	env := newStoryMediaTestEnv(t)
 	router := env.router(t, testMediaAuthorID)
 
-	data := append(pngImage(t), make([]byte, 400)...)
-	created := env.uploadMedia(t, router, data, "gallery")
+	created := env.uploadMedia(t, router, pngImage(t), "gallery")
+	data := env.storedDerivative(t, "_display.avif")
 
 	// Open-ended: bytes=10- means 10 through the end.
 	request := httptest.NewRequest(http.MethodGet, created.URL, nil)
@@ -844,8 +899,8 @@ func TestStoryMediaContentIgnoresUnsatisfiableRange(t *testing.T) {
 	env := newStoryMediaTestEnv(t)
 	router := env.router(t, testMediaAuthorID)
 
-	data := pngImage(t)
-	created := env.uploadMedia(t, router, data, "camera")
+	created := env.uploadMedia(t, router, pngImage(t), "camera")
+	data := env.storedDerivative(t, "_display.avif")
 
 	request := httptest.NewRequest(http.MethodGet, created.URL, nil)
 	request.Header.Set("Range", "bytes=99999-100000")
@@ -895,11 +950,11 @@ func TestStoryMediaDelete(t *testing.T) {
 	if recorder.Code != http.StatusNotFound {
 		t.Errorf("content after delete status = %d, want %d", recorder.Code, http.StatusNotFound)
 	}
-	// An image upload creates four objects — the original, the AVIF thumbnail, its
-	// WebP sibling, and the medium rendition — and deleting the item must remove
-	// all of them, not just the original (KNOT-037, KNOT-037-fix6).
-	if len(env.objects.deleted) != 4 {
-		t.Errorf("deleted objects = %d, want 4 (original, avif thumbnail, webp thumbnail, medium)", len(env.objects.deleted))
+	// An image upload creates two objects — the display AVIF and the WebP thumbnail
+	// — and deleting the item must remove both, not just the one the row names
+	// (KNOT-037-fix7).
+	if len(env.objects.deleted) != 2 {
+		t.Errorf("deleted objects = %d, want 2 (display and thumbnail)", len(env.objects.deleted))
 	}
 }
 
@@ -982,36 +1037,55 @@ func TestStoryMediaCreateExposesDerivativeURLs(t *testing.T) {
 
 	created := env.uploadMedia(t, router, pngImage(t), string(storymedia.MediaSourceCamera))
 
-	// A real image is decoded by the pipeline, so both image renditions exist and
-	// are addressed by the original's path with a variant.
-	if created.ThumbnailURL == nil {
-		t.Fatal("thumbnail_url = null, want a rendition URL")
+	// A ready image is addressed by its display AVIF, with the feed thumbnail as a
+	// separate WebP address (KNOT-037-fix7).
+	base := "/stories/" + testMediaStoryID + "/media/" + created.ID + "/content"
+	if want := base + "?variant=display"; created.URL != want {
+		t.Errorf("url = %q, want %q", created.URL, want)
 	}
-	if want := created.URL + "?variant=thumb&format=avif"; *created.ThumbnailURL != want {
+	if created.ThumbnailURL == nil {
+		t.Fatal("thumbnail_url = null, want the thumbnail address")
+	}
+	if want := base + "?variant=thumb"; *created.ThumbnailURL != want {
 		t.Errorf("thumbnail_url = %q, want %q", *created.ThumbnailURL, want)
 	}
-	if created.ThumbnailURLFallback == nil {
-		t.Fatal("thumbnail_url_fallback = null, want the webp URL")
-	}
-	if want := created.URL + "?variant=thumb&format=webp"; *created.ThumbnailURLFallback != want {
-		t.Errorf("thumbnail_url_fallback = %q, want %q", *created.ThumbnailURLFallback, want)
-	}
-	if created.MediumURL == nil {
-		t.Fatal("medium_url = null, want a rendition URL")
-	}
-	if want := created.URL + "?variant=medium"; *created.MediumURL != want {
-		t.Errorf("medium_url = %q, want %q", *created.MediumURL, want)
-	}
 
-	// A still image has no poster frame.
+	// Since the thumbnail IS the WebP file, there is no second codec to fall back
+	// to, and neither retired rendition exists on a new row.
+	if created.ThumbnailURLFallback != nil {
+		t.Errorf("thumbnail_url_fallback = %q, want null", *created.ThumbnailURLFallback)
+	}
+	if created.MediumURL != nil {
+		t.Errorf("medium_url = %q, want null: the pipeline writes no medium", *created.MediumURL)
+	}
 	if created.PosterURL != nil {
-		t.Errorf("poster_url = %q, want null for an image", *created.PosterURL)
+		t.Errorf("poster_url = %q, want null: a video autoplays, and this is an image", *created.PosterURL)
+	}
+}
+
+// TestStoryMediaVideoURLsHaveNoThumbnail pins Item 5's rule for videos: the full
+// address is the stream, and there is no cover (KNOT-037-fix7).
+func TestStoryMediaVideoURLsHaveNoThumbnail(t *testing.T) {
+	video := storymedia.StoryMedia{
+		ID:         testMediaID,
+		StoryID:    testMediaStoryID,
+		MediaType:  storymedia.MediaTypeVideo,
+		MimeType:   "video/mp4",
+		StorageKey: "story-media/" + testMediaStoryID + "/x_stream.mp4",
+		Status:     storymedia.StatusReady,
 	}
 
-	// The original address stays variant-free: it is what a full-screen viewer
-	// keeps reading (KNOT-037 non-goal: no client change).
-	if strings.Contains(created.URL, "variant=") {
-		t.Errorf("url = %q, want no variant on the original", created.URL)
+	response := newStoryMediaResponse(video, testMediaStoryID)
+
+	base := "/stories/" + testMediaStoryID + "/media/" + testMediaID + "/content"
+	if want := base + "?variant=stream"; response.URL != want {
+		t.Errorf("url = %q, want %q", response.URL, want)
+	}
+	if response.ThumbnailURL != nil {
+		t.Errorf("thumbnail_url = %q, want null for a video", *response.ThumbnailURL)
+	}
+	if response.ThumbnailURLFallback != nil {
+		t.Errorf("thumbnail_url_fallback = %q, want null for a video", *response.ThumbnailURLFallback)
 	}
 }
 
@@ -1185,6 +1259,59 @@ func TestStoryMediaContentRejectsAFormatWithoutTheThumbVariant(t *testing.T) {
 	}
 	if service.gotVariant != storymedia.Variant("") {
 		t.Errorf("the service was called for a rejected combination, want no call")
+	}
+}
+
+// TestStoryMediaContentAnswers202WhileProcessing pins Item 5's processing gate: a
+// client is told to wait rather than shown a 404 for media that is on its way
+// (KNOT-037-fix7).
+func TestStoryMediaContentAnswers202WhileProcessing(t *testing.T) {
+	service := &fakeStoryMediaService{streamErr: storymedia.ErrProcessing}
+	handler, err := NewStoryMediaHandler(service, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewStoryMediaHandler() error = %v, want nil", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/stories/"+testMediaStoryID+"/media/"+testMediaID+"/content?variant=display",
+		nil,
+	)
+	request.SetPathValue("mid", testMediaID)
+	recorder := httptest.NewRecorder()
+	handler.Content(recorder, request)
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusAccepted)
+	}
+	if got := recorder.Header().Get("Retry-After"); got != storyMediaRetryAfter {
+		t.Errorf("Retry-After = %q, want %q", got, storyMediaRetryAfter)
+	}
+	if recorder.Body.Len() != 0 {
+		t.Errorf("body = %q, want none", recorder.Body.String())
+	}
+}
+
+// TestStoryMediaContentAnswers404WhenProcessingFailed: nothing is coming for a
+// failed row, so the client must stop waiting.
+func TestStoryMediaContentAnswers404WhenProcessingFailed(t *testing.T) {
+	service := &fakeStoryMediaService{streamErr: storymedia.ErrProcessingFailed}
+	handler, err := NewStoryMediaHandler(service, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewStoryMediaHandler() error = %v, want nil", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/stories/"+testMediaStoryID+"/media/"+testMediaID+"/content?variant=display",
+		nil,
+	)
+	request.SetPathValue("mid", testMediaID)
+	recorder := httptest.NewRecorder()
+	handler.Content(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
 	}
 }
 

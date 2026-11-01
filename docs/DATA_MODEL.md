@@ -578,7 +578,7 @@ KNOT-ADR-030.
 | `id`            | `uuid`        | no       | `gen_random_uuid()` | Primary key                                                           |
 | `story_id`      | `uuid`        | no       | —                   | References `stories(id)`; the story the media belongs to               |
 | `uploader_id`   | `uuid`        | no       | —                   | References `users(id)`; who uploaded it (the story's author in the MVP) |
-| `storage_key`   | `text`        | no       | —                   | The object key in the media bucket, `story-media/{story_id}/{uuid}.{ext}`, **not** a public URL |
+| `storage_key`   | `text`        | no       | —                   | The row's PRIMARY object: the display AVIF (image) or stream MP4 (video) since KNOT-037-fix7, or the original upload on an older row. `story-media/{story_id}/{uuid}_{display,stream}.{ext}`, **not** a public URL |
 | `media_type`    | `text`        | no       | —                   | `CHECK (media_type IN ('image', 'video'))`                             |
 | `mime_type`     | `text`        | no       | —                   | The sniffed content type (JPEG/PNG/WebP/MP4/MOV)                       |
 | `source`        | `text`        | no       | —                   | `CHECK (source IN ('camera', 'gallery'))`                              |
@@ -588,15 +588,18 @@ KNOT-ADR-030.
 | `size_bytes`    | `bigint`      | no       | —                   | The stored object's size                                               |
 | `display_order` | `integer`     | no       | `0`                 | Position within the story; lower comes first. Appended on upload        |
 | `created_at`    | `timestamptz` | no       | `now()`             |                                                                        |
-| `thumbnail_key` | `text`        | yes      | `NULL`              | Object key of the feed thumbnail (AVIF, max 800px wide), or `NULL` when none was generated (KNOT-037, KNOT-037-fix6). The WebP sibling is derived from this key, not stored |
-| `medium_key`    | `text`        | yes      | `NULL`              | Object key of the story-detail rendition (JPEG, max 1200px wide), or `NULL` when none was generated (KNOT-037) |
-| `poster_key`    | `text`        | yes      | `NULL`              | Object key of a video poster frame (JPEG, max 400px wide); `NULL` for images, for a system without FFmpeg, or when extraction failed (KNOT-037) |
+| `thumbnail_key` | `text`        | yes      | `NULL`              | Object key of the feed thumbnail: a 400px WebP, `NULL` for a video (no cover) and for a row whose pipeline has not produced it (KNOT-037-fix7) |
+| `medium_key`    | `text`        | yes      | `NULL`              | **Retired** by KNOT-037-fix7: rows written earlier may still name a 1200px JPEG here, and it keeps being served |
+| `poster_key`    | `text`        | yes      | `NULL`              | **Retired** by KNOT-037-fix7 (videos autoplay, so no cover is generated); older rows keep theirs |
+| `status`        | `text`        | no       | `'ready'`           | `processing` \| `ready` \| `failed`. The row is written as `processing` and the background worker flips it (KNOT-037-fix7) |
 
 The three derivative columns name renditions generated beside the original in the same
-bucket. Like `storage_key` they hold **object keys, never URLs**, and all three are
-nullable on purpose: a rendition is an optimisation, so a row without one is still fully
-servable through `storage_key`. There is deliberately no backfill — rows written before
-migration `0024` keep working untouched, and the API answers `null` for a rendition a row
+bucket. Like `storage_key` they hold **object keys, never URLs**. Since KNOT-037-fix7 the
+pipeline stores derivatives ONLY — the upload itself is never written — so `storage_key`
+and `thumbnail_key` name the two files a new image has, and the only file a new video has.
+`medium_key` and `poster_key` are retired and left NULL. There is deliberately no backfill:
+rows written before migration `0024` keep working untouched, and the API answers `null` for
+a rendition a row
 does not have (KNOT-ADR-091).
 
 ### Indexes and constraints

@@ -592,8 +592,8 @@ func TestDiscoveryPlaceStoriesCarriesFeedEnrichment(t *testing.T) {
 	if got.FirstMediaType == nil || *got.FirstMediaType != "video" {
 		t.Errorf("first_media_type = %v, want video", got.FirstMediaType)
 	}
-	if got.FirstMediaURL == nil || !strings.HasSuffix(*got.FirstMediaURL, "/content") {
-		t.Errorf("first_media_url = %v, want the media content path", got.FirstMediaURL)
+	if got.FirstMediaURL == nil || !strings.HasSuffix(*got.FirstMediaURL, "/content?variant=stream") {
+		t.Errorf("first_media_url = %v, want the stream address", got.FirstMediaURL)
 	}
 	// The dimensions ride along with the preview, so a place page frames its media
 	// at the natural ratio exactly as the feed does (KNOT-020g-fix5).

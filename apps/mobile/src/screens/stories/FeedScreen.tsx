@@ -50,6 +50,7 @@ import {
   VIEWABILITY_CONFIG,
   type ViewableItemsInfo,
   activeViewableKey,
+  nextKeyAfter,
 } from '../../utils/viewability';
 import {
   PROMPT_PILLARS,
@@ -208,6 +209,14 @@ export default function FeedScreen({
   const onViewableItemsChanged = useRef((info: ViewableItemsInfo): void => {
     setActiveItemId(activeViewableKey(info));
   }).current;
+
+  // The entry immediately after the active one. Its video is mounted and paused so
+  // the platform buffers the first seconds, and the handover when it is scrolled
+  // into view is instant rather than a spinner (KNOT-037-fix7).
+  const nextItemId = nextKeyAfter(
+    items.map((item) => item.id),
+    activeItemId,
+  );
 
   /** Flips the feed-wide mute setting; every video follows it. */
   const toggleMute = useCallback((): void => {
@@ -568,6 +577,7 @@ export default function FeedScreen({
               showBottomHairline={false}
               isMuted={isMuted}
               isVisible={item.id === activeItemId}
+              isNextInLine={item.id === nextItemId}
               onToggleMute={toggleMute}
               onPress={() =>
                 item.kind === 'version' ? onOpenVersion(item.id) : onOpenStory(item.id)

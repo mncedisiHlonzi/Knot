@@ -1134,7 +1134,7 @@ func TestStoryDetailIncludesMedia(t *testing.T) {
 	if item.Source != "camera" {
 		t.Errorf("media source = %q, want camera", item.Source)
 	}
-	if want := "/stories/" + created.ID + "/media/" + mediaID + "/content"; item.URL != want {
+	if want := "/stories/" + created.ID + "/media/" + mediaID + "/content?variant=display"; item.URL != want {
 		t.Errorf("media url = %q, want %q", item.URL, want)
 	}
 }

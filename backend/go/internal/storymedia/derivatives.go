@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"image/jpeg"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -25,46 +23,46 @@ import (
 	_ "golang.org/x/image/webp"
 )
 
-// The derivative ladder (KNOT-037, KNOT-ADR-091; dual-format thumbnails
-// KNOT-037-fix6).
+// The derivative ladder (KNOT-037-fix7).
 //
-// The numbers are the product decision, not a tuning knob: a feed card is at most
-// 400 logical points wide on the widest phone, so an 800px thumbnail is comfortably
-// retina, and the story detail is a full-width column at roughly 1200px on a
-// tablet. The feed thumbnail is written TWICE — AVIF first for its bytes, WebP as
-// the fallback for a device with no AVIF decoder — while the medium rendition and
-// the video poster stay JPEG, where the extra bytes buy nothing.
+// The pipeline stores DERIVATIVES ONLY: the upload itself is never written to the
+// bucket, which is what keeps storage cost proportional to what a client actually
+// downloads. An image becomes a 2048px AVIF for the story view and a 400px WebP
+// for the feed card; a video becomes a 1080p H.264 MP4 whose index is at the
+// front, so it starts playing before it has finished downloading. No cover image
+// is generated for a video: it autoplays in the feed, so a still would be a second
+// copy of the same content (KNOT-037-fix7).
 const (
-	// ThumbnailMaxWidth is the widest a feed thumbnail may be. A narrower source
-	// is never upscaled.
-	ThumbnailMaxWidth = 800
-	// ThumbnailQuality is the quality a feed thumbnail is encoded at, for BOTH
-	// AVIF and WebP. It is the same number in both so the two files differ by
-	// codec, not by a second tuning decision.
+	// DisplayMaxWidth is the widest an image's display rendition may be. A source
+	// narrower than this is re-encoded at its own size, never upscaled.
+	DisplayMaxWidth = 2048
+	// DisplayQuality is the AVIF quality of the display rendition.
+	DisplayQuality = 80
+	// ThumbnailMaxWidth is the widest a feed thumbnail may be: a feed card is at
+	// most 400 logical points wide.
+	ThumbnailMaxWidth = 400
+	// ThumbnailQuality is the WebP quality of the feed thumbnail.
 	ThumbnailQuality = 80
 	// AVIFSpeed is libavif's encoder effort: 0 is slowest and smallest, 10 is
-	// fastest and largest. Eight keeps an 800px thumbnail well ahead of the JPEG
-	// it replaces at a cost of a second or two of CPU per upload; at ten the same
-	// image can come out LARGER than that JPEG.
+	// fastest and largest. Eight is the balance the thumbnails shipped with
+	// (KNOT-037-fix6); a 2048px display takes a few seconds at it, which is why the
+	// work happens in the background (KNOT-037-fix7).
 	AVIFSpeed = 8
-	// MediumMaxWidth is the widest the story-detail rendition may be.
-	MediumMaxWidth = 1200
-	// MediumQuality is the JPEG quality of the story-detail rendition.
-	MediumQuality = 85
-	// PosterMaxWidth is the widest a video poster frame may be.
-	PosterMaxWidth = 400
-	// PosterQuality is the quality the poster frame is written with. FFmpeg is
-	// asked for `-q:v 3`, which is roughly this, and the value is named so the
-	// figure is not a bare literal in a command line.
-	PosterQuality = 85
-	// posterOffsetRatio is how far into a video the poster frame is taken. A
-	// frame at zero is often a black fade or a title card, so the still is taken
-	// a fifth of the way in.
-	posterOffsetRatio = 0.2
-	// unknownDurationOffsetMS is where the frame is taken when the client did not
-	// report the video's duration. Zero is the only offset that is guaranteed to
-	// exist in any video.
-	unknownDurationOffsetMS = 0
+	// StreamMaxWidth is libavif's counterpart for video: the stream's WIDTH is
+	// capped at 1080px (the brief's `scale='min(1080,iw)':-2`), so portrait video
+	// keeps its own width and landscape is capped at 1080p.
+	StreamMaxWidth = 1080
+	// StreamCRF is x264's constant rate factor: lower is better and larger. 23 is
+	// x264's own default, the point at which a transcode is visually transparent
+	// for phone footage.
+	StreamCRF = 23
+	// StreamPreset trades encode time for bytes: `medium` is x264's default balance.
+	StreamPreset = "medium"
+	// StreamAudioBitrate is the AAC bitrate of the stream rendition.
+	StreamAudioBitrate = "128k"
+	// streamScaleFilter caps the width at StreamMaxWidth and lets FFmpeg derive an
+	// even height (`-2`), which is what yuv420p requires.
+	streamScaleFilter = "scale='min(1080,iw)':-2"
 )
 
 // The extensions and the suffixes are the object-key naming scheme. They live
@@ -73,29 +71,39 @@ const (
 	jpegExtension = ".jpg"
 	avifExtension = ".avif"
 	webpExtension = ".webp"
+	mp4Extension  = ".mp4"
+	movExtension  = ".mov"
 
+	displaySuffix   = "_display"
 	thumbnailSuffix = "_thumb"
-	mediumSuffix    = "_medium"
-	posterSuffix    = "_poster"
+	streamSuffix    = "_stream"
+	// mediumSuffix and posterSuffix only ever appear in rows written before
+	// KNOT-037-fix7; those files are still served, but nothing new is written with
+	// them.
+	mediumSuffix = "_medium"
+	posterSuffix = "_poster"
 )
 
 // The content types a rendition can have. Serving one never echoes the row's
-// stored MIME type: a derivative's type is whatever its encoder produced.
+// stored MIME type: that describes the UPLOAD, and the object is a derivative of
+// it (KNOT-037-fix7).
 const (
-	jpegContentType = "image/jpeg"
-	avifContentType = "image/avif"
-	webpContentType = "image/webp"
+	jpegContentType      = "image/jpeg"
+	avifContentType      = "image/avif"
+	webpContentType      = "image/webp"
+	videoContentType     = "video/mp4"
+	quickTimeContentType = "video/quicktime"
 )
 
-// ffmpegBinary is the executable used for poster frames. It is a name, not a
+// ffmpegBinary is the executable used for video transcoding. It is a name, not a
 // path: FFmpeg is a system prerequisite and its location is whatever PATH says
 // (KNOT-037, docs/DEVELOPMENT.md).
 const ffmpegBinary = "ffmpeg"
 
-// ErrPosterUnavailable is returned when the system has no FFmpeg. It is distinct
-// from a failed extraction so the log line can say which problem occurred: a
+// ErrFFmpegUnavailable is returned when the system has no FFmpeg. It is distinct
+// from a failed transcode so the log line can say which problem occurred: a
 // missing prerequisite is an operator's job, a malformed video is not.
-var ErrPosterUnavailable = errors.New("storymedia: ffmpeg is not installed")
+var ErrFFmpegUnavailable = errors.New("storymedia: ffmpeg is not installed")
 
 // Rendition is one generated derivative: its variant, the bytes to store, and the
 // object-key suffix that names it.
@@ -122,55 +130,43 @@ type Rendition struct {
 	Height int
 }
 
-// ImageDerivatives decodes an uploaded image and returns its feed thumbnail in
-// both modern formats followed by its JPEG medium rendition: AVIF first, then
-// WebP, then JPEG.
+// ImageDerivatives decodes an uploaded image and returns its display rendition
+// (AVIF, at most DisplayMaxWidth) and its feed thumbnail (WebP, at most
+// ThumbnailMaxWidth), in that order.
 //
 // Decoding applies EXIF orientation, because a phone photo is usually stored
-// sideways with a rotation flag, and a thumbnail that ignores the flag is a
-// thumbnail of a sideways picture. A source narrower than a rendition's max width
-// is re-encoded at its own size rather than upscaled: the point of the pipeline is
-// fewer bytes, not more.
+// sideways with a rotation flag, and a rendition that ignores the flag is a
+// sideways picture. A source narrower than a rendition's max width is re-encoded
+// at its own size rather than upscaled: the point of the pipeline is fewer bytes,
+// not more.
 //
-// Transparency is composited onto white before encoding. None of these encoders is
-// asked to keep alpha, and letting one drop it turns a transparent PNG's background
+// Transparency is composited onto white before encoding. Neither encoder is asked
+// to keep alpha, and letting one drop it turns a transparent PNG's background
 // black.
 //
 // The renditions that DID encode are returned together with the error from any that
-// did not. One codec failing must not cost the other: an AVIF encoder that refuses
-// a picture still leaves a WebP thumbnail to serve.
+// did not, so one codec failing does not hide the other's result.
 func ImageDerivatives(data []byte) ([]Rendition, error) {
 	source, err := imaging.Decode(bytes.NewReader(data), imaging.AutoOrientation(true))
 	if err != nil {
 		return nil, fmt.Errorf("decode image: %w", err)
 	}
 
-	renditions := make([]Rendition, 0, 3)
+	renditions := make([]Rendition, 0, 2)
 	var failures []error
 
-	// Both thumbnails come from ONE scaled copy, so AVIF and WebP are guaranteed to
-	// be the same picture and only the codec differs.
-	thumbnailSource := flattenOntoWhite(scaleToMaxWidth(source, ThumbnailMaxWidth))
-
-	avifThumbnail, err := encodeAVIFThumbnail(thumbnailSource)
+	display, err := encodeDisplay(flattenOntoWhite(scaleToMaxWidth(source, DisplayMaxWidth)))
 	if err != nil {
 		failures = append(failures, err)
 	} else {
-		renditions = append(renditions, avifThumbnail)
+		renditions = append(renditions, display)
 	}
 
-	webpThumbnail, err := encodeWebPThumbnail(thumbnailSource)
+	thumbnail, err := encodeThumbnail(flattenOntoWhite(scaleToMaxWidth(source, ThumbnailMaxWidth)))
 	if err != nil {
 		failures = append(failures, err)
 	} else {
-		renditions = append(renditions, webpThumbnail)
-	}
-
-	medium, err := encodeJPEG(flattenOntoWhite(scaleToMaxWidth(source, MediumMaxWidth)), VariantMedium, mediumSuffix, MediumQuality)
-	if err != nil {
-		failures = append(failures, err)
-	} else {
-		renditions = append(renditions, medium)
+		renditions = append(renditions, thumbnail)
 	}
 
 	return renditions, errors.Join(failures...)
@@ -189,29 +185,29 @@ func flattenOntoWhite(source image.Image) image.Image {
 	)
 }
 
-// encodeAVIFThumbnail encodes a feed thumbnail as AVIF.
-func encodeAVIFThumbnail(source image.Image) (Rendition, error) {
+// encodeDisplay encodes the full story-view rendition as AVIF.
+func encodeDisplay(source image.Image) (Rendition, error) {
 	var buffer bytes.Buffer
 	err := avif.Encode(&buffer, source, avif.Options{
-		Quality: ThumbnailQuality,
+		Quality: DisplayQuality,
 		// The picture is opaque by now, so the alpha quality only has to be a
 		// valid number; passing the picture quality keeps it from silently
 		// falling back to the library default.
-		QualityAlpha: ThumbnailQuality,
+		QualityAlpha: DisplayQuality,
 		Speed:        AVIFSpeed,
 		// 4:2:0 is the chroma layout a photograph wants; the zero value of the
 		// option would select 4:4:4 and cost bytes for detail nobody sees.
 		ChromaSubsampling: image.YCbCrSubsampleRatio420,
 	})
 	if err != nil {
-		return Rendition{}, fmt.Errorf("encode %s %s: %w", VariantThumb, FormatAVIF, err)
+		return Rendition{}, fmt.Errorf("encode %s %s: %w", VariantDisplay, FormatAVIF, err)
 	}
 
-	return newRendition(VariantThumb, FormatAVIF, buffer.Bytes(), source), nil
+	return newRendition(VariantDisplay, FormatAVIF, buffer.Bytes(), source), nil
 }
 
-// encodeWebPThumbnail encodes a feed thumbnail as WebP.
-func encodeWebPThumbnail(source image.Image) (Rendition, error) {
+// encodeThumbnail encodes the feed thumbnail as WebP.
+func encodeThumbnail(source image.Image) (Rendition, error) {
 	var buffer bytes.Buffer
 	err := webp.Encode(&buffer, source, &webp.Options{Quality: ThumbnailQuality})
 	if err != nil {
@@ -219,16 +215,6 @@ func encodeWebPThumbnail(source image.Image) (Rendition, error) {
 	}
 
 	return newRendition(VariantThumb, FormatWebP, buffer.Bytes(), source), nil
-}
-
-// encodeJPEG encodes one JPEG rendition at the given quality.
-func encodeJPEG(source image.Image, variant Variant, suffix string, quality int) (Rendition, error) {
-	var buffer bytes.Buffer
-	if err := jpeg.Encode(&buffer, source, &jpeg.Options{Quality: quality}); err != nil {
-		return Rendition{}, fmt.Errorf("encode %s: %w", variant, err)
-	}
-
-	return newRendition(variant, FormatJPEG, buffer.Bytes(), source), nil
 }
 
 // newRendition fills in the naming and content type that belong to a variant and
@@ -249,10 +235,10 @@ func newRendition(variant Variant, format Format, body []byte, source image.Imag
 // suffixForVariant returns the object-key suffix a variant is named with.
 func suffixForVariant(variant Variant) string {
 	switch variant {
-	case VariantMedium:
-		return mediumSuffix
-	case VariantPoster:
-		return posterSuffix
+	case VariantDisplay:
+		return displaySuffix
+	case VariantStream:
+		return streamSuffix
 	default:
 		return thumbnailSuffix
 	}
@@ -292,79 +278,66 @@ func scaleToMaxWidth(source image.Image, maxWidth int) image.Image {
 	return imaging.Resize(source, maxWidth, 0, imaging.Lanczos)
 }
 
-// posterOffsetMS decides where in a video the poster frame is taken.
+// TranscodeToStream writes the web-playable stream rendition of a video file.
 //
-// A known duration puts the frame posterOffsetRatio of the way in; an unknown one
-// takes the first frame, which is the only offset that is always present.
-func posterOffsetMS(durationMS *int) int {
-	if durationMS == nil || *durationMS <= 0 {
-		return unknownDurationOffsetMS
-	}
-	offset := int(float64(*durationMS) * posterOffsetRatio)
-	if offset < 0 {
-		return unknownDurationOffsetMS
-	}
-	return offset
-}
-
-// ExtractPosterFrame renders one frame of a video as a JPEG.
+// The output is H.264 + AAC in an MP4 whose index (`moov`) is written FIRST
+// (`-movflags +faststart`). That single flag is what makes the feed feel instant:
+// a player can start on the first bytes it receives instead of downloading the
+// whole file to find out where the frames are (KNOT-037-fix7).
 //
-// FFmpeg is a system prerequisite, not a Go dependency (KNOT-037). When it is
-// absent the returned error is ErrPosterUnavailable, so the caller can log a
-// missing prerequisite differently from a video it could not read. The frame is
-// scaled to PosterMaxWidth with the aspect ratio preserved (`scale=400:-2` keeps
-// the height even, which is what the JPEG encoder wants).
-//
-// The video is written to a temporary file first: FFmpeg seeks far more reliably
-// over a file than over a pipe, and the offset is only meaningful with seeking.
-func ExtractPosterFrame(ctx context.Context, video []byte, offsetMS int) ([]byte, error) {
-	if len(video) == 0 {
-		return nil, fmt.Errorf("extract poster: the video is empty")
-	}
-
+// FFmpeg is a system prerequisite, not a Go dependency. When it is absent the error
+// is ErrFFmpegUnavailable, so a missing prerequisite reads differently in the log
+// from a video FFmpeg refused.
+func TranscodeToStream(ctx context.Context, inputPath, outputPath string) error {
 	binary, err := exec.LookPath(ffmpegBinary)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrPosterUnavailable, err)
+		return fmt.Errorf("%w: %w", ErrFFmpegUnavailable, err)
 	}
-
-	dir, err := os.MkdirTemp("", "knot-poster-")
-	if err != nil {
-		return nil, fmt.Errorf("extract poster: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(dir) }()
-
-	input := filepath.Join(dir, "source")
-	if err := os.WriteFile(input, video, 0o600); err != nil {
-		return nil, fmt.Errorf("extract poster: write source: %w", err)
-	}
-
-	output := filepath.Join(dir, "poster"+jpegExtension)
-	offset := strconv.FormatFloat(float64(offsetMS)/1000, 'f', 3, 64)
 
 	arguments := []string{
 		"-y",
-		"-ss", offset,
-		"-i", input,
-		"-frames:v", "1",
-		"-q:v", "3",
-		"-vf", fmt.Sprintf("scale=%d:-2", PosterMaxWidth),
-		output,
+		"-i", inputPath,
+		// Cap the width at 1080 and let FFmpeg derive an even height.
+		"-vf", streamScaleFilter,
+		"-c:v", "libx264",
+		"-crf", strconv.Itoa(StreamCRF),
+		"-preset", StreamPreset,
+		"-c:a", "aac",
+		"-b:a", StreamAudioBitrate,
+		// yuv420p is the pixel format every browser and hardware decoder accepts.
+		"-pix_fmt", "yuv420p",
+		// The index goes at the front of the file.
+		"-movflags", "+faststart",
+		outputPath,
 	}
 
 	command := exec.CommandContext(ctx, binary, arguments...)
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
-		return nil, fmt.Errorf("extract poster: ffmpeg: %w: %s", err, strings.TrimSpace(stderr.String()))
+		return fmt.Errorf("transcode stream: ffmpeg: %w: %s", err, lastLine(stderr.String()))
 	}
 
-	frame, err := os.ReadFile(output)
+	info, err := os.Stat(outputPath)
 	if err != nil {
-		return nil, fmt.Errorf("extract poster: read frame: %w", err)
+		return fmt.Errorf("transcode stream: read output: %w", err)
 	}
-	if len(frame) == 0 {
-		return nil, fmt.Errorf("extract poster: ffmpeg produced no frame")
+	if info.Size() == 0 {
+		return fmt.Errorf("transcode stream: ffmpeg produced no output")
 	}
 
-	return frame, nil
+	return nil
+}
+
+// lastLine returns the last non-empty line of FFmpeg's stderr, which is where the
+// actual reason for a failure sits; the rest is banner and progress noise.
+func lastLine(output string) string {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if line := strings.TrimSpace(lines[i]); line != "" {
+			return line
+		}
+	}
+
+	return ""
 }

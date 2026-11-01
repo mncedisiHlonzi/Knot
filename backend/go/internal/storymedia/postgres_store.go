@@ -14,11 +14,11 @@ import (
 // so every query in this file stays consistent with scanMedia, and its order is
 // the order scanMedia reads.
 //
-// The three derivative keys follow storage_key because migration 0024 added them
-// as the renditions of the original object, and every read of a row needs them:
-// the feed addresses the thumbnail, the detail the medium rendition, and a video
-// card its poster frame (KNOT-037).
-const mediaColumns = `id, story_id, uploader_id, storage_key, thumbnail_key, medium_key, poster_key, media_type, mime_type, source, width, height, duration_ms, size_bytes, display_order, created_at`
+// `storage_key` names the row's primary object and the derivative columns follow
+// it, because every read needs them: the feed addresses the thumbnail, the story
+// view the display rendition, and a video its stream. `status` sits with them so a
+// reader can tell "still processing" from "nothing here" (KNOT-037-fix7).
+const mediaColumns = `id, story_id, uploader_id, storage_key, thumbnail_key, medium_key, poster_key, status, media_type, mime_type, source, width, height, duration_ms, size_bytes, display_order, created_at`
 
 // PostgresStore is the pgx-backed implementation of StoryMediaStore.
 //
@@ -66,18 +66,18 @@ func (s *PostgresStore) CreateMedia(ctx context.Context, media StoryMedia) (Stor
 	const query = `
 		INSERT INTO story_media (
 			story_id, uploader_id, storage_key, thumbnail_key, medium_key, poster_key,
-			media_type, mime_type, source, width, height, duration_ms, size_bytes, display_order
+			status, media_type, mime_type, source, width, height, duration_ms, size_bytes, display_order
 		)
 		VALUES (
 			$1, $2, $3, $4, $5, $6,
-			$7, $8, $9, $10, $11, $12, $13,
+			$7, $8, $9, $10, $11, $12, $13, $14,
 			CASE
-				WHEN $14 < 0 THEN (
+				WHEN $15 < 0 THEN (
 					SELECT COALESCE(MAX(display_order) + 1, 0)
 					FROM story_media
 					WHERE story_id = $1
 				)
-				ELSE $14
+				ELSE $15
 			END
 		)
 		RETURNING ` + mediaColumns
@@ -91,6 +91,7 @@ func (s *PostgresStore) CreateMedia(ctx context.Context, media StoryMedia) (Stor
 		media.ThumbnailKey,
 		media.MediumKey,
 		media.PosterKey,
+		string(media.Status),
 		string(media.MediaType),
 		media.MimeType,
 		string(media.Source),
@@ -270,6 +271,38 @@ func (s *PostgresStore) DeleteMedia(ctx context.Context, id string) error {
 	return nil
 }
 
+// SetStatus records where an item's derivatives are in the pipeline
+// (KNOT-037-fix7).
+//
+// A malformed id names no row, so it is reported as ErrNotFound exactly as a
+// missing one is.
+func (s *PostgresStore) SetStatus(ctx context.Context, id string, status Status, sizeBytes int64) error {
+	if !isUUID(id) {
+		return ErrNotFound
+	}
+	if !status.Valid() {
+		return fmt.Errorf("storymedia: invalid media status %q", status)
+	}
+
+	// A zero size leaves the row's value alone: a failed job has nothing to
+	// describe, and overwriting the upload's size with 0 would be a lie.
+	const query = `
+		UPDATE story_media
+		SET status = $2,
+			size_bytes = CASE WHEN $3 > 0 THEN $3 ELSE size_bytes END
+		WHERE id = $1`
+
+	tag, err := s.pool.Exec(ctx, query, id, string(status), sizeBytes)
+	if err != nil {
+		return fmt.Errorf("storymedia: set media status: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+
+	return nil
+}
+
 // StoryAuthor returns the author id of a story, or ErrStoryNotFound.
 func (s *PostgresStore) StoryAuthor(ctx context.Context, storyID string) (string, error) {
 	if !isUUID(storyID) {
@@ -298,6 +331,7 @@ func scanMedia(row rowScanner) (StoryMedia, error) {
 		media    StoryMedia
 		kind     string
 		source   string
+		status   string
 		width    *int
 		height   *int
 		duration *int
@@ -311,6 +345,7 @@ func scanMedia(row rowScanner) (StoryMedia, error) {
 		&media.ThumbnailKey,
 		&media.MediumKey,
 		&media.PosterKey,
+		&status,
 		&kind,
 		&media.MimeType,
 		&source,
@@ -327,6 +362,7 @@ func scanMedia(row rowScanner) (StoryMedia, error) {
 
 	media.MediaType = MediaType(kind)
 	media.Source = MediaSource(source)
+	media.Status = Status(status)
 	media.Width = width
 	media.Height = height
 	media.DurationMS = duration

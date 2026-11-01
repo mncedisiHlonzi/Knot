@@ -188,6 +188,11 @@ type FeedEntryProps = {
   readonly isMuted?: boolean;
   /** Called when the entry's mute control is tapped. */
   readonly onToggleMute?: () => void;
+  /**
+   * True only for the entry immediately after the active one, so its video prepares
+   * itself before it is scrolled into view (KNOT-037-fix7). Defaults to `false`.
+   */
+  readonly isNextInLine?: boolean;
   /** Test identifier. */
   readonly testID?: string;
 };
@@ -294,6 +299,7 @@ export default function FeedEntry({
   isVisible = false,
   isMuted = true,
   onToggleMute = NOOP,
+  isNextInLine = false,
   testID,
 }: FeedEntryProps): React.ReactElement {
   const { colors } = useTheme();
@@ -587,6 +593,7 @@ export default function FeedEntry({
                 isMuted={isMuted}
                 onToggleMute={onToggleMute}
                 onLoadSize={onLoadSize}
+                isNextInLine={isNextInLine}
               />
             ) : (
               <Image

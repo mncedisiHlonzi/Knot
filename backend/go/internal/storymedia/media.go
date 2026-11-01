@@ -28,6 +28,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/knot/backend/internal/storage"
@@ -58,6 +59,13 @@ var (
 	// and another would exceed the cap. The handler maps it to a 400
 	// validation_error carrying MediaLimitMessage (KNOT-ADR-054).
 	ErrMediaLimit = errors.New("storymedia: story media limit reached")
+	// ErrProcessing is returned when a row's derivatives are still being generated
+	// by the background worker, so there are no bytes to serve yet. The handler
+	// answers 202 Accepted for it (KNOT-037-fix7).
+	ErrProcessing = errors.New("storymedia: media is still processing")
+	// ErrProcessingFailed is returned when the background worker could not produce
+	// the derivatives. The row keeps the reason in the log, not in the response.
+	ErrProcessingFailed = errors.New("storymedia: media processing failed")
 )
 
 // ValidationError describes a rejected field on a request. Handlers expose the
@@ -118,6 +126,35 @@ const (
 func (s MediaSource) Valid() bool {
 	switch s {
 	case MediaSourceCamera, MediaSourceGallery:
+		return true
+	default:
+		return false
+	}
+}
+
+// Status says where an item's derivatives are in the pipeline (KNOT-037-fix7).
+//
+// The upload request only records the row; a background worker produces the
+// objects and moves the row from processing to ready (or failed). A reader can
+// therefore never mistake "not generated yet" for "there is nothing here", and
+// the CHECK constraint in migration 0026 pins the same three values.
+type Status string
+
+// The pipeline states.
+const (
+	// StatusProcessing means the row exists but its derivatives do not yet.
+	StatusProcessing Status = "processing"
+	// StatusReady means every derivative exists and the row can be served.
+	StatusReady Status = "ready"
+	// StatusFailed means the worker gave up; the reason is in the log, never in a
+	// response.
+	StatusFailed Status = "failed"
+)
+
+// Valid reports whether s is one of the pipeline states.
+func (s Status) Valid() bool {
+	switch s {
+	case StatusProcessing, StatusReady, StatusFailed:
 		return true
 	default:
 		return false
@@ -205,6 +242,12 @@ type StoryMedia struct {
 	UploaderID string
 	// StorageKey is the object key in the media bucket. It never leaves the
 	// server; the wire format carries a relative URL instead.
+	//
+	// Since KNOT-037-fix7 the pipeline stores DERIVATIVES ONLY, so this names the
+	// full rendition rather than an upload: the 2048px AVIF display for an image,
+	// the 1080p H.264 stream for a video. A row written before that change still
+	// names its original upload here, and a `display`/`stream` request falls back
+	// to it, which is what keeps old media readable.
 	StorageKey string
 	// MediaType is image or video.
 	MediaType MediaType
@@ -220,21 +263,26 @@ type StoryMedia struct {
 	DurationMS *int
 	// SizeBytes is the stored object's size.
 	SizeBytes int64
-	// ThumbnailKey, MediumKey, and PosterKey are the object keys of the renditions
-	// generated beside the original, or nil when none was generated (KNOT-037).
-	// Each is a key, never a URL, exactly as StorageKey is (KNOT-ADR-029).
+	// ThumbnailKey, MediumKey, and PosterKey are the object keys of renditions, or
+	// nil when this item has none. Each is a key, never a URL, exactly as
+	// StorageKey is (KNOT-ADR-029).
 	//
-	// ThumbnailKey names the AVIF thumbnail. The WebP thumbnail is written beside it
-	// under the same base name and is derived with ThumbnailWebPKey rather than
-	// stored twice; a row written before KNOT-037-fix6 keeps its JPEG thumbnail key
-	// here, and is told apart by the extension.
+	// Since KNOT-037-fix7 ThumbnailKey names a 400px WEBP thumbnail for an image and
+	// is nil for a video: a video autoplays in the feed, so no cover is generated
+	// at all. A row written earlier keeps whatever it stored here (a JPEG or AVIF
+	// thumbnail, or a video poster's key is in PosterKey), and the extension tells
+	// the reader which codec it is.
 	//
-	// They are nullable because a rendition is an optimisation: an upload whose
-	// bytes could not be decoded, a video the system has no FFmpeg for, and every
-	// row written before migration 0024 all read correctly through the original.
+	// MediumKey and PosterKey are RETIRED by KNOT-037-fix7 — new rows leave both nil
+	// — but they stay part of the row so media written before the change keeps its
+	// 1200px JPEG and its poster frame.
 	ThumbnailKey *string
 	MediumKey    *string
 	PosterKey    *string
+	// Status says whether the derivatives exist yet: processing (the worker is
+	// still running), ready, or failed. Only a ready row can be served
+	// (KNOT-037-fix7).
+	Status Status
 	// DisplayOrder is the item's position within its story. Lower comes first.
 	DisplayOrder int
 	// CreatedAt is the insertion time.
@@ -245,10 +293,17 @@ type StoryMedia struct {
 // that rendition.
 //
 // The original is not a variant: a row with no rendition answers false, and the
-// caller serves the object StorageKey names.
+// caller serves the object StorageKey names. Display and stream both answer with
+// StorageKey, because since KNOT-037-fix7 that IS the full rendition rather than
+// an upload (KNOT-037-fix7).
 func (m StoryMedia) DerivativeKey(variant Variant) (string, bool) {
 	var key *string
 	switch variant {
+	case VariantDisplay, VariantStream:
+		if strings.TrimSpace(m.StorageKey) == "" {
+			return "", false
+		}
+		return m.StorageKey, true
 	case VariantThumb:
 		key = m.ThumbnailKey
 	case VariantMedium:
@@ -269,17 +324,29 @@ func (m StoryMedia) DerivativeKey(variant Variant) (string, bool) {
 // derivativeKeys lists the rendition object keys this row holds, in a stable
 // order. It exists so deleting an item can remove everything the upload created.
 //
-// The derived WebP thumbnail is included: it is a second object with no column of
-// its own, and leaving it behind would keep the bytes of a deleted item.
+// The primary object is included when it is a derivative (every row written since
+// KNOT-037-fix7), and the derived WebP thumbnail is included for a row whose
+// thumbnail is an AVIF with a WebP sibling. Duplicates are dropped, because the
+// same file must not be deleted twice.
 func (m StoryMedia) derivativeKeys() []string {
 	keys := make([]string, 0, 4)
+	seen := make(map[string]bool, 4)
+
+	add := func(key string) {
+		if strings.TrimSpace(key) == "" || seen[key] {
+			return
+		}
+		seen[key] = true
+		keys = append(keys, key)
+	}
+
 	for _, key := range []*string{m.ThumbnailKey, m.MediumKey, m.PosterKey} {
-		if key != nil && strings.TrimSpace(*key) != "" {
-			keys = append(keys, *key)
+		if key != nil {
+			add(*key)
 		}
 	}
 	if webpKey, ok := m.ThumbnailWebPKey(); ok {
-		keys = append(keys, webpKey)
+		add(webpKey)
 	}
 
 	return keys
@@ -337,14 +404,41 @@ type rendition struct {
 	contentType string
 }
 
-// renditionCandidates lists the objects a variant request may be answered from,
-// in the order they should be tried.
+// contentTypeForKey answers the content type an object key names, falling back to
+// the given type when the extension is one this package does not mint.
 //
-// For a thumbnail the requested format comes first and the other modern format
-// second, so a missing file degrades to the sibling codec instead of to a
-// full-size original (KNOT-037-fix6). A legacy JPEG thumbnail is the third choice,
-// which keeps rows written before the dual-format ladder answering with a small
-// image.
+// It exists because a row's stored MimeType describes the UPLOAD, and since
+// KNOT-037-fix7 the object the row names is a derivative of that upload: serving
+// AVIF bytes as image/png is exactly the kind of lie this prevents.
+func contentTypeForKey(key, fallback string) string {
+	switch {
+	case strings.HasSuffix(key, avifExtension):
+		return avifContentType
+	case strings.HasSuffix(key, webpExtension):
+		return webpContentType
+	case strings.HasSuffix(key, jpegExtension):
+		return jpegContentType
+	case strings.HasSuffix(key, mp4Extension):
+		return videoContentType
+	case strings.HasSuffix(key, movExtension):
+		return quickTimeContentType
+	default:
+		return fallback
+	}
+}
+
+// renditionCandidates lists the SMALL objects a variant request may be answered
+// from, in the order they should be tried.
+//
+// Only the resident images are candidates. A display rendition or a stream is the
+// row's primary object and is served by the caller's range-aware path instead: a
+// video has to answer a `Range` request to seek, and reading 60 MiB into memory to
+// hand back 200 bytes would be worse than not having the variant at all
+// (KNOT-037-fix7).
+//
+// For a thumbnail the stored file comes first, then the legacy codecs a row
+// written before KNOT-037-fix6 may still hold, so old media keeps a small image to
+// show.
 func (m StoryMedia) renditionCandidates(variant Variant, format Format) []rendition {
 	candidates := make([]rendition, 0, 3)
 	add := func(candidate rendition) {
@@ -355,9 +449,9 @@ func (m StoryMedia) renditionCandidates(variant Variant, format Format) []rendit
 	case VariantThumb:
 		available := m.thumbnailRenditions()
 
-		order := []Format{FormatAVIF, FormatWebP, FormatJPEG}
-		if format == FormatWebP {
-			order = []Format{FormatWebP, FormatAVIF, FormatJPEG}
+		order := []Format{FormatWebP, FormatAVIF, FormatJPEG}
+		if format == FormatAVIF {
+			order = []Format{FormatAVIF, FormatWebP, FormatJPEG}
 		}
 		for _, candidateFormat := range order {
 			if candidate, ok := available[candidateFormat]; ok {
@@ -366,11 +460,11 @@ func (m StoryMedia) renditionCandidates(variant Variant, format Format) []rendit
 		}
 	case VariantMedium:
 		if key, ok := m.DerivativeKey(VariantMedium); ok {
-			add(rendition{key: key, contentType: jpegContentType})
+			add(rendition{key: key, contentType: contentTypeForKey(key, jpegContentType)})
 		}
 	case VariantPoster:
 		if key, ok := m.DerivativeKey(VariantPoster); ok {
-			add(rendition{key: key, contentType: jpegContentType})
+			add(rendition{key: key, contentType: contentTypeForKey(key, jpegContentType)})
 		}
 	}
 
@@ -426,6 +520,10 @@ type StoryMediaStore interface {
 	GetMedia(ctx context.Context, id string) (StoryMedia, error)
 	// DeleteMedia removes one media row, or reports ErrNotFound.
 	DeleteMedia(ctx context.Context, id string) error
+	// SetStatus records where an item's derivatives are in the pipeline, and the
+	// size of the object it now serves. A size of zero leaves the stored value
+	// alone, which is what a failed job wants (KNOT-037-fix7).
+	SetStatus(ctx context.Context, id string, status Status, sizeBytes int64) error
 	// StoryAuthor returns the author id of a story, or ErrStoryNotFound.
 	StoryAuthor(ctx context.Context, storyID string) (string, error)
 }
@@ -438,15 +536,40 @@ type Service struct {
 	store   StoryMediaStore
 	objects Storage
 	logger  Logger
-	// extractPoster renders a video's poster frame. It is a field so a test can
-	// substitute a stand-in without FFmpeg installed, exactly as the stories store
-	// does for its feature upsert (KNOT-037). Production never replaces the
-	// default, which is ExtractPosterFrame.
-	extractPoster posterExtractor
+
+	// processMedia turns one uploaded file into its stored derivatives and uploads
+	// them. It is a field so tests can substitute a stand-in: production never
+	// replaces the default, which is the real FFmpeg/encoder pipeline
+	// (KNOT-037-fix7).
+	processMedia processor
+	// semaphore caps how many uploads are processed at once. It is a buffered
+	// channel used as a counting semaphore, so a burst of uploads queues instead of
+	// saturating the machine's CPU (KNOT-037-fix7).
+	semaphore chan struct{}
+	// pending tracks the background jobs, so tests can wait for them and a graceful
+	// shutdown can drain them (KNOT-037-fix7).
+	pending sync.WaitGroup
 }
 
-// posterExtractor renders one frame of a video as JPEG bytes.
-type posterExtractor func(ctx context.Context, video []byte, offsetMS int) ([]byte, error)
+// processor turns one uploaded file into its derivatives, and reports the size of
+// the primary object it stored so the row can describe what it serves.
+type processor func(ctx context.Context, job processJob) (int64, error)
+
+// processJob is one queued upload: what to read, where to write, and which row to
+// finish.
+type processJob struct {
+	// MediaID is the row the worker completes.
+	MediaID string
+	// MediaType decides which pipeline runs: an image or a video.
+	MediaType MediaType
+	// TempPath is the spooled upload. The worker deletes it when it finishes,
+	// whatever the outcome.
+	TempPath string
+	// BaseKey is the stem every object of this upload is named from:
+	// `story-media/<story id>/<uuid>`. The worker appends the same suffix and
+	// extension the row already stores, so a key cannot drift.
+	BaseKey string
+}
 
 // Storage is the slice of the object-storage contract this package needs:
 // writing an object, reading a byte range, and deleting one. Depending on this
@@ -460,11 +583,20 @@ type Storage interface {
 }
 
 // Logger is the slice of slog.Logger this package needs: a warning when a
-// best-effort object deletion fails. Depending on an interface keeps the service
-// tests free of a logger.
+// best-effort object deletion fails or a background job cannot be recorded.
+// Depending on an interface keeps the service tests free of a logger.
 type Logger interface {
 	WarnContext(ctx context.Context, msg string, args ...any)
+	// ErrorContext reports a job that failed outright: the row is marked failed
+	// and the reason must reach the operator (KNOT-037-fix7).
+	ErrorContext(ctx context.Context, msg string, args ...any)
 }
+
+// MaxConcurrentProcessing is how many uploads the background worker processes at
+// once. Encoding a 2048px AVIF and transcoding a video are both CPU-bound, so the
+// cap is what stops a burst of uploads from starving the request path
+// (KNOT-037-fix7).
+const MaxConcurrentProcessing = 5
 
 // NewService wires a store, an object store, and a logger together.
 func NewService(store StoryMediaStore, objects Storage, logger Logger) (*Service, error) {
@@ -477,12 +609,25 @@ func NewService(store StoryMediaStore, objects Storage, logger Logger) (*Service
 	if logger == nil {
 		return nil, fmt.Errorf("storymedia: service requires a logger")
 	}
-	return &Service{
-		store:         store,
-		objects:       objects,
-		logger:        logger,
-		extractPoster: ExtractPosterFrame,
-	}, nil
+
+	service := &Service{
+		store:     store,
+		objects:   objects,
+		logger:    logger,
+		semaphore: make(chan struct{}, MaxConcurrentProcessing),
+	}
+	service.processMedia = service.transcodeAndUpload
+
+	return service, nil
+}
+
+// WaitForProcessing blocks until every queued background job has finished.
+//
+// It exists for tests and for a graceful shutdown: the request path returns as
+// soon as the row is written, so nothing else would tell a caller when the work
+// is actually done (KNOT-037-fix7).
+func (s *Service) WaitForProcessing() {
+	s.pending.Wait()
 }
 
 // TrimMimeType normalises a MIME type by dropping any parameters, so
@@ -496,14 +641,23 @@ func TrimMimeType(raw string) string {
 // the original upload (KNOT-037, KNOT-ADR-091).
 type Variant string
 
-// The derivative variants. The empty string is the original object, which is why
-// Variant's zero value means "serve what was uploaded".
+// The derivative variants. The empty string is the full rendition (or, for a row
+// written before KNOT-037-fix7, the original upload), which is why Variant's zero
+// value means "serve what the row's primary key names".
 const (
-	// VariantThumb is the feed thumbnail, at most ThumbnailMaxWidth wide.
+	// VariantThumb is the feed thumbnail: a 400px WebP (KNOT-037-fix7).
 	VariantThumb Variant = "thumb"
-	// VariantMedium is the story-detail rendition, at most MediumMaxWidth wide.
+	// VariantDisplay is an image's full rendition: a 2048px AVIF. A row written
+	// before KNOT-037-fix7 answers with the original upload instead.
+	VariantDisplay Variant = "display"
+	// VariantStream is a video's full rendition: a 1080p H.264 MP4 with its index
+	// at the front, so it starts playing before it has downloaded.
+	VariantStream Variant = "stream"
+	// VariantMedium is the story-detail rendition of a row written before
+	// KNOT-037-fix7, at most MediumMaxWidth wide. New rows have none.
 	VariantMedium Variant = "medium"
-	// VariantPoster is a video's poster frame.
+	// VariantPoster is a video's poster frame on a row written before
+	// KNOT-037-fix7. New videos have none: they autoplay (KNOT-037-fix7).
 	VariantPoster Variant = "poster"
 )
 
@@ -551,7 +705,7 @@ func ParseFormat(raw string) (Format, bool) {
 func ParseVariant(raw string) (Variant, bool) {
 	trimmed := Variant(strings.TrimSpace(raw))
 	switch trimmed {
-	case "", VariantThumb, VariantMedium, VariantPoster:
+	case "", VariantThumb, VariantDisplay, VariantStream, VariantMedium, VariantPoster:
 		return trimmed, true
 	default:
 		return "", false
@@ -584,6 +738,17 @@ func (s *Service) StreamMedia(ctx context.Context, id string, variant Variant, f
 		return nil, 0, "", err
 	}
 
+	// A row whose derivatives are still being generated has no bytes to serve yet.
+	// Answering 404 would tell the client the media does not exist, so the caller is
+	// told to wait instead; a failed row has nothing coming, and is reported as
+	// missing because there is nothing else it can ever be (KNOT-037-fix7).
+	switch media.Status {
+	case StatusProcessing:
+		return nil, 0, "", ErrProcessing
+	case StatusFailed:
+		return nil, 0, "", ErrProcessingFailed
+	}
+
 	for _, candidate := range media.renditionCandidates(variant, format) {
 		body, size, readErr := s.readRendition(ctx, candidate.key)
 		switch {
@@ -592,15 +757,20 @@ func (s *Service) StreamMedia(ctx context.Context, id string, variant Variant, f
 		case !errors.Is(readErr, ErrNotFound):
 			return nil, 0, "", readErr
 		}
-		// The object is gone, so try the next candidate. The original is last.
+		// The object is gone, so try the next candidate. The primary object is last.
 	}
+
+	// The fallback is the row's primary object, served with the type its key names:
+	// on a row written since KNOT-037-fix7 that is the display AVIF or the stream
+	// MP4, not the upload the row's MimeType describes.
+	contentType := contentTypeForKey(media.StorageKey, media.MimeType)
 
 	if start, end, ok := ParseRange(r.Header.Get("Range"), media.SizeBytes); ok {
 		body, err := s.objects.GetRange(ctx, media.StorageKey, start, end)
 		if err != nil {
 			return nil, 0, "", storageReadError(err)
 		}
-		return body, media.SizeBytes, media.MimeType, nil
+		return body, media.SizeBytes, contentType, nil
 	}
 
 	body, _, err := s.objects.Get(ctx, media.StorageKey)
@@ -608,7 +778,7 @@ func (s *Service) StreamMedia(ctx context.Context, id string, variant Variant, f
 		return nil, 0, "", storageReadError(err)
 	}
 
-	return body, media.SizeBytes, media.MimeType, nil
+	return body, media.SizeBytes, contentType, nil
 }
 
 // readRendition reads one rendition whole.
