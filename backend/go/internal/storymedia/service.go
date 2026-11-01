@@ -132,14 +132,35 @@ type derivativeKeys struct {
 	thumbnail *string
 	medium    *string
 	poster    *string
+	// thumbnailRank is the format of the thumbnail already recorded. A thumbnail
+	// exists in two files but a row has one column, so the best available codec
+	// wins regardless of the order the encoders happen to succeed in: AVIF keeps
+	// its WebP sibling derivable, while a WebP key alone stands for itself.
+	thumbnailRank int
 }
 
-// set records the key for one variant.
-func (k *derivativeKeys) set(variant Variant, key string) {
+// thumbnailFormatRank orders thumbnail formats by how much they can serve. AVIF
+// ranks highest because its WebP sibling is derivable from its key (KNOT-037-fix6).
+func thumbnailFormatRank(format Format) int {
+	switch format {
+	case FormatAVIF:
+		return 2
+	case FormatWebP:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// set records the key for one variant and format.
+func (k *derivativeKeys) set(variant Variant, format Format, key string) {
 	value := key
 	switch variant {
 	case VariantThumb:
-		k.thumbnail = &value
+		if rank := thumbnailFormatRank(format); rank > k.thumbnailRank {
+			k.thumbnailRank = rank
+			k.thumbnail = &value
+		}
 	case VariantMedium:
 		k.medium = &value
 	case VariantPoster:
@@ -171,19 +192,21 @@ func (s *Service) storeDerivatives(ctx context.Context, mediaType MediaType, dat
 
 	switch mediaType {
 	case MediaTypeImage:
+		// Every rendition that encoded is stored, even when a sibling codec
+		// failed: a picture with an AVIF thumbnail and no WebP one is still a
+		// picture, and the log line names what went missing (KNOT-037-fix6).
 		renditions, err := ImageDerivatives(data)
 		if err != nil {
-			s.warnDerivative(ctx, "could not generate image derivatives", err)
-			return keys
+			s.warnDerivative(ctx, "could not generate every image derivative", err)
 		}
 
 		for _, rendition := range renditions {
-			key := prefix + name + rendition.Suffix + derivativeExtension
+			key := prefix + name + rendition.Suffix + rendition.Extension
 			if err := s.objects.Put(ctx, key, bytes.NewReader(rendition.Body), rendition.ContentType); err != nil {
 				s.warnDerivative(ctx, "could not store an image derivative", err)
 				continue
 			}
-			keys.set(rendition.Variant, key)
+			keys.set(rendition.Variant, rendition.Format, key)
 		}
 	case MediaTypeVideo:
 		poster, err := s.extractPoster(ctx, data, posterOffsetMS(durationMS))
@@ -192,8 +215,8 @@ func (s *Service) storeDerivatives(ctx context.Context, mediaType MediaType, dat
 			return keys
 		}
 
-		key := prefix + name + posterSuffix + derivativeExtension
-		if err := s.objects.Put(ctx, key, bytes.NewReader(poster), derivativeContentType); err != nil {
+		key := prefix + name + posterSuffix + jpegExtension
+		if err := s.objects.Put(ctx, key, bytes.NewReader(poster), jpegContentType); err != nil {
 			s.warnDerivative(ctx, "could not store a video poster frame", err)
 			return keys
 		}

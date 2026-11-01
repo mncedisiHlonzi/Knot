@@ -224,6 +224,11 @@ type StoryMedia struct {
 	// generated beside the original, or nil when none was generated (KNOT-037).
 	// Each is a key, never a URL, exactly as StorageKey is (KNOT-ADR-029).
 	//
+	// ThumbnailKey names the AVIF thumbnail. The WebP thumbnail is written beside it
+	// under the same base name and is derived with ThumbnailWebPKey rather than
+	// stored twice; a row written before KNOT-037-fix6 keeps its JPEG thumbnail key
+	// here, and is told apart by the extension.
+	//
 	// They are nullable because a rendition is an optimisation: an upload whose
 	// bytes could not be decoded, a video the system has no FFmpeg for, and every
 	// row written before migration 0024 all read correctly through the original.
@@ -263,15 +268,113 @@ func (m StoryMedia) DerivativeKey(variant Variant) (string, bool) {
 
 // derivativeKeys lists the rendition object keys this row holds, in a stable
 // order. It exists so deleting an item can remove everything the upload created.
+//
+// The derived WebP thumbnail is included: it is a second object with no column of
+// its own, and leaving it behind would keep the bytes of a deleted item.
 func (m StoryMedia) derivativeKeys() []string {
-	keys := make([]string, 0, 3)
+	keys := make([]string, 0, 4)
 	for _, key := range []*string{m.ThumbnailKey, m.MediumKey, m.PosterKey} {
 		if key != nil && strings.TrimSpace(*key) != "" {
 			keys = append(keys, *key)
 		}
 	}
+	if webpKey, ok := m.ThumbnailWebPKey(); ok {
+		keys = append(keys, webpKey)
+	}
 
 	return keys
+}
+
+// thumbnailRenditions maps each thumbnail format this row can answer to the
+// object key that holds it.
+//
+// A row stores ONE thumbnail key, so the format it is in decides what else can be
+// derived. An AVIF key implies its WebP sibling: both files are written beside each
+// other with the same base name, so no second column and no migration is needed
+// (KNOT-037-fix6). A WebP key stands alone (the upload encoded no AVIF), and a
+// legacy JPEG key is all a row written before the dual-format ladder has.
+func (m StoryMedia) thumbnailRenditions() map[Format]rendition {
+	available := make(map[Format]rendition, 3)
+	if m.ThumbnailKey == nil || strings.TrimSpace(*m.ThumbnailKey) == "" {
+		return available
+	}
+
+	stored := *m.ThumbnailKey
+	switch {
+	case strings.HasSuffix(stored, avifExtension):
+		available[FormatAVIF] = rendition{key: stored, contentType: avifContentType}
+		available[FormatWebP] = rendition{
+			key:         strings.TrimSuffix(stored, avifExtension) + webpExtension,
+			contentType: webpContentType,
+		}
+	case strings.HasSuffix(stored, webpExtension):
+		available[FormatWebP] = rendition{key: stored, contentType: webpContentType}
+	case strings.HasSuffix(stored, jpegExtension):
+		available[FormatJPEG] = rendition{key: stored, contentType: jpegContentType}
+	}
+
+	return available
+}
+
+// ThumbnailWebPKey derives the WebP thumbnail's object key from the stored
+// thumbnail key, and reports whether this row has a WebP rendition at all.
+//
+// The key is derived rather than stored so the two files cannot disagree about
+// which upload they belong to. A row whose thumbnail is a legacy JPEG answers
+// false: it has no WebP file, and the JPEG thumbnail is what a thumbnail request
+// falls back to.
+func (m StoryMedia) ThumbnailWebPKey() (string, bool) {
+	webpRendition, ok := m.thumbnailRenditions()[FormatWebP]
+	return webpRendition.key, ok
+}
+
+// rendition is one stored derivative a content request may be answered from.
+type rendition struct {
+	// key is the object key to read.
+	key string
+	// contentType is the type to serve it as, which follows the format actually
+	// read rather than the format that was asked for.
+	contentType string
+}
+
+// renditionCandidates lists the objects a variant request may be answered from,
+// in the order they should be tried.
+//
+// For a thumbnail the requested format comes first and the other modern format
+// second, so a missing file degrades to the sibling codec instead of to a
+// full-size original (KNOT-037-fix6). A legacy JPEG thumbnail is the third choice,
+// which keeps rows written before the dual-format ladder answering with a small
+// image.
+func (m StoryMedia) renditionCandidates(variant Variant, format Format) []rendition {
+	candidates := make([]rendition, 0, 3)
+	add := func(candidate rendition) {
+		candidates = append(candidates, candidate)
+	}
+
+	switch variant {
+	case VariantThumb:
+		available := m.thumbnailRenditions()
+
+		order := []Format{FormatAVIF, FormatWebP, FormatJPEG}
+		if format == FormatWebP {
+			order = []Format{FormatWebP, FormatAVIF, FormatJPEG}
+		}
+		for _, candidateFormat := range order {
+			if candidate, ok := available[candidateFormat]; ok {
+				add(candidate)
+			}
+		}
+	case VariantMedium:
+		if key, ok := m.DerivativeKey(VariantMedium); ok {
+			add(rendition{key: key, contentType: jpegContentType})
+		}
+	case VariantPoster:
+		if key, ok := m.DerivativeKey(VariantPoster); ok {
+			add(rendition{key: key, contentType: jpegContentType})
+		}
+	}
+
+	return candidates
 }
 
 // CreateMediaInput is the input to CreateMedia. It is a domain type, not an HTTP
@@ -404,11 +507,46 @@ const (
 	VariantPoster Variant = "poster"
 )
 
+// Format names the image encoding a thumbnail is stored and served in
+// (KNOT-037-fix6).
+type Format string
+
+// The formats a thumbnail exists in, plus the internal JPEG value that names the
+// legacy thumbnails written before the dual-format ladder and the medium
+// rendition. Only FormatAVIF and FormatWebP are accepted from a client.
+const (
+	// FormatAVIF is the primary thumbnail: smallest bytes at the same quality.
+	FormatAVIF Format = "avif"
+	// FormatWebP is the thumbnail a device without an AVIF decoder falls back to.
+	FormatWebP Format = "webp"
+	// FormatJPEG is a JPEG rendition. It is never requested by a client: it is what
+	// the medium rendition is, and what a thumbnail key written before
+	// KNOT-037-fix6 names.
+	FormatJPEG Format = "jpeg"
+)
+
+// ParseFormat validates the `format` query parameter of the content endpoint.
+//
+// An absent or blank value resolves to the zero Format, which asks for the primary
+// encoding (AVIF) while still allowing the sibling codec as a fallback. Anything
+// other than avif or webp must be rejected rather than ignored: silently answering
+// in a codec the caller cannot decode is the failure this parameter exists to
+// prevent.
+func ParseFormat(raw string) (Format, bool) {
+	trimmed := Format(strings.ToLower(strings.TrimSpace(raw)))
+	switch trimmed {
+	case "", FormatAVIF, FormatWebP:
+		return trimmed, true
+	default:
+		return "", false
+	}
+}
+
 // ParseVariant validates the `variant` query parameter of the content endpoint.
 //
 // An absent or blank value resolves to the original object. An unknown value must
 // be rejected rather than ignored: silently answering with the original would send
-// a full-size photo to a client that asked for a 400px thumbnail, which is the
+// a full-size photo to a client that asked for an 800px thumbnail, which is the
 // opposite of what the parameter is for.
 func ParseVariant(raw string) (Variant, bool) {
 	trimmed := Variant(strings.TrimSpace(raw))
@@ -435,21 +573,26 @@ func ParseVariant(raw string) (Variant, bool) {
 // means a thumbnail request can never be turned into a full-size transfer. When
 // the row has no rendition, or its object is missing, the original is served
 // instead: an optimisation that failed must not hide the image (KNOT-ADR-091).
-func (s *Service) StreamMedia(ctx context.Context, id string, variant Variant, r *http.Request) (io.ReadCloser, int64, string, error) {
+//
+// A thumbnail request also names a format. The requested format is tried first and
+// the other one second, so a device that cannot decode AVIF still gets a small
+// image rather than the original (KNOT-037-fix6). The content type returned is the
+// type of the file that was actually read, not the one that was asked for.
+func (s *Service) StreamMedia(ctx context.Context, id string, variant Variant, format Format, r *http.Request) (io.ReadCloser, int64, string, error) {
 	media, err := s.GetMedia(ctx, id)
 	if err != nil {
 		return nil, 0, "", err
 	}
 
-	if key, ok := media.DerivativeKey(variant); ok {
-		body, size, readErr := s.readRendition(ctx, key)
+	for _, candidate := range media.renditionCandidates(variant, format) {
+		body, size, readErr := s.readRendition(ctx, candidate.key)
 		switch {
 		case readErr == nil:
-			return body, size, derivativeContentType, nil
+			return body, size, candidate.contentType, nil
 		case !errors.Is(readErr, ErrNotFound):
 			return nil, 0, "", readErr
 		}
-		// The object is gone, so fall through to the original.
+		// The object is gone, so try the next candidate. The original is last.
 	}
 
 	if start, end, ok := ParseRange(r.Header.Get("Range"), media.SizeBytes); ok {
@@ -470,8 +613,8 @@ func (s *Service) StreamMedia(ctx context.Context, id string, variant Variant, r
 
 // readRendition reads one rendition whole.
 //
-// The storage contract has no stat method, and a rendition is small (a 400px JPEG
-// is tens of kilobytes), so buffering it is what allows an exact Content-Length
+// The storage contract has no stat method, and a rendition is small (a thumbnail is
+// tens of kilobytes), so buffering it is what allows an exact Content-Length
 // without widening the interface. Renditions are images, so they are never played
 // with a Range request.
 func (s *Service) readRendition(ctx context.Context, key string) (io.ReadCloser, int64, error) {

@@ -601,7 +601,8 @@ and the pillar it belongs to.
       "display_order": 0,
       "created_at": "2026-10-09T18:26:37.134182+02:00",
       "url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content",
-      "thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb",
+      "thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb&format=avif",
+      "thumbnail_url_fallback": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb&format=webp",
       "medium_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=medium",
       "poster_url": null
     }
@@ -1048,7 +1049,8 @@ Returns **200** with the story's media, in display order:
       "media_type": "image",
       "source": "camera",
       "url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content",
-      "thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb",
+      "thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb&format=avif",
+      "thumbnail_url_fallback": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb&format=webp",
       "medium_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=medium",
       "poster_url": null
     }
@@ -1062,7 +1064,14 @@ Returns **200** with the story's media, in display order:
 `thumbnail_url`, `medium_url`, and `poster_url` address the generated renditions
 (KNOT-037) and are `null` when this item has none — an image upload whose bytes could not
 be decoded, a video the system has no FFmpeg for, or a row written before migration
-`0024`. A client that wants a renditions must fall back to `url` when they are null.
+`0024`. A client that wants a rendition must fall back to `url` when they are null.
+
+**The thumbnail exists in two formats** (KNOT-037-fix6). `thumbnail_url` is the **AVIF**
+file: the smallest bytes at the same quality. `thumbnail_url_fallback` is the same picture
+as **WebP**, for a device without an AVIF decoder, and is `null` when the item has no WebP
+file. Both addresses are safe to load even when the server has to substitute codec: a
+missing format is answered with the other one, and a row written before the dual-format
+ladder is answered with its JPEG thumbnail. Thumbnails are at most **800px** wide.
 
 **Errors:** `404 not_found`, `500 internal_error`.
 
@@ -1077,12 +1086,19 @@ rendition instead of the original upload (KNOT-037):
 | `variant` | Serves | Content type |
 | --- | --- | --- |
 | absent | The original upload | The stored type (`image/jpeg`, `image/png`, `image/webp`, `video/mp4`, `video/quicktime`) |
-| `thumb` | The feed thumbnail, max 400px wide | `image/jpeg` |
+| `thumb` | The feed thumbnail, max 800px wide | `image/avif` (default), `image/webp` with `format=webp`, or `image/jpeg` for a row written before the dual-format ladder |
 | `medium` | The story-detail rendition, max 1200px wide | `image/jpeg` |
 | `poster` | A video's poster frame, max 400px wide | `image/jpeg` |
 
-A rendition is always a JPEG, so its response never echoes the row's stored type. A
-variant the item does not have — `poster` on an image, or any variant on a row whose
+**The `format` parameter** selects a thumbnail's codec (KNOT-037-fix6): `avif` (the
+default when the parameter is absent) or `webp`. It is only meaningful with
+`variant=thumb`; combining it with any other variant, or sending an unrecognised value,
+is `400 invalid_request` rather than a silent substitution. The response's `Content-Type`
+is always the type of the file that was actually served, so a WebP request that fell back
+to the AVIF sibling answers `image/avif`. A missing format degrades in this order:
+requested codec, the other codec, a legacy JPEG thumbnail, then the original.
+
+A variant the item does not have — `poster` on an image, or any variant on a row whose
 pipeline did not run — is answered with **the original**, so a missing rendition never
 hides the media. Renditions are small and are sent whole; `Range` applies to the original.
 An unrecognised `variant` is `400 invalid_request` rather than a silent full-size response.
@@ -1094,8 +1110,8 @@ answered **200** (KNOT-ADR-032). Multi-range requests are treated as unusable.
 
 A media id that does not exist — or a row whose object is missing — returns `404 not_found`.
 
-**Errors:** `400 invalid_request` (an unknown `variant`), `404 not_found`, `500
-internal_error`.
+**Errors:** `400 invalid_request` (an unknown `variant`, an unknown `format`, or `format`
+without `variant=thumb`), `404 not_found`, `500 internal_error`.
 
 ### DELETE /stories/{id}/media/{mid}
 

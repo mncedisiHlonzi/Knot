@@ -588,7 +588,7 @@ KNOT-ADR-030.
 | `size_bytes`    | `bigint`      | no       | —                   | The stored object's size                                               |
 | `display_order` | `integer`     | no       | `0`                 | Position within the story; lower comes first. Appended on upload        |
 | `created_at`    | `timestamptz` | no       | `now()`             |                                                                        |
-| `thumbnail_key` | `text`        | yes      | `NULL`              | Object key of the feed thumbnail (JPEG, max 400px wide), or `NULL` when none was generated (KNOT-037) |
+| `thumbnail_key` | `text`        | yes      | `NULL`              | Object key of the feed thumbnail (AVIF, max 800px wide), or `NULL` when none was generated (KNOT-037, KNOT-037-fix6). The WebP sibling is derived from this key, not stored |
 | `medium_key`    | `text`        | yes      | `NULL`              | Object key of the story-detail rendition (JPEG, max 1200px wide), or `NULL` when none was generated (KNOT-037) |
 | `poster_key`    | `text`        | yes      | `NULL`              | Object key of a video poster frame (JPEG, max 400px wide); `NULL` for images, for a system without FFmpeg, or when extraction failed (KNOT-037) |
 

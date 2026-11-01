@@ -104,7 +104,7 @@ writes objects (KNOT-ADR-028, KNOT-ADR-029).
 | S3 API              | `http://127.0.0.1:9000`                                            |
 | Web console         | `http://127.0.0.1:9001`                                            |
 | Bucket              | `knot-media` (`KNOT_S3_BUCKET`)                                     |
-| Object layout       | Avatars: `avatars/<user id>/<uuid>.{jpg,png,webp}`. Story media: `story-media/<story id>/<uuid>.{jpg,png,webp,mp4,mov}`, with the renditions beside it as `<uuid>_thumb.jpg`, `<uuid>_medium.jpg` and `<uuid>_poster.jpg` (KNOT-037) |
+| Object layout       | Avatars: `avatars/<user id>/<uuid>.{jpg,png,webp}`. Story media: `story-media/<story id>/<uuid>.{jpg,png,webp,mp4,mov}`, with the renditions beside it as `<uuid>_thumb.avif`, `<uuid>_thumb.webp`, `<uuid>_medium.jpg` and `<uuid>_poster.jpg` (KNOT-037, KNOT-037-fix6) |
 | Data directory      | `/bitnami/minio/data` in the container, on the `knot_minio_data` named volume |
 | Credentials         | `KNOT_S3_ACCESS_KEY` / `KNOT_S3_SECRET_KEY`, which are the same values the container is given as `KNOT_MINIO_ROOT_USER` / `KNOT_MINIO_ROOT_PASSWORD` |
 | Health              | `curl -f http://127.0.0.1:9000/minio/health/live`                   |
@@ -166,20 +166,24 @@ Deleting a media row does **not** remove the object from the bucket in the conso
 until the `DELETE` endpoint is called; a row and its object are removed together by
 `DELETE /stories/{id}/media/{mid}`, which also removes that item's renditions.
 
-#### Media renditions (KNOT-037)
+#### Media renditions (KNOT-037, dual-format thumbnails in KNOT-037-fix6)
 
-Every image upload is also rendered as a feed thumbnail (JPEG, max 400px wide, quality 80)
-and a story-detail rendition (JPEG, max 1200px wide, quality 85); every video upload gets a
-poster frame (JPEG, max 400px wide) taken a fifth of the way in. The objects are named
-`<uuid>_thumb.jpg`, `<uuid>_medium.jpg` and `<uuid>_poster.jpg` inside the same
-`story-media/<story id>/` folder, and the row records their keys in `thumbnail_key`,
-`medium_key` and `poster_key` (migration `0024`).
+Every image upload is also rendered as a feed thumbnail in **two formats** — AVIF and WebP,
+both max 800px wide at quality 80 — plus a story-detail rendition (JPEG, max 1200px wide,
+quality 85); every video upload gets a poster frame (JPEG, max 400px wide) taken a fifth of
+the way in. The objects are named `<uuid>_thumb.avif`, `<uuid>_thumb.webp`,
+`<uuid>_medium.jpg` and `<uuid>_poster.jpg` inside the same `story-media/<story id>/`
+folder, and the row records the thumbnail, medium and poster keys in `thumbnail_key`,
+`medium_key` and `poster_key` (migration `0024`). `thumbnail_key` names the AVIF file; the
+WebP key is derived from it, so one column covers both.
 
-Renditions are served by the same content endpoint with `?variant=thumb|medium|poster`:
+Renditions are served by the same content endpoint with `?variant=thumb|medium|poster`,
+and a thumbnail also takes `&format=avif|webp`:
 
 ```bash
-# The thumbnail, the medium rendition, and the fallback behaviour
-curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=thumb"
+# The AVIF thumbnail (the default), the WebP fallback, and the medium rendition
+curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=thumb&format=avif"
+curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=thumb&format=webp"
 curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=medium"
 # A poster on an image has none, so this answers with the ORIGINAL (200, image/png)
 curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=poster"
@@ -187,7 +191,16 @@ curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/conte
 
 A failed rendition is a `WARN` in the log and nothing else: the original is already stored
 and every reader falls back to it, so a missing decoder or a missing FFmpeg never fails an
-upload.
+upload. A thumbnail request that names a format the item does not have is answered with the
+other codec (then with a legacy JPEG thumbnail), so an address a client holds keeps working.
+
+**Both thumbnail encoders are pure Go**: `github.com/chai2010/webp` (libwebp compiled in)
+and `github.com/gen2brain/avif` (libavif compiled to WASM, run by `wazero`). Nothing native
+needs installing, and there is no cgo library to provision on CI. AVIF encoding is the
+expensive step: at speed 8 an 800px thumbnail costs about half a second of CPU for a simple
+image and a couple of seconds for a detailed one, and the FIRST encode in a process also pays
+about 2.5s to instantiate the WASM module. The upload response waits for it, so the first
+photo after a restart is slower than the ones after it.
 
 **FFmpeg is required for video poster frames**, and only for those. Image renditions are
 pure Go and need nothing installed:

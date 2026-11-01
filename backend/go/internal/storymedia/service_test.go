@@ -606,7 +606,7 @@ func TestStreamMediaFullAndRange(t *testing.T) {
 
 	// No Range header: the whole object. No variant asks for the original.
 	request := newRangeRequest("")
-	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, "", request)
+	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, "", "", request)
 	if err != nil {
 		t.Fatalf("StreamMedia(full) error = %v", err)
 	}
@@ -623,7 +623,7 @@ func TestStreamMediaFullAndRange(t *testing.T) {
 
 	// A Range header: only the requested bytes.
 	request = newRangeRequest("bytes=3-6")
-	body, total, _, err = service.StreamMedia(context.Background(), created.ID, "", request)
+	body, total, _, err = service.StreamMedia(context.Background(), created.ID, "", "", request)
 	if err != nil {
 		t.Fatalf("StreamMedia(range) error = %v", err)
 	}
@@ -748,22 +748,35 @@ func TestCreateMediaStoresImageDerivatives(t *testing.T) {
 	}
 
 	base := strings.TrimSuffix(created.StorageKey, ".png")
-	if want := base + "_thumb.jpg"; *created.ThumbnailKey != want {
+	if want := base + "_thumb.avif"; *created.ThumbnailKey != want {
 		t.Errorf("thumbnail key = %q, want %q", *created.ThumbnailKey, want)
 	}
 	if want := base + "_medium.jpg"; *created.MediumKey != want {
 		t.Errorf("medium key = %q, want %q", *created.MediumKey, want)
 	}
 
-	// The renditions are objects in the same bucket as the original.
+	// The WebP fallback has no column of its own: it is derived from the AVIF key.
+	webpKey, ok := created.ThumbnailWebPKey()
+	if !ok {
+		t.Fatal("ThumbnailWebPKey() = false, want the key derived from the avif thumbnail")
+	}
+	if want := base + "_thumb.webp"; webpKey != want {
+		t.Errorf("derived webp key = %q, want %q", webpKey, want)
+	}
+
+	// Both thumbnail files and the medium are objects in the same bucket as the
+	// original.
 	thumbnail, ok := objects.objects[*created.ThumbnailKey]
 	if !ok {
-		t.Fatal("the thumbnail object was not written")
+		t.Fatal("the avif thumbnail object was not written")
+	}
+	if _, ok := objects.objects[webpKey]; !ok {
+		t.Fatal("the webp thumbnail object was not written")
 	}
 	if _, ok := objects.objects[*created.MediumKey]; !ok {
 		t.Fatal("the medium object was not written")
 	}
-	if got := decodeJPEG(t, thumbnail).Bounds().Dx(); got != ThumbnailMaxWidth {
+	if got := decodeAVIF(t, thumbnail).Bounds().Dx(); got != ThumbnailMaxWidth {
 		t.Errorf("stored thumbnail width = %d, want %d", got, ThumbnailMaxWidth)
 	}
 
@@ -871,7 +884,7 @@ func TestStreamMediaServesAThumbnail(t *testing.T) {
 		t.Fatalf("CreateMedia() error = %v, want nil", err)
 	}
 
-	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, newRangeRequest(""))
+	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, "", newRangeRequest(""))
 	if err != nil {
 		t.Fatalf("StreamMedia(thumb) error = %v, want nil", err)
 	}
@@ -884,12 +897,124 @@ func TestStreamMediaServesAThumbnail(t *testing.T) {
 	if total != int64(len(want)) {
 		t.Errorf("total = %d, want the rendition's %d bytes", total, len(want))
 	}
-	if mimeType != derivativeContentType {
-		t.Errorf("mime = %q, want %q", mimeType, derivativeContentType)
+	// With no format asked for, the answer is the primary codec.
+	if mimeType != avifContentType {
+		t.Errorf("mime = %q, want %q", mimeType, avifContentType)
 	}
 	// A rendition is smaller than the original, which is the point of serving it.
 	if total >= created.SizeBytes {
 		t.Errorf("rendition size = %d, want less than the original's %d", total, created.SizeBytes)
+	}
+}
+
+func TestStreamMediaServesTheWebPFallback(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, _ := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 1000, 500))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+
+	webpKey, ok := created.ThumbnailWebPKey()
+	if !ok {
+		t.Fatal("ThumbnailWebPKey() = false, want a derived key")
+	}
+
+	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, FormatWebP, newRangeRequest(""))
+	if err != nil {
+		t.Fatalf("StreamMedia(thumb, webp) error = %v, want nil", err)
+	}
+
+	served, _ := io.ReadAll(body)
+	if want := objects.objects[webpKey]; !bytes.Equal(served, want) {
+		t.Error("StreamMedia(thumb, webp) did not serve the webp file")
+	}
+	if total != int64(len(objects.objects[webpKey])) {
+		t.Errorf("total = %d, want the webp file's %d bytes", total, len(objects.objects[webpKey]))
+	}
+	if mimeType != webpContentType {
+		t.Errorf("mime = %q, want %q", mimeType, webpContentType)
+	}
+}
+
+func TestStreamMediaFallsBackToTheOtherFormat(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, _ := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 1000, 500))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+
+	webpKey, ok := created.ThumbnailWebPKey()
+	if !ok {
+		t.Fatal("ThumbnailWebPKey() = false, want a derived key")
+	}
+
+	// The WebP file is gone, so a WebP request is answered with the AVIF sibling
+	// rather than with the full-size original.
+	delete(objects.objects, webpKey)
+
+	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, FormatWebP, newRangeRequest(""))
+	if err != nil {
+		t.Fatalf("StreamMedia(thumb, webp) error = %v, want the avif sibling", err)
+	}
+
+	served, _ := io.ReadAll(body)
+	if want := objects.objects[*created.ThumbnailKey]; !bytes.Equal(served, want) {
+		t.Error("the fallback did not serve the avif thumbnail")
+	}
+	if total != int64(len(objects.objects[*created.ThumbnailKey])) {
+		t.Errorf("total = %d, want the avif file's %d bytes", total, len(objects.objects[*created.ThumbnailKey]))
+	}
+	if mimeType != avifContentType {
+		t.Errorf("mime = %q, want the codec actually served, %q", mimeType, avifContentType)
+	}
+}
+
+func TestStreamMediaServesALegacyJPEGThumbnail(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, _ := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 300, 200))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+
+	// A row written before KNOT-037-fix6 keeps a JPEG thumbnail key and has no
+	// modern sibling objects. Asking for AVIF or WebP must still answer with that
+	// small file rather than with the full-size original.
+	legacyKey := strings.TrimSuffix(*created.ThumbnailKey, avifExtension) + jpegExtension
+	objects.objects[legacyKey] = []byte("legacy jpeg thumbnail bytes")
+
+	stored := store.media[created.ID]
+	stored.ThumbnailKey = &legacyKey
+	store.media[created.ID] = stored
+
+	if _, ok := stored.ThumbnailWebPKey(); ok {
+		t.Fatal("ThumbnailWebPKey() = true for a legacy jpeg thumbnail, want false")
+	}
+
+	for _, format := range []Format{"", FormatAVIF, FormatWebP} {
+		body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, format, newRangeRequest(""))
+		if err != nil {
+			t.Fatalf("StreamMedia(thumb, %q) error = %v, want the legacy jpeg thumbnail", format, err)
+		}
+
+		served, _ := io.ReadAll(body)
+		if !bytes.Equal(served, objects.objects[legacyKey]) {
+			t.Errorf("format %q: the fallback did not serve the legacy thumbnail", format)
+		}
+		if total != int64(len(objects.objects[legacyKey])) {
+			t.Errorf("format %q: total = %d, want the legacy thumbnail's %d", format, total, len(objects.objects[legacyKey]))
+		}
+		if mimeType != jpegContentType {
+			t.Errorf("format %q: mime = %q, want the legacy thumbnail's %q", format, mimeType, jpegContentType)
+		}
 	}
 }
 
@@ -903,10 +1028,13 @@ func TestStreamMediaFallsBackWhenTheRenditionObjectIsMissing(t *testing.T) {
 		t.Fatalf("CreateMedia() error = %v, want nil", err)
 	}
 
-	// The row still names the key, but the object is gone.
+	// The row still names the keys, but every rendition object is gone.
 	delete(objects.objects, *created.ThumbnailKey)
+	if webpKey, ok := created.ThumbnailWebPKey(); ok {
+		delete(objects.objects, webpKey)
+	}
 
-	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, newRangeRequest(""))
+	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, "", newRangeRequest(""))
 	if err != nil {
 		t.Fatalf("StreamMedia(thumb, missing object) error = %v, want the original", err)
 	}
@@ -934,7 +1062,7 @@ func TestStreamMediaFallsBackForAVariantTheRowDoesNotHave(t *testing.T) {
 	}
 
 	// An image has no poster, so asking for one must still return the picture.
-	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantPoster, newRangeRequest(""))
+	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantPoster, "", newRangeRequest(""))
 	if err != nil {
 		t.Fatalf("StreamMedia(poster on an image) error = %v, want the original", err)
 	}

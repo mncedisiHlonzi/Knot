@@ -12,6 +12,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/chai2010/webp"
+	"github.com/gen2brain/avif"
 )
 
 // testPNG encodes a solid image of the given size, so a test can assert what a
@@ -60,42 +63,116 @@ func decodeJPEG(t *testing.T, data []byte) image.Image {
 	return img
 }
 
+// decodeAVIF decodes an AVIF rendition.
+func decodeAVIF(t *testing.T, data []byte) image.Image {
+	t.Helper()
+
+	img, err := avif.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("decoding the rendition as AVIF: %v", err)
+	}
+
+	return img
+}
+
+// decodeWebP decodes a WebP rendition.
+func decodeWebP(t *testing.T, data []byte) image.Image {
+	t.Helper()
+
+	img, err := webp.Decode(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("decoding the rendition as WebP: %v", err)
+	}
+
+	return img
+}
+
+// renditionFor finds one rendition by variant and format.
+func renditionFor(t *testing.T, renditions []Rendition, variant Variant, format Format) Rendition {
+	t.Helper()
+
+	for _, rendition := range renditions {
+		if rendition.Variant == variant && rendition.Format == format {
+			return rendition
+		}
+	}
+
+	t.Fatalf("no %s rendition in %s format (have %d renditions)", variant, format, len(renditions))
+	return Rendition{}
+}
+
 func TestImageDerivativesScaleDownAndKeepAspectRatio(t *testing.T) {
 	renditions, err := ImageDerivatives(testPNG(t, 1000, 500))
 	if err != nil {
 		t.Fatalf("ImageDerivatives() error = %v, want nil", err)
 	}
-	if len(renditions) != 2 {
-		t.Fatalf("renditions = %d, want a thumbnail and a medium", len(renditions))
+	if len(renditions) != 3 {
+		t.Fatalf("renditions = %d, want an AVIF thumbnail, a WebP thumbnail, and a medium", len(renditions))
 	}
 
-	thumbnail, medium := renditions[0], renditions[1]
+	// The order is the ladder: AVIF first, then the WebP fallback, then the medium.
+	avifThumbnail := renditionFor(t, renditions, VariantThumb, FormatAVIF)
+	webpThumbnail := renditionFor(t, renditions, VariantThumb, FormatWebP)
+	medium := renditionFor(t, renditions, VariantMedium, FormatJPEG)
 
-	if thumbnail.Variant != VariantThumb || medium.Variant != VariantMedium {
-		t.Fatalf("variants = %q, %q, want thumb then medium", thumbnail.Variant, medium.Variant)
+	// 1000x500 scaled to an 800 max width is 800x400.
+	thumbnailCases := []struct {
+		name      string
+		rendition Rendition
+		decode    func(*testing.T, []byte) image.Image
+	}{
+		{name: "avif", rendition: avifThumbnail, decode: decodeAVIF},
+		{name: "webp", rendition: webpThumbnail, decode: decodeWebP},
 	}
-
-	// 1000x500 scaled to a 400 max width is 400x200.
-	thumbImage := decodeJPEG(t, thumbnail.Body)
-	if got := thumbImage.Bounds(); got.Dx() != ThumbnailMaxWidth || got.Dy() != 200 {
-		t.Errorf("thumbnail = %dx%d, want %dx200", got.Dx(), got.Dy(), ThumbnailMaxWidth)
-	}
-	if thumbnail.Width != ThumbnailMaxWidth || thumbnail.Height != 200 {
-		t.Errorf("reported thumbnail size = %dx%d, want %dx200", thumbnail.Width, thumbnail.Height, ThumbnailMaxWidth)
+	for _, testCase := range thumbnailCases {
+		bounds := testCase.decode(t, testCase.rendition.Body).Bounds()
+		if bounds.Dx() != ThumbnailMaxWidth || bounds.Dy() != 400 {
+			t.Errorf("%s thumbnail = %dx%d, want %dx400", testCase.name, bounds.Dx(), bounds.Dy(), ThumbnailMaxWidth)
+		}
+		if testCase.rendition.Width != ThumbnailMaxWidth || testCase.rendition.Height != 400 {
+			t.Errorf("reported %s thumbnail size = %dx%d, want %dx400",
+				testCase.name, testCase.rendition.Width, testCase.rendition.Height, ThumbnailMaxWidth)
+		}
 	}
 
 	// 1000 is narrower than the medium's 1200, so it is re-encoded at its own size
 	// rather than upscaled.
-	mediumImage := decodeJPEG(t, medium.Body)
-	if got := mediumImage.Bounds(); got.Dx() != 1000 || got.Dy() != 500 {
+	if got := decodeJPEG(t, medium.Body).Bounds(); got.Dx() != 1000 || got.Dy() != 500 {
 		t.Errorf("medium = %dx%d, want the source's 1000x500", got.Dx(), got.Dy())
 	}
 
-	if thumbnail.ContentType != derivativeContentType || medium.ContentType != derivativeContentType {
-		t.Errorf("content types = %q, %q, want %q", thumbnail.ContentType, medium.ContentType, derivativeContentType)
+	// The content type and the key extension follow the format, so a file is never
+	// stored as one codec and served as another.
+	wanted := map[Format]struct {
+		contentType string
+		extension   string
+	}{
+		FormatAVIF: {avifContentType, avifExtension},
+		FormatWebP: {webpContentType, webpExtension},
+		FormatJPEG: {jpegContentType, jpegExtension},
 	}
-	if thumbnail.Suffix != thumbnailSuffix || medium.Suffix != mediumSuffix {
-		t.Errorf("suffixes = %q, %q, want %q, %q", thumbnail.Suffix, medium.Suffix, thumbnailSuffix, mediumSuffix)
+	for format, want := range wanted {
+		got := map[Format]Rendition{FormatAVIF: avifThumbnail, FormatWebP: webpThumbnail, FormatJPEG: medium}[format]
+		if got.ContentType != want.contentType {
+			t.Errorf("%s content type = %q, want %q", format, got.ContentType, want.contentType)
+		}
+		if got.Extension != want.extension {
+			t.Errorf("%s extension = %q, want %q", format, got.Extension, want.extension)
+		}
+	}
+
+	if avifThumbnail.Suffix != thumbnailSuffix || webpThumbnail.Suffix != thumbnailSuffix {
+		t.Errorf("thumbnail suffixes = %q, %q, want both %q",
+			avifThumbnail.Suffix, webpThumbnail.Suffix, thumbnailSuffix)
+	}
+	if medium.Suffix != mediumSuffix {
+		t.Errorf("medium suffix = %q, want %q", medium.Suffix, mediumSuffix)
+	}
+
+	// AVIF at this effort is the point of the task: it must not be the larger file.
+	if len(avifThumbnail.Body) >= len(webpThumbnail.Body) {
+		t.Errorf("avif thumbnail = %d bytes, want fewer than the webp thumbnail's %d",
+			len(avifThumbnail.Body), len(webpThumbnail.Body))
 	}
 }
 
@@ -106,20 +183,30 @@ func TestImageDerivativesNeverUpscale(t *testing.T) {
 	}
 
 	for _, rendition := range renditions {
-		if got := decodeJPEG(t, rendition.Body).Bounds(); got.Dx() != 300 || got.Dy() != 200 {
-			t.Errorf("%s = %dx%d, want the source's 300x200", rendition.Variant, got.Dx(), got.Dy())
+		var bounds image.Rectangle
+		if rendition.Format == FormatAVIF {
+			bounds = decodeAVIF(t, rendition.Body).Bounds()
+		} else if rendition.Format == FormatWebP {
+			bounds = decodeWebP(t, rendition.Body).Bounds()
+		} else {
+			bounds = decodeJPEG(t, rendition.Body).Bounds()
+		}
+		if bounds.Dx() != 300 || bounds.Dy() != 200 {
+			t.Errorf("%s/%s = %dx%d, want the source's 300x200",
+				rendition.Variant, rendition.Format, bounds.Dx(), bounds.Dy())
 		}
 	}
 }
 
 func TestImageDerivativesScaleAPortraitByWidth(t *testing.T) {
-	renditions, err := ImageDerivatives(testPNG(t, 500, 1500))
+	renditions, err := ImageDerivatives(testPNG(t, 900, 1350))
 	if err != nil {
 		t.Fatalf("ImageDerivatives() error = %v, want nil", err)
 	}
 
-	// A tall image is still constrained by width, so 500x1500 becomes 400x1200.
-	if got := decodeJPEG(t, renditions[0].Body).Bounds(); got.Dx() != ThumbnailMaxWidth || got.Dy() != 1200 {
+	// A tall image is still constrained by width, so 900x1350 becomes 800x1200.
+	thumbnail := renditionFor(t, renditions, VariantThumb, FormatAVIF)
+	if got := decodeAVIF(t, thumbnail.Body).Bounds(); got.Dx() != ThumbnailMaxWidth || got.Dy() != 1200 {
 		t.Errorf("thumbnail = %dx%d, want %dx1200", got.Dx(), got.Dy(), ThumbnailMaxWidth)
 	}
 }
@@ -130,11 +217,21 @@ func TestImageDerivativesFlattenTransparencyOntoWhite(t *testing.T) {
 		t.Fatalf("ImageDerivatives() error = %v, want nil", err)
 	}
 
-	r, g, b, _ := decodeJPEG(t, renditions[0].Body).At(100, 100).RGBA()
-	// JPEG is lossy, so near-white rather than exactly white.
+	// The AVIF thumbnail is checked because it is the file the feed loads: neither
+	// codec is asked to keep alpha, so an unflattened picture would go black.
+	r, g, b, _ := decodeAVIF(t, renditionFor(t, renditions, VariantThumb, FormatAVIF).Body).At(100, 100).RGBA()
+	// Both codecs are lossy, so near-white rather than exactly white.
 	for name, channel := range map[string]uint32{"red": r, "green": g, "blue": b} {
-		if channel>>8 < 250 {
+		if channel>>8 < 245 {
 			t.Errorf("%s channel = %d, want near-white (255) where the source was transparent", name, channel>>8)
+		}
+	}
+
+	// The WebP fallback must agree with it.
+	r, g, b, _ = decodeWebP(t, renditionFor(t, renditions, VariantThumb, FormatWebP).Body).At(100, 100).RGBA()
+	for name, channel := range map[string]uint32{"red": r, "green": g, "blue": b} {
+		if channel>>8 < 245 {
+			t.Errorf("%s channel = %d in the webp fallback, want near-white (255)", name, channel>>8)
 		}
 	}
 }

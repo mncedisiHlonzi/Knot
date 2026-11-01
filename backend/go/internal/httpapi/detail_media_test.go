@@ -87,23 +87,64 @@ func TestStoryDetailMediaCarriesDerivativeURLs(t *testing.T) {
 		t.Errorf("url = %q, want %q", item.URL, original)
 	}
 
-	for name, got := range map[string]*string{
-		"thumbnail_url": item.ThumbnailURL,
-		"medium_url":    item.MediumURL,
-		"poster_url":    item.PosterURL,
+	for name, expectation := range map[string]struct {
+		got  *string
+		want string
+	}{
+		"thumbnail_url": {item.ThumbnailURL, original + "?variant=thumb&format=avif"},
+		"medium_url":    {item.MediumURL, original + "?variant=medium"},
+		"poster_url":    {item.PosterURL, original + "?variant=poster"},
 	} {
-		if got == nil {
+		if expectation.got == nil {
 			t.Errorf("%s = null, want a rendition URL", name)
 			continue
 		}
-		variant := map[string]string{
-			"thumbnail_url": "thumb",
-			"medium_url":    "medium",
-			"poster_url":    "poster",
-		}[name]
-		if want := original + "?variant=" + variant; *got != want {
-			t.Errorf("%s = %q, want %q", name, *got, want)
+		if *expectation.got != expectation.want {
+			t.Errorf("%s = %q, want %q", name, *expectation.got, expectation.want)
 		}
+	}
+
+	// This fixture's thumbnail key is a legacy JPEG, so there is no WebP file to
+	// offer as a fallback (KNOT-037-fix6).
+	if item.ThumbnailURLFallback != nil {
+		t.Errorf("thumbnail_url_fallback = %q, want null for a jpeg-only thumbnail", *item.ThumbnailURLFallback)
+	}
+}
+
+// TestStoryThumbnailFallbackIsTheWebPSibling proves a row written by the
+// dual-format pipeline advertises both files: AVIF first, WebP as the fallback.
+func TestStoryThumbnailFallbackIsTheWebPSibling(t *testing.T) {
+	media := mediaWithDerivatives()
+	thumb := storymedia.StoryMediaKeyPrefix(testDetailMediaStoryID) + "upload_thumb.avif"
+	media.ThumbnailKey = &thumb
+
+	lookup := &fakeStoryMediaLookup{
+		byStory: map[string][]storymedia.StoryMedia{
+			testDetailMediaStoryID: {media},
+		},
+	}
+
+	handler := newRouterWithMediaLookup(t, discardLogger(),
+		&fakeStoriesService{getResult: storyFixture(testDetailMediaStoryID, authorA)}, lookup)
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories/"+testDetailMediaStoryID, "", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var body storyEnvelope
+	decodeBody(t, recorder, &body)
+	if len(body.Story.Media) != 1 {
+		t.Fatalf("media = %d items, want 1", len(body.Story.Media))
+	}
+
+	item := body.Story.Media[0]
+	base := "/stories/" + testDetailMediaStoryID + "/media/" + testDetailMediaItemID + "/content"
+	if item.ThumbnailURL == nil || *item.ThumbnailURL != base+"?variant=thumb&format=avif" {
+		t.Errorf("thumbnail_url = %v, want the avif address", item.ThumbnailURL)
+	}
+	if item.ThumbnailURLFallback == nil || *item.ThumbnailURLFallback != base+"?variant=thumb&format=webp" {
+		t.Errorf("thumbnail_url_fallback = %v, want the webp address", item.ThumbnailURLFallback)
 	}
 }
 

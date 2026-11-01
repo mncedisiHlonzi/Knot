@@ -41,7 +41,7 @@ const (
 type StoryMediaService interface {
 	CreateMedia(ctx context.Context, in storymedia.CreateMediaInput) (storymedia.StoryMedia, error)
 	ListMedia(ctx context.Context, storyID string) ([]storymedia.StoryMedia, error)
-	StreamMedia(ctx context.Context, id string, variant storymedia.Variant, r *http.Request) (io.ReadCloser, int64, string, error)
+	StreamMedia(ctx context.Context, id string, variant storymedia.Variant, format storymedia.Format, r *http.Request) (io.ReadCloser, int64, string, error)
 	DeleteMedia(ctx context.Context, id, byUserID string) error
 }
 
@@ -106,11 +106,20 @@ type storyMediaResponse struct {
 	// ThumbnailURL, MediumURL, and PosterURL address the generated renditions, or
 	// are null when this item has none (no decoder, no FFmpeg, or a row older than
 	// migration 0024). A client must fall back to URL. Each is the same path as URL
-	// with `?variant=` appended, so nothing about the bucket reaches the client
-	// (KNOT-ADR-029).
+	// with `?variant=` appended (the thumbnail adds `&format=`), so nothing about
+	// the bucket reaches the client (KNOT-ADR-029).
+	//
+	// ThumbnailURL asks for AVIF, the smallest file at the same quality
+	// (KNOT-037-fix6). A device with no AVIF decoder uses ThumbnailURLFallback
+	// instead; when that is null the AVIF address is still safe to load, because
+	// the server answers a missing format with the other codec (and, for a row
+	// written before the dual-format ladder, with the JPEG thumbnail).
 	ThumbnailURL *string `json:"thumbnail_url"`
-	MediumURL    *string `json:"medium_url"`
-	PosterURL    *string `json:"poster_url"`
+	// ThumbnailURLFallback is the same thumbnail as WebP, or null when this item
+	// has no WebP rendition.
+	ThumbnailURLFallback *string `json:"thumbnail_url_fallback"`
+	MediumURL            *string `json:"medium_url"`
+	PosterURL            *string `json:"poster_url"`
 }
 
 // storyMediaEnvelope wraps a single item, so the response shape can gain sibling
@@ -237,15 +246,36 @@ func (h *StoryMediaHandler) List(w http.ResponseWriter, r *http.Request) {
 // would send exactly the bytes the caller asked to avoid. A rendition the item
 // does not have is answered with the original, so a failed pipeline never breaks
 // an image.
+//
+// For `variant=thumb` the `format` parameter selects the codec: `avif` (the
+// default) or `webp` (KNOT-037-fix6). A codec the item does not have falls back to
+// the other one, so the address a client holds keeps working. `format` with any
+// other variant is rejected rather than ignored.
 func (h *StoryMediaHandler) Content(w http.ResponseWriter, r *http.Request) {
-	variant, ok := storymedia.ParseVariant(r.URL.Query().Get("variant"))
+	query := r.URL.Query()
+
+	variant, ok := storymedia.ParseVariant(query.Get("variant"))
 	if !ok {
 		writeError(w, http.StatusBadRequest, codeInvalidRequest,
 			"variant must be thumb, medium, or poster")
 		return
 	}
 
-	body, total, mimeType, err := h.service.StreamMedia(r.Context(), r.PathValue("mid"), variant, r)
+	format, ok := storymedia.ParseFormat(query.Get("format"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, codeInvalidRequest,
+			"format must be avif or webp")
+		return
+	}
+	// A format only means something for a thumbnail. Rejecting the combination
+	// rather than ignoring it keeps a client from believing it negotiated a codec.
+	if format != "" && variant != storymedia.VariantThumb {
+		writeError(w, http.StatusBadRequest, codeInvalidRequest,
+			"format may only be used with variant=thumb")
+		return
+	}
+
+	body, total, mimeType, err := h.service.StreamMedia(r.Context(), r.PathValue("mid"), variant, format, r)
 	if err != nil {
 		h.writeServiceError(w, r, err)
 		return
@@ -370,21 +400,43 @@ func (h *StoryMediaHandler) writeFailure(w http.ResponseWriter, r *http.Request,
 // the story the item belongs to, which the item's URL is built from.
 func newStoryMediaResponse(media storymedia.StoryMedia, storyID string) storyMediaResponse {
 	return storyMediaResponse{
-		ID:           media.ID,
-		MediaType:    string(media.MediaType),
-		Source:       string(media.Source),
-		MimeType:     media.MimeType,
-		Width:        media.Width,
-		Height:       media.Height,
-		DurationMS:   media.DurationMS,
-		SizeBytes:    media.SizeBytes,
-		DisplayOrder: media.DisplayOrder,
-		CreatedAt:    media.CreatedAt,
-		URL:          storyMediaURL(storyID, media.ID),
-		ThumbnailURL: storyMediaVariantURL(storyID, media.ID, media.ThumbnailKey, storymedia.VariantThumb),
-		MediumURL:    storyMediaVariantURL(storyID, media.ID, media.MediumKey, storymedia.VariantMedium),
-		PosterURL:    storyMediaVariantURL(storyID, media.ID, media.PosterKey, storymedia.VariantPoster),
+		ID:                   media.ID,
+		MediaType:            string(media.MediaType),
+		Source:               string(media.Source),
+		MimeType:             media.MimeType,
+		Width:                media.Width,
+		Height:               media.Height,
+		DurationMS:           media.DurationMS,
+		SizeBytes:            media.SizeBytes,
+		DisplayOrder:         media.DisplayOrder,
+		CreatedAt:            media.CreatedAt,
+		URL:                  storyMediaURL(storyID, media.ID),
+		ThumbnailURL:         storyMediaThumbnailURL(storyID, media.ID, media, storymedia.FormatAVIF),
+		ThumbnailURLFallback: storyMediaThumbnailURL(storyID, media.ID, media, storymedia.FormatWebP),
+		MediumURL:            storyMediaVariantURL(storyID, media.ID, media.MediumKey, storymedia.VariantMedium),
+		PosterURL:            storyMediaVariantURL(storyID, media.ID, media.PosterKey, storymedia.VariantPoster),
 	}
+}
+
+// storyMediaThumbnailURL builds the address of one thumbnail format, or nil when
+// the item cannot answer it.
+//
+// AVIF is offered whenever the row has any thumbnail at all: a row written before
+// the dual-format ladder has a JPEG one, and the server answers an AVIF request
+// with it rather than with the original. WebP is offered only when the row really
+// has a WebP rendition, because there is nothing for it to add otherwise.
+func storyMediaThumbnailURL(storyID, mediaID string, media storymedia.StoryMedia, format storymedia.Format) *string {
+	if _, ok := media.DerivativeKey(storymedia.VariantThumb); !ok {
+		return nil
+	}
+	if format == storymedia.FormatWebP {
+		if _, ok := media.ThumbnailWebPKey(); !ok {
+			return nil
+		}
+	}
+
+	url := storyMediaURL(storyID, mediaID) + "?variant=" + string(storymedia.VariantThumb) + "&format=" + string(format)
+	return &url
 }
 
 // storyMediaURL builds the relative path a client fetches the bytes from.

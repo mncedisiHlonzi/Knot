@@ -78,6 +78,8 @@ type fakeStoryMediaService struct {
 	gotDeleteUser string
 	// gotVariant is the variant the content handler asked for.
 	gotVariant storymedia.Variant
+	// gotFormat is the format the content handler asked for.
+	gotFormat storymedia.Format
 }
 
 func (f *fakeStoryMediaService) CreateMedia(_ context.Context, _ storymedia.CreateMediaInput) (storymedia.StoryMedia, error) {
@@ -88,8 +90,9 @@ func (f *fakeStoryMediaService) ListMedia(_ context.Context, _ string) ([]storym
 	return f.listResult, f.listErr
 }
 
-func (f *fakeStoryMediaService) StreamMedia(_ context.Context, _ string, variant storymedia.Variant, _ *http.Request) (io.ReadCloser, int64, string, error) {
+func (f *fakeStoryMediaService) StreamMedia(_ context.Context, _ string, variant storymedia.Variant, format storymedia.Format, _ *http.Request) (io.ReadCloser, int64, string, error) {
 	f.gotVariant = variant
+	f.gotFormat = format
 	if f.streamErr != nil {
 		return nil, 0, "", f.streamErr
 	}
@@ -892,11 +895,11 @@ func TestStoryMediaDelete(t *testing.T) {
 	if recorder.Code != http.StatusNotFound {
 		t.Errorf("content after delete status = %d, want %d", recorder.Code, http.StatusNotFound)
 	}
-	// An image upload creates three objects — the original and its two renditions —
-	// and deleting the item must remove all of them, not just the original
-	// (KNOT-037).
-	if len(env.objects.deleted) != 3 {
-		t.Errorf("deleted objects = %d, want 3 (original, thumbnail, medium)", len(env.objects.deleted))
+	// An image upload creates four objects — the original, the AVIF thumbnail, its
+	// WebP sibling, and the medium rendition — and deleting the item must remove
+	// all of them, not just the original (KNOT-037, KNOT-037-fix6).
+	if len(env.objects.deleted) != 4 {
+		t.Errorf("deleted objects = %d, want 4 (original, avif thumbnail, webp thumbnail, medium)", len(env.objects.deleted))
 	}
 }
 
@@ -984,8 +987,14 @@ func TestStoryMediaCreateExposesDerivativeURLs(t *testing.T) {
 	if created.ThumbnailURL == nil {
 		t.Fatal("thumbnail_url = null, want a rendition URL")
 	}
-	if want := created.URL + "?variant=thumb"; *created.ThumbnailURL != want {
+	if want := created.URL + "?variant=thumb&format=avif"; *created.ThumbnailURL != want {
 		t.Errorf("thumbnail_url = %q, want %q", *created.ThumbnailURL, want)
+	}
+	if created.ThumbnailURLFallback == nil {
+		t.Fatal("thumbnail_url_fallback = null, want the webp URL")
+	}
+	if want := created.URL + "?variant=thumb&format=webp"; *created.ThumbnailURLFallback != want {
+		t.Errorf("thumbnail_url_fallback = %q, want %q", *created.ThumbnailURLFallback, want)
 	}
 	if created.MediumURL == nil {
 		t.Fatal("medium_url = null, want a rendition URL")
@@ -1054,6 +1063,131 @@ func TestStoryMediaContentWithoutAVariantAsksForTheOriginal(t *testing.T) {
 	}
 }
 
+// TestStoryMediaContentServesTheNegotiatedCodec pins Item 4: the format the
+// client asks for reaches the service, and the response carries the content type
+// of the file that was actually served (KNOT-037-fix6).
+func TestStoryMediaContentServesTheNegotiatedCodec(t *testing.T) {
+	cases := []struct {
+		name       string
+		query      string
+		streamMime string
+		wantFormat storymedia.Format
+		wantType   string
+	}{
+		{
+			name:       "avif",
+			query:      "?variant=thumb&format=avif",
+			streamMime: "image/avif",
+			wantFormat: storymedia.FormatAVIF,
+			wantType:   "image/avif",
+		},
+		{
+			name:       "webp fallback",
+			query:      "?variant=thumb&format=webp",
+			streamMime: "image/webp",
+			wantFormat: storymedia.FormatWebP,
+			wantType:   "image/webp",
+		},
+		{
+			name:       "absent format asks for the primary codec",
+			query:      "?variant=thumb",
+			streamMime: "image/avif",
+			wantFormat: storymedia.Format(""),
+			wantType:   "image/avif",
+		},
+		{
+			// The server answered in the sibling codec because the requested file was
+			// missing; the header must follow the bytes, not the request.
+			name:       "fallback content type",
+			query:      "?variant=thumb&format=webp",
+			streamMime: "image/avif",
+			wantFormat: storymedia.FormatWebP,
+			wantType:   "image/avif",
+		},
+	}
+
+	for _, testCase := range cases {
+		service := &fakeStoryMediaService{streamSize: 3, streamMime: testCase.streamMime}
+		handler, err := NewStoryMediaHandler(service, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		if err != nil {
+			t.Fatalf("NewStoryMediaHandler() error = %v, want nil", err)
+		}
+
+		request := httptest.NewRequest(
+			http.MethodGet,
+			"/stories/"+testMediaStoryID+"/media/"+testMediaID+"/content"+testCase.query,
+			nil,
+		)
+		request.SetPathValue("mid", testMediaID)
+		recorder := httptest.NewRecorder()
+		handler.Content(recorder, request)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want %d", testCase.name, recorder.Code, http.StatusOK)
+		}
+		if service.gotFormat != testCase.wantFormat {
+			t.Errorf("%s: format = %q, want %q", testCase.name, service.gotFormat, testCase.wantFormat)
+		}
+		if got := recorder.Header().Get("Content-Type"); got != testCase.wantType {
+			t.Errorf("%s: Content-Type = %q, want %q", testCase.name, got, testCase.wantType)
+		}
+	}
+}
+
+func TestStoryMediaContentRejectsAnUnknownFormat(t *testing.T) {
+	service := &fakeStoryMediaService{}
+	handler, err := NewStoryMediaHandler(service, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewStoryMediaHandler() error = %v, want nil", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/stories/"+testMediaStoryID+"/media/"+testMediaID+"/content?variant=thumb&format=gif",
+		nil,
+	)
+	request.SetPathValue("mid", testMediaID)
+	recorder := httptest.NewRecorder()
+	handler.Content(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+	if code := decodedErrorCode(t, recorder); code != codeInvalidRequest {
+		t.Errorf("error code = %q, want %q", code, codeInvalidRequest)
+	}
+	if service.gotVariant != storymedia.Variant("") {
+		t.Errorf("the service was called for an invalid format, want no call")
+	}
+}
+
+func TestStoryMediaContentRejectsAFormatWithoutTheThumbVariant(t *testing.T) {
+	service := &fakeStoryMediaService{}
+	handler, err := NewStoryMediaHandler(service, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewStoryMediaHandler() error = %v, want nil", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/stories/"+testMediaStoryID+"/media/"+testMediaID+"/content?variant=medium&format=avif",
+		nil,
+	)
+	request.SetPathValue("mid", testMediaID)
+	recorder := httptest.NewRecorder()
+	handler.Content(recorder, request)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusBadRequest)
+	}
+	if code := decodedErrorCode(t, recorder); code != codeInvalidRequest {
+		t.Errorf("error code = %q, want %q", code, codeInvalidRequest)
+	}
+	if service.gotVariant != storymedia.Variant("") {
+		t.Errorf("the service was called for a rejected combination, want no call")
+	}
+}
+
 func TestStoryMediaContentRejectsAnUnknownVariant(t *testing.T) {
 	service := &fakeStoryMediaService{}
 	handler, err := NewStoryMediaHandler(service, slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -1087,7 +1221,7 @@ func TestStoryMediaContentRejectsAnUnknownVariant(t *testing.T) {
 // `first_media_url`, and that address is the thumbnail when the item has one.
 func TestFirstMediaFieldsPrefersTheThumbnail(t *testing.T) {
 	original := "/stories/" + testMediaStoryID + "/media/" + testMediaID + "/content"
-	thumbnail := original + "?variant=thumb"
+	thumbnail := original + "?variant=thumb&format=avif"
 
 	withThumbnail := firstMediaFields([]storyMediaResponse{
 		{MediaType: "image", URL: original, ThumbnailURL: &thumbnail},

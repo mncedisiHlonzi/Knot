@@ -14,27 +14,39 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/chai2010/webp"
 	"github.com/disintegration/imaging"
+	"github.com/gen2brain/avif"
 	// The uploads allowlist accepts image/webp, and Go's image package has no
 	// WebP decoder of its own. Registering this one is what lets a WebP upload
 	// produce derivatives instead of quietly falling back to the original
-	// (KNOT-037). It is decode-only; nothing re-encodes to WebP.
+	// (KNOT-037). It is decode-only: encoding to WebP is chai2010/webp's job
+	// (KNOT-037-fix6).
 	_ "golang.org/x/image/webp"
 )
 
-// The derivative ladder (KNOT-037, KNOT-ADR-091).
+// The derivative ladder (KNOT-037, KNOT-ADR-091; dual-format thumbnails
+// KNOT-037-fix6).
 //
 // The numbers are the product decision, not a tuning knob: a feed card is at most
-// 400 logical points wide on the widest phone, so a 400px thumbnail is already
-// retina-marginal, and the story detail is a full-width column at roughly 1200px
-// on a tablet. Everything is JPEG because these are photographs being shown at
-// screen size, where PNG's lossless bytes buy nothing.
+// 400 logical points wide on the widest phone, so an 800px thumbnail is comfortably
+// retina, and the story detail is a full-width column at roughly 1200px on a
+// tablet. The feed thumbnail is written TWICE — AVIF first for its bytes, WebP as
+// the fallback for a device with no AVIF decoder — while the medium rendition and
+// the video poster stay JPEG, where the extra bytes buy nothing.
 const (
 	// ThumbnailMaxWidth is the widest a feed thumbnail may be. A narrower source
 	// is never upscaled.
-	ThumbnailMaxWidth = 400
-	// ThumbnailQuality is the JPEG quality of a feed thumbnail.
+	ThumbnailMaxWidth = 800
+	// ThumbnailQuality is the quality a feed thumbnail is encoded at, for BOTH
+	// AVIF and WebP. It is the same number in both so the two files differ by
+	// codec, not by a second tuning decision.
 	ThumbnailQuality = 80
+	// AVIFSpeed is libavif's encoder effort: 0 is slowest and smallest, 10 is
+	// fastest and largest. Eight keeps an 800px thumbnail well ahead of the JPEG
+	// it replaces at a cost of a second or two of CPU per upload; at ten the same
+	// image can come out LARGER than that JPEG.
+	AVIFSpeed = 8
 	// MediumMaxWidth is the widest the story-detail rendition may be.
 	MediumMaxWidth = 1200
 	// MediumQuality is the JPEG quality of the story-detail rendition.
@@ -55,19 +67,25 @@ const (
 	unknownDurationOffsetMS = 0
 )
 
-// derivativeExtension and the suffixes are the object-key naming scheme. They
-// live here so the key a row stores and the key a reader asks for cannot drift.
+// The extensions and the suffixes are the object-key naming scheme. They live
+// here so the key a row stores and the key a reader asks for cannot drift.
 const (
-	derivativeExtension = ".jpg"
-	thumbnailSuffix     = "_thumb"
-	mediumSuffix        = "_medium"
-	posterSuffix        = "_poster"
+	jpegExtension = ".jpg"
+	avifExtension = ".avif"
+	webpExtension = ".webp"
+
+	thumbnailSuffix = "_thumb"
+	mediumSuffix    = "_medium"
+	posterSuffix    = "_poster"
 )
 
-// derivativeContentType is the content type of every derivative. They are all
-// JPEG, whatever the original was, which is why serving one never echoes the
-// row's stored MIME type.
-const derivativeContentType = "image/jpeg"
+// The content types a rendition can have. Serving one never echoes the row's
+// stored MIME type: a derivative's type is whatever its encoder produced.
+const (
+	jpegContentType = "image/jpeg"
+	avifContentType = "image/avif"
+	webpContentType = "image/webp"
+)
 
 // ffmpegBinary is the executable used for poster frames. It is a name, not a
 // path: FFmpeg is a system prerequisite and its location is whatever PATH says
@@ -87,9 +105,15 @@ var ErrPosterUnavailable = errors.New("storymedia: ffmpeg is not installed")
 type Rendition struct {
 	// Variant is which derivative this is: VariantThumb or VariantMedium.
 	Variant Variant
+	// Format is the encoding, which is what tells one thumbnail file from the
+	// other: VariantThumb exists once as FormatAVIF and once as FormatWebP.
+	Format Format
 	// Suffix is appended to the object's base name, e.g. "_thumb".
 	Suffix string
-	// ContentType is the stored content type (always derivativeContentType).
+	// Extension is the object key's extension, e.g. ".avif".
+	Extension string
+	// ContentType is the stored content type: image/avif, image/webp, or
+	// image/jpeg, matching Format.
 	ContentType string
 	// Body is the encoded rendition.
 	Body []byte
@@ -98,8 +122,9 @@ type Rendition struct {
 	Height int
 }
 
-// ImageDerivatives decodes an uploaded image and returns its thumbnail and medium
-// renditions, in that order.
+// ImageDerivatives decodes an uploaded image and returns its feed thumbnail in
+// both modern formats followed by its JPEG medium rendition: AVIF first, then
+// WebP, then JPEG.
 //
 // Decoding applies EXIF orientation, because a phone photo is usually stored
 // sideways with a rotation flag, and a thumbnail that ignores the flag is a
@@ -107,54 +132,154 @@ type Rendition struct {
 // is re-encoded at its own size rather than upscaled: the point of the pipeline is
 // fewer bytes, not more.
 //
-// Transparency is composited onto white before encoding. JPEG has no alpha, and
-// letting the encoder drop it turns a transparent PNG's background black.
+// Transparency is composited onto white before encoding. None of these encoders is
+// asked to keep alpha, and letting one drop it turns a transparent PNG's background
+// black.
+//
+// The renditions that DID encode are returned together with the error from any that
+// did not. One codec failing must not cost the other: an AVIF encoder that refuses
+// a picture still leaves a WebP thumbnail to serve.
 func ImageDerivatives(data []byte) ([]Rendition, error) {
 	source, err := imaging.Decode(bytes.NewReader(data), imaging.AutoOrientation(true))
 	if err != nil {
 		return nil, fmt.Errorf("decode image: %w", err)
 	}
 
-	thumbnail, err := encodeRendition(source, VariantThumb, thumbnailSuffix, ThumbnailMaxWidth, ThumbnailQuality)
+	renditions := make([]Rendition, 0, 3)
+	var failures []error
+
+	// Both thumbnails come from ONE scaled copy, so AVIF and WebP are guaranteed to
+	// be the same picture and only the codec differs.
+	thumbnailSource := flattenOntoWhite(scaleToMaxWidth(source, ThumbnailMaxWidth))
+
+	avifThumbnail, err := encodeAVIFThumbnail(thumbnailSource)
 	if err != nil {
-		return nil, err
+		failures = append(failures, err)
+	} else {
+		renditions = append(renditions, avifThumbnail)
 	}
 
-	medium, err := encodeRendition(source, VariantMedium, mediumSuffix, MediumMaxWidth, MediumQuality)
+	webpThumbnail, err := encodeWebPThumbnail(thumbnailSource)
 	if err != nil {
-		return nil, err
+		failures = append(failures, err)
+	} else {
+		renditions = append(renditions, webpThumbnail)
 	}
 
-	return []Rendition{thumbnail, medium}, nil
+	medium, err := encodeJPEG(flattenOntoWhite(scaleToMaxWidth(source, MediumMaxWidth)), VariantMedium, mediumSuffix, MediumQuality)
+	if err != nil {
+		failures = append(failures, err)
+	} else {
+		renditions = append(renditions, medium)
+	}
+
+	return renditions, errors.Join(failures...)
 }
 
-// encodeRendition scales one source image to a maximum width and encodes it as
-// JPEG.
-func encodeRendition(source image.Image, variant Variant, suffix string, maxWidth, quality int) (Rendition, error) {
-	scaled := scaleToMaxWidth(source, maxWidth)
-	// The composite is always done: it is a small image by now, and doing it
-	// unconditionally means an opaque photo and a transparent PNG follow exactly
-	// the same path.
-	flattened := imaging.Overlay(
-		imaging.New(scaled.Bounds().Dx(), scaled.Bounds().Dy(), color.White),
-		scaled,
+// flattenOntoWhite composites an image onto a white background.
+//
+// It is always done: the image is small by now, and doing it unconditionally means
+// an opaque photo and a transparent PNG follow exactly the same path.
+func flattenOntoWhite(source image.Image) image.Image {
+	return imaging.Overlay(
+		imaging.New(source.Bounds().Dx(), source.Bounds().Dy(), color.White),
+		source,
 		image.Point{},
 		1.0,
 	)
+}
 
+// encodeAVIFThumbnail encodes a feed thumbnail as AVIF.
+func encodeAVIFThumbnail(source image.Image) (Rendition, error) {
 	var buffer bytes.Buffer
-	if err := jpeg.Encode(&buffer, flattened, &jpeg.Options{Quality: quality}); err != nil {
+	err := avif.Encode(&buffer, source, avif.Options{
+		Quality: ThumbnailQuality,
+		// The picture is opaque by now, so the alpha quality only has to be a
+		// valid number; passing the picture quality keeps it from silently
+		// falling back to the library default.
+		QualityAlpha: ThumbnailQuality,
+		Speed:        AVIFSpeed,
+		// 4:2:0 is the chroma layout a photograph wants; the zero value of the
+		// option would select 4:4:4 and cost bytes for detail nobody sees.
+		ChromaSubsampling: image.YCbCrSubsampleRatio420,
+	})
+	if err != nil {
+		return Rendition{}, fmt.Errorf("encode %s %s: %w", VariantThumb, FormatAVIF, err)
+	}
+
+	return newRendition(VariantThumb, FormatAVIF, buffer.Bytes(), source), nil
+}
+
+// encodeWebPThumbnail encodes a feed thumbnail as WebP.
+func encodeWebPThumbnail(source image.Image) (Rendition, error) {
+	var buffer bytes.Buffer
+	err := webp.Encode(&buffer, source, &webp.Options{Quality: ThumbnailQuality})
+	if err != nil {
+		return Rendition{}, fmt.Errorf("encode %s %s: %w", VariantThumb, FormatWebP, err)
+	}
+
+	return newRendition(VariantThumb, FormatWebP, buffer.Bytes(), source), nil
+}
+
+// encodeJPEG encodes one JPEG rendition at the given quality.
+func encodeJPEG(source image.Image, variant Variant, suffix string, quality int) (Rendition, error) {
+	var buffer bytes.Buffer
+	if err := jpeg.Encode(&buffer, source, &jpeg.Options{Quality: quality}); err != nil {
 		return Rendition{}, fmt.Errorf("encode %s: %w", variant, err)
 	}
 
+	return newRendition(variant, FormatJPEG, buffer.Bytes(), source), nil
+}
+
+// newRendition fills in the naming and content type that belong to a variant and
+// format, so the key a row stores and the type it is served as cannot disagree.
+func newRendition(variant Variant, format Format, body []byte, source image.Image) Rendition {
 	return Rendition{
 		Variant:     variant,
-		Suffix:      suffix,
-		ContentType: derivativeContentType,
-		Body:        buffer.Bytes(),
-		Width:       flattened.Bounds().Dx(),
-		Height:      flattened.Bounds().Dy(),
-	}, nil
+		Format:      format,
+		Suffix:      suffixForVariant(variant),
+		Extension:   extensionForFormat(format),
+		ContentType: contentTypeForFormat(format),
+		Body:        body,
+		Width:       source.Bounds().Dx(),
+		Height:      source.Bounds().Dy(),
+	}
+}
+
+// suffixForVariant returns the object-key suffix a variant is named with.
+func suffixForVariant(variant Variant) string {
+	switch variant {
+	case VariantMedium:
+		return mediumSuffix
+	case VariantPoster:
+		return posterSuffix
+	default:
+		return thumbnailSuffix
+	}
+}
+
+// extensionForFormat returns the object-key extension a format is stored with.
+func extensionForFormat(format Format) string {
+	switch format {
+	case FormatAVIF:
+		return avifExtension
+	case FormatWebP:
+		return webpExtension
+	default:
+		return jpegExtension
+	}
+}
+
+// contentTypeForFormat returns the content type a format is served as.
+func contentTypeForFormat(format Format) string {
+	switch format {
+	case FormatAVIF:
+		return avifContentType
+	case FormatWebP:
+		return webpContentType
+	default:
+		return jpegContentType
+	}
 }
 
 // scaleToMaxWidth shrinks an image to maxWidth, preserving its aspect ratio, and
@@ -213,7 +338,7 @@ func ExtractPosterFrame(ctx context.Context, video []byte, offsetMS int) ([]byte
 		return nil, fmt.Errorf("extract poster: write source: %w", err)
 	}
 
-	output := filepath.Join(dir, "poster"+derivativeExtension)
+	output := filepath.Join(dir, "poster"+jpegExtension)
 	offset := strconv.FormatFloat(float64(offsetMS)/1000, 'f', 3, 64)
 
 	arguments := []string{
