@@ -4,8 +4,18 @@ import { StyleSheet, Text, View } from 'react-native';
 import { layout, typeScale, useThemedStyles, type ThemeColors } from '../theme';
 
 type HeaderProps = {
-  /** The title, always centred on the bar. When omitted, the middle stays empty. */
+  /** The title. When omitted, the middle stays empty. */
   readonly title?: string;
+  /**
+   * Where the title sits on the bar.
+   *
+   * `center` (the default) draws it out of flow on the bar's own middle, which is
+   * what every screen has used so far. `left` puts it in flow at the leading edge,
+   * on the same gutter as the side controls and the content below, for a screen
+   * whose reference reads as a left-aligned page title — the Inquiries tab
+   * (KNOT-020k-fix11).
+   */
+  readonly titleAlign?: 'center' | 'left';
   /** A leading node — typically a 44-point icon button. */
   readonly left?: React.ReactNode;
   /** A trailing node, or a row of them. */
@@ -50,6 +60,10 @@ const TITLE_INSET = layout.screenPaddingFeed + 48;
  * the other, say — which the in-flow form could not do. The side slots stay in
  * their own row and keep their own corners (KNOT-020g-fix4, KNOT-020g-fix13).
  *
+ * `titleAlign="left"` is the exception: the title then sits IN flow after the
+ * leading slot, taking the row's free width, so it starts on the bar's gutter and
+ * reads as a page title rather than as a centred label (KNOT-020k-fix11).
+ *
  * The status-bar inset is not applied here: every screen already sits inside the
  * app root's `SafeAreaView`, so adding another inset would double it (KNOT-020b).
  *
@@ -58,12 +72,14 @@ const TITLE_INSET = layout.screenPaddingFeed + 48;
  */
 export default function Header({
   title,
+  titleAlign = 'center',
   left,
   right,
   pinned = false,
   testID,
 }: HeaderProps): React.ReactElement {
   const styles = useThemedStyles(createStyles);
+  const leftAligned = titleAlign === 'left';
   return (
     <View style={styles.container} testID={testID}>
       {/* A constant opaque fill: the bar never fades, so no scroll offset is
@@ -71,12 +87,19 @@ export default function Header({
       {pinned ? <View pointerEvents="none" style={styles.background} /> : null}
       <View style={styles.row}>
         <View style={styles.side}>{left}</View>
-        {/* The title is drawn out of flow (below), so the middle stays a flexible
-            spacer and the two slots take their own corners. */}
-        <View style={styles.titleSpacer} />
+        {/* A left-aligned title takes the middle slot in flow, so it starts on the
+            bar's gutter; the centred form keeps a flexible spacer there and draws
+            the title out of flow below. */}
+        {title !== undefined && leftAligned ? (
+          <Text style={[typeScale.h3, styles.title, styles.titleLeft]} numberOfLines={1}>
+            {title}
+          </Text>
+        ) : (
+          <View style={styles.titleSpacer} />
+        )}
         <View style={styles.side}>{right}</View>
 
-        {title !== undefined ? (
+        {title !== undefined && !leftAligned ? (
           // Out of flow, so an unequal pair of side slots cannot pull it off the
           // bar's centre. The inset keeps a long title clear of those slots.
           <View pointerEvents="none" style={styles.titleCentered}>
@@ -118,6 +141,12 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.text.primary,
       flex: 1,
       textAlign: 'center',
+    },
+    // The left-aligned title keeps the row's free width but reads from the leading
+    // edge, on the same gutter the side controls and the content use
+    // (KNOT-020k-fix11).
+    titleLeft: {
+      textAlign: 'left',
     },
     // Pinned to the bar's own middle, so an unequal pair of side slots cannot pull
     // the title off centre (KNOT-020g-fix4, KNOT-020g-fix13). The inset keeps a long

@@ -28,4 +28,34 @@ describe('Header', () => {
     const floating = Header({ title: 'Comments' });
     expect(floating.props.children[0]).toBeNull();
   });
+
+  /**
+   * The row's children, in order: the two side slots, the middle slot, and — for a
+   * centred title — the out-of-flow title container (KNOT-020k-fix11).
+   */
+  function rowChildren(header: { props?: { children?: unknown } }): unknown[] {
+    const container = header.props?.children as unknown[];
+    const row = container[1] as { props?: { children?: unknown } };
+    return row.props?.children as unknown[];
+  }
+
+  it('centres the title out of flow by default', () => {
+    const [, middle, , outOfFlow] = rowChildren(Header({ title: 'Inquiries' }));
+
+    // The middle slot stays a flexible spacer; the title sits above the row.
+    expect((middle as { type?: unknown }).type).toBe('View');
+    expect((outOfFlow as { props?: { style?: { position?: string } } }).props?.style).toMatchObject(
+      { position: 'absolute' },
+    );
+  });
+
+  it('draws the title in flow when it is left-aligned', () => {
+    const [, middle, , outOfFlow] = rowChildren(Header({ title: 'Inquiries', titleAlign: 'left' }));
+
+    // The title itself is the middle child now, so it starts on the bar's gutter.
+    expect((middle as { type?: unknown }).type).toBe('Text');
+    expect((middle as { props?: { children?: unknown } }).props?.children).toBe('Inquiries');
+    // …and nothing is drawn out of flow above it.
+    expect(outOfFlow).toBeNull();
+  });
 });

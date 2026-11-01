@@ -61,6 +61,55 @@ export function inquiryAudienceLabel(place: string | null | undefined): string {
   return `The first ${NEARBY_RECIPIENT_LIMIT} people rooted in ${trimmed} are notified. Everyone else finds it in the Inquiries list.`;
 }
 
+/**
+ * The fields the inline search reads. Structural rather than the API's `Inquiry`
+ * type, so the rule can be tested over plain objects and the module keeps its
+ * documented independence from the network types.
+ */
+export type InquirySearchable = {
+  readonly title?: string | null;
+  readonly body?: string | null;
+  readonly place?: string | null;
+  readonly place_country?: string | null;
+};
+
+/** One field as a lower-cased string, tolerating anything the wire sends. */
+function searchableText(value: string | null | undefined): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+/**
+ * The questions matching a typed phrase, in the order they arrived.
+ *
+ * It matches the title, the question, and the place (with its country), because
+ * a reader typing "manguzi" is as likely to be looking for the questions about a
+ * place as for the word in a title. Matching is case-insensitive and substring
+ * based, so a partial word narrows as the person types.
+ *
+ * An empty phrase matches everything, which is what makes closing the field
+ * restore the whole list. This narrows what the screen has already loaded; the
+ * server has no phrase filter for inquiries, and the place filter travels on the
+ * request instead (KNOT-020k-fix11).
+ */
+export function filterInquiries<T extends InquirySearchable>(
+  inquiries: readonly T[],
+  query: string,
+): readonly T[] {
+  const phrase = typeof query === 'string' ? query.trim().toLowerCase() : '';
+  if (phrase === '') {
+    return inquiries;
+  }
+
+  return inquiries.filter((inquiry) =>
+    [
+      searchableText(inquiry.title),
+      searchableText(inquiry.body),
+      searchableText(inquiry.place),
+      searchableText(inquiry.place_country),
+    ].some((field) => field.includes(phrase)),
+  );
+}
+
 /** What the ask form currently holds. */
 export type InquiryDraft = {
   readonly title: string;

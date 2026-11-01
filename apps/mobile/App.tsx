@@ -622,12 +622,13 @@ function ThemedApp(): React.ReactElement {
           <InquiryListScreen
             token={current.accessToken}
             // The header carries the signed-in person's avatar beside search, the
-            // same pair the Feed's bar draws (KNOT-020k-fix10).
+            // same pair the Feed's bar draws (KNOT-020k-fix10). Its magnifier
+            // narrows this list inline rather than opening the app-wide search, so
+            // this screen needs no search callback at all (KNOT-020k-fix11).
             viewer={{
               display_name: current.user.display_name,
               avatar_url: current.user.avatar_url,
             }}
-            onOpenSearch={() => setOverlays((stack) => pushOverlay(stack, { name: 'search' }))}
             onOpenProfile={() => openUserProfile(current.user.id)}
             onOpenInquiry={(inquiryId) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'inquiry', inquiryId }))

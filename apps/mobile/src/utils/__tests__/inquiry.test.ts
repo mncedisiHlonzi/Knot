@@ -5,6 +5,7 @@ import {
   NEARBY_RECIPIENT_LIMIT,
   answerCountLabel,
   answerDraftError,
+  filterInquiries,
   inquiryAudienceLabel,
   inquiryDraftError,
   inquiryPlaceLabel,
@@ -56,6 +57,68 @@ describe('inquiryAudienceLabel', () => {
     const label = inquiryAudienceLabel(null);
     expect(label).toContain('nobody is notified');
     expect(label).toContain('still public');
+  });
+});
+
+describe('filterInquiries', () => {
+  const questions = [
+    {
+      title: 'Why do the older women wear red ribbons?',
+      body: 'At the festival almost every woman over sixty had one.',
+      place: 'Manguzi',
+      place_country: 'South Africa',
+    },
+    {
+      title: 'Who keeps the drums?',
+      body: 'The elders do.',
+      place: 'Durban',
+      place_country: 'South Africa',
+    },
+    {
+      title: 'Where is the salt?',
+      body: 'In the pans.',
+      place: null,
+      place_country: null,
+    },
+  ];
+
+  it('keeps every question for an empty phrase, which is what closing the field does', () => {
+    expect(filterInquiries(questions, '')).toHaveLength(3);
+    expect(filterInquiries(questions, '   ')).toHaveLength(3);
+  });
+
+  it('matches the title, ignoring case', () => {
+    expect(filterInquiries(questions, 'RIBBONS').map((question) => question.title)).toEqual([
+      'Why do the older women wear red ribbons?',
+    ]);
+  });
+
+  it('matches the question and the place as well as the title', () => {
+    expect(filterInquiries(questions, 'elders').map((question) => question.title)).toEqual([
+      'Who keeps the drums?',
+    ]);
+    expect(filterInquiries(questions, 'manguzi').map((question) => question.title)).toEqual([
+      'Why do the older women wear red ribbons?',
+    ]);
+  });
+
+  it('matches the country a place belongs to', () => {
+    expect(filterInquiries(questions, 'south africa')).toHaveLength(2);
+  });
+
+  it('narrows as a partial word is typed', () => {
+    expect(filterInquiries(questions, 'rib')).toHaveLength(1);
+  });
+
+  it('returns nothing when no question matches', () => {
+    expect(filterInquiries(questions, 'hips')).toEqual([]);
+  });
+
+  it('tolerates missing fields and a phrase that is not a string', () => {
+    const sparse = [{ title: null, body: undefined }];
+
+    expect(filterInquiries(sparse, 'anything')).toEqual([]);
+    expect(filterInquiries(questions, 42 as unknown as string)).toHaveLength(3);
   });
 });
 

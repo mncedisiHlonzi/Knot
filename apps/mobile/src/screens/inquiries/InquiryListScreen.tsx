@@ -7,6 +7,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { MagnifyingGlass, MapPin } from 'phosphor-react-native';
@@ -23,13 +24,14 @@ import Input from '../../components/Input';
 import { API_BASE_URL } from '../../config/api';
 import {
   layout,
+  radius,
   spacing,
   typeScale,
   useTheme,
   useThemedStyles,
   type ThemeColors,
 } from '../../theme';
-import { answerCountLabel } from '../../utils/inquiry';
+import { answerCountLabel, filterInquiries } from '../../utils/inquiry';
 
 /**
  * "INQUIRY · OAXACA, MEXICO" — the overline naming what the row is and where. A
@@ -67,6 +69,9 @@ const HERO_HEADLINE = 'What are you curious about?';
 /** The header glyph size, matching the Feed's `Search` control (KNOT-020k-fix10). */
 const ICON_SIZE = 24;
 
+/** The place pin inside the hero's pill. */
+const PIN_ICON_SIZE = 20;
+
 /** The hero's one-sentence explanation of what an inquiry is. */
 const HERO_SUBTITLE = 'Ask about a place, a tradition or a word. People rooted there will answer.';
 
@@ -101,8 +106,6 @@ type InquiryListScreenProps = {
   readonly onAsk: (seed?: InquiryDraftSeed) => void;
   /** Called when a question's author is tapped. */
   readonly onOpenUserProfile: (userId: string) => void;
-  /** Called when the header's search control is tapped (KNOT-020k-fix10). */
-  readonly onOpenSearch: () => void;
   /** Called when the header avatar is tapped, to open the signed-in person's profile. */
   readonly onOpenProfile: () => void;
 };
@@ -124,6 +127,12 @@ type InquiryListScreenProps = {
  * a search to browse. The same field is the hero's "Which place?" — one place, two
  * explicit actions: "Ask" starts a question about it, "Show questions about …"
  * narrows the list to it (KNOT-020k-fix9).
+ *
+ * The bar's magnifier opens an INLINE search over the questions already on screen
+ * rather than the app-wide search overlay: on a tab that lists one kind of thing,
+ * a magnifier means "find a question here", and sending the reader to a screen
+ * that also searches stories and versions answered a question nobody asked
+ * (KNOT-020k-fix11).
  */
 export default function InquiryListScreen({
   token,
@@ -131,7 +140,6 @@ export default function InquiryListScreen({
   onOpenInquiry,
   onAsk,
   onOpenUserProfile,
-  onOpenSearch,
   onOpenProfile,
 }: InquiryListScreenProps): React.ReactElement {
   const { colors } = useTheme();
@@ -146,6 +154,12 @@ export default function InquiryListScreen({
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+  // The inline search: the header's magnifier reveals a field that narrows the
+  // loaded questions. It is deliberately NOT the global search overlay — from the
+  // Inquiries tab a magnifier means "find a question", not "search the whole app"
+  // (KNOT-020k-fix11).
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState('');
 
   // The header avatar. The API sends an avatar as a relative path, so it is joined
   // to the API base here; a blank path lets `Avatar` draw the initials rather than
@@ -216,6 +230,24 @@ export default function InquiryListScreen({
   // rather than fired on every keystroke.
   const filterPending = draftTrimmed !== '' && draftTrimmed !== place;
 
+  // The questions the list draws: the loaded page narrowed by the inline search,
+  // so typing filters what is on screen without another request.
+  const visibleInquiries = filterInquiries(inquiries, query);
+  const searching = query.trim() !== '';
+
+  /**
+   * Shows or hides the inline search.
+   *
+   * Closing it also clears the phrase, so the list never stays narrowed by a
+   * field the person can no longer see.
+   */
+  const toggleSearch = useCallback((): void => {
+    if (searchOpen) {
+      setQuery('');
+    }
+    setSearchOpen(!searchOpen);
+  }, [searchOpen]);
+
   /** Opens the ask form, carrying the place already typed into it. */
   const askAboutPlace = useCallback((): void => {
     onAsk(draftTrimmed === '' ? undefined : { place: draftTrimmed });
@@ -242,16 +274,20 @@ export default function InquiryListScreen({
     <View style={styles.screen}>
       {/* The bar carries only the search control and the signed-in person's
           avatar: asking lives in the hero below, where the question starts, so the
-          header keeps no action of its own beside them (KNOT-020k-fix10). */}
+          header keeps no action of its own beside them (KNOT-020k-fix10). The
+          title reads from the leading edge, on the same gutter as the hero
+          (KNOT-020k-fix11). */}
       <Header
         title="Inquiries"
+        titleAlign="left"
         right={
           <View style={styles.headerActions}>
             <Pressable
               style={styles.iconButton}
-              onPress={onOpenSearch}
+              onPress={toggleSearch}
               accessibilityRole="button"
-              accessibilityLabel="Search stories, versions, and questions"
+              accessibilityLabel="Search questions"
+              accessibilityState={{ expanded: searchOpen }}
               testID="inquiries-search"
             >
               <MagnifyingGlass color={colors.text.primary} size={ICON_SIZE} weight="bold" />
@@ -271,7 +307,7 @@ export default function InquiryListScreen({
       />
 
       <FlatList
-        data={inquiries}
+        data={visibleInquiries}
         keyExtractor={(inquiry) => inquiry.id}
         contentContainerStyle={styles.content}
         keyboardShouldPersistTaps="handled"
@@ -285,28 +321,59 @@ export default function InquiryListScreen({
         }
         ListHeaderComponent={
           <View style={styles.hero}>
+            {/* The inline search, revealed by the bar's magnifier. It sits
+                immediately under the bar, where the control that opened it lives,
+                and narrows the questions already on screen (KNOT-020k-fix11). */}
+            {searchOpen ? (
+              <View style={styles.searchRow} testID="inquiries-search-row">
+                <Input
+                  value={query}
+                  onChangeText={setQuery}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  returnKeyType="search"
+                  accessibilityLabel="Search questions"
+                  placeholder="Search questions"
+                  leadingIcon={
+                    <MagnifyingGlass color={colors.text.tertiary} size={PIN_ICON_SIZE} />
+                  }
+                  testID="inquiries-search-input"
+                />
+              </View>
+            ) : null}
+
             {/* The screen opens with the QUESTION rather than with its title: the
                 tab bar already says where you are, so the first thing a reader
                 meets is the invitation to ask (KNOT-020k-fix9). */}
             <Text style={[typeScale.h1, styles.heroHeadline]}>{HERO_HEADLINE}</Text>
             <Text style={[typeScale.body, styles.heroSubtitle]}>{HERO_SUBTITLE}</Text>
 
-            {/* One field and one action: say which place, then ask. The field
-                keeps the app's underline treatment with a pin at its leading edge
-                so it reads as a place rather than as a search box. */}
-            <View style={styles.askRow}>
-              <View style={styles.askField}>
-                <Input
+            {/* One control, not two: the place and its action share a single
+                rounded pill — the pin and the field on the left, the Ask button
+                nested at its right end — so the hero reads as one field with its
+                action rather than an underlined field beside a button
+                (KNOT-020k-fix11). */}
+            <View style={styles.askPill} testID="inquiries-place-pill">
+              <View style={styles.askPillField}>
+                <MapPin color={colors.text.tertiary} size={PIN_ICON_SIZE} />
+                <TextInput
+                  style={[typeScale.body, styles.askInput]}
                   value={draftPlace}
                   onChangeText={setDraftPlace}
                   autoCapitalize="words"
                   returnKeyType="search"
                   accessibilityLabel="Which place is your question about?"
                   placeholder="Which place?"
-                  leadingIcon={<MapPin color={colors.text.tertiary} size={20} />}
+                  placeholderTextColor={colors.text.disabled}
+                  testID="inquiries-place-input"
                 />
               </View>
-              <Button variant="primary" label="Ask" onPress={askAboutPlace} />
+              <Button
+                variant="primary"
+                label="Ask"
+                onPress={askAboutPlace}
+                testID="inquiries-ask"
+              />
             </View>
 
             {/* The starters: three ways in, when the person knows the shape of the
@@ -394,7 +461,12 @@ export default function InquiryListScreen({
           </Pressable>
         )}
         ListEmptyComponent={
-          loading || error !== undefined ? null : (
+          loading || error !== undefined ? null : searching ? (
+            <EmptyState
+              illustrationName="no-inquiries"
+              headline={`No questions match '${query.trim()}'.`}
+            />
+          ) : (
             <EmptyState
               illustrationName="no-inquiries"
               headline={place === '' ? 'No questions yet' : `No questions about ${place} yet`}
@@ -429,17 +501,36 @@ const createStyles = (colors: ThemeColors) =>
       marginLeft: spacing.xs,
       marginRight: spacing.xs,
     },
-    // The field and its button: one line. The row is bottom-aligned so the button's
-    // 48pt box sits on the field's underline rather than floating above it
-    // (KNOT-020k-fix9).
-    askField: {
-      flex: 1,
-    },
-    askRow: {
-      alignItems: 'flex-end',
+    // The hero's one field: a rounded pill holding the pin, the place, and the Ask
+    // action at its right end. The fill is the sunken surface rather than an
+    // underline, so the field and its button read as one control
+    // (KNOT-020k-fix11).
+    askPill: {
+      alignItems: 'center',
+      backgroundColor: colors.bg.sunken,
+      borderRadius: radius.pill,
       flexDirection: 'row',
       gap: spacing.sm,
       marginTop: spacing.lg,
+      paddingLeft: spacing.lg,
+      // The button keeps the pill's own edge: 4pt of air on the right and above and
+      // below it, which leaves the 48pt button inside a 56pt pill.
+      paddingRight: spacing.xs,
+      paddingVertical: spacing.xs,
+    },
+    // The pin and the place, sharing the pill's free width.
+    askPillField: {
+      alignItems: 'center',
+      flex: 1,
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    // The pill supplies the vertical air, so the field adds none of its own: its
+    // own padding would make the text sit low against the button beside it.
+    askInput: {
+      color: colors.text.primary,
+      flex: 1,
+      paddingVertical: 0,
     },
     content: {
       paddingBottom: spacing.xxxl,
@@ -523,6 +614,11 @@ const createStyles = (colors: ThemeColors) =>
     screen: {
       backgroundColor: colors.bg.canvas,
       flex: 1,
+    },
+    // The inline search, revealed under the bar. It keeps the hero's rhythm by
+    // taking the gap above the headline rather than adding one below itself.
+    searchRow: {
+      marginBottom: spacing.md,
     },
     spinner: {
       marginVertical: spacing.lg,
