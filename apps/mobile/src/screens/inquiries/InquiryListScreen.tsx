@@ -72,6 +72,15 @@ const ICON_SIZE = 24;
 /** The place pin inside the hero's pill. */
 const PIN_ICON_SIZE = 20;
 
+/**
+ * The hero's place prompt: an invitation to CREATE, not to search.
+ *
+ * The field seeds the ask form's place (and the place filter), so the copy is a
+ * question the person answers by starting a question, rather than the search-box
+ * phrasing "Which place?" implied (KNOT-020k-fix12).
+ */
+const PLACE_PLACEHOLDER = 'Ask about a place, a tradition, or a word...';
+
 /** The hero's one-sentence explanation of what an inquiry is. */
 const HERO_SUBTITLE = 'Ask about a place, a tradition or a word. People rooted there will answer.';
 
@@ -124,9 +133,11 @@ type InquiryListScreenProps = {
  *
  * An optional place filter narrows the page to one place. It is an exact match on
  * the spelling the asker gave, so the field is a filter to type a place into, not
- * a search to browse. The same field is the hero's "Which place?" — one place, two
+ * a search to browse. The same field is the hero's place pill — one place, two
  * explicit actions: "Ask" starts a question about it, "Show questions about …"
- * narrows the list to it (KNOT-020k-fix9).
+ * narrows the list to it (KNOT-020k-fix9). Its placeholder invites a question
+ * rather than a search, while the value it carries is still the place
+ * (KNOT-020k-fix12).
  *
  * The bar's magnifier opens an INLINE search over the questions already on screen
  * rather than the app-wide search overlay: on a tab that lists one kind of thing,
@@ -334,9 +345,6 @@ export default function InquiryListScreen({
                   returnKeyType="search"
                   accessibilityLabel="Search questions"
                   placeholder="Search questions"
-                  leadingIcon={
-                    <MagnifyingGlass color={colors.text.tertiary} size={PIN_ICON_SIZE} />
-                  }
                   testID="inquiries-search-input"
                 />
               </View>
@@ -351,8 +359,9 @@ export default function InquiryListScreen({
             {/* One control, not two: the place and its action share a single
                 rounded pill — the pin and the field on the left, the Ask button
                 nested at its right end — so the hero reads as one field with its
-                action rather than an underlined field beside a button
-                (KNOT-020k-fix11). */}
+                action rather than an underlined field beside a button. The button
+                is the same pill shape, inset 4pt from the pill's own edge, so the
+                two curves sit concentric (KNOT-020k-fix11, KNOT-020k-fix12). */}
             <View style={styles.askPill} testID="inquiries-place-pill">
               <View style={styles.askPillField}>
                 <MapPin color={colors.text.tertiary} size={PIN_ICON_SIZE} />
@@ -363,13 +372,14 @@ export default function InquiryListScreen({
                   autoCapitalize="words"
                   returnKeyType="search"
                   accessibilityLabel="Which place is your question about?"
-                  placeholder="Which place?"
+                  placeholder={PLACE_PLACEHOLDER}
                   placeholderTextColor={colors.text.disabled}
                   testID="inquiries-place-input"
                 />
               </View>
               <Button
                 variant="primary"
+                shape="pill"
                 label="Ask"
                 onPress={askAboutPlace}
                 testID="inquiries-ask"

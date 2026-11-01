@@ -8,6 +8,7 @@ import TabBar, { type TabName } from '../TabBar';
 import { BellIcon, ChatIcon, HomeIcon, MapIcon } from '../TabIcons';
 import { fontWeights } from '../../theme';
 import { colors } from '../../theme';
+import { radius } from '../../theme';
 import { typeScale } from '../../theme';
 import {
   attributionParts,
@@ -129,6 +130,27 @@ describe('Button', () => {
     expect(label.props.children).toBe('Write it');
 
     expect(childrenOf(Button({ label: 'Write it', onPress: () => undefined }))[0]).toBeNull();
+  });
+
+  // KNOT-020k-fix12: a button nested inside a round surface (the Inquiries hero's
+  // place pill) needs fully rounded ends; the default 8pt corner reads as a box
+  // inside a pill. The shape is additive, so every existing caller is unchanged.
+  it('draws a pill cap only when a caller asks for one', () => {
+    const pressableStyle = (element: { props: { children?: unknown } }): readonly unknown[] => {
+      const pressable = element.props.children as {
+        props: { style: (state: { pressed: boolean }) => readonly unknown[] };
+      };
+      return pressable.props.style({ pressed: false });
+    };
+
+    const pill = pressableStyle(
+      Button({ label: 'Ask', onPress: () => undefined, variant: 'primary', shape: 'pill' }),
+    );
+    const rounded = pressableStyle(Button({ label: 'Ask', onPress: () => undefined }));
+
+    expect(pill).toContainEqual({ borderRadius: radius.pill });
+    // The default keeps the design system's 8pt corner, so nothing else moves.
+    expect(rounded).not.toContainEqual({ borderRadius: radius.pill });
   });
 });
 

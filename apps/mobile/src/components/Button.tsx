@@ -31,6 +31,15 @@ type ButtonProps = {
   /** Stretches the button to its container's width. */
   readonly fullWidth?: boolean;
   /**
+   * The button's end caps.
+   *
+   * `rounded` (the default) is the 8pt corner every button in the app draws.
+   * `pill` rounds both ends fully, for a button that nests inside a pill-shaped
+   * field or any other round surface — the Inquiries hero's "Ask" control
+   * (KNOT-020k-fix12).
+   */
+  readonly shape?: 'rounded' | 'pill';
+  /**
    * An optional glyph drawn before the label.
    *
    * The caller supplies it already sized and coloured, because only the caller
@@ -55,6 +64,7 @@ export default function Button({
   loading = false,
   loadingIndicator,
   fullWidth = false,
+  shape = 'rounded',
   leadingIcon,
   accessibilityLabel,
   testID,
@@ -99,6 +109,7 @@ export default function Button({
         style={({ pressed }) => [
           styles.base,
           variantStyle,
+          shape === 'pill' ? styles.pill : null,
           fullWidth ? styles.fullWidth : null,
           // Primary darkens to the pressed indigo; the others dim, because a
           // transparent fill has no darker shade to move to.
@@ -173,6 +184,12 @@ const createStyles = (colors: ThemeColors) =>
     },
     plain: {
       backgroundColor: 'transparent',
+    },
+    // The pill cap (KNOT-020k-fix12): the same button with both ends fully
+    // rounded, for a control that nests inside a round surface. It comes after the
+    // base style, so it overrides the default 8pt corner.
+    pill: {
+      borderRadius: radius.pill,
     },
     pressedOpacity: {
       opacity: 0.7,

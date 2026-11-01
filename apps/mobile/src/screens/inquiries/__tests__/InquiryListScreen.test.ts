@@ -7,7 +7,7 @@ import Chip from '../../../components/Chip';
 import EmptyState from '../../../components/EmptyState';
 import Header from '../../../components/Header';
 import Input from '../../../components/Input';
-import { colors, radius, typeScale } from '../../../theme';
+import { colors, radius, spacing, typeScale } from '../../../theme';
 import InquiryListScreen from '../InquiryListScreen';
 
 /**
@@ -349,19 +349,28 @@ describe('InquiryListScreen hero', () => {
     const field = findByTestID(hero, 'inquiries-place-input');
     const ask = findElementByType(pill, Button);
 
-    // One rounded surface with the action at its right end — not an underlined
-    // field beside a button (KNOT-020k-fix11).
+    // One rounded surface with the action nested at its right end — not an
+    // underlined field beside a button (KNOT-020k-fix11). The 4pt inset on the
+    // right (and above and below) is what makes the button's pill sit concentric
+    // with the field's (KNOT-020k-fix12).
     expect(pill?.props?.style).toMatchObject({
       alignItems: 'center',
       backgroundColor: colors.bg.sunken,
       borderRadius: radius.pill,
       flexDirection: 'row',
+      paddingRight: spacing.xs,
+      paddingVertical: spacing.xs,
     });
 
     // The pin and the place are inside the pill, left of the action.
     expect(findElementByType(pill, MapPin)).toBeDefined();
     expect(field).toBeDefined();
-    expect(field?.props?.placeholder).toBe('Which place?');
+    // An invitation to ask, not the search phrasing "Which place?"
+    // (KNOT-020k-fix12).
+    expect(field?.props?.placeholder).toBe('Ask about a place, a tradition, or a word...');
+    // The field takes the pill's free width, so the text can never run under the
+    // button.
+    expect(field?.props?.style).toContainEqual(expect.objectContaining({ flex: 1 }));
 
     // The shared underline input is gone from the hero entirely.
     expect(findElementByType(hero, Input)).toBeUndefined();
@@ -369,10 +378,26 @@ describe('InquiryListScreen hero', () => {
     expect(ask).toBeDefined();
     expect(ask?.props?.label).toBe('Ask');
     expect(ask?.props?.variant).toBe('primary');
+    // The primary fill is black in light mode and white in dark, and the pill cap
+    // matches the field it sits in (KNOT-020k-fix12).
+    expect(ask?.props?.shape).toBe('pill');
 
     // An empty field still asks — the place is optional, the question is not.
     (ask?.props?.onPress as () => void)();
     expect(onAsk).toHaveBeenCalledWith(undefined);
+  });
+
+  it('keeps the bar’s magnifier as the only search icon on the screen', () => {
+    // Closed: the hero draws no magnifier at all.
+    expect(findElementByType(heroFor(InquiryListScreen(PROPS)), MagnifyingGlass)).toBeUndefined();
+
+    // Open: the search field is a plain field, so the bar's control is still the
+    // only mark that means "search" (KNOT-020k-fix12).
+    scriptState({ 8: true });
+    const openHero = heroFor(InquiryListScreen(PROPS));
+
+    expect(findByTestID(openHero, 'inquiries-search-input')).toBeDefined();
+    expect(findElementByType(openHero, MagnifyingGlass)).toBeUndefined();
   });
 
   it('hands the starters to the composer as opening words', () => {
