@@ -23,6 +23,14 @@ export type MediaType = 'image' | 'video';
 export type MediaSource = 'camera' | 'gallery';
 
 /** A piece of media attached to a story. */
+/**
+ * Where a media item's derivatives are in the backend's pipeline
+ * (KNOT-037-fix7). The server writes the row as `processing`, generates the
+ * renditions in the background, then marks it `ready` — or `failed` when it could
+ * not.
+ */
+export type MediaStatus = 'processing' | 'ready' | 'failed';
+
 export type StoryMedia = {
   readonly id: string;
   readonly media_type: MediaType;
@@ -35,17 +43,17 @@ export type StoryMedia = {
   readonly display_order: number;
   readonly created_at: string;
   /**
-   * The path on the API that serves the bytes. It is a relative path
-   * (`/stories/{id}/media/{mid}/content`); resolve it against the API base URL.
-   * It always addresses the ORIGINAL upload: the renditions below are separate
-   * addresses, and the full-screen viewer keeps asking for this one (KNOT-037).
+   * The path on the API that serves the item's full rendition: the 2048px AVIF
+   * display for an image, the 1080p MP4 stream for a video. It is a relative path
+   * (`/stories/{id}/media/{mid}/content?variant=display`), so resolve it against
+   * the API base URL. A row written before KNOT-037-fix7 answers with its original
+   * upload instead (KNOT-037-fix7).
    */
   readonly url: string;
   /**
-   * The generated renditions' paths, or null when this item has none (a row from
-   * before KNOT-037, or an upload whose decoder or FFmpeg failed). Each is the
-   * original's path with `?variant=` appended, so a client resolves it against
-   * the API base URL exactly like `url`. A client must fall back to `url`.
+   * The generated renditions' paths, or null when this item has none. Each is the
+   * original's path with `?variant=` appended, so a client resolves it against the
+   * API base URL exactly like `url`.
    *
    * Both optional and nullable because the API types describe the wire format
    * optimistically: an older server omits them, and the client treats a missing
@@ -54,6 +62,16 @@ export type StoryMedia = {
   readonly thumbnail_url?: string | null;
   readonly medium_url?: string | null;
   readonly poster_url?: string | null;
+  /**
+   * Whether the bytes are ready to be rendered.
+   *
+   * Optional because an older server does not send it: a missing status is treated
+   * as `ready`, which is what every row written before the async pipeline is. A
+   * `processing` item has no bytes to fetch yet, so a client draws a placeholder
+   * and asks again rather than showing a broken frame (KNOT-037-fix7,
+   * KNOT-037-fix8).
+   */
+  readonly status?: MediaStatus;
 };
 
 /** A story as returned by the API. */

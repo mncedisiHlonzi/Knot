@@ -21,7 +21,13 @@ import {
 } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
-import { FEED_PAGE_SIZE, type FeedItem, storiesApi } from '../../api/stories';
+import {
+  FEED_PAGE_SIZE,
+  type FeedItem,
+  type Story,
+  type StoryFeedItem,
+  storiesApi,
+} from '../../api/stories';
 import Avatar from '../../components/Avatar';
 import Button from '../../components/Button';
 import Chip from '../../components/Chip';
@@ -52,6 +58,8 @@ import {
   activeViewableKey,
   nextKeyAfter,
 } from '../../utils/viewability';
+import { useStoryPolling } from '../../hooks/useStoryPolling';
+import { hasProcessingMedia, itemsWithStory, mediaStatusOf } from './storyPolling';
 import {
   PROMPT_PILLARS,
   nextPromptIndex,
@@ -124,6 +132,15 @@ type FeedScreenProps = {
   /** Called when the person opens search. */
   readonly onOpenSearch: () => void;
   /**
+   * The story the composer just published, handed over before the backend has
+   * finished encoding its media. It is inserted at the top of the list straight
+   * away, so the post appears the moment the person returns to the feed
+   * (KNOT-037-fix8).
+   */
+  readonly pendingStory?: Story;
+  /** Called once `pendingStory` has been taken into the list. */
+  readonly onPendingStoryConsumed?: () => void;
+  /**
    * Called when the prompt card's call to action is used: the "Write it" button or
    * the prompt itself. Create used to be the bar's elevated tab and then a simple
    * composer row; it is the prompt card now (KNOT-020k-fix6, KNOT-020k-fix7).
@@ -158,6 +175,17 @@ type FeedScreenProps = {
  * both through `FeedEntry` -- the card takes a `variant` -- and a tap opens what the
  * entry actually is: the story, or the version (KNOT-022).
  */
+
+/**
+ * The pending story in the shape the list holds, or undefined when there is none.
+ *
+ * The composer hands over a `Story`; the feed's list is a union of story and version
+ * entries, and this is what tags the newcomer as a story (KNOT-037-fix8).
+ */
+function pendingItem(story: Story | undefined): StoryFeedItem | undefined {
+  return story === undefined ? undefined : { ...story, kind: 'story' };
+}
+
 export default function FeedScreen({
   token,
   viewer,
@@ -168,6 +196,8 @@ export default function FeedScreen({
   onOpenMedia,
   onOpenSearch,
   onCreateStory,
+  pendingStory,
+  onPendingStoryConsumed,
 }: FeedScreenProps): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -218,6 +248,44 @@ export default function FeedScreen({
     activeItemId,
   );
 
+  // The story the composer handed over, kept in a ref so a page load that finishes
+  // after it arrived can put it back at the top without re-running the loader
+  // (KNOT-037-fix8).
+  const pendingRef = useRef<Story | undefined>(pendingStory);
+  const pendingConsumed = useRef(false);
+
+  /** Puts a story at the top of the list, replacing any copy already there. */
+  const insertStory = useCallback((story: Story): void => {
+    const item: StoryFeedItem = { ...story, kind: 'story' };
+    setItems((existing) => itemsWithStory(existing, item));
+  }, []);
+
+  // The composer publishes and hands the story over before the backend has encoded
+  // its media. Showing it at once — with the placeholder its `processing` status
+  // earns — is what makes a post feel instant rather than "appears on refresh"
+  // (KNOT-037-fix8).
+  useEffect(() => {
+    if (pendingStory === undefined || pendingConsumed.current) {
+      return;
+    }
+
+    pendingConsumed.current = true;
+    pendingRef.current = pendingStory;
+    insertStory(pendingStory);
+    if (onPendingStoryConsumed !== undefined) {
+      onPendingStoryConsumed();
+    }
+  }, [insertStory, onPendingStoryConsumed, pendingStory]);
+
+  // While a story's media is still being encoded, ask the server until it is done,
+  // then let the card re-render with the real picture (KNOT-037-fix8). The id is
+  // derived from the list, so once this one is ready the next processing entry (if
+  // any) becomes the target.
+  const pollingStory: Story | undefined = items.find(
+    (item): item is StoryFeedItem => item.kind === 'story' && hasProcessingMedia(item.media),
+  );
+  useStoryPolling(pollingStory, insertStory, token);
+
   /** Flips the feed-wide mute setting; every video follows it. */
   const toggleMute = useCallback((): void => {
     setIsMuted((current) => !current);
@@ -245,7 +313,10 @@ export default function FeedScreen({
 
     try {
       const page = await storiesApi.listStories({ feedType, limit: FEED_PAGE_SIZE }, token);
-      setItems(page.items);
+      // A page fetched after the composer handed its story over must not drop it:
+      // the cached feed may not contain a story written seconds ago
+      // (KNOT-037-fix8).
+      setItems(itemsWithStory(page.items, pendingItem(pendingRef.current)));
       setNextCursor(page.next_cursor);
     } catch (caught) {
       setError(describeError(caught));
@@ -265,7 +336,7 @@ export default function FeedScreen({
 
     try {
       const page = await storiesApi.listStories({ feedType, limit: FEED_PAGE_SIZE }, token);
-      setItems(page.items);
+      setItems(itemsWithStory(page.items, pendingItem(pendingRef.current)));
       setNextCursor(page.next_cursor);
     } catch (caught) {
       setError(describeError(caught));
@@ -578,6 +649,7 @@ export default function FeedScreen({
               isMuted={isMuted}
               isVisible={item.id === activeItemId}
               isNextInLine={item.id === nextItemId}
+              mediaStatus={item.kind === 'story' ? mediaStatusOf(item.media) : undefined}
               onToggleMute={toggleMute}
               onPress={() =>
                 item.kind === 'version' ? onOpenVersion(item.id) : onOpenStory(item.id)

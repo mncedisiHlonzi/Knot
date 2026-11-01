@@ -28,6 +28,7 @@ import {
 } from '../../utils/mediaLimit';
 import { layout, radius, spacing, typeScale, useTheme, useThemedStyles } from '../../theme';
 import type { ThemeColors } from '../../theme';
+import { withPendingMedia } from './storyPolling';
 
 type CreateStoryScreenProps = {
   /** The signed-in user's access token. The server derives the author from it. */
@@ -237,7 +238,10 @@ export default function CreateStoryScreen({
         });
       }
 
-      onCreated(story);
+      // Hand over the story with the media the composer just uploaded marked
+      // `processing`: the detail and the feed draw a placeholder from it and poll
+      // until the backend has encoded the bytes (KNOT-037-fix8).
+      onCreated(withPendingMedia(story, media));
     } catch (caught) {
       // A media failure leaves the story in place: it is already published, so it
       // is kept and the error shown rather than rolled back.

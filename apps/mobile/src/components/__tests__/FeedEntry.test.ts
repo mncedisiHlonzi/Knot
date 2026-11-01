@@ -31,6 +31,7 @@ jest.mock('react', () => ({
 }));
 
 jest.mock('react-native', () => ({
+  ActivityIndicator: 'ActivityIndicator',
   Image: 'Image',
   Pressable: 'Pressable',
   StyleSheet: { create: (styles: unknown) => styles },
@@ -1087,6 +1088,29 @@ describe('FeedEntry hide control', () => {
   });
 });
 
+/** The string children of every `Text`, so a caption can be asserted directly. */
+function textContent(node: unknown, found: string[] = []): string[] {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      textContent(child, found);
+    }
+    return found;
+  }
+  if (node === null || node === undefined || typeof node !== 'object') {
+    return found;
+  }
+
+  const element = node as { type?: unknown; props?: { children?: unknown } };
+  if (element.type === 'Text' && typeof element.props?.children === 'string') {
+    found.push(element.props.children);
+  }
+  if (element.props !== undefined) {
+    textContent(element.props.children, found);
+  }
+
+  return found;
+}
+
 /**
  * The first element carrying a test identifier, depth-first — the direct-call
  * equivalent of `getByTestId` (KNOT-020k-fix21).
@@ -1155,5 +1179,59 @@ describe('the meta row', () => {
 
     expect(findByTestID(element, 'feed-meta-row')).toBeUndefined();
     expect(style[2]).toEqual({ paddingBottom: spacing.lg });
+  });
+
+  /**
+   * The backend answers an upload before it has encoded the bytes, so a card whose
+   * media is still `processing` must say so rather than draw an empty frame
+   * (KNOT-037-fix8).
+   */
+  describe('media still being processed', () => {
+    it('draws a placeholder instead of an empty media frame', () => {
+      const element = FeedEntry({
+        story: { ...story, first_media_type: 'video' },
+        onPress: () => undefined,
+        mediaStatus: 'processing',
+      });
+      const types = elementTypes(element);
+
+      expect(findByTestID(element, 'media-processing')).toBeDefined();
+      expect(types).toContain('ActivityIndicator');
+      // No player and no image: there is nothing to fetch yet.
+      expect(types).not.toContain(FeedVideo);
+      expect(types).not.toContain('Image');
+    });
+
+    it('labels the placeholder so the wait is explained, not implied', () => {
+      const element = FeedEntry({
+        story: { ...story, first_media_type: 'image' },
+        onPress: () => undefined,
+        mediaStatus: 'processing',
+      });
+
+      expect(textContent(element)).toContain('Processing media...');
+    });
+
+    it('draws the real media once the status is ready', () => {
+      const element = FeedEntry({
+        story: { ...story, first_media_type: 'video', first_media_url: '/stories/x/media/y' },
+        onPress: () => undefined,
+        mediaStatus: 'ready',
+      });
+      const types = elementTypes(element);
+
+      expect(findByTestID(element, 'media-processing')).toBeUndefined();
+      expect(types).toContain(FeedVideo);
+    });
+
+    it('treats a missing status as ready, which is what an older server sends', () => {
+      const element = FeedEntry({
+        story: { ...story, first_media_type: 'image', first_media_url: '/stories/x/media/y' },
+        onPress: () => undefined,
+      });
+
+      expect(findByTestID(element, 'media-processing')).toBeUndefined();
+      expect(elementTypes(element)).toContain('Image');
+    });
   });
 });

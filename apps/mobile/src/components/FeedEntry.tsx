@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  ActivityIndicator,
   Image,
   Pressable,
   StyleSheet,
@@ -10,7 +11,7 @@ import {
 } from 'react-native';
 import { ArrowsClockwise, DotsThree, Images, X } from 'phosphor-react-native';
 
-import type { RecentInteraction } from '../api/stories';
+import type { MediaStatus, RecentInteraction } from '../api/stories';
 import { API_BASE_URL } from '../config/api';
 import {
   fontWeights,
@@ -189,6 +190,16 @@ type FeedEntryProps = {
   /** Called when the entry's mute control is tapped. */
   readonly onToggleMute?: () => void;
   /**
+   * Where the FIRST media item's bytes are: `processing`, `ready`, or `failed`.
+   *
+   * The upload answers before the backend has encoded anything (KNOT-037-fix7), so
+   * an item created a moment ago is `processing` and has no bytes to fetch. The card
+   * then draws a placeholder instead of an empty frame, and the screen keeps asking
+   * until it flips (KNOT-037-fix8). Absent is treated as `ready`, which is what a
+   * row written before the async pipeline is.
+   */
+  readonly mediaStatus?: MediaStatus;
+  /**
    * True only for the entry immediately after the active one, so its video prepares
    * itself before it is scrolled into view (KNOT-037-fix7). Defaults to `false`.
    */
@@ -300,12 +311,16 @@ export default function FeedEntry({
   isMuted = true,
   onToggleMute = NOOP,
   isNextInLine = false,
+  mediaStatus,
   testID,
 }: FeedEntryProps): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const mediaUrl = resolveMediaUrl(story.first_media_url);
   const isVideo = story.first_media_type === 'video';
+  // The bytes are still being encoded, so there is nothing to fetch yet
+  // (KNOT-037-fix8).
+  const isProcessing = mediaStatus === 'processing';
   const mediaCount = story.media_count ?? 0;
   const { aspectRatio, onLoadSize } = useMediaAspectRatio(
     story.first_media_width,
@@ -569,7 +584,18 @@ export default function FeedEntry({
         ) : null}
       </View>
 
-      {mediaUrl !== '' ? (
+      {isProcessing ? (
+        // An item just uploaded has no bytes yet, and a plain empty frame reads as
+        // a broken image. The box keeps the card's shape, says what is happening,
+        // and is NOT a tap target: there is nothing to open until the encode
+        // finishes (KNOT-037-fix8).
+        <View style={[styles.mediaFrame, { aspectRatio: mediaFrame }]} testID="media-processing">
+          <View style={styles.processingBox}>
+            <ActivityIndicator color={colors.text.tertiary} />
+            <Text style={[typeScale.caption, styles.processingLabel]}>Processing media...</Text>
+          </View>
+        </View>
+      ) : mediaUrl !== '' ? (
         <View style={[styles.mediaFrame, { aspectRatio: mediaFrame }]}>
           {/* The media is its own tap target: the viewer is opened from here,
               never from the card, whose tap still opens the story (KNOT-020k).
@@ -746,6 +772,23 @@ const createStyles = (colors: ThemeColors) =>
       marginTop: spacing.md,
       overflow: 'hidden',
       width: '100%',
+    },
+    // The placeholder that stands in for media the backend is still encoding
+    // (KNOT-037-fix8). It fills the frame the media will take, so the card does not
+    // change height when the picture arrives, and it centres a spinner over the
+    // `bg.sunken` wash with one quiet line of text under it.
+    processingBox: {
+      alignItems: 'center',
+      bottom: 0,
+      gap: spacing.sm,
+      justifyContent: 'center',
+      left: 0,
+      position: 'absolute',
+      right: 0,
+      top: 0,
+    },
+    processingLabel: {
+      color: colors.text.tertiary,
     },
     // The stats row carries real counts, so it reads in the secondary ink and the
     // bolder label voice rather than as a caption (KNOT-031). Its vertical padding is

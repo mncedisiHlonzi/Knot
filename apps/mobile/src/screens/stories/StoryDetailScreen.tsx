@@ -32,6 +32,7 @@ import ReportModal from '../../components/ReportModal';
 import VideoThumbnail from '../../components/VideoThumbnail';
 import { API_BASE_URL } from '../../config/api';
 import { languageName } from '../../data/languages';
+import { useStoryPolling } from '../../hooks/useStoryPolling';
 import {
   layout,
   mediaOverlayText,
@@ -137,8 +138,24 @@ function CarouselPage({
   readonly onPress: () => void;
 }): React.ReactElement {
   const styles = useThemedStyles(createStyles);
+  const { colors } = useTheme();
   const { aspectRatio, onLoadSize } = useMediaAspectRatio(media.width, media.height);
   const uri = resolveMediaUrl(media.url);
+
+  // The backend has not encoded this item yet, so there is nothing to draw and
+  // nothing to open: a placeholder that holds the page's shape is the honest
+  // answer (KNOT-037-fix8).
+  if (media.status === 'processing') {
+    return (
+      <View
+        style={[styles.page, styles.processingBox, { height, width }]}
+        testID="detail-media-processing"
+      >
+        <ActivityIndicator color={colors.text.tertiary} />
+        <Text style={[typeScale.caption, styles.processingLabel]}>Processing media...</Text>
+      </View>
+    );
+  }
 
   // The carousel's frame takes the active page's shape, so a page reports the
   // ratio it resolved. `null` means the media has not reported one yet, which the
@@ -330,6 +347,15 @@ export default function StoryDetailScreen({
     void load();
   }, [load]);
 
+  // The screen opens the moment a story is published, when its media is still
+  // being encoded. Polling the story swaps every placeholder for the real picture
+  // as the backend finishes, without the reader refreshing anything
+  // (KNOT-037-fix8).
+  const handleStoryUpdate = useCallback((updated: Story): void => {
+    setStory(updated);
+  }, []);
+  useStoryPolling(story, handleStoryUpdate, token);
+
   // A different story starts at its first page: the overlay reuses this component
   // instance when one detail replaces another, so the previous page index and
   // shapes must not leak into the new story.
@@ -478,6 +504,7 @@ export default function StoryDetailScreen({
                       key={item.id}
                       style={[styles.thumbnail, active ? null : styles.thumbnailInactive]}
                       onPress={() => onOpenMedia(media, index, viewerStory)}
+                      disabled={item.status === 'processing'}
                       accessibilityRole="button"
                       accessibilityState={{ selected: active }}
                       accessibilityLabel={`Open ${carouselPositionLabel(
@@ -486,7 +513,14 @@ export default function StoryDetailScreen({
                         media.length,
                       )}`}
                     >
-                      {item.media_type === 'video' ? (
+                      {item.status === 'processing' ? (
+                        // Still encoding: the tile keeps its place in the strip
+                        // rather than vanishing, and cannot be opened
+                        // (KNOT-037-fix8).
+                        <View style={styles.thumbnailProcessing} testID="thumbnail-processing">
+                          <ActivityIndicator color={colors.text.tertiary} size="small" />
+                        </View>
+                      ) : item.media_type === 'video' ? (
                         // The poster frame is the video's still. A video with no
                         // poster keeps the sunken placeholder and its play disc:
                         // the original is an MP4, which an Image cannot draw
@@ -751,6 +785,25 @@ const createStyles = (colors: ThemeColors) =>
     pageMedia: {
       height: '100%',
       width: '100%',
+    },
+    // The placeholder shown while the backend encodes a page's media: it fills the
+    // frame the picture will take, so the carousel does not change height when the
+    // bytes arrive (KNOT-037-fix8).
+    processingBox: {
+      alignItems: 'center',
+      gap: spacing.sm,
+      justifyContent: 'center',
+    },
+    processingLabel: {
+      color: colors.text.tertiary,
+    },
+    // The same placeholder, shrunk to a strip tile.
+    thumbnailProcessing: {
+      alignItems: 'center',
+      backgroundColor: colors.bg.sunken,
+      height: THUMBNAIL_SIZE,
+      justifyContent: 'center',
+      width: THUMBNAIL_SIZE,
     },
     retry: {
       marginTop: spacing.lg,

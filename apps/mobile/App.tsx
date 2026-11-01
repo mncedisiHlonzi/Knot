@@ -19,7 +19,7 @@ import type { AuthResponse, User } from './src/api/client';
 import { logout } from './src/api/auth';
 import { conversationsApi } from './src/api/conversations';
 import { Notification, notificationsApi } from './src/api/notifications';
-import { storiesApi } from './src/api/stories';
+import { type Story, storiesApi } from './src/api/stories';
 import { versionsApi } from './src/api/versions';
 import { DEFAULT_LANGUAGE_CODE } from './src/config/language';
 import { isLanguageCode } from './src/data/languages';
@@ -256,6 +256,15 @@ function ThemedApp(): React.ReactElement {
   const [recoveryNotice, setRecoveryNotice] = useState(false);
   const [tab, setTab] = useState<TabName>('feed');
   const [overlays, setOverlays] = useState<readonly Overlay[]>([]);
+  /**
+   * The story the composer just published, parked until the feed can take it.
+   *
+   * Publishing replaces the composer with the story's detail, so the Feed is not
+   * mounted at that moment; this is what carries the new story across the handover
+   * so the feed can show it at the top the instant it is next rendered, with the
+   * placeholder its `processing` media earns (KNOT-037-fix8).
+   */
+  const [pendingStory, setPendingStory] = useState<Story | undefined>(undefined);
   // The unread notification count drawn on the bell tab. It is read here rather
   // than inside the bar so the bar stays stateless, and it is re-read whenever
   // the visible tab changes — which covers coming back from the inbox after it
@@ -670,6 +679,11 @@ function ThemedApp(): React.ReactElement {
               display_name: current.user.display_name,
               avatar_url: current.user.avatar_url,
             }}
+            // A story published a moment ago is shown before the backend has
+            // finished its media, and the feed polls it until it is ready
+            // (KNOT-037-fix8).
+            pendingStory={pendingStory}
+            onPendingStoryConsumed={() => setPendingStory(undefined)}
             onOpenStory={(id) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId: id }))
             }
@@ -796,9 +810,13 @@ function ThemedApp(): React.ReactElement {
         return (
           <CreateStoryScreen
             token={current.accessToken}
-            onCreated={(story) =>
-              setOverlays((stack) => replaceOverlay(stack, { name: 'detail', storyId: story.id }))
-            }
+            onCreated={(story) => {
+              // The composer has already uploaded the media, so the story carries
+              // items marked `processing`: the detail shows placeholders and the
+              // feed keeps a copy for when the reader goes back (KNOT-037-fix8).
+              setPendingStory(story);
+              setOverlays((stack) => replaceOverlay(stack, { name: 'detail', storyId: story.id }));
+            }}
             onCancel={handleBack}
           />
         );
