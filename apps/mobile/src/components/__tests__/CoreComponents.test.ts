@@ -188,6 +188,44 @@ describe('Chip', () => {
     expect(labelStyle({ textScale: 'label' })).toBe(typeScale.label);
     expect(labelStyle({ textScale: 'button' })).toBe(typeScale.button);
   });
+
+  // KNOT-020k-fix15: the chip used to tween its `backgroundColor` with the JS driver
+  // on the SAME view whose press transform runs on the native driver. The first tap
+  // moved that view's node to the native side, so the next fill animation threw
+  // "Attempting to run JS driven animation on animated node that has been moved to
+  // 'native' earlier". `backgroundColor` cannot run natively, so the fill is a plain
+  // colour now and the only animated property on that node is the transform.
+  it('paints its fill as a plain colour, never an animated value', () => {
+    const fillOf = (props: { variant?: 'default' | 'outline'; selected?: boolean }): unknown => {
+      const chip = Chip({ label: 'Wonder', ...props }) as unknown as {
+        props: { style: readonly (Record<string, unknown> | null)[] };
+      };
+      // The outline-variant slot is `null` on a default chip.
+      const fill = chip.props.style.find((entry) => entry !== null && 'backgroundColor' in entry);
+      return fill?.backgroundColor;
+    };
+
+    expect(fillOf({})).toBe(colors.bg.sunken);
+    expect(fillOf({ selected: true })).toBe(colors.brand.tint);
+    expect(fillOf({ variant: 'outline' })).toBe('transparent');
+    // A string, not an `AnimatedInterpolation` object.
+    expect(typeof fillOf({ selected: true })).toBe('string');
+  });
+
+  // The crash surfaced on the tap itself, so a press must be a no-op as far as
+  // errors are concerned — and must still fire the handler.
+  it('handles a tap without throwing', () => {
+    const onPress = jest.fn();
+    const chip = Chip({ label: 'Wonder', onPress }) as unknown as {
+      props: { onPress: () => void; onPressIn: () => void; onPressOut: () => void };
+    };
+
+    expect(() => chip.props.onPressIn()).not.toThrow();
+    expect(() => chip.props.onPressOut()).not.toThrow();
+    chip.props.onPress();
+
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('Avatar', () => {

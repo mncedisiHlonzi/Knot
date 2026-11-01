@@ -1,8 +1,8 @@
 import React, { useEffect, useRef } from 'react';
-import { Animated, Easing, Pressable, StyleSheet, Text } from 'react-native';
+import { Animated, Pressable, StyleSheet, Text } from 'react-native';
 import { X } from 'phosphor-react-native';
 
-import { motion, radius, spacing, typeScale, useTheme, useThemedStyles } from '../theme';
+import { radius, spacing, typeScale, useTheme, useThemedStyles } from '../theme';
 import type { ThemeColors } from '../theme';
 import { usePressScale } from '../motion/usePressScale';
 
@@ -42,9 +42,18 @@ const VERTICAL_HIT_SLOP = 6;
 const ICON_REST_SCALE = 0.72;
 
 /**
- * The chip paints its own fill through an animated value, so a selection is a
- * colour change rather than a swapped style. `backgroundColor` cannot run on the
- * native driver, so this one animation is JS-driven; the icon's spring is native.
+ * The chip's fill is a PLAIN colour, not an animated one (KNOT-020k-fix15).
+ *
+ * `backgroundColor` cannot run on the native driver, so a tween on it has to be
+ * JS-driven — and the press transform on the very same view IS native-driven. Once
+ * the press starts, React Native moves that view's node to the native side, and the
+ * JS fill animation then throws "Attempting to run JS driven animation on animated
+ * node that has been moved to 'native' earlier". Keeping the fill flat is the only
+ * fix that leaves the chip's appearance untouched without either a second layer
+ * over the hairline border or a JS press scale for every control in the app: the
+ * selected surface still changes, it simply changes with the re-render instead of
+ * sliding. The press still scales on the native driver, and the icon still springs
+ * (KNOT-020h).
  */
 const AnimatedChip = Animated.createAnimatedComponent(Pressable);
 
@@ -75,20 +84,19 @@ export default function Chip({
       ? colors.text.primary
       : colors.text.secondary;
 
-  // 0 is the resting fill, 1 the brand tint; the chip slides between them so a
-  // tap reads as a surface change in motion (KNOT-020h).
-  const fill = useRef(new Animated.Value(selected ? 1 : 0)).current;
-  useEffect(() => {
-    Animated.timing(fill, {
-      toValue: selected ? 1 : 0,
-      duration: motion.durations.small,
-      easing: Easing.bezier(...motion.easing.standard),
-      useNativeDriver: false,
-    }).start();
-  }, [fill, selected]);
+  // The resting fill and the brand tint, applied instantly. This is a plain style
+  // rather than an interpolation of an `Animated.Value`: the same view carries the
+  // native press transform, and a JS-driven prop on a native-moved node is exactly
+  // the crash KNOT-020k-fix15 removes.
+  const fillColor = selected
+    ? colors.brand.tint
+    : variant === 'outline'
+      ? 'transparent'
+      : colors.bg.sunken;
 
   // The icon springs in when the chip becomes selected, which gives the tap a
-  // point of arrival beyond the fill alone.
+  // point of arrival beyond the fill alone. It animates its own node's transform,
+  // so it never shares a node with the fill.
   const iconScale = useRef(new Animated.Value(selected ? 1 : ICON_REST_SCALE)).current;
   useEffect(() => {
     Animated.spring(iconScale, {
@@ -98,11 +106,6 @@ export default function Chip({
       useNativeDriver: true,
     }).start();
   }, [iconScale, selected]);
-
-  const fillColor = fill.interpolate({
-    inputRange: [0, 1],
-    outputRange: [variant === 'outline' ? 'transparent' : colors.bg.sunken, colors.brand.tint],
-  });
 
   const content = (
     <>
@@ -128,7 +131,8 @@ export default function Chip({
     </>
   );
 
-  // The fill is always the animated one; the outline variant only adds its border.
+  // The fill is a flat colour; the only animated property on this node is the
+  // native press transform.
   const chipStyle = [
     styles.chip,
     variant === 'outline' ? styles.outline : null,
