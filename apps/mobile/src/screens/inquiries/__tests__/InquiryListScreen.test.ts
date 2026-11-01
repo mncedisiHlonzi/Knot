@@ -368,11 +368,12 @@ describe('InquiryListScreen hero', () => {
     // …and nothing on the hero accepts typing any more.
     expect(findElementByType(hero, 'TextInput')).toBeUndefined();
 
-    // The Ask button is unchanged: primary, pill-shaped, nested on the right.
+    // The Ask button is unchanged apart from its cap: primary, with an 8pt corner
+    // that sits concentric inside the 12pt line (KNOT-020k-fix14).
     expect(ask).toBeDefined();
     expect(ask?.props?.label).toBe('Ask');
     expect(ask?.props?.variant).toBe('primary');
-    expect(ask?.props?.shape).toBe('pill');
+    expect(ask?.props?.shape).toBe('rounded');
 
     // Both halves of the line open the composer, and neither carries a place into
     // it (KNOT-020k-fix13).

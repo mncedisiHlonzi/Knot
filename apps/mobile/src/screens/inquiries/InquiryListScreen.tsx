@@ -363,9 +363,13 @@ export default function InquiryListScreen({
                   {ASK_PROMPT}
                 </Text>
               </Pressable>
+              {/* The button's cap matches the line it sits in: the line is
+                  `radius.lg` (12) and the button is inset 4pt, so an 8pt corner
+                  (`shape="rounded"`) is the concentric one — a full pill would
+                  fight the soft rectangle around it (KNOT-020k-fix14). */}
               <Button
                 variant="primary"
-                shape="pill"
+                shape="rounded"
                 label="Ask"
                 onPress={openComposer}
                 testID="inquiries-ask"
