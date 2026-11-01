@@ -7,7 +7,14 @@ import Button from '../../components/Button';
 import Header from '../../components/Header';
 import Input from '../../components/Input';
 import Logomark from '../../components/Logomark';
-import { layout, spacing, typeScale, useThemedStyles, type ThemeColors } from '../../theme';
+import {
+  layout,
+  spacing,
+  typeScale,
+  useTheme,
+  useThemedStyles,
+  type ThemeColors,
+} from '../../theme';
 
 /** The logomark's size in the auth header, matching Login and Register. */
 const LOGOMARK_SIZE = 36;
@@ -34,6 +41,7 @@ type VerifyEmailScreenProps = {
 export default function VerifyEmailScreen({
   onBackToLogin,
 }: VerifyEmailScreenProps): React.ReactElement {
+  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const [token, setToken] = useState('');
   const [error, setError] = useState<string | undefined>(undefined);
@@ -68,7 +76,7 @@ export default function VerifyEmailScreen({
       <Header
         left={
           <View style={styles.logomark}>
-            <Logomark size={LOGOMARK_SIZE} />
+            <Logomark size={LOGOMARK_SIZE} color={colors.text.primary} />
           </View>
         }
       />

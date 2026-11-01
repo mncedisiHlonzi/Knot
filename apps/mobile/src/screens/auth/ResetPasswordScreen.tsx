@@ -7,7 +7,14 @@ import Button from '../../components/Button';
 import Header from '../../components/Header';
 import Input from '../../components/Input';
 import Logomark from '../../components/Logomark';
-import { layout, spacing, typeScale, useThemedStyles, type ThemeColors } from '../../theme';
+import {
+  layout,
+  spacing,
+  typeScale,
+  useTheme,
+  useThemedStyles,
+  type ThemeColors,
+} from '../../theme';
 import { MIN_PASSWORD_LENGTH, validatePassword } from '../../utils/authForm';
 
 /** The logomark's size in the auth header, matching Login and Register. */
@@ -32,6 +39,7 @@ type ResetPasswordScreenProps = {
 export default function ResetPasswordScreen({
   onBackToLogin,
 }: ResetPasswordScreenProps): React.ReactElement {
+  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const [token, setToken] = useState('');
   const [password, setPassword] = useState('');
@@ -70,7 +78,7 @@ export default function ResetPasswordScreen({
       <Header
         left={
           <View style={styles.logomark}>
-            <Logomark size={LOGOMARK_SIZE} />
+            <Logomark size={LOGOMARK_SIZE} color={colors.text.primary} />
           </View>
         }
       />

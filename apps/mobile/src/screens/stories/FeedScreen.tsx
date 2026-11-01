@@ -387,12 +387,12 @@ export default function FeedScreen({
           right={
             <View style={styles.headerActions}>
               {/* Create sits first in the action pair, the slot the composer row
-                  used to fill: writing is the feed's primary action, so it keeps
-                  the bold weight — but it takes the QUIET ink, the same
-                  `text.tertiary` the search glyph beside it uses, so two glyph
-                  controls in one bar read as one family rather than one shouting
-                  over the other (KNOT-020k-fix9). It opens the same overlay the
-                  prompt card's "Write it" does. */}
+                  used to fill: writing is the feed's primary action, so it takes
+                  the mode's primary ink (pure black in light, pure white in dark)
+                  at the bold weight — the same treatment as the search glyph
+                  beside it, so the two read as one family rather than as a quiet
+                  pair beside a louder avatar (KNOT-020k-fix10). It opens the same
+                  overlay the prompt card's "Write it" does. */}
               <Pressable
                 style={styles.iconButton}
                 onPress={onCreateStory}
@@ -400,18 +400,20 @@ export default function FeedScreen({
                 accessibilityLabel="Create a story"
                 testID="feed-create"
               >
-                <Plus color={colors.text.tertiary} size={ICON_SIZE} weight="bold" />
+                <Plus color={colors.text.primary} size={ICON_SIZE} weight="bold" />
               </Pressable>
               {/* Search stays a glyph control beside the avatar, the pair the
                   header carries now that the bell has moved to the tab bar
-                  (KNOT-020j). */}
+                  (KNOT-020j). It carries the primary ink and the bold weight too,
+                  so the two glyph controls match (KNOT-020k-fix10). */}
               <Pressable
                 style={styles.iconButton}
                 onPress={onOpenSearch}
                 accessibilityRole="button"
                 accessibilityLabel="Search stories, versions, and questions"
+                testID="feed-search"
               >
-                <MagnifyingGlass color={colors.text.tertiary} size={ICON_SIZE} />
+                <MagnifyingGlass color={colors.text.primary} size={ICON_SIZE} weight="bold" />
               </Pressable>
               <View style={styles.avatar}>
                 <Avatar

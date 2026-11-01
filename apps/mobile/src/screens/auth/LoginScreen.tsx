@@ -8,7 +8,14 @@ import Button from '../../components/Button';
 import Header from '../../components/Header';
 import Input from '../../components/Input';
 import Logomark from '../../components/Logomark';
-import { layout, spacing, typeScale, useThemedStyles, type ThemeColors } from '../../theme';
+import {
+  layout,
+  spacing,
+  typeScale,
+  useTheme,
+  useThemedStyles,
+  type ThemeColors,
+} from '../../theme';
 import { validateEmail } from '../../utils/authForm';
 
 /** The logomark's size in the auth header, one step up from the Feed's 32. */
@@ -67,6 +74,7 @@ export default function LoginScreen({
   onForgotPassword,
   onOpenVerifyEmail,
 }: LoginScreenProps): React.ReactElement {
+  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -106,11 +114,13 @@ export default function LoginScreen({
   return (
     <View style={styles.screen}>
       {/* The mark replaces a title in the bar: the page below already says what
-          this screen is, so the header stays quiet. */}
+          this screen is, so the header stays quiet. It is drawn in ONE ink — the
+          mode's primary — rather than as the brand gradient, so every screen in
+          the app carries the same monochrome mark (KNOT-020k-fix10). */}
       <Header
         left={
           <View style={styles.logomark}>
-            <Logomark size={LOGOMARK_SIZE} />
+            <Logomark size={LOGOMARK_SIZE} color={colors.text.primary} />
           </View>
         }
       />

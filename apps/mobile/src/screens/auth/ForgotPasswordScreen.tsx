@@ -7,7 +7,14 @@ import Button from '../../components/Button';
 import Header from '../../components/Header';
 import Input from '../../components/Input';
 import Logomark from '../../components/Logomark';
-import { layout, spacing, typeScale, useThemedStyles, type ThemeColors } from '../../theme';
+import {
+  layout,
+  spacing,
+  typeScale,
+  useTheme,
+  useThemedStyles,
+  type ThemeColors,
+} from '../../theme';
 import { validateEmail } from '../../utils/authForm';
 
 /** The logomark's size in the auth header, matching Login and Register. */
@@ -35,6 +42,7 @@ export default function ForgotPasswordScreen({
   onBackToLogin,
   onOpenResetPassword,
 }: ForgotPasswordScreenProps): React.ReactElement {
+  const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const [email, setEmail] = useState('');
   const [error, setError] = useState<string | undefined>(undefined);
@@ -66,7 +74,7 @@ export default function ForgotPasswordScreen({
       <Header
         left={
           <View style={styles.logomark}>
-            <Logomark size={LOGOMARK_SIZE} />
+            <Logomark size={LOGOMARK_SIZE} color={colors.text.primary} />
           </View>
         }
       />

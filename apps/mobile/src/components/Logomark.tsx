@@ -18,10 +18,11 @@ type LogomarkProps = {
    *
    * The mark is a single stroked ribbon, so its monochrome cut is the same
    * geometry with the gradient replaced by `currentColor`: pass a colour and the
-   * whole glyph takes it. The Feed's header passes `colors.text.primary`, which is
-   * pure black in light mode and pure white in dark mode, so the mark follows the
-   * monochrome palette instead of sitting on it as a purple patch
-   * (KNOT-020k-fix9). When omitted the gradient mark draws, exactly as before.
+   * whole glyph takes it. The Feed's header and every auth header pass
+   * `colors.text.primary`, which is pure black in light mode and pure white in
+   * dark mode, so the mark follows the monochrome palette instead of sitting on it
+   * as a purple patch everywhere it is drawn (KNOT-020k-fix9, KNOT-020k-fix10).
+   * When omitted the gradient mark draws, exactly as before.
    */
   readonly color?: string;
 };

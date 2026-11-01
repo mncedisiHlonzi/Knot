@@ -160,7 +160,7 @@ export default function RegisterScreen({
         <Header
           left={
             <View style={styles.logomark}>
-              <Logomark size={LOGOMARK_SIZE} />
+              <Logomark size={LOGOMARK_SIZE} color={colors.text.primary} />
             </View>
           }
         />
@@ -190,11 +190,13 @@ export default function RegisterScreen({
   return (
     <View style={styles.screen}>
       {/* The mark replaces a title in the bar, exactly as the Login screen draws
-          it, so the two auth pages feel like two pages of one book. */}
+          it, so the two auth pages feel like two pages of one book. It carries the
+          mode's primary ink, the monochrome cut every screen now shares
+          (KNOT-020k-fix10). */}
       <Header
         left={
           <View style={styles.logomark}>
-            <Logomark size={LOGOMARK_SIZE} />
+            <Logomark size={LOGOMARK_SIZE} color={colors.text.primary} />
           </View>
         }
       />

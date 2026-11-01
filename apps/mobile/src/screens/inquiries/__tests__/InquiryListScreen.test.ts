@@ -1,7 +1,11 @@
+import { MagnifyingGlass } from 'phosphor-react-native';
+
+import Avatar from '../../../components/Avatar';
 import Button from '../../../components/Button';
 import Chip from '../../../components/Chip';
+import Header from '../../../components/Header';
 import Input from '../../../components/Input';
-import { typeScale } from '../../../theme';
+import { colors, typeScale } from '../../../theme';
 import InquiryListScreen from '../InquiryListScreen';
 
 /**
@@ -39,6 +43,8 @@ jest.mock('react-native', () => ({
   },
   Easing: { bezier: () => (progress: number) => progress },
   FlatList: 'FlatList',
+  // Avatar draws its image-or-initials frame with both natives.
+  Image: 'Image',
   Pressable: 'Pressable',
   RefreshControl: 'RefreshControl',
   ScrollView: 'ScrollView',
@@ -48,6 +54,7 @@ jest.mock('react-native', () => ({
 }));
 
 jest.mock('phosphor-react-native', () => ({
+  MagnifyingGlass: () => null,
   MapPin: () => null,
   X: () => null,
 }));
@@ -109,16 +116,99 @@ function findText(node: unknown, text: string): ElementLike | undefined {
 
 const PROPS = {
   token: 'token',
+  viewer: { display_name: 'Nomsa Khan', avatar_url: '' },
   onOpenInquiry: () => undefined,
   onAsk: () => undefined,
   onOpenUserProfile: () => undefined,
+  onOpenSearch: () => undefined,
+  onOpenProfile: () => undefined,
 };
+
+/** Finds the first element whose props satisfy the predicate, children only. */
+function findElement(
+  node: unknown,
+  predicate: (props: Record<string, unknown>) => boolean,
+): ElementLike | undefined {
+  if (Array.isArray(node)) {
+    for (const child of node) {
+      const found = findElement(child, predicate);
+      if (found !== undefined) {
+        return found;
+      }
+    }
+    return undefined;
+  }
+  if (node === null || node === undefined || typeof node !== 'object') {
+    return undefined;
+  }
+
+  const element = node as ElementLike;
+  if (element.props !== undefined && predicate(element.props)) {
+    return element;
+  }
+
+  return findElement(element.props?.children, predicate);
+}
 
 /** The hero, as the list's header element (the element is not invoked). */
 function heroFor(tree: unknown): unknown {
   const list = findElementByType(tree, 'FlatList');
   return list?.props?.ListHeaderComponent;
 }
+
+describe('InquiryListScreen header', () => {
+  it('carries only search and the signed-in avatar in the bar', () => {
+    const header = findElementByType(InquiryListScreen(PROPS), Header);
+    const right = header?.props?.right;
+    const search = findElement(
+      right,
+      (props) => props.accessibilityLabel === 'Search stories, versions, and questions',
+    );
+
+    expect(search).toBeDefined();
+    expect(findElementByType(right, Avatar)).toBeDefined();
+    // Asking is the hero's job: the bar keeps no action of its own beside the pair
+    // (KNOT-020k-fix10).
+    expect(findText(right, 'Ask a question')).toBeUndefined();
+  });
+
+  it('draws the search glyph in the primary ink at the bold weight', () => {
+    const header = findElementByType(InquiryListScreen(PROPS), Header);
+    const search = findElement(
+      header?.props?.right,
+      (props) => props.accessibilityLabel === 'Search stories, versions, and questions',
+    );
+    const glyph = findElementByType(search?.props?.children, MagnifyingGlass);
+
+    expect(glyph).toBeDefined();
+    expect(glyph?.props?.color).toBe(colors.text.primary);
+    expect(glyph?.props?.weight).toBe('bold');
+  });
+
+  it('opens search from the header control', () => {
+    const onOpenSearch = jest.fn();
+    const header = findElementByType(InquiryListScreen({ ...PROPS, onOpenSearch }), Header);
+    const search = findElement(
+      header?.props?.right,
+      (props) => props.accessibilityLabel === 'Search stories, versions, and questions',
+    );
+
+    (search?.props?.onPress as () => void)();
+
+    expect(onOpenSearch).toHaveBeenCalledTimes(1);
+  });
+
+  it('opens the signed-in person profile from the header avatar', () => {
+    const onOpenProfile = jest.fn();
+    const header = findElementByType(InquiryListScreen({ ...PROPS, onOpenProfile }), Header);
+    const avatar = findElementByType(header?.props?.right, Avatar);
+
+    expect(avatar?.props?.displayName).toBe('Nomsa Khan');
+    (avatar?.props?.onPress as () => void)();
+
+    expect(onOpenProfile).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('InquiryListScreen hero', () => {
   it('opens with the question, not with the screen title', () => {

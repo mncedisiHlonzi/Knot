@@ -8,11 +8,12 @@ import {
   type ImageLoadEventData,
   type NativeSyntheticEvent,
 } from 'react-native';
-import { DotsThree, Images, ShareNetwork, X } from 'phosphor-react-native';
+import { ArrowsClockwise, DotsThree, Images, X } from 'phosphor-react-native';
 
 import type { RecentInteraction } from '../api/stories';
 import { API_BASE_URL } from '../config/api';
 import {
+  fontWeights,
   layout,
   mediaOverlayText,
   radius,
@@ -124,10 +125,13 @@ type FeedEntryProps = {
    */
   readonly variant?: 'story' | 'version';
   /**
-   * The entry's position in its lineage, counting the original as 1. The server
-   * sends it as `version_number`, and it is still carried here for callers, but the
-   * feed card no longer displays it: the attribution sentence ends after the
-   * language (KNOT-025-fix4).
+   * The entry's position in its lineage, counting the original as 1, as the
+   * server sends it in `version_number`.
+   *
+   * Only the `version` variant draws it: the pillar row ends with an "Adapted
+   * v{n}" badge on the side opposite the pillar tag, so the row says both how the
+   * story is filed and which telling of it this is (KNOT-020k-fix10). A version
+   * the server sent no number for falls back to the bare word "Adapted".
    */
   readonly versionNumber?: number;
   /**
@@ -194,8 +198,8 @@ const PREVIEW_LINES = 3;
 /** The media-count badge's glyph size. */
 const COUNT_ICON_SIZE = 14;
 
-/** The adaptation marker's glyph size: small enough to ride beside the name. */
-const ADAPT_BADGE_SIZE = 16;
+/** The adaptation badge's glyph size: a small mark preceding a caption label. */
+const ADAPT_ICON_SIZE = 14;
 
 /** The overflow glyph's size; its button is the 44pt touch target. */
 const MENU_ICON_SIZE = 22;
@@ -251,11 +255,10 @@ function lineageAvatarLabel(name: string): string {
  * opens with a `SocialProofHeader` (KNOT-029): the newest interactions if there
  * are any; a version falls back to the lineage avatars and the server's
  * attribution sentence when there are none, while a story (which has no
- * attribution) draws nothing. A version card also carries a permanent adapt badge
- * beside the adapter's name, so the adaptation stays legible when interactions
- * replace the sentence (KNOT-029). The poster is the AuthorLine below, not a face
- * in that header (KNOT-022-fix1, KNOT-022-fix2). The version number is deliberately
- * absent from the feed: the credit ends after the language (KNOT-025-fix4).
+ * attribution) draws nothing. A version card also carries a permanent
+ * "Adapted v{n}" badge on the far side of its pillar row, so the adaptation stays
+ * legible when interactions replace the sentence (KNOT-020k-fix10). The poster is
+ * the AuthorLine below, not a face in that header (KNOT-022-fix1, KNOT-022-fix2).
  *
  * The text column keeps the feed's horizontal inset, but the **media is
  * full-bleed**: no horizontal padding and no corner rounding. An image draws
@@ -280,6 +283,7 @@ function lineageAvatarLabel(name: string): string {
 export default function FeedEntry({
   story,
   variant = 'story',
+  versionNumber,
   attributionLine,
   showBottomHairline = true,
   onPress,
@@ -419,17 +423,28 @@ export default function FeedEntry({
   );
 
   // A version's telling is always marked, even when its attribution sentence has
-  // been replaced by interactions. The badge is a status marker beside the
-  // adapter's name, not a tap target, so it stays out of the profile Pressable
-  // (KNOT-029).
-  const adaptBadge = isVersion ? (
+  // been replaced by interactions. The marker is no longer an icon beside the
+  // adapter's name (KNOT-029, removed in KNOT-020k-fix10): it is the "Adapted v{n}"
+  // badge on the far side of the pillar row, so the row reads
+  // `[pillar · place] …… [Adapted v3]`. It is a status marker, not a tap target,
+  // and it draws only for an adaptation.
+  const adaptationLabel =
+    typeof versionNumber === 'number' && Number.isInteger(versionNumber) && versionNumber > 0
+      ? `Adapted v${versionNumber}`
+      : 'Adapted';
+
+  const adaptedBadge = isVersion ? (
     <View
-      style={styles.adaptBadge}
+      style={styles.adaptedBadge}
       testID="adapt-badge"
-      accessibilityRole="image"
-      accessibilityLabel="Adapted story"
+      accessible
+      accessibilityRole="text"
+      accessibilityLabel={adaptationLabel}
     >
-      <ShareNetwork color={colors.brand.primary} size={ADAPT_BADGE_SIZE} weight="bold" />
+      <ArrowsClockwise color={colors.text.primary} size={ADAPT_ICON_SIZE} weight="bold" />
+      <Text style={[typeScale.caption, styles.adaptedBadgeText]} numberOfLines={1}>
+        {adaptationLabel}
+      </Text>
     </View>
   ) : null;
 
@@ -474,7 +489,6 @@ export default function FeedEntry({
               // a left avatar. The compact time is the feed's alone (KNOT-023b).
               layout="stacked"
               timeFormat="short"
-              badge={adaptBadge}
               onPress={onOpenAuthor}
             />
           </View>
@@ -515,10 +529,15 @@ export default function FeedEntry({
         </View>
 
         {/* Both kinds open with the same pillar tag -- "WONDER · ARLIT" -- so an
-            adaptation reads as a story filed under a pillar. Which telling it is
-            lives in the attribution row above (KNOT-022-fix1). */}
+            adaptation reads as a story filed under a pillar. The row is
+            space-between: the tag holds the left edge and, on an adaptation, the
+            "Adapted v{n}" badge holds the right, so which telling this is sits
+            opposite how the story is filed (KNOT-020k-fix10). */}
         <View style={styles.tagRow}>
-          <PillarTag pillar={story.pillar} place={story.place} />
+          <View style={styles.pillarSlot}>
+            <PillarTag pillar={story.pillar} place={story.place} />
+          </View>
+          {adaptedBadge}
         </View>
 
         <Text style={[typeScale.title, styles.title]}>{story.title}</Text>
@@ -660,12 +679,17 @@ const createStyles = (colors: ThemeColors) =>
     entryWithSocialProof: {
       paddingTop: spacing.sm,
     },
-    // The adaptation marker rides beside the adapter's name, so it needs no ink of
-    // its own beyond the glyph's tint. Its box exists to carry the accessibility
-    // label (KNOT-029).
-    adaptBadge: {
+    // The adaptation badge at the end of the pillar row: a 14pt shuffling arrow and
+    // the lineage position, in the mode's primary ink at the bold weight the row's
+    // other half already carries (KNOT-020k-fix10).
+    adaptedBadge: {
       alignItems: 'center',
-      justifyContent: 'center',
+      flexDirection: 'row',
+      gap: spacing.xs,
+    },
+    adaptedBadgeText: {
+      color: colors.text.primary,
+      fontWeight: fontWeights.bold,
     },
     // The Feed's card form: without its bottom hairline, the entry needs its own
     // bottom inset so the next card's grey gap does not touch the meta line
@@ -750,7 +774,19 @@ const createStyles = (colors: ThemeColors) =>
     readMoreText: {
       color: colors.brand.primary,
     },
+    // The pillar tag's slot. It shrinks rather than pushing the adaptation badge
+    // off the row when a place name is long (KNOT-020k-fix10).
+    pillarSlot: {
+      flexShrink: 1,
+    },
+    // The pillar row: the tag on the left and, on an adaptation, the "Adapted v{n}"
+    // badge on the right — one line that says how the story is filed and whose
+    // telling it is (KNOT-020k-fix10).
     tagRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.sm,
+      justifyContent: 'space-between',
       marginTop: spacing.md,
     },
     title: {

@@ -9,16 +9,18 @@ import {
   Text,
   View,
 } from 'react-native';
-import { MapPin } from 'phosphor-react-native';
+import { MagnifyingGlass, MapPin } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { INQUIRY_PAGE_SIZE, Inquiry, inquiriesApi } from '../../api/inquiries';
 import AuthorLine from '../../components/AuthorLine';
+import Avatar from '../../components/Avatar';
 import Button from '../../components/Button';
 import Chip from '../../components/Chip';
 import EmptyState from '../../components/EmptyState';
 import Header from '../../components/Header';
 import Input from '../../components/Input';
+import { API_BASE_URL } from '../../config/api';
 import {
   layout,
   spacing,
@@ -62,6 +64,9 @@ export type InquiryDraftSeed = {
 /** The hero's headline: the screen's reason to exist, in the largest type. */
 const HERO_HEADLINE = 'What are you curious about?';
 
+/** The header glyph size, matching the Feed's `Search` control (KNOT-020k-fix10). */
+const ICON_SIZE = 24;
+
 /** The hero's one-sentence explanation of what an inquiry is. */
 const HERO_SUBTITLE = 'Ask about a place, a tradition or a word. People rooted there will answer.';
 
@@ -77,6 +82,16 @@ const STARTERS = ['Why do people…', 'What is the name of…', 'Who taught you�
 type InquiryListScreenProps = {
   /** The signed-in user's access token, so a page can carry their own reaction highlights. */
   readonly token: string;
+  /**
+   * The signed-in person, drawn as the header's avatar. Only the two fields the
+   * avatar needs are required, so the screen does not depend on the whole `User`
+   * record — the same shape the Feed's header takes (KNOT-020k-fix10).
+   */
+  readonly viewer: {
+    readonly display_name: string;
+    /** The API-relative avatar path, or an empty string when there is none. */
+    readonly avatar_url: string;
+  };
   /** Called when a question is tapped. */
   readonly onOpenInquiry: (inquiryId: string) => void;
   /**
@@ -86,6 +101,10 @@ type InquiryListScreenProps = {
   readonly onAsk: (seed?: InquiryDraftSeed) => void;
   /** Called when a question's author is tapped. */
   readonly onOpenUserProfile: (userId: string) => void;
+  /** Called when the header's search control is tapped (KNOT-020k-fix10). */
+  readonly onOpenSearch: () => void;
+  /** Called when the header avatar is tapped, to open the signed-in person's profile. */
+  readonly onOpenProfile: () => void;
 };
 
 /**
@@ -108,9 +127,12 @@ type InquiryListScreenProps = {
  */
 export default function InquiryListScreen({
   token,
+  viewer,
   onOpenInquiry,
   onAsk,
   onOpenUserProfile,
+  onOpenSearch,
+  onOpenProfile,
 }: InquiryListScreenProps): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -124,6 +146,12 @@ export default function InquiryListScreen({
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
+
+  // The header avatar. The API sends an avatar as a relative path, so it is joined
+  // to the API base here; a blank path lets `Avatar` draw the initials rather than
+  // an empty frame (KNOT-020j, KNOT-020k-fix10).
+  const avatarPath = typeof viewer.avatar_url === 'string' ? viewer.avatar_url.trim() : '';
+  const avatarUri = avatarPath === '' ? undefined : `${API_BASE_URL}${avatarPath}`;
 
   const loadFirstPage = useCallback(
     async (mode: 'initial' | 'refresh'): Promise<void> => {
@@ -212,7 +240,35 @@ export default function InquiryListScreen({
 
   return (
     <View style={styles.screen}>
-      <Header title="Inquiries" />
+      {/* The bar carries only the search control and the signed-in person's
+          avatar: asking lives in the hero below, where the question starts, so the
+          header keeps no action of its own beside them (KNOT-020k-fix10). */}
+      <Header
+        title="Inquiries"
+        right={
+          <View style={styles.headerActions}>
+            <Pressable
+              style={styles.iconButton}
+              onPress={onOpenSearch}
+              accessibilityRole="button"
+              accessibilityLabel="Search stories, versions, and questions"
+              testID="inquiries-search"
+            >
+              <MagnifyingGlass color={colors.text.primary} size={ICON_SIZE} weight="bold" />
+            </Pressable>
+            <View style={styles.avatar}>
+              <Avatar
+                uri={avatarUri}
+                displayName={viewer.display_name}
+                size="md"
+                onPress={onOpenProfile}
+                accessibilityLabel="Open your profile"
+                testID="inquiries-profile-avatar"
+              />
+            </View>
+          </View>
+        }
+      />
 
       <FlatList
         data={inquiries}
@@ -367,6 +423,12 @@ export default function InquiryListScreen({
 
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
+    // The header avatar sits just inside the bar's right gutter, with the small
+    // clearance the Feed's header gives it (KNOT-020j, KNOT-020k-fix10).
+    avatar: {
+      marginLeft: spacing.xs,
+      marginRight: spacing.xs,
+    },
     // The field and its button: one line. The row is bottom-aligned so the button's
     // 48pt box sits on the field's underline rather than floating above it
     // (KNOT-020k-fix9).
@@ -395,6 +457,20 @@ const createStyles = (colors: ThemeColors) =>
     },
     footer: {
       paddingVertical: spacing.lg,
+    },
+    // The header's trailing pair: the search control and the avatar, sharing one row
+    // (KNOT-020k-fix10).
+    headerActions: {
+      alignItems: 'center',
+      flexDirection: 'row',
+    },
+    // A 44pt touch target around the 24pt search glyph, the same box every glyph
+    // control in the app draws.
+    iconButton: {
+      alignItems: 'center',
+      height: 44,
+      justifyContent: 'center',
+      width: 44,
     },
     // The hero: the invitation to ask, then the field, the action and the starters.
     // It is the list's header rather than pinned chrome, so the questions take the

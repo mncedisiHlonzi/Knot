@@ -1,8 +1,8 @@
 import type { ImageLoadEventData, NativeSyntheticEvent } from 'react-native';
 
 import { MAX_PORTRAIT_ASPECT_RATIO } from '../../utils/mediaFrame';
-import { spacing } from '../../theme';
-import { ShareNetwork } from 'phosphor-react-native';
+import { colors, fontWeights, spacing, typeScale } from '../../theme';
+import { ArrowsClockwise } from 'phosphor-react-native';
 
 import AuthorLine from '../AuthorLine';
 import FeedEntry from '../FeedEntry';
@@ -39,9 +39,9 @@ jest.mock('react-native', () => ({
 }));
 
 jest.mock('phosphor-react-native', () => ({
+  ArrowsClockwise: () => null,
   DotsThree: () => null,
   Images: () => null,
-  ShareNetwork: () => null,
   X: () => null,
 }));
 
@@ -577,7 +577,7 @@ describe('FeedEntry', () => {
       );
     });
 
-    it('always marks a version card as adapted', () => {
+    it('marks a version card as adapted, in the pillar row opposite the tag', () => {
       const element = FeedEntry({
         story: adapted,
         variant: 'version',
@@ -586,13 +586,35 @@ describe('FeedEntry', () => {
         onPress: () => undefined,
       });
 
-      const badge = findElementByType(element, AuthorLine)?.props?.badge;
-      expect(badge).toBeTruthy();
-      expect(findElementByType(badge, ShareNetwork)).toBeDefined();
+      // The tag holds the row's left edge and the badge its right, so the row says
+      // both how the story is filed and which telling this is (KNOT-020k-fix10).
+      expect(findElementByType(element, PillarTag)).toBeDefined();
 
-      const badgeElement = badge as { props?: Record<string, unknown> };
-      expect(badgeElement.props?.testID).toBe('adapt-badge');
-      expect(badgeElement.props?.accessibilityLabel).toBe('Adapted story');
+      const badge = findByTestID(element, 'adapt-badge');
+      expect(badge).toBeDefined();
+      expect(findElementByType(badge, ArrowsClockwise)).toBeDefined();
+      expect(collectText(badge)).toEqual(['Adapted v3']);
+      expect(badge?.props?.accessibilityLabel).toBe('Adapted v3');
+
+      // The label is a caption, bold, in the mode's primary ink.
+      const label = findElementByType(badge, 'Text');
+      const labelStyle = label?.props?.style as readonly unknown[] | undefined;
+      expect(labelStyle?.[0]).toBe(typeScale.caption);
+      expect(labelStyle?.[1]).toMatchObject({
+        color: colors.text.primary,
+        fontWeight: fontWeights.bold,
+      });
+    });
+
+    it('names the badge "Adapted" alone when the server sent no version number', () => {
+      const element = FeedEntry({
+        story: adapted,
+        variant: 'version',
+        attributionLine: sentence,
+        onPress: () => undefined,
+      });
+
+      expect(collectText(findByTestID(element, 'adapt-badge'))).toEqual(['Adapted']);
     });
 
     it('keeps the adaptation marker when interactions replace the attribution', () => {
@@ -615,13 +637,13 @@ describe('FeedEntry', () => {
       });
 
       expect(findElementByType(element, SocialProofHeader)?.props?.interactions).toBeDefined();
-      expect(findElementByType(element, AuthorLine)?.props?.badge).toBeTruthy();
+      expect(findByTestID(element, 'adapt-badge')).toBeDefined();
     });
 
     it('does not mark a story card as adapted', () => {
       const element = FeedEntry({ story, onPress: () => undefined });
 
-      expect(findElementByType(element, AuthorLine)?.props?.badge).toBeNull();
+      expect(findByTestID(element, 'adapt-badge')).toBeUndefined();
     });
 
     it('passes nothing to credit when neither the sentence nor the root author exists', () => {

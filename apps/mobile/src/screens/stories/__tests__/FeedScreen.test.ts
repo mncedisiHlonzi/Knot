@@ -1,4 +1,4 @@
-import { Plus } from 'phosphor-react-native';
+import { MagnifyingGlass, Plus } from 'phosphor-react-native';
 
 import type { FeedItem } from '../../../api/stories';
 import Avatar from '../../../components/Avatar';
@@ -420,15 +420,24 @@ describe('FeedScreen header', () => {
     expect(onCreateStory).toHaveBeenCalledTimes(1);
   });
 
-  // The create glyph is quiet now: it carries the same tertiary ink as the search
-  // glyph beside it, so the two read as one family instead of one shouting.
-  it('draws the create glyph in the quiet ink', () => {
+  // Both header glyphs are the mode's primary ink at the bold weight: pure black on
+  // the light canvas, pure white on the dark one (KNOT-020k-fix10).
+  it('draws the create glyph in the primary ink, at the bold weight', () => {
     const header = findElementByType(renderScreen(), Header);
     const glyph = findElementByType(header?.props?.right, Plus);
 
     expect(glyph).toBeDefined();
-    expect(glyph?.props?.color).toBe(colors.text.tertiary);
+    expect(glyph?.props?.color).toBe(colors.text.primary);
     expect(glyph?.props?.weight).toBe('bold');
+  });
+
+  it('draws the search glyph in the same primary ink and weight as create', () => {
+    const header = findElementByType(renderScreen(), Header);
+    const search = findInProps(header?.props?.right, MagnifyingGlass);
+
+    expect(search).toBeDefined();
+    expect(search?.props?.color).toBe(colors.text.primary);
+    expect(search?.props?.weight).toBe('bold');
   });
 
   // The mark is the monochrome cut in the primary ink: pure black on the light

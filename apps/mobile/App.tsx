@@ -621,6 +621,14 @@ function ThemedApp(): React.ReactElement {
         return (
           <InquiryListScreen
             token={current.accessToken}
+            // The header carries the signed-in person's avatar beside search, the
+            // same pair the Feed's bar draws (KNOT-020k-fix10).
+            viewer={{
+              display_name: current.user.display_name,
+              avatar_url: current.user.avatar_url,
+            }}
+            onOpenSearch={() => setOverlays((stack) => pushOverlay(stack, { name: 'search' }))}
+            onOpenProfile={() => openUserProfile(current.user.id)}
             onOpenInquiry={(inquiryId) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'inquiry', inquiryId }))
             }
