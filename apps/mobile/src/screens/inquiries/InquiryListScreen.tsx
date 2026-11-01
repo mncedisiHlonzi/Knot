@@ -7,7 +7,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { MagnifyingGlass, MapPin } from 'phosphor-react-native';
@@ -53,8 +52,12 @@ function inquiryMetaLabel(inquiry: Inquiry): string {
 
 /**
  * What the person already has in mind when they leave this screen for the ask
- * form: the place they typed, the starter phrase they tapped, or both. Nothing is
- * sent from here — the composer opens seeded and editable (KNOT-020k-fix9).
+ * form: the starter phrase they tapped. Nothing is sent from here — the composer
+ * opens seeded and editable (KNOT-020k-fix9).
+ *
+ * `place` is still part of the shape because the ask overlay's payload carries one
+ * and another caller may seed it; this screen no longer produces it now that the
+ * hero's prompt is a button rather than a field (KNOT-020k-fix13).
  */
 export type InquiryDraftSeed = {
   /** The place the question is about. */
@@ -69,17 +72,17 @@ const HERO_HEADLINE = 'What are you curious about?';
 /** The header glyph size, matching the Feed's `Search` control (KNOT-020k-fix10). */
 const ICON_SIZE = 24;
 
-/** The place pin inside the hero's pill. */
+/** The place pin inside the hero's prompt. */
 const PIN_ICON_SIZE = 20;
 
 /**
- * The hero's place prompt: an invitation to CREATE, not to search.
+ * The hero's prompt: an invitation to CREATE, not a search box.
  *
- * The field seeds the ask form's place (and the place filter), so the copy is a
- * question the person answers by starting a question, rather than the search-box
- * phrasing "Which place?" implied (KNOT-020k-fix12).
+ * It is the settled copy of the whole line, so it is drawn as `numberOfLines={1}`
+ * text that truncates rather than as a placeholder a person could type into
+ * (KNOT-020k-fix12, KNOT-020k-fix13).
  */
-const PLACE_PLACEHOLDER = 'Ask about a place, a tradition, or a word...';
+const ASK_PROMPT = 'Ask about a place, a tradition, or a word...';
 
 /** The hero's one-sentence explanation of what an inquiry is. */
 const HERO_SUBTITLE = 'Ask about a place, a tradition or a word. People rooted there will answer.';
@@ -131,13 +134,11 @@ type InquiryListScreenProps = {
  * is passed anyway so a signed-in reader's own reaction highlights travel with the
  * questions, exactly as they do on the feed.
  *
- * An optional place filter narrows the page to one place. It is an exact match on
- * the spelling the asker gave, so the field is a filter to type a place into, not
- * a search to browse. The same field is the hero's place pill — one place, two
- * explicit actions: "Ask" starts a question about it, "Show questions about …"
- * narrows the list to it (KNOT-020k-fix9). Its placeholder invites a question
- * rather than a search, while the value it carries is still the place
- * (KNOT-020k-fix12).
+ * There is no typed place on this screen. The hero's line is a BUTTON — an
+ * outlined soft rectangle holding the pin, the invitation and the Ask action — and
+ * both halves of it open the composer, so the hero starts questions rather than
+ * collecting text (KNOT-020k-fix13). The list endpoint's `?place=` filter is still
+ * supported by the API; nothing on this screen sets it now.
  *
  * The bar's magnifier opens an INLINE search over the questions already on screen
  * rather than the app-wide search overlay: on a tab that lists one kind of thing,
@@ -157,10 +158,6 @@ export default function InquiryListScreen({
   const styles = useThemedStyles(createStyles);
   const [inquiries, setInquiries] = useState<readonly Inquiry[]>([]);
   const [nextCursor, setNextCursor] = useState('');
-  // The place applied to the query, which lags the text field until the person
-  // submits it.
-  const [place, setPlace] = useState('');
-  const [draftPlace, setDraftPlace] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -188,10 +185,7 @@ export default function InquiryListScreen({
       setError(undefined);
 
       try {
-        const page = await inquiriesApi.listInquiries(
-          { limit: INQUIRY_PAGE_SIZE, ...(place === '' ? {} : { place }) },
-          token,
-        );
+        const page = await inquiriesApi.listInquiries({ limit: INQUIRY_PAGE_SIZE }, token);
         setInquiries(page.inquiries);
         setNextCursor(page.next_cursor);
       } catch (caught) {
@@ -201,7 +195,7 @@ export default function InquiryListScreen({
         setRefreshing(false);
       }
     },
-    [place, token],
+    [token],
   );
 
   useEffect(() => {
@@ -218,11 +212,7 @@ export default function InquiryListScreen({
 
     try {
       const page = await inquiriesApi.listInquiries(
-        {
-          cursor: nextCursor,
-          limit: INQUIRY_PAGE_SIZE,
-          ...(place === '' ? {} : { place }),
-        },
+        { cursor: nextCursor, limit: INQUIRY_PAGE_SIZE },
         token,
       );
       // Append rather than replace: the cursor is exclusive, so a page never
@@ -234,12 +224,7 @@ export default function InquiryListScreen({
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, nextCursor, place, token]);
-
-  const draftTrimmed = draftPlace.trim();
-  // A filter the person has typed but not yet applied, so it is offered as a tap
-  // rather than fired on every keystroke.
-  const filterPending = draftTrimmed !== '' && draftTrimmed !== place;
+  }, [loadingMore, nextCursor, token]);
 
   // The questions the list draws: the loaded page narrowed by the inline search,
   // so typing filters what is on screen without another request.
@@ -259,26 +244,29 @@ export default function InquiryListScreen({
     setSearchOpen(!searchOpen);
   }, [searchOpen]);
 
-  /** Opens the ask form, carrying the place already typed into it. */
-  const askAboutPlace = useCallback((): void => {
-    onAsk(draftTrimmed === '' ? undefined : { place: draftTrimmed });
-  }, [draftTrimmed, onAsk]);
+  /**
+   * Opens the ask form.
+   *
+   * The hero's prompt and the "Ask" button both call this, so the whole line — the
+   * pin, the invitation and the action — starts one question. Nothing is carried
+   * into the composer: the screen no longer has a field to read a place from
+   * (KNOT-020k-fix13).
+   */
+  const openComposer = useCallback((): void => {
+    onAsk();
+  }, [onAsk]);
 
   /**
    * Opens the ask form from a starter phrase.
    *
    * A starter is an opening, not a question, so it lands in the composer's title
-   * field where the person can finish it. The place typed above travels with it,
-   * because a starter is no more specific than the sentence it begins.
+   * field where the person can finish it.
    */
   const startFrom = useCallback(
     (starter: string): void => {
-      onAsk({
-        title: starter,
-        ...(draftTrimmed === '' ? {} : { place: draftTrimmed }),
-      });
+      onAsk({ title: starter });
     },
-    [draftTrimmed, onAsk],
+    [onAsk],
   );
 
   return (
@@ -356,32 +344,30 @@ export default function InquiryListScreen({
             <Text style={[typeScale.h1, styles.heroHeadline]}>{HERO_HEADLINE}</Text>
             <Text style={[typeScale.body, styles.heroSubtitle]}>{HERO_SUBTITLE}</Text>
 
-            {/* One control, not two: the place and its action share a single
-                rounded pill — the pin and the field on the left, the Ask button
-                nested at its right end — so the hero reads as one field with its
-                action rather than an underlined field beside a button. The button
-                is the same pill shape, inset 4pt from the pill's own edge, so the
-                two curves sit concentric (KNOT-020k-fix11, KNOT-020k-fix12). */}
-            <View style={styles.askPill} testID="inquiries-place-pill">
-              <View style={styles.askPillField}>
+            {/* One line that reads as a control, not as a search box: a soft
+                rounded rectangle with a hairline outline, holding the pin and the
+                invitation on the left and the Ask action nested on the right. The
+                left half is a BUTTON — tapping it opens the composer exactly like
+                Ask does — so nothing on this screen accepts typing
+                (KNOT-020k-fix13). */}
+            <View style={styles.askLine} testID="inquiries-place-pill">
+              <Pressable
+                style={styles.askPrompt}
+                onPress={openComposer}
+                accessibilityRole="button"
+                accessibilityLabel="Start a question"
+                testID="inquiries-ask-prompt"
+              >
                 <MapPin color={colors.text.tertiary} size={PIN_ICON_SIZE} />
-                <TextInput
-                  style={[typeScale.body, styles.askInput]}
-                  value={draftPlace}
-                  onChangeText={setDraftPlace}
-                  autoCapitalize="words"
-                  returnKeyType="search"
-                  accessibilityLabel="Which place is your question about?"
-                  placeholder={PLACE_PLACEHOLDER}
-                  placeholderTextColor={colors.text.disabled}
-                  testID="inquiries-place-input"
-                />
-              </View>
+                <Text style={[typeScale.body, styles.askPromptText]} numberOfLines={1}>
+                  {ASK_PROMPT}
+                </Text>
+              </Pressable>
               <Button
                 variant="primary"
                 shape="pill"
                 label="Ask"
-                onPress={askAboutPlace}
+                onPress={openComposer}
                 testID="inquiries-ask"
               />
             </View>
@@ -404,32 +390,6 @@ export default function InquiryListScreen({
                 />
               ))}
             </ScrollView>
-
-            {/* Narrowing the list is a second, quieter action on the same field.
-                It only appears once there is something to narrow by, so the hero
-                at rest is the headline, the field and the starters. */}
-            {filterPending || place !== '' ? (
-              <View style={styles.filterChips}>
-                {filterPending ? (
-                  <Chip
-                    label={`Show questions about ${draftTrimmed}`}
-                    variant="outline"
-                    selected
-                    onPress={() => setPlace(draftTrimmed)}
-                  />
-                ) : null}
-                {place !== '' ? (
-                  <Chip
-                    label={`Clear the ${place} filter`}
-                    variant="outline"
-                    onPress={() => {
-                      setDraftPlace('');
-                      setPlace('');
-                    }}
-                  />
-                ) : null}
-              </View>
-            ) : null}
 
             {error !== undefined ? (
               <Text style={[typeScale.bodyS, styles.error]}>{error}</Text>
@@ -479,8 +439,8 @@ export default function InquiryListScreen({
           ) : (
             <EmptyState
               illustrationName="no-inquiries"
-              headline={place === '' ? 'No questions yet' : `No questions about ${place} yet`}
-              body={place === '' ? 'Ask the first one.' : undefined}
+              headline="No questions yet"
+              body="Ask the first one."
             />
           )
         }
@@ -511,36 +471,40 @@ const createStyles = (colors: ThemeColors) =>
       marginLeft: spacing.xs,
       marginRight: spacing.xs,
     },
-    // The hero's one field: a rounded pill holding the pin, the place, and the Ask
-    // action at its right end. The fill is the sunken surface rather than an
-    // underline, so the field and its button read as one control
-    // (KNOT-020k-fix11).
-    askPill: {
+    // The hero's one line: a soft rounded rectangle with a hairline outline and no
+    // fill, holding the prompt on the left and the Ask action nested on the right.
+    // An outline rather than the sunken surface it used to be, so it reads as a
+    // button that starts something instead of as a search field
+    // (KNOT-020k-fix11, KNOT-020k-fix13).
+    askLine: {
       alignItems: 'center',
-      backgroundColor: colors.bg.sunken,
-      borderRadius: radius.pill,
+      backgroundColor: 'transparent',
+      borderColor: colors.border.hairline,
+      borderRadius: radius.lg,
+      borderWidth: 1,
       flexDirection: 'row',
       gap: spacing.sm,
       marginTop: spacing.lg,
       paddingLeft: spacing.lg,
-      // The button keeps the pill's own edge: 4pt of air on the right and above and
-      // below it, which leaves the 48pt button inside a 56pt pill.
+      // The button keeps the line's own edge: 4pt of air on the right and above and
+      // below it, which leaves the 48pt button inside the 58pt line.
       paddingRight: spacing.xs,
       paddingVertical: spacing.xs,
     },
-    // The pin and the place, sharing the pill's free width.
-    askPillField: {
+    // The prompt fills the left side and stretches to the line's inner height, so
+    // the whole left area — not just the pin and the words — is one tap target.
+    askPrompt: {
       alignItems: 'center',
+      alignSelf: 'stretch',
       flex: 1,
       flexDirection: 'row',
       gap: spacing.sm,
     },
-    // The pill supplies the vertical air, so the field adds none of its own: its
-    // own padding would make the text sit low against the button beside it.
-    askInput: {
-      color: colors.text.primary,
-      flex: 1,
-      paddingVertical: 0,
+    // The invitation is settled copy, not a placeholder, so it truncates on a
+    // narrow screen rather than pushing the Ask button off the line.
+    askPromptText: {
+      color: colors.text.tertiary,
+      flexShrink: 1,
     },
     content: {
       paddingBottom: spacing.xxxl,
@@ -549,12 +513,6 @@ const createStyles = (colors: ThemeColors) =>
     error: {
       color: colors.state.danger,
       marginTop: spacing.md,
-    },
-    filterChips: {
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      gap: spacing.sm,
-      marginTop: spacing.sm,
     },
     footer: {
       paddingVertical: spacing.lg,
@@ -573,9 +531,9 @@ const createStyles = (colors: ThemeColors) =>
       justifyContent: 'center',
       width: 44,
     },
-    // The hero: the invitation to ask, then the field, the action and the starters.
-    // It is the list's header rather than pinned chrome, so the questions take the
-    // screen as soon as the person scrolls (KNOT-020k-fix9).
+    // The hero: the invitation to ask, then the prompt line, the starters. It is the
+    // list's header rather than pinned chrome, so the questions take the screen as
+    // soon as the person scrolls (KNOT-020k-fix9).
     hero: {
       paddingBottom: spacing.md,
       paddingTop: spacing.sm,

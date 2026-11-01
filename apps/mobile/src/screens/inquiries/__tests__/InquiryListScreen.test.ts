@@ -6,8 +6,7 @@ import Button from '../../../components/Button';
 import Chip from '../../../components/Chip';
 import EmptyState from '../../../components/EmptyState';
 import Header from '../../../components/Header';
-import Input from '../../../components/Input';
-import { colors, radius, spacing, typeScale } from '../../../theme';
+import { colors, radius, typeScale } from '../../../theme';
 import InquiryListScreen from '../InquiryListScreen';
 
 /**
@@ -71,8 +70,8 @@ jest.mock('react-native', () => ({
   ScrollView: 'ScrollView',
   StyleSheet: { create: (styles: unknown) => styles },
   Text: 'Text',
-  // The hero's place field is a bare TextInput inside the pill, not the shared
-  // underline `Input` (KNOT-020k-fix11).
+  // The shared underline `Input` renders one; the hero no longer does
+  // (KNOT-020k-fix13).
   TextInput: 'TextInput',
   View: 'View',
 }));
@@ -151,9 +150,9 @@ const PROPS = {
  * Scripts the stubbed `useState` by slot index, in hook order.
  *
  * The queue is consumed from the front, so an index a test does not name keeps its
- * own initial value. The screen's order is: inquiries 0, nextCursor 1, place 2,
- * draftPlace 3, loading 4, refreshing 5, loadingMore 6, error 7, **searchOpen 8**,
- * **query 9** (KNOT-020k-fix11).
+ * own initial value. The screen's order is: inquiries 0, nextCursor 1, loading 2,
+ * refreshing 3, loadingMore 4, error 5, **searchOpen 6**, **query 7**
+ * (KNOT-020k-fix11, KNOT-020k-fix13).
  */
 function scriptState(values: Readonly<Record<number, unknown>>): void {
   const last = Math.max(...Object.keys(values).map((key) => Number(key)));
@@ -286,7 +285,7 @@ describe('InquiryListScreen inline search', () => {
   });
 
   it('reveals a question search under the bar when it is opened', () => {
-    scriptState({ 8: true });
+    scriptState({ 6: true });
     const hero = heroFor(InquiryListScreen(PROPS));
     const field = findByTestID(hero, 'inquiries-search-input');
 
@@ -302,8 +301,8 @@ describe('InquiryListScreen inline search', () => {
         inquiryFixture('one', 'Why red ribbons?', 'At the festival.', 'Manguzi'),
         inquiryFixture('two', 'Who keeps the drums?', 'The elders do.', 'Durban'),
       ],
-      8: true,
-      9: 'ribbons',
+      6: true,
+      7: 'ribbons',
     });
 
     const tree = InquiryListScreen(PROPS);
@@ -313,9 +312,9 @@ describe('InquiryListScreen inline search', () => {
   });
 
   it('names the empty state when nothing matches', () => {
-    // `loading` is slot 4: the first render is loading, and an empty state is only
+    // `loading` is slot 2: the first render is loading, and an empty state is only
     // owed once the page has been read.
-    scriptState({ 4: false, 8: true, 9: 'nothing matches this' });
+    scriptState({ 2: false, 6: true, 7: 'nothing matches this' });
     const list = findElementByType(InquiryListScreen(PROPS), 'FlatList');
     const empty = list?.props?.ListEmptyComponent as ElementLike | null | undefined;
 
@@ -342,49 +341,45 @@ describe('InquiryListScreen hero', () => {
     expect((subtitle?.props?.style as readonly unknown[])[0]).toBe(typeScale.body);
   });
 
-  it('nests the place field and its Ask action inside one rounded pill', () => {
+  it('draws the hero line as an outlined button, not a filled field', () => {
     const onAsk = jest.fn();
     const hero = heroFor(InquiryListScreen({ ...PROPS, onAsk }));
-    const pill = findByTestID(hero, 'inquiries-place-pill');
-    const field = findByTestID(hero, 'inquiries-place-input');
-    const ask = findElementByType(pill, Button);
+    const line = findByTestID(hero, 'inquiries-place-pill');
+    const prompt = findByTestID(hero, 'inquiries-ask-prompt');
+    const ask = findElementByType(line, Button);
 
-    // One rounded surface with the action nested at its right end — not an
-    // underlined field beside a button (KNOT-020k-fix11). The 4pt inset on the
-    // right (and above and below) is what makes the button's pill sit concentric
-    // with the field's (KNOT-020k-fix12).
-    expect(pill?.props?.style).toMatchObject({
+    // Transparent with a hairline outline and a soft corner: a button that starts
+    // something, not the filled search field it used to be and not a full pill
+    // (KNOT-020k-fix13).
+    expect(line?.props?.style).toMatchObject({
       alignItems: 'center',
-      backgroundColor: colors.bg.sunken,
-      borderRadius: radius.pill,
+      backgroundColor: 'transparent',
+      borderColor: colors.border.hairline,
+      borderRadius: radius.lg,
+      borderWidth: 1,
       flexDirection: 'row',
-      paddingRight: spacing.xs,
-      paddingVertical: spacing.xs,
     });
 
-    // The pin and the place are inside the pill, left of the action.
-    expect(findElementByType(pill, MapPin)).toBeDefined();
-    expect(field).toBeDefined();
-    // An invitation to ask, not the search phrasing "Which place?"
-    // (KNOT-020k-fix12).
-    expect(field?.props?.placeholder).toBe('Ask about a place, a tradition, or a word...');
-    // The field takes the pill's free width, so the text can never run under the
-    // button.
-    expect(field?.props?.style).toContainEqual(expect.objectContaining({ flex: 1 }));
+    // The pin and the invitation are the prompt's content…
+    expect(findElementByType(prompt, MapPin)).toBeDefined();
+    expect(findText(prompt, 'Ask about a place, a tradition, or a word...')).toBeDefined();
+    // …which stretches across the line's left side…
+    expect(prompt?.props?.style).toMatchObject({ flex: 1 });
+    // …and nothing on the hero accepts typing any more.
+    expect(findElementByType(hero, 'TextInput')).toBeUndefined();
 
-    // The shared underline input is gone from the hero entirely.
-    expect(findElementByType(hero, Input)).toBeUndefined();
-
+    // The Ask button is unchanged: primary, pill-shaped, nested on the right.
     expect(ask).toBeDefined();
     expect(ask?.props?.label).toBe('Ask');
     expect(ask?.props?.variant).toBe('primary');
-    // The primary fill is black in light mode and white in dark, and the pill cap
-    // matches the field it sits in (KNOT-020k-fix12).
     expect(ask?.props?.shape).toBe('pill');
 
-    // An empty field still asks — the place is optional, the question is not.
+    // Both halves of the line open the composer, and neither carries a place into
+    // it (KNOT-020k-fix13).
+    (prompt?.props?.onPress as () => void)();
     (ask?.props?.onPress as () => void)();
-    expect(onAsk).toHaveBeenCalledWith(undefined);
+    expect(onAsk).toHaveBeenCalledTimes(2);
+    expect(onAsk).toHaveBeenCalledWith();
   });
 
   it('keeps the bar’s magnifier as the only search icon on the screen', () => {
@@ -393,7 +388,7 @@ describe('InquiryListScreen hero', () => {
 
     // Open: the search field is a plain field, so the bar's control is still the
     // only mark that means "search" (KNOT-020k-fix12).
-    scriptState({ 8: true });
+    scriptState({ 6: true });
     const openHero = heroFor(InquiryListScreen(PROPS));
 
     expect(findByTestID(openHero, 'inquiries-search-input')).toBeDefined();
@@ -412,9 +407,9 @@ describe('InquiryListScreen hero', () => {
     expect(onAsk).toHaveBeenCalledWith({ title: 'Why do people…' });
   });
 
-  it('offers the place filter only once there is something to narrow by', () => {
-    // With nothing typed the hero is the headline, the pill and the starters: the
-    // chips are the starters alone.
+  it('offers the starters alone when the hero is at rest', () => {
+    // With nothing typed and no place filter left to drive, the chips are the
+    // starters alone (KNOT-020k-fix13).
     const hero = heroFor(InquiryListScreen(PROPS));
 
     expect(elementsByType(hero, Chip)).toHaveLength(3);
