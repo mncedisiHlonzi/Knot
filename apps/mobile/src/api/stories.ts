@@ -55,13 +55,17 @@ export type StoryMedia = {
    * original's path with `?variant=` appended, so a client resolves it against the
    * API base URL exactly like `url`.
    *
+   * `medium_url` addresses the 1200px JPEG a row written before KNOT-037-fix7
+   * still holds; the current pipeline writes none. There is no `poster_url`: a
+   * video autoplays its stream, so the server stopped generating and advertising a
+   * cover frame (KNOT-037-fix10).
+   *
    * Both optional and nullable because the API types describe the wire format
    * optimistically: an older server omits them, and the client treats a missing
    * field as absent (KNOT-036-fix4).
    */
   readonly thumbnail_url?: string | null;
   readonly medium_url?: string | null;
-  readonly poster_url?: string | null;
   /**
    * Whether the bytes are ready to be rendered.
    *

@@ -604,8 +604,7 @@ and the pillar it belongs to.
       "url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=display",
       "thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb",
       "thumbnail_url_fallback": null,
-      "medium_url": null,
-      "poster_url": null
+      "medium_url": null
     }
   ],
   "created_at": "2026-10-07T18:26:37.134182+02:00",
@@ -615,7 +614,7 @@ and the pillar it belongs to.
   "comment_count": 14,
   "media_count": 5,
   "first_media_type": "image",
-  "first_media_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content",
+  "first_media_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb",
   "first_media_width": 1080,
   "first_media_height": 1920,
   "attribution_line": "Original story by Ada Lovelace in English.",
@@ -1059,8 +1058,7 @@ Returns **200** with the story's media, in display order:
       "url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=display",
       "thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb",
       "thumbnail_url_fallback": null,
-      "medium_url": null,
-      "poster_url": null
+      "medium_url": null
     }
   ]
 }
@@ -1075,14 +1073,18 @@ while it is `processing` every content address answers **202** with `Retry-After
 **`url` is the full rendition**, not an upload: since KNOT-037-fix7 the pipeline stores
 **derivatives only**. For an image it is the 2048px **AVIF display** (`?variant=display`); for
 a video it is the 1080p **H.264 stream** (`?variant=stream`), whose index is at the front of
-the file so playback starts immediately. A row written before that change answers with its
-original upload instead, which is why old media keeps working.
+the file so playback starts immediately. A row written before that change names its original
+upload there; those originals are no longer stored, so such a row answers **404** rather than
+serving a full-size file (KNOT-037-fix10).
 
 **`thumbnail_url` is the feed card's image** — a 400px **WebP** (`?variant=thumb`) — and is
 `null` for a video: a video autoplays in the feed, so no cover is generated at all
-(KNOT-037-fix7). `thumbnail_url_fallback`, `medium_url`, and `poster_url` only exist on a row
-written by an earlier pipeline (KNOT-037-fix6 and before); a new item returns `null` for all
-three.
+(KNOT-037-fix7). There is no `poster_url`: the cover frame was retired with the async
+pipeline. `thumbnail_url_fallback` and `medium_url` only exist on a row written by an earlier
+pipeline (KNOT-037-fix6 and before); a new item returns `null` for both.
+
+**`first_media_url`** is the same choice of rendition the card draws: the thumbnail for an
+image and the stream for a video, never a display image.
 
 **Errors:** `404 not_found`, `500 internal_error`.
 
@@ -1114,9 +1116,11 @@ variant answers **202 Accepted** with `Retry-After` and no body — the bytes ar
 but no longer selects a file: the thumbnail is the WebP. An unknown value, or `format` with
 any other variant, is `400 invalid_request` rather than a silent substitution.
 
-A variant the item does not have is answered with **the primary object**, so a missing
-rendition never hides the media. An unrecognised `variant` is `400 invalid_request` rather
-than a silent full-size response.
+**A variant the item does not have is a 404** (KNOT-037-fix10). There is no fallback to the
+original upload: it either no longer exists, or it is exactly the multi-megabyte file the
+derivative contract exists to stop transferring. A request for `stream` on an image, or
+`display` on a video, is a 404 for the same reason. An unrecognised `variant` is `400
+invalid_request` rather than a silent full-size response.
 
 **Range support.** A valid single-range `Range: bytes=start-end` header (also `bytes=start-`
 and `bytes=-suffix`) is answered **206 Partial Content** with a `Content-Range` header and

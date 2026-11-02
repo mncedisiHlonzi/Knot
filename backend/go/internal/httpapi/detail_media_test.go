@@ -100,7 +100,6 @@ func TestStoryDetailMediaCarriesDerivativeURLs(t *testing.T) {
 		want string
 	}{
 		"medium_url": {item.MediumURL, original + "?variant=medium"},
-		"poster_url": {item.PosterURL, original + "?variant=poster"},
 	} {
 		if expectation.got == nil {
 			t.Errorf("%s = null, want a rendition URL", name)
@@ -190,8 +189,8 @@ func TestStoryDetailMediaWithoutDerivativesFallsBackToTheOriginal(t *testing.T) 
 	if item.URL == "" {
 		t.Error("url is empty; a legacy item must still be readable through the original")
 	}
-	if item.ThumbnailURL != nil || item.MediumURL != nil || item.PosterURL != nil {
-		t.Errorf("derivatives = (%v, %v, %v), want all null", item.ThumbnailURL, item.MediumURL, item.PosterURL)
+	if item.ThumbnailURL != nil || item.MediumURL != nil {
+		t.Errorf("derivatives = (%v, %v), want both null", item.ThumbnailURL, item.MediumURL)
 	}
 }
 
@@ -239,18 +238,18 @@ func TestVersionDetailCarriesTheStoryMediaDerivatives(t *testing.T) {
 	}
 
 	item := body.Version.Media[0]
-	// A video carries no cover since KNOT-037-fix7, but the poster and medium
-	// renditions the row still names keep being advertised.
+	// A video carries no cover since KNOT-037-fix7, and since KNOT-037-fix10 the
+	// response names no poster at all: the player autoplays the stream. The medium
+	// rendition a legacy row still stores keeps being advertised.
 	if item.ThumbnailURL != nil {
 		t.Errorf("thumbnail_url = %q, want null for a video", *item.ThumbnailURL)
 	}
-	if item.PosterURL == nil || item.MediumURL == nil {
-		t.Fatalf("derivatives = (%v, %v), want the poster and the medium",
-			item.PosterURL, item.MediumURL)
+	if item.MediumURL == nil {
+		t.Fatalf("medium_url = null, want the retired rendition the row still names")
 	}
 	base := "/stories/" + testDetailMediaStoryID + "/media/" + testDetailMediaItemID + "/content"
-	if want := base + "?variant=poster"; *item.PosterURL != want {
-		t.Errorf("poster_url = %q, want %q", *item.PosterURL, want)
+	if want := base + "?variant=medium"; *item.MediumURL != want {
+		t.Errorf("medium_url = %q, want %q", *item.MediumURL, want)
 	}
 }
 
@@ -310,8 +309,8 @@ func TestCachedVersionDetailKeepsTheMediaArray(t *testing.T) {
 
 		var body versionDetailEnvelope
 		decodeBody(t, recorder, &body)
-		if len(body.Version.Media) != 1 || body.Version.Media[0].PosterURL == nil {
-			t.Fatalf("attempt %d: media = %+v, want the story's item with its poster", attempt, body.Version.Media)
+		if len(body.Version.Media) != 1 || body.Version.Media[0].MediumURL == nil {
+			t.Fatalf("attempt %d: media = %+v, want the story's item with its medium rendition", attempt, body.Version.Media)
 		}
 	}
 

@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { SpeakerHigh, SpeakerSlash } from 'phosphor-react-native';
 import Video, { type BufferConfig, type OnLoadData, type OnProgressData } from 'react-native-video';
@@ -13,6 +13,7 @@ import {
   useThemedStyles,
 } from '../theme';
 import type { ThemeColors } from '../theme';
+import { cachedVideoUri } from '../utils/videoCache';
 import { formatProgress } from './feedVideoMeta';
 
 /**
@@ -198,6 +199,12 @@ export default function FeedVideo({
   const preloading = isNextInLine && !playing;
   const progressLabel = formatProgress(currentSeconds, durationSeconds);
 
+  // The stream plays through the local proxy, so scrolling this video out of view
+  // and back re-reads it from the device instead of downloading it again
+  // (KNOT-037-fix10). The conversion is synchronous, but it is a native call, so it
+  // is memoised on the URL rather than repeated on every progress tick.
+  const sourceUri = useMemo(() => cachedVideoUri(uri), [uri]);
+
   return (
     <View style={styles.container} testID={testID}>
       {/* Behind the video: covers the gap before the first frame, and stands in
@@ -213,7 +220,7 @@ export default function FeedVideo({
           the surface itself has to be skipped, not just the wrapper's own box. */}
       <View style={styles.videoAnchor} pointerEvents="none">
         <Video
-          source={{ uri }}
+          source={{ uri: sourceUri }}
           style={styles.video}
           paused={!playing}
           // Only the player that is actually playing follows the screen-wide mute

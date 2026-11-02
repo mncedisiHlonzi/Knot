@@ -26,3 +26,16 @@ jest.mock('react', () => {
     useContext: () => jest.requireActual('./src/theme/ThemeContext').lightTheme,
   };
 });
+
+/**
+ * `react-native-video-cache` is a native module whose entry point reads
+ * `NativeModules.VideoCache` while it is being imported (KNOT-037-fix10). The
+ * suites replace `react-native` wholesale, so that read would throw before any
+ * test ran. The stand-in is the identity conversion: every video keeps the URL it
+ * was given, which is exactly what a build without the native module does.
+ */
+jest.mock('react-native-video-cache', () => ({
+  __esModule: true,
+  default: (url) => url,
+  convertAsync: async (url) => url,
+}));

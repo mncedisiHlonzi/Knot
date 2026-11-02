@@ -46,16 +46,11 @@ import type { ThemeColors, ThemeName } from '../../theme';
 import { PLACEHOLDER_MEDIA_ASPECT_RATIO, resolveMediaAspectRatio } from '../../utils/mediaFrame';
 import { useMediaAspectRatio } from '../../utils/useMediaAspectRatio';
 import { carouselCounter, carouselIndex, carouselPositionLabel } from './detailCarousel';
-import { stripImagePath, stripPosterPath } from './mediaStripSource';
+import { stripImagePath } from './mediaStripSource';
 
 /** Resolves a relative media path returned by the API against the base URL. */
 function resolveMediaUrl(url: string): string {
   return `${API_BASE_URL}${url}`;
-}
-
-/** Resolves an optional rendition path, leaving `undefined` for the placeholder. */
-function resolveOptionalMediaUrl(url: string | undefined): string | undefined {
-  return url === undefined ? undefined : resolveMediaUrl(url);
 }
 
 /** The thumbnail strip's square item, matching the Story Detail (KNOT-025-fix5). */
@@ -498,12 +493,9 @@ export default function StoryVersionScreen({
                     >
                       {' '}
                       {item.media_type === 'video' ? (
-                        // The poster frame is the video's still; without one the
-                        // tile keeps the sunken placeholder (KNOT-036-fix4).
-                        <VideoThumbnail
-                          size={THUMBNAIL_SIZE}
-                          posterUrl={resolveOptionalMediaUrl(stripPosterPath(item))}
-                        />
+                        // No poster is generated for a video any more: the tile
+                        // keeps the sunken placeholder (KNOT-037-fix10).
+                        <VideoThumbnail size={THUMBNAIL_SIZE} />
                       ) : (
                         <Image
                           source={{ uri: resolveMediaUrl(stripImagePath(item)) }}

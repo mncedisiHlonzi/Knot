@@ -224,11 +224,12 @@ sudo apt-get install ffmpeg
 ffmpeg -version
 ```
 
-The backend calls `ffmpeg` from `PATH` only when a video is uploaded; if it is missing, the
-upload still succeeds with a `WARN` ("could not generate a video poster frame: … ffmpeg is
-not installed") and the item simply has no `poster_url`. A production image that wants video
-posters must install FFmpeg in the container. FFmpeg is **not** a Go dependency and is not
-vendored: it is a system prerequisite, like Docker.
+The backend calls `ffmpeg` from `PATH` when a **video** is uploaded: it is what produces the
+row's stream rendition. Without it the upload is still accepted (the row is written as
+`processing`), the background job fails with `storymedia: ffmpeg is not installed`, and the
+row is marked `failed` — so the item answers `404` and the log says why. Images never need
+it. FFmpeg is **not** a Go dependency and is not vendored: it is a system prerequisite, like
+Docker, and a production image that accepts video must install it.
 
 #### Cloudflare R2 (production storage)
 
@@ -2929,24 +2930,41 @@ On a small local table the planner still prefers sequential scans by cost; with
 seq scans disabled the language branch shows
 `Bitmap Index Scan on users_preferred_languages_gin`.
 
-**Derivative URLs on detail responses (KNOT-036-fix3).** Every item in a story or
-version detail's `media` array carries `thumbnail_url`, `medium_url`, and
-`poster_url` beside the original `url`. They are the same `/stories/{id}/media/{mid}/content?variant=…`
-paths the feed's `first_media_url` uses, and are `null` when the item has no
-rendition (a legacy row, or an upload whose decoder or FFmpeg failed) — the client
-falls back to `url`. A version has no media of its own: `GET /versions/{id}` returns
-the media of the story it adapts, through the same projection, so the two arrays are
-identical.
+**Derivative URLs on detail responses (KNOT-036-fix3, KNOT-037-fix10).** Every item in a
+story or version detail's `media` array carries `thumbnail_url` and, on a legacy row,
+`medium_url` beside its `url`. They are the same `/stories/{id}/media/{mid}/content?variant=…`
+paths the feed's `first_media_url` uses, and are `null` when the item has no rendition. `url`
+itself is the **display AVIF** for an image and the **stream MP4** for a video; there is no
+`poster_url` any more, because a video autoplays and the pipeline generates no cover. A
+version has no media of its own: `GET /versions/{id}` returns the media of the story it
+adapts, through the same projection, so the two arrays are identical.
+
+**Only derivatives are served (KNOT-037-fix10).** `StreamMedia` answers `display`/`stream`
+from the row's primary object only when its key actually names that derivative
+(`…_display.avif` / `…_stream.mp4`), and the small variants from their stored keys. A
+variant the row cannot answer is a **404** — never a fallback to the original upload, which
+the bucket no longer holds. The mobile strip draws `thumbnail_url` for an image and the
+sunken placeholder for a video (no poster exists); the rule lives in
+`apps/mobile/src/screens/stories/mediaStripSource.ts`.
 
 **Media writes invalidate the story detail (KNOT-036-fix4).** Uploading or deleting a
 media item deletes `knot:story:{id}` on the request path, so the detail's media array
 is never older than the write. Version keys are deliberately not touched (an upload
 cannot cheaply name every adaptation), so those expire on
-`KNOT_DETAIL_CACHE_TTL`. The mobile strip draws `thumbnail_url` for an image and
-`poster_url` for a video; the rule lives in
-`apps/mobile/src/screens/stories/mediaStripSource.ts`. An image without a thumbnail
-falls back to its original, while a video without a poster keeps the sunken
-placeholder — the original is an MP4, which an `Image` cannot draw.
+`KNOT_DETAIL_CACHE_TTL`.
+
+**The mobile stream cache (KNOT-037-fix10).** `FeedVideo` plays every story video through
+`apps/mobile/src/utils/videoCache.ts`, which hands the URL to `react-native-video-cache`
+and gets back a `127.0.0.1` proxy address; the proxy keeps a disk copy, so scrolling a
+video out of view and back re-reads it from the device instead of downloading the stream
+again. The conversion is synchronous and total: a non-HTTP URL, an address that is
+already the proxy, and a build without the native module all keep the original URL. Two
+native pieces come with the library: `android/build.gradle` adds its bundled
+`com.danikula:videocache` AAR to the repositories, and
+`android/app/src/main/res/xml/network_security_config.xml` permits **cleartext to
+loopback only** (the proxy speaks plain HTTP to `127.0.0.1`, which a release build would
+otherwise refuse). iOS gets the pod from the library's podspec, so `pod install` is
+needed after a fresh checkout.
 
 **A comment count is version-scoped (KNOT-036-fix5).** `comment_count` on a feed entry is
 the number of **comments on that entry's version** — the root version's thread for a story

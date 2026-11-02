@@ -47,16 +47,11 @@ import type { ThemeColors, ThemeName } from '../../theme';
 import { PLACEHOLDER_MEDIA_ASPECT_RATIO, resolveMediaAspectRatio } from '../../utils/mediaFrame';
 import { useMediaAspectRatio } from '../../utils/useMediaAspectRatio';
 import { carouselCounter, carouselIndex, carouselPositionLabel } from './detailCarousel';
-import { stripImagePath, stripPosterPath } from './mediaStripSource';
+import { stripImagePath } from './mediaStripSource';
 
 /** Resolves a relative media path returned by the API against the base URL. */
 function resolveMediaUrl(url: string): string {
   return `${API_BASE_URL}${url}`;
-}
-
-/** Resolves an optional rendition path, leaving `undefined` for the placeholder. */
-function resolveOptionalMediaUrl(url: string | undefined): string | undefined {
-  return url === undefined ? undefined : resolveMediaUrl(url);
 }
 
 /** The thumbnail strip's square item (KNOT-025-fix1, enlarged in fix5). */
@@ -521,14 +516,11 @@ export default function StoryDetailScreen({
                           <ActivityIndicator color={colors.text.tertiary} size="small" />
                         </View>
                       ) : item.media_type === 'video' ? (
-                        // The poster frame is the video's still. A video with no
-                        // poster keeps the sunken placeholder and its play disc:
-                        // the original is an MP4, which an Image cannot draw
-                        // (KNOT-036-fix4).
-                        <VideoThumbnail
-                          size={THUMBNAIL_SIZE}
-                          posterUrl={resolveOptionalMediaUrl(stripPosterPath(item))}
-                        />
+                        // A video has no cover: the server generates no poster, so
+                        // the tile keeps its sunken placeholder and play disc rather
+                        // than drawing the MP4 an Image cannot render
+                        // (KNOT-037-fix10).
+                        <VideoThumbnail size={THUMBNAIL_SIZE} />
                       ) : (
                         <Image
                           source={{ uri: resolveMediaUrl(stripImagePath(item)) }}

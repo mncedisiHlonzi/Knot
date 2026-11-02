@@ -22,6 +22,7 @@ jest.mock('react', () => ({
   ...jest.requireActual('react'),
   useContext: () => jest.requireActual('../../theme/ThemeContext').lightTheme,
   useCallback: (callback: unknown) => callback,
+  useMemo: (factory: () => unknown) => factory(),
   useState: (initial: unknown) => {
     const index = mockStateCursor;
     mockStateCursor += 1;
@@ -52,6 +53,14 @@ jest.mock('phosphor-react-native', () => ({
 // element tree can be built and inspected.
 jest.mock('react-native-video', () => ({ __esModule: true, default: 'Video' }));
 
+// The stream cache is a native proxy. It is stubbed to a visible prefix so the
+// test can prove the player loads the CACHED address rather than the bare stream
+// (KNOT-037-fix10).
+jest.mock('react-native-video-cache', () => ({
+  __esModule: true,
+  default: (url: string) => `cached:${url}`,
+}));
+
 type Element = { type?: unknown; props?: Record<string, unknown> };
 
 /** Every element in a directly-called component's tree, depth-first. */
@@ -81,8 +90,13 @@ function firstOfType(tree: unknown, type: string): Element | undefined {
   return elements(tree).find((element) => element.type === type);
 }
 
-/** The video's URL, in the shape every test in this suite uses. */
-const URI = 'http://localhost:8080/stories/1/media/2/content';
+/**
+ * The video's URL, in the shape every test in this suite uses. It is the address
+ * the emulator reaches the API on, not loopback: `cachedVideoUri` leaves a
+ * loopback address alone (it may already BE the cache proxy), so a `localhost`
+ * URL would not exercise the cache at all (KNOT-037-fix10).
+ */
+const URI = 'http://10.0.2.2:8080/stories/1/media/2/content';
 
 /**
  * Renders the component with the hook cursor back at slot zero, keeping whatever
@@ -151,6 +165,14 @@ describe('FeedVideo playback', () => {
     expect(video?.props?.repeat).toBe(true);
   });
 
+  it('plays the stream through the local cache', () => {
+    // The player is handed the proxy address, not the bare stream URL, so a second
+    // scroll past this video re-reads it from the device (KNOT-037-fix10).
+    const video = firstOfType(visibleTree(), 'Video');
+
+    expect(video?.props?.source).toEqual({ uri: `cached:${URI}` });
+  });
+
   it('pauses the video that is off screen', () => {
     const tree = render({ uri: URI, isVisible: false });
     const video = firstOfType(tree, 'Video');
@@ -169,7 +191,7 @@ describe('FeedVideo preloading', () => {
     const video = firstOfType(render({ uri: URI, isNextInLine: true }), 'Video');
 
     expect(video).toBeDefined();
-    expect(video?.props?.source).toEqual({ uri: URI });
+    expect(video?.props?.source).toEqual({ uri: `cached:${URI}` });
     expect(video?.props?.paused).toBe(true);
     expect(video?.props?.bufferConfig).toBeDefined();
   });

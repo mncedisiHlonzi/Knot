@@ -92,7 +92,14 @@ type FeedEntryStory = {
   readonly media_count?: number;
   /** The first media item's kind, or null when the story has no media. */
   readonly first_media_type?: 'image' | 'video' | null;
-  /** The first media item's relative path on the API, or null/empty for none. */
+  /**
+   * The first media item's relative path on the API, or null/empty for none.
+   *
+   * The server sends the SMALLEST rendition that can fill this frame: the item's
+   * `thumbnail_url` (a 400px WebP) for an image, and its stream for a video, which
+   * has no cover because it autoplays. The card therefore never requests a full
+   * display image (KNOT-037, KNOT-037-fix10).
+   */
   readonly first_media_url?: string | null;
   /**
    * The first media item's pixel dimensions, or null when the uploader's client

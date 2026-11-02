@@ -47,5 +47,14 @@ allprojects {
                 password = project.properties['MAPBOX_DOWNLOADS_TOKEN'] ?: ""
             }
         }
+
+        // react-native-video-cache ships the AndroidVideoCache AAR inside its own
+        // npm package instead of publishing it, so the local proxy cannot be
+        // resolved from Maven Central. Without this repository the dependency
+        // `com.danikula:videocache` does not resolve and the Android build fails
+        // (KNOT-037-fix10; see the library's README).
+        maven {
+            url "$rootDir/../node_modules/react-native-video-cache/android/libs"
+        }
     }
 }

@@ -1058,9 +1058,6 @@ func TestStoryMediaCreateExposesDerivativeURLs(t *testing.T) {
 	if created.MediumURL != nil {
 		t.Errorf("medium_url = %q, want null: the pipeline writes no medium", *created.MediumURL)
 	}
-	if created.PosterURL != nil {
-		t.Errorf("poster_url = %q, want null: a video autoplays, and this is an image", *created.PosterURL)
-	}
 }
 
 // TestStoryMediaVideoURLsHaveNoThumbnail pins Item 5's rule for videos: the full
@@ -1289,6 +1286,32 @@ func TestStoryMediaContentAnswers202WhileProcessing(t *testing.T) {
 	}
 	if recorder.Body.Len() != 0 {
 		t.Errorf("body = %q, want none", recorder.Body.String())
+	}
+}
+
+// TestStoryMediaContentAnswers404ForAMissingVariant pins KNOT-037-fix10: a
+// variant the row cannot answer is a 404, never a fallback to the original.
+func TestStoryMediaContentAnswers404ForAMissingVariant(t *testing.T) {
+	service := &fakeStoryMediaService{streamErr: storymedia.ErrNotFound}
+	handler, err := NewStoryMediaHandler(service, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("NewStoryMediaHandler() error = %v, want nil", err)
+	}
+
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/stories/"+testMediaStoryID+"/media/"+testMediaID+"/content?variant=display",
+		nil,
+	)
+	request.SetPathValue("mid", testMediaID)
+	recorder := httptest.NewRecorder()
+	handler.Content(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
+	}
+	if code := decodedErrorCode(t, recorder); code != codeNotFound {
+		t.Errorf("error code = %q, want %q", code, codeNotFound)
 	}
 }
 

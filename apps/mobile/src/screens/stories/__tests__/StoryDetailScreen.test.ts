@@ -1,4 +1,5 @@
 import type { Story, StoryMedia } from '../../../api/stories';
+import FeedVideo from '../../../components/FeedVideo';
 import VideoThumbnail from '../../../components/VideoThumbnail';
 import StoryDetailScreen from '../StoryDetailScreen';
 
@@ -76,13 +77,12 @@ const imageMedia: StoryMedia = {
   size_bytes: 1_000,
   display_order: 0,
   created_at: '2026-10-01T00:00:00Z',
-  url: '/stories/story-1/media/media-1/content',
+  url: '/stories/story-1/media/media-1/content?variant=display',
   thumbnail_url: '/stories/story-1/media/media-1/content?variant=thumb',
   medium_url: '/stories/story-1/media/media-1/content?variant=medium',
-  poster_url: null,
 };
 
-/** A video whose poster frame the server extracted. */
+/** A video: its full rendition is the stream, and it has no cover. */
 const videoMedia: StoryMedia = {
   id: 'media-2',
   media_type: 'video',
@@ -94,21 +94,16 @@ const videoMedia: StoryMedia = {
   size_bytes: 2_000,
   display_order: 1,
   created_at: '2026-10-01T00:00:00Z',
-  url: '/stories/story-1/media/media-2/content',
+  url: '/stories/story-1/media/media-2/content?variant=stream',
   thumbnail_url: null,
   medium_url: null,
-  poster_url: '/stories/story-1/media/media-2/content?variant=poster',
 };
 
-/** The same two items on a server that generated no renditions (or a legacy row). */
+/** The same image on a server that generated no thumbnail. */
 const legacyImage: StoryMedia = {
   ...imageMedia,
   thumbnail_url: null,
   medium_url: null,
-};
-const legacyVideo: StoryMedia = {
-  ...videoMedia,
-  poster_url: null,
 };
 
 function storyWith(media: readonly StoryMedia[]): Story {
@@ -163,6 +158,17 @@ function elementsOfType(tree: unknown, type: unknown): ElementLike[] {
   return found;
 }
 
+/** Every element whose component function has the given name (file-local children). */
+function elementsByFunctionName(tree: unknown, name: string): ElementLike[] {
+  const found: ElementLike[] = [];
+  collect(tree, (element) => {
+    if (typeof element.type === 'function' && element.type.name === name) {
+      found.push(element);
+    }
+  });
+  return found;
+}
+
 /** Calls the screen in its loaded state with the given media. */
 function renderLoaded(media: readonly StoryMedia[]): unknown {
   mockStateValues = [storyWith(media), 3, false, undefined];
@@ -181,7 +187,7 @@ function renderLoaded(media: readonly StoryMedia[]): unknown {
 }
 
 describe('StoryDetailScreen media strip', () => {
-  it('draws the image tile from the thumbnail and the video tile from the poster', () => {
+  it('draws the image tile from the thumbnail and the video tile from a placeholder', () => {
     const tree = renderLoaded([imageMedia, videoMedia]);
 
     const images = elementsOfType(tree, 'Image');
@@ -192,24 +198,48 @@ describe('StoryDetailScreen media strip', () => {
 
     const video = elementsOfType(tree, VideoThumbnail);
     expect(video).toHaveLength(1);
-    expect(video[0].props?.posterUrl).toBe(
-      API_BASE + '/stories/story-1/media/media-2/content?variant=poster',
-    );
+    // The server generates no poster for a video any more, so the tile draws its
+    // sunken placeholder and play disc (KNOT-037-fix10).
+    expect(video[0].props?.posterUrl).toBeUndefined();
   });
 
-  it('falls back to the original image and the placeholder when there are no renditions', () => {
-    const tree = renderLoaded([legacyImage, legacyVideo]);
+  it('falls back to the display image when there is no thumbnail', () => {
+    const tree = renderLoaded([legacyImage, videoMedia]);
 
     const images = elementsOfType(tree, 'Image');
     expect(images).toHaveLength(1);
     expect(images[0].props?.source).toEqual({
-      uri: API_BASE + '/stories/story-1/media/media-1/content',
+      uri: API_BASE + '/stories/story-1/media/media-1/content?variant=display',
     });
 
     const video = elementsOfType(tree, VideoThumbnail);
     expect(video).toHaveLength(1);
-    // Undefined is what makes VideoThumbnail draw its sunken placeholder and play
-    // disc: the original is an MP4, which an Image cannot render.
     expect(video[0].props?.posterUrl).toBeUndefined();
+  });
+});
+
+describe('StoryDetailScreen carousel', () => {
+  it('draws the full page from media.url, which is the display or stream rendition', () => {
+    const tree = renderLoaded([imageMedia, videoMedia]);
+
+    const pages = elementsByFunctionName(tree, 'CarouselPage');
+    expect(pages).toHaveLength(2);
+
+    // The pages are children, so they are invoked directly. Their hook state starts
+    // empty: the shape is the payload's own dimensions.
+    const draw = (index: number): unknown => {
+      mockStateValues = [];
+      mockStateCursor = 0;
+      const page = pages[index];
+      return (page.type as (props: unknown) => unknown)(page.props);
+    };
+
+    const imagePage = elementsOfType(draw(0), 'Image');
+    expect(imagePage).toHaveLength(1);
+    expect(imagePage[0].props?.source).toEqual({ uri: API_BASE + imageMedia.url });
+
+    const videoPage = elementsOfType(draw(1), FeedVideo);
+    expect(videoPage).toHaveLength(1);
+    expect(videoPage[0].props?.uri).toBe(API_BASE + videoMedia.url);
   });
 });

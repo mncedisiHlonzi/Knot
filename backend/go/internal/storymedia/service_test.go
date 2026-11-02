@@ -634,10 +634,10 @@ func TestStreamMediaFullAndRange(t *testing.T) {
 	objects := newFakeObjects()
 	service, _ := newTestService(t, store, objects)
 
-	// A row whose primary object is its upload: that is the shape of a row written
-	// before KNOT-037-fix7, and the shape the Range path is about.
+	// A row written by the derivative pipeline: the primary object IS the display
+	// AVIF, which is what the empty (full-rendition) variant addresses.
 	payload := []byte("0123456789abcdefghij")
-	key := StoryMediaKeyPrefix(storyID) + "original.png"
+	key := StoryMediaKeyPrefix(storyID) + "photo_display.avif"
 	objects.objects[key] = payload
 
 	created, err := store.CreateMedia(context.Background(), StoryMedia{
@@ -645,7 +645,7 @@ func TestStreamMediaFullAndRange(t *testing.T) {
 		UploaderID:   authorID,
 		StorageKey:   key,
 		MediaType:    MediaTypeImage,
-		MimeType:     "image/png",
+		MimeType:     "image/jpeg",
 		Source:       MediaSourceCamera,
 		SizeBytes:    int64(len(payload)),
 		Status:       StatusReady,
@@ -655,7 +655,8 @@ func TestStreamMediaFullAndRange(t *testing.T) {
 		t.Fatalf("CreateMedia() error = %v", err)
 	}
 
-	// No Range header: the whole object. No variant asks for the original.
+	// No Range header: the whole object. An absent variant asks for the item's full
+	// rendition, which is the display AVIF this row names.
 	request := newRangeRequest("")
 	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, "", "", request)
 	if err != nil {
@@ -668,8 +669,9 @@ func TestStreamMediaFullAndRange(t *testing.T) {
 	if total != int64(len(payload)) {
 		t.Errorf("total = %d, want %d", total, len(payload))
 	}
-	if mimeType != "image/png" {
-		t.Errorf("mime = %q, want image/png", mimeType)
+	// The type follows the object's key, not the upload's MIME type.
+	if mimeType != "image/avif" {
+		t.Errorf("mime = %q, want image/avif", mimeType)
 	}
 
 	// A Range header: only the requested bytes.
@@ -1184,7 +1186,7 @@ func TestStreamMediaServesTheDisplay(t *testing.T) {
 	}
 }
 
-func TestStreamMediaFallsBackToTheDisplayWhenTheThumbnailIsMissing(t *testing.T) {
+func TestStreamMediaAnswers404WhenTheThumbnailIsMissing(t *testing.T) {
 	store := newFakeStore()
 	objects := newFakeObjects()
 	service, _ := newTestService(t, store, objects)
@@ -1195,22 +1197,14 @@ func TestStreamMediaFallsBackToTheDisplayWhenTheThumbnailIsMissing(t *testing.T)
 	}
 	service.WaitForProcessing()
 
-	// The thumbnail object is gone, so the display is the next best picture rather
-	// than a 404.
+	// The thumbnail object is gone. There is no original to fall back to any more,
+	// and answering with the multi-megabyte display would defeat the rendition
+	// request, so the item is reported missing (KNOT-037-fix10).
 	thumbnailKey, _ := created.ThumbnailWebPKey()
 	delete(objects.objects, thumbnailKey)
 
-	body, _, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, "", newRangeRequest(""))
-	if err != nil {
-		t.Fatalf("StreamMedia(thumb, missing object) error = %v, want the display", err)
-	}
-
-	served, _ := io.ReadAll(body)
-	if !bytes.Equal(served, objects.objects[created.StorageKey]) {
-		t.Error("the fallback did not serve the display rendition")
-	}
-	if mimeType != avifContentType {
-		t.Errorf("mime = %q, want the codec actually served, %q", mimeType, avifContentType)
+	if _, _, _, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, "", newRangeRequest("")); !errors.Is(err, ErrNotFound) {
+		t.Errorf("StreamMedia(thumb, missing object) error = %v, want ErrNotFound", err)
 	}
 }
 
@@ -1254,7 +1248,7 @@ func TestStreamMediaServesALegacyJPEGThumbnail(t *testing.T) {
 	}
 }
 
-func TestStreamMediaFallsBackForAVariantTheRowDoesNotHave(t *testing.T) {
+func TestStreamMediaAnswers404ForAVariantTheRowDoesNotHave(t *testing.T) {
 	store := newFakeStore()
 	objects := newFakeObjects()
 	service, _ := newTestService(t, store, objects)
@@ -1265,19 +1259,104 @@ func TestStreamMediaFallsBackForAVariantTheRowDoesNotHave(t *testing.T) {
 	}
 	service.WaitForProcessing()
 
-	// A new row has no poster, so asking for one must still return a picture: its
-	// primary object, served as the type its key names rather than the upload's.
-	body, _, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantPoster, "", newRangeRequest(""))
+	// This row has no poster, and the primary object is the display AVIF. Answering a
+	// poster request with it would send a full-size picture for a still frame, so the
+	// request is a 404 (KNOT-037-fix10).
+	if _, _, _, err := service.StreamMedia(context.Background(), created.ID, VariantPoster, "", newRangeRequest("")); !errors.Is(err, ErrNotFound) {
+		t.Errorf("StreamMedia(poster on an image) error = %v, want ErrNotFound", err)
+	}
+}
+
+// TestStreamMediaServesNoOriginalForALegacyRow is KNOT-037-fix10's core rule: a row
+// written before the derivative pipeline names its uploaded file as the primary
+// object, and that file must never be served.
+func TestStreamMediaServesNoOriginalForALegacyRow(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, _ := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 300, 200))
 	if err != nil {
-		t.Fatalf("StreamMedia(poster on an image) error = %v, want the primary object", err)
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+	service.WaitForProcessing()
+
+	// Rewrite the row as a pre-KNOT-037-fix7 one, with the upload present in the
+	// bucket so a fallback would SUCCEED and go unnoticed if the rule regressed.
+	legacyKey := StoryMediaKeyPrefix(created.StoryID) + "legacy_upload.jpg"
+	objects.objects[legacyKey] = []byte("the multi-megabyte original")
+	stored := store.media[created.ID]
+	stored.StorageKey = legacyKey
+	store.media[created.ID] = stored
+
+	for _, variant := range []Variant{"", VariantDisplay, VariantStream} {
+		if _, _, _, err := service.StreamMedia(context.Background(), created.ID, variant, "", newRangeRequest("")); !errors.Is(err, ErrNotFound) {
+			t.Errorf("StreamMedia(%q on a legacy row) error = %v, want ErrNotFound", variant, err)
+		}
+	}
+}
+
+// TestStreamMediaServesTheStreamAsMP4 pins the video half of the full-rendition
+// contract: the stream object is served as `video/mp4`, never as the upload's
+// declared type (KNOT-037-fix10).
+func TestStreamMediaServesTheStreamAsMP4(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, _ := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 300, 200))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+	service.WaitForProcessing()
+
+	// Rewrite the row as a video produced by the derivative pipeline, so no FFmpeg
+	// is needed: the object the row names is the stream itself.
+	streamKey := StoryMediaKeyPrefix(created.StoryID) + "clip_stream.mp4"
+	objects.objects[streamKey] = []byte("the h264 stream")
+	stored := store.media[created.ID]
+	stored.MediaType = MediaTypeVideo
+	stored.StorageKey = streamKey
+	store.media[created.ID] = stored
+
+	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantStream, "", newRangeRequest(""))
+	if err != nil {
+		t.Fatalf("StreamMedia(stream) error = %v, want nil", err)
 	}
 
 	served, _ := io.ReadAll(body)
-	if !bytes.Equal(served, objects.objects[created.StorageKey]) {
-		t.Error("the fallback did not serve the primary object")
+	if !bytes.Equal(served, objects.objects[streamKey]) {
+		t.Error("StreamMedia(stream) did not serve the stream object")
 	}
-	if mimeType != avifContentType {
-		t.Errorf("mime = %q, want the served object's type %q", mimeType, avifContentType)
+	if total != stored.SizeBytes {
+		t.Errorf("total = %d, want the row's %d", total, stored.SizeBytes)
+	}
+	if mimeType != videoContentType {
+		t.Errorf("mime = %q, want %q", mimeType, videoContentType)
+	}
+	if mimeType != "video/mp4" {
+		t.Errorf("mime = %q, want the literal video/mp4", mimeType)
+	}
+}
+
+// TestStreamMediaAnswers404ForTheOtherFullVariant keeps the two full renditions
+// apart: an image has no stream, and a video has no display.
+func TestStreamMediaAnswers404ForTheOtherFullVariant(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, _ := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 300, 200))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+	service.WaitForProcessing()
+
+	if _, _, _, err := service.StreamMedia(context.Background(), created.ID, VariantDisplay, "", newRangeRequest("")); err != nil {
+		t.Fatalf("StreamMedia(display) error = %v, want nil", err)
+	}
+	if _, _, _, err := service.StreamMedia(context.Background(), created.ID, VariantStream, "", newRangeRequest("")); !errors.Is(err, ErrNotFound) {
+		t.Errorf("StreamMedia(stream on an image) error = %v, want ErrNotFound", err)
 	}
 }
 

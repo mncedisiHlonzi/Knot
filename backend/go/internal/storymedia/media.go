@@ -289,6 +289,35 @@ type StoryMedia struct {
 	CreatedAt time.Time
 }
 
+// fullRenditionFor answers the variant that carries a media type's full rendition:
+// the display AVIF for an image, the stream MP4 for a video.
+func fullRenditionFor(mediaType MediaType) Variant {
+	if mediaType == MediaTypeVideo {
+		return VariantStream
+	}
+	return VariantDisplay
+}
+
+// servesFullRendition reports whether an object key names a full rendition of the
+// given variant, and not an original upload.
+//
+// It is a suffix test because the key is the only evidence a row has: a row
+// written since KNOT-037-fix7 names `..._display.avif` or `..._stream.mp4` there,
+// while a legacy row names the file its author uploaded. The distinction is what
+// makes "serve derivatives only" enforceable without a second column
+// (KNOT-037-fix10).
+func servesFullRendition(key string, variant Variant) bool {
+	switch variant {
+	case VariantDisplay:
+		return strings.HasSuffix(key, displaySuffix+avifExtension)
+	case VariantStream:
+		return strings.HasSuffix(key, streamSuffix+mp4Extension) ||
+			strings.HasSuffix(key, streamSuffix+movExtension)
+	default:
+		return false
+	}
+}
+
 // DerivativeKey answers the object key for one variant, and whether this row has
 // that rendition.
 //
@@ -698,10 +727,11 @@ func ParseFormat(raw string) (Format, bool) {
 
 // ParseVariant validates the `variant` query parameter of the content endpoint.
 //
-// An absent or blank value resolves to the original object. An unknown value must
-// be rejected rather than ignored: silently answering with the original would send
-// a full-size photo to a client that asked for an 800px thumbnail, which is the
-// opposite of what the parameter is for.
+// An absent or blank value resolves to the item's full rendition, which is chosen
+// from its media type. An unknown value must be rejected rather than ignored:
+// silently answering with a full-size object would send a multi-megabyte file to a
+// client that asked for a 400px thumbnail, which is the opposite of what the
+// parameter is for.
 func ParseVariant(raw string) (Variant, bool) {
 	trimmed := Variant(strings.TrimSpace(raw))
 	switch trimmed {
@@ -722,15 +752,21 @@ func ParseVariant(raw string) (Variant, bool) {
 // the decision in one exported helper is what keeps the service and the handler
 // from disagreeing about which bytes were sent.
 //
-// A named variant is answered from its rendition when the row has one. Renditions
-// are small, so they are read whole and sent without range support, which also
-// means a thumbnail request can never be turned into a full-size transfer. When
-// the row has no rendition, or its object is missing, the original is served
-// instead: an optimisation that failed must not hide the image (KNOT-ADR-091).
+// Only derivatives are served (KNOT-037-fix10). A row written since
+// KNOT-037-fix7 stores its display AVIF or stream MP4 as the primary object, and
+// that file is what a full-rendition request answers from; the upload itself is
+// never stored. A row written earlier still names its original upload there, and
+// the originals are not in the bucket any more, so a variant such a row cannot
+// answer is a 404 rather than a fallback to a file that either no longer exists or
+// is exactly the multi-megabyte upload this contract exists to avoid.
+//
+// Thumbnails, and the medium and poster files a legacy row may still hold, are
+// small, so they are read whole and sent without range support — which also means
+// a thumbnail request can never be turned into a full-size transfer.
 //
 // A thumbnail request also names a format. The requested format is tried first and
-// the other one second, so a device that cannot decode AVIF still gets a small
-// image rather than the original (KNOT-037-fix6). The content type returned is the
+// the other one second, so a device that cannot decode one codec still gets a
+// small image rather than nothing (KNOT-037-fix6). The content type returned is the
 // type of the file that was actually read, not the one that was asked for.
 func (s *Service) StreamMedia(ctx context.Context, id string, variant Variant, format Format, r *http.Request) (io.ReadCloser, int64, string, error) {
 	media, err := s.GetMedia(ctx, id)
@@ -749,20 +785,38 @@ func (s *Service) StreamMedia(ctx context.Context, id string, variant Variant, f
 		return nil, 0, "", ErrProcessingFailed
 	}
 
-	for _, candidate := range media.renditionCandidates(variant, format) {
-		body, size, readErr := s.readRendition(ctx, candidate.key)
-		switch {
-		case readErr == nil:
-			return body, size, candidate.contentType, nil
-		case !errors.Is(readErr, ErrNotFound):
-			return nil, 0, "", readErr
+	// The small renditions: the feed thumbnail in either codec, plus the medium and
+	// poster files a row written before KNOT-037-fix7 may still hold. A row with
+	// none of them has nothing to answer this request, and there is no original to
+	// fall back to.
+	if variant != "" && variant != VariantDisplay && variant != VariantStream {
+		for _, candidate := range media.renditionCandidates(variant, format) {
+			body, size, readErr := s.readRendition(ctx, candidate.key)
+			switch {
+			case readErr == nil:
+				return body, size, candidate.contentType, nil
+			case !errors.Is(readErr, ErrNotFound):
+				return nil, 0, "", readErr
+			}
+			// The object is gone, so try the next candidate.
 		}
-		// The object is gone, so try the next candidate. The primary object is last.
+
+		return nil, 0, "", ErrNotFound
 	}
 
-	// The fallback is the row's primary object, served with the type its key names:
-	// on a row written since KNOT-037-fix7 that is the display AVIF or the stream
-	// MP4, not the upload the row's MimeType describes.
+	// A full rendition, named explicitly or implied by an absent variant: the row's
+	// primary object, but only when it really is that rendition. This check is what
+	// stops a legacy row from answering with its upload.
+	full := variant
+	if full == "" {
+		full = fullRenditionFor(media.MediaType)
+	}
+	if !servesFullRendition(media.StorageKey, full) {
+		return nil, 0, "", ErrNotFound
+	}
+
+	// Served with the type its key names: the display AVIF or the stream MP4, never
+	// the upload's MIME type.
 	contentType := contentTypeForKey(media.StorageKey, media.MimeType)
 
 	if start, end, ok := ParseRange(r.Header.Get("Range"), media.SizeBytes); ok {

@@ -26,7 +26,8 @@
     "react-native-image-picker": "^8.2.1",
     "react-native-svg": "^15.15.5",
     "react-native-vector-icons": "^10.3.0",
-    "react-native-video": "^6.19.3"
+    "react-native-video": "^6.19.3",
+    "react-native-video-cache": "^2.7.4"
   },
   "devDependencies": {
     "@babel/core": "^7.25.0",

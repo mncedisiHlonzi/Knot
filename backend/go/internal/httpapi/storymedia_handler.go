@@ -123,10 +123,11 @@ type storyMediaResponse struct {
 	// null for an item produced since KNOT-037-fix7, whose thumbnail is already
 	// WebP.
 	ThumbnailURLFallback *string `json:"thumbnail_url_fallback"`
-	// MediumURL and PosterURL address renditions that only exist on a row written
-	// before KNOT-037-fix7; both stay in the payload so those items keep working.
+	// MediumURL addresses the 1200px JPEG a row written before KNOT-037-fix7 has.
+	// Since KNOT-037-fix10 it is the only retired rendition still advertised: a video
+	// autoplays, so there is no cover and no `poster_url`, and no row written since
+	// the async pipeline has either file.
 	MediumURL *string `json:"medium_url"`
-	PosterURL *string `json:"poster_url"`
 }
 
 // storyMediaEnvelope wraps a single item, so the response shape can gain sibling
@@ -250,12 +251,18 @@ func (h *StoryMediaHandler) List(w http.ResponseWriter, r *http.Request) {
 // answered 206 with Content-Range; anything else (no header, or an unusable one)
 // is answered 200 with the whole object.
 //
-// The optional `variant` parameter asks for a generated rendition instead of the
-// original — `thumb`, `medium`, or `poster` (KNOT-037). An unknown value is a 400
-// rather than a silent full-size response, because answering with the original
-// would send exactly the bytes the caller asked to avoid. A rendition the item
-// does not have is answered with the original, so a failed pipeline never breaks
-// an image.
+// The optional `variant` parameter selects the rendition: `display` (an image's
+// 2048px AVIF), `stream` (a video's 1080p MP4), `thumb` (the 400px WebP feed
+// thumbnail), or — for a row written before KNOT-037-fix7 — `medium` or `poster`.
+// An absent variant means the item's full rendition, chosen from its media type.
+// An unknown value is a 400 rather than a silent full-size response, because
+// answering with a full-size object would send exactly the bytes the caller asked
+// to avoid.
+//
+// Only derivatives are served (KNOT-037-fix10): the originals are not kept, so a
+// variant the row cannot answer is answered 404. There is no fallback to the
+// uploaded file — it either does not exist or is the multi-megabyte object this
+// contract exists to stop transferring.
 //
 // For `variant=thumb` the `format` parameter selects the codec: `avif` (the
 // default) or `webp` (KNOT-037-fix6). A codec the item does not have falls back to
@@ -442,7 +449,6 @@ func newStoryMediaResponse(media storymedia.StoryMedia, storyID string) storyMed
 		ThumbnailURL:         storyMediaImageThumbnailURL(storyID, media),
 		ThumbnailURLFallback: storyMediaThumbnailFallbackURL(storyID, media),
 		MediumURL:            storyMediaVariantURL(storyID, media.ID, media.MediumKey, storymedia.VariantMedium),
-		PosterURL:            storyMediaVariantURL(storyID, media.ID, media.PosterKey, storymedia.VariantPoster),
 	}
 }
 
