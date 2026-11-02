@@ -183,6 +183,59 @@ func (s *Service) enqueue(job processJob) {
 	}()
 }
 
+// stageError tags a pipeline failure with the step that produced it, so the one
+// ERROR line a failed job emits names the stage and not only the wrapped cause
+// (KNOT-037-fix17).
+//
+// It changes no control flow: the cause still travels through errors.Is and
+// errors.As, and Error() carries its full text after the step name.
+type stageError struct {
+	step string
+	err  error
+}
+
+func (e *stageError) Error() string { return e.step + ": " + e.err.Error() }
+
+func (e *stageError) Unwrap() error { return e.err }
+
+// stage wraps err with the name of the step that produced it.
+func stage(step string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &stageError{step: step, err: err}
+}
+
+// failingStage names the step a pipeline error came from, for the job's ERROR log.
+func failingStage(err error) string {
+	var staged *stageError
+	if errors.As(err, &staged) {
+		return staged.step
+	}
+	return "pipeline"
+}
+
+// mediaContentPath is the API path that serves one stored derivative.
+//
+// The service deliberately knows nothing about the bucket's endpoint — the bucket
+// is private and no client is ever handed a link to it (KNOT-ADR-028) — so this is
+// the URL worth logging: if a job reports it uploaded, the bytes are in the bucket,
+// and a reader still seeing `processing` means the status write is what failed
+// (KNOT-037-fix17).
+func mediaContentPath(job processJob, variant Variant) string {
+	return "/stories/" + storyIDFromBaseKey(job.BaseKey) + "/media/" + job.MediaID + "/content?variant=" + string(variant)
+}
+
+// storyIDFromBaseKey reads the story id back out of a job's object-key stem,
+// which is `story-media/<story id>/<uuid>` (see StoryMediaKeyPrefix).
+func storyIDFromBaseKey(baseKey string) string {
+	parts := strings.Split(baseKey, "/")
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[len(parts)-2]
+}
+
 // runJob produces one upload's derivatives and records the outcome.
 //
 // The work is retried up to `retryAttempts` times, `retryDelay` apart: the common
@@ -202,6 +255,18 @@ func (s *Service) runJob(ctx context.Context, job processJob) {
 	if attempts < 1 {
 		attempts = 1
 	}
+
+	// The first line of the job's trace. Without it a row that never leaves
+	// `processing` is indistinguishable from one whose worker never started
+	// (KNOT-037-fix17).
+	s.logger.InfoContext(
+		ctx,
+		"media processing started",
+		"media_id", job.MediaID,
+		"media_type", string(job.MediaType),
+		"object_base_key", job.BaseKey,
+		"attempts", attempts,
+	)
 
 	var (
 		size int64
@@ -232,11 +297,16 @@ func (s *Service) runJob(ctx context.Context, job processJob) {
 	}
 
 	if err != nil {
+		// `step` names the stage that failed, and `error` carries the whole wrapped
+		// chain: the storage error is never replaced by a summary, so an S3 status
+		// code, request id, or FFmpeg message survives into the log
+		// (KNOT-037-fix17).
 		s.logger.ErrorContext(
 			ctx,
 			"media processing failed",
 			"media_id", job.MediaID,
 			"media_type", string(job.MediaType),
+			"step", failingStage(err),
 			"error", err.Error(),
 		)
 		s.setStatus(ctx, job.MediaID, StatusFailed, 0)
@@ -244,6 +314,14 @@ func (s *Service) runJob(ctx context.Context, job processJob) {
 	}
 
 	s.setStatus(ctx, job.MediaID, StatusReady, size)
+	s.logger.InfoContext(
+		ctx,
+		"media processing complete",
+		"media_id", job.MediaID,
+		"media_type", string(job.MediaType),
+		"status", string(StatusReady),
+		"size_bytes", size,
+	)
 }
 
 // sleepBeforeRetry waits for d, and reports false when ctx ended first. A
@@ -275,6 +353,7 @@ func (s *Service) setStatus(ctx context.Context, mediaID string, status Status, 
 			"could not record media status",
 			"media_id", mediaID,
 			"status", string(status),
+			"step", "record status",
 			"error", err.Error(),
 		)
 	}
@@ -289,7 +368,7 @@ func (s *Service) transcodeAndUpload(ctx context.Context, job processJob) (int64
 	case MediaTypeVideo:
 		return s.uploadStreamRendition(ctx, job)
 	default:
-		return 0, fmt.Errorf("storymedia: unknown media type %q", job.MediaType)
+		return 0, stage("pipeline", fmt.Errorf("storymedia: unknown media type %q", job.MediaType))
 	}
 }
 
@@ -303,26 +382,75 @@ func (s *Service) transcodeAndUpload(ctx context.Context, job processJob) (int64
 func (s *Service) uploadImageDerivatives(ctx context.Context, job processJob) (int64, error) {
 	data, err := os.ReadFile(job.TempPath)
 	if err != nil {
-		return 0, fmt.Errorf("read spooled upload: %w", err)
+		return 0, stage("read upload", fmt.Errorf("read spooled upload: %w", err))
 	}
 
 	renditions, err := ImageDerivatives(data)
+	if len(renditions) == 0 {
+		if err == nil {
+			err = fmt.Errorf("storymedia: the image produced no renditions")
+		}
+		return 0, stage("decode image", err)
+	}
+
+	// The widest rendition's dimensions ARE the decoded picture's: a source narrower
+	// than DisplayMaxWidth is re-encoded at its own size and nothing is upscaled. A
+	// partial set is logged too, so an encoder that failed first says how far the
+	// pipeline got (KNOT-037-fix17).
+	decoded := renditions[0]
+	for _, rendition := range renditions {
+		if rendition.Variant == VariantDisplay {
+			decoded = rendition
+			break
+		}
+	}
+	s.logger.InfoContext(
+		ctx,
+		"media decoded",
+		"media_id", job.MediaID,
+		"input_bytes", len(data),
+		"width", decoded.Width,
+		"height", decoded.Height,
+		"renditions", len(renditions),
+	)
+
 	if err != nil {
-		return 0, err
+		return 0, stage("encode derivatives", err)
 	}
 	if len(renditions) != 2 {
-		return 0, fmt.Errorf("storymedia: expected a display and a thumbnail, got %d renditions", len(renditions))
+		return 0, stage("encode derivatives", fmt.Errorf("storymedia: expected a display and a thumbnail, got %d renditions", len(renditions)))
 	}
 
 	uploaded := make([]string, 0, len(renditions))
 	var displaySize int64
 	for _, rendition := range renditions {
 		key := job.BaseKey + rendition.Suffix + rendition.Extension
+		s.logger.InfoContext(
+			ctx,
+			"uploading derivative to R2",
+			"media_id", job.MediaID,
+			"variant", string(rendition.Variant),
+			"format", string(rendition.Format),
+			"key", key,
+			"content_type", rendition.ContentType,
+			"size_bytes", len(rendition.Body),
+			"width", rendition.Width,
+			"height", rendition.Height,
+		)
 		if err := s.objects.Put(ctx, key, bytes.NewReader(rendition.Body), rendition.ContentType); err != nil {
 			s.discardObjects(ctx, uploaded)
-			return 0, fmt.Errorf("store %s: %w", rendition.Variant, err)
+			return 0, stage("upload "+string(rendition.Variant), fmt.Errorf("store %s: %w", rendition.Variant, err))
 		}
 		uploaded = append(uploaded, key)
+		s.logger.InfoContext(
+			ctx,
+			"derivative uploaded to R2",
+			"media_id", job.MediaID,
+			"variant", string(rendition.Variant),
+			"key", key,
+			"size_bytes", len(rendition.Body),
+			"url", mediaContentPath(job, rendition.Variant),
+		)
 		if rendition.Variant == VariantDisplay {
 			displaySize = int64(len(rendition.Body))
 		}
@@ -340,24 +468,49 @@ func (s *Service) uploadStreamRendition(ctx context.Context, job processJob) (in
 	defer removeTempFile(output)
 
 	if err := TranscodeToStream(ctx, job.TempPath, output); err != nil {
-		return 0, err
+		return 0, stage("transcode video", err)
 	}
 
 	info, err := os.Stat(output)
 	if err != nil {
-		return 0, fmt.Errorf("stat transcoded stream: %w", err)
+		return 0, stage("stat transcoded stream", fmt.Errorf("stat transcoded stream: %w", err))
 	}
 
 	file, err := os.Open(output)
 	if err != nil {
-		return 0, fmt.Errorf("open transcoded stream: %w", err)
+		return 0, stage("open transcoded stream", fmt.Errorf("open transcoded stream: %w", err))
 	}
 	defer func() { _ = file.Close() }()
 
 	key := job.BaseKey + streamSuffix + mp4Extension
+	s.logger.InfoContext(
+		ctx,
+		"video transcoded",
+		"media_id", job.MediaID,
+		"key", key,
+		"size_bytes", info.Size(),
+	)
+	s.logger.InfoContext(
+		ctx,
+		"uploading derivative to R2",
+		"media_id", job.MediaID,
+		"variant", string(VariantStream),
+		"key", key,
+		"content_type", videoContentType,
+		"size_bytes", info.Size(),
+	)
 	if err := s.objects.Put(ctx, key, file, videoContentType); err != nil {
-		return 0, fmt.Errorf("store stream: %w", err)
+		return 0, stage("upload "+string(VariantStream), fmt.Errorf("store stream: %w", err))
 	}
+	s.logger.InfoContext(
+		ctx,
+		"derivative uploaded to R2",
+		"media_id", job.MediaID,
+		"variant", string(VariantStream),
+		"key", key,
+		"size_bytes", info.Size(),
+		"url", mediaContentPath(job, VariantStream),
+	)
 
 	return info.Size(), nil
 }

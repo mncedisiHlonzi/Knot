@@ -635,6 +635,11 @@ type Storage interface {
 // best-effort object deletion fails or a background job cannot be recorded.
 // Depending on an interface keeps the service tests free of a logger.
 type Logger interface {
+	// InfoContext records one step of a background job. The pipeline runs after the
+	// response has been sent, so these lines are the only trace of it in production
+	// logs — a job that never finishes and a job that never started otherwise look
+	// identical (KNOT-037-fix17).
+	InfoContext(ctx context.Context, msg string, args ...any)
 	WarnContext(ctx context.Context, msg string, args ...any)
 	// ErrorContext reports a job that failed outright: the row is marked failed
 	// and the reason must reach the operator (KNOT-037-fix7).

@@ -239,18 +239,87 @@ func (o *fakeObjects) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-// fakeLogger records the warnings and errors the service emits.
+// fakeLogger records the lines the service emits. The mutex is required: the media
+// pipeline logs from background goroutines, and two jobs finishing at once append
+// concurrently (KNOT-037-fix17).
 type fakeLogger struct {
+	mu       sync.Mutex
+	infos    []string
 	warnings []string
 	errors   []string
+	entries  []logEntry
+}
+
+// logEntry is one captured line with its structured attributes.
+type logEntry struct {
+	level string
+	msg   string
+	attrs map[string]string
+}
+
+func (l *fakeLogger) InfoContext(_ context.Context, msg string, args ...any) {
+	l.record("info", msg, args)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.infos = append(l.infos, msg)
 }
 
 func (l *fakeLogger) WarnContext(_ context.Context, msg string, args ...any) {
+	l.record("warn", msg, args)
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.warnings = append(l.warnings, msg)
 }
 
 func (l *fakeLogger) ErrorContext(_ context.Context, msg string, args ...any) {
+	l.record("error", msg, args)
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	l.errors = append(l.errors, msg)
+}
+
+// record captures one line and its attributes, so a test can assert exactly what
+// an operator would read in the log stream.
+func (l *fakeLogger) record(level, msg string, args []any) {
+	attrs := make(map[string]string, len(args)/2)
+	for i := 0; i+1 < len(args); i += 2 {
+		key, ok := args[i].(string)
+		if !ok {
+			continue
+		}
+		attrs[key] = fmt.Sprint(args[i+1])
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.entries = append(l.entries, logEntry{level: level, msg: msg, attrs: attrs})
+}
+
+// find returns the first recorded line with msg.
+func (l *fakeLogger) find(msg string) (logEntry, bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	for _, entry := range l.entries {
+		if entry.msg == msg {
+			return entry, true
+		}
+	}
+
+	return logEntry{}, false
+}
+
+// messages lists every recorded message, for a failure that needs context.
+func (l *fakeLogger) messages() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	out := make([]string, 0, len(l.entries))
+	for _, entry := range l.entries {
+		out = append(out, entry.msg)
+	}
+
+	return out
 }
 
 func newTestService(t *testing.T, store StoryMediaStore, objects Storage) (*Service, *fakeLogger) {
@@ -1448,5 +1517,98 @@ func TestDeleteMediaRemovesTheDerivatives(t *testing.T) {
 	}
 	if len(objects.objects) != 0 {
 		t.Errorf("objects = %d, want none", len(objects.objects))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostics (KNOT-037-fix17)
+// ---------------------------------------------------------------------------
+
+// TestMediaJobLogsEveryPipelineStep pins the trace an operator reads on Render: a
+// job that never finishes is otherwise indistinguishable from one that never
+// started.
+func TestMediaJobLogsEveryPipelineStep(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, logger := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 800, 600))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+	service.WaitForProcessing()
+
+	for _, msg := range []string{
+		"media processing started",
+		"media decoded",
+		"uploading derivative to R2",
+		"derivative uploaded to R2",
+		"media processing complete",
+	} {
+		entry, ok := logger.find(msg)
+		if !ok {
+			t.Fatalf("no %q line logged; got %v", msg, logger.messages())
+		}
+		if entry.attrs["media_id"] != created.ID {
+			t.Errorf("%q media_id = %q, want %q", msg, entry.attrs["media_id"], created.ID)
+		}
+	}
+
+	decoded, _ := logger.find("media decoded")
+	if decoded.attrs["width"] != "800" || decoded.attrs["height"] != "600" {
+		t.Errorf("decoded dimensions = %sx%s, want 800x600", decoded.attrs["width"], decoded.attrs["height"])
+	}
+
+	uploaded, _ := logger.find("derivative uploaded to R2")
+	if uploaded.attrs["key"] == "" {
+		t.Error("the uploaded line has no object key")
+	}
+	if url := uploaded.attrs["url"]; !strings.Contains(url, created.ID) || !strings.Contains(url, "variant=") {
+		t.Errorf("uploaded url = %q, want an API path for this media", url)
+	}
+	if size := uploaded.attrs["size_bytes"]; size == "" || size == "0" {
+		t.Errorf("uploaded size_bytes = %q, want the stored object's size", size)
+	}
+
+	complete, _ := logger.find("media processing complete")
+	if complete.attrs["status"] != string(StatusReady) {
+		t.Errorf("complete status = %q, want %q", complete.attrs["status"], StatusReady)
+	}
+}
+
+// TestMediaJobLogsTheStepAndTheFullError pins the pair that makes a deployment
+// failure actionable: which stage failed, and the object store's own words.
+func TestMediaJobLogsTheStepAndTheFullError(t *testing.T) {
+	const storeMessage = "operation error S3: PutObject, https response error StatusCode: 403, RequestID: ABC123, api error AccessDenied"
+
+	store := newFakeStore()
+	objects := newFakeObjects()
+	objects.putErr = errors.New(storeMessage)
+	service, logger := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 40, 30))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+	service.WaitForProcessing()
+
+	failed, ok := logger.find("media processing failed")
+	if !ok {
+		t.Fatalf("no failure line logged; got %v", logger.messages())
+	}
+	wantStep := "upload " + string(VariantDisplay)
+	if failed.attrs["step"] != wantStep {
+		t.Errorf("step = %q, want %q", failed.attrs["step"], wantStep)
+	}
+	if !strings.Contains(failed.attrs["error"], storeMessage) {
+		t.Errorf("error = %q, want it to carry the store's full message", failed.attrs["error"])
+	}
+
+	stored, err := store.GetMedia(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetMedia() error = %v", err)
+	}
+	if stored.Status != StatusFailed {
+		t.Errorf("status = %q, want %q", stored.Status, StatusFailed)
 	}
 }
