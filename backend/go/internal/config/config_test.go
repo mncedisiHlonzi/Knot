@@ -34,6 +34,7 @@ func clearEnv(t *testing.T) {
 		envKeyFeedCap,
 		envKeyDetailCache,
 		envKeyDetailTTL,
+		envKeyPort,
 	} {
 		t.Setenv(key, "")
 	}

@@ -66,6 +66,11 @@ const (
 	envKeyFeedCap         = "KNOT_FEED_CAP"
 	envKeyDetailCache     = "KNOT_DETAIL_CACHE_ENABLED"
 	envKeyDetailTTL       = "KNOT_DETAIL_CACHE_TTL"
+	// envKeyPort is the generic listen-port variable a platform provider injects
+	// into a web service (Render, and most PaaS platforms). It is only a fallback
+	// for KNOT_HTTP_PORT, so an explicit Knot setting always wins
+	// (KNOT-037-fix13).
+	envKeyPort = "PORT"
 )
 
 // Safe local defaults. These are placeholders that match .env.example and the
@@ -253,6 +258,9 @@ type Config struct {
 //     and KNOT_S3_SECRET_KEY are required too: outside local there is no default
 //     object store to fall back to. Load fails fast, naming every problem.
 //   - KNOT_HTTP_PORT and KNOT_LOG_LEVEL must be valid when set.
+//   - PORT is the listen-port fallback a platform provider injects (Render does
+//     this for every web service). It is read only when KNOT_HTTP_PORT is unset,
+//     and must be valid when set (KNOT-037-fix13).
 //   - KNOT_REDIS_PASSWORD is optional in every environment and is read verbatim:
 //     an empty value means the server requires no password, which is how the
 //     local docker-compose stack runs.
@@ -282,7 +290,7 @@ type Config struct {
 //
 // Load performs no I/O beyond reading environment variables.
 func Load() (Config, error) {
-	httpPort, err := parseHTTPPort(os.Getenv(envKeyHTTPPort))
+	httpPort, err := parseHTTPPort(os.Getenv(envKeyHTTPPort), os.Getenv(envKeyPort))
 	if err != nil {
 		return Config{}, err
 	}
@@ -456,19 +464,33 @@ func (c Config) UsingInsecureJWTSecret() bool {
 	return c.JWTSecret == LocalJWTSecretPlaceholder || len(c.JWTSecret) < MinJWTSecretBytes
 }
 
-// parseHTTPPort resolves KNOT_HTTP_PORT, defaulting when unset.
-func parseHTTPPort(raw string) (int, error) {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" {
-		return defaultHTTPPort, nil
+// parseHTTPPort resolves the listen port, in order of precedence: KNOT_HTTP_PORT
+// (Knot's own name for it), then PORT (injected by a platform provider such as
+// Render), then the local default. A value that is set but unusable is an error
+// rather than a silent fallback: a service that listens somewhere its proxy is
+// not forwarding to is unreachable, with no other symptom.
+//
+// The returned port is combined with an empty host by the caller (":8080"),
+// which binds every interface — what a platform proxy requires.
+func parseHTTPPort(raw string, platformRaw string) (int, error) {
+	if trimmed := strings.TrimSpace(raw); trimmed != "" {
+		return parsePort(envKeyHTTPPort, trimmed)
+	}
+	if trimmed := strings.TrimSpace(platformRaw); trimmed != "" {
+		return parsePort(envKeyPort, trimmed)
 	}
 
-	port, err := strconv.Atoi(trimmed)
+	return defaultHTTPPort, nil
+}
+
+// parsePort validates one listen-port value, naming the variable it came from.
+func parsePort(key string, raw string) (int, error) {
+	port, err := strconv.Atoi(raw)
 	if err != nil {
-		return 0, fmt.Errorf("config: %s must be a number: %w", envKeyHTTPPort, err)
+		return 0, fmt.Errorf("config: %s must be a number: %w", key, err)
 	}
 	if port < 1 || port > 65535 {
-		return 0, fmt.Errorf("config: %s must be between 1 and 65535 (got %d)", envKeyHTTPPort, port)
+		return 0, fmt.Errorf("config: %s must be between 1 and 65535 (got %d)", key, port)
 	}
 
 	return port, nil

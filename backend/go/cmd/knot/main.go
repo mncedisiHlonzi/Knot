@@ -638,6 +638,12 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	}
 
 	server := &http.Server{
+		// The host is deliberately empty: ":8080" binds every interface, IPv4
+		// and IPv6, which is what a platform proxy requires (Render forwards to
+		// 0.0.0.0). An explicit "127.0.0.1" or "localhost" here would accept
+		// connections only from inside the container and the service would
+		// answer nothing from the outside. The port comes from KNOT_HTTP_PORT,
+		// else the PORT variable Render injects, else 8080 (KNOT-037-fix13).
 		Addr:    fmt.Sprintf(":%d", cfg.HTTPPort),
 		Handler: router.Handler(),
 		// These bounds protect the server from slow or stalled clients. Read and
