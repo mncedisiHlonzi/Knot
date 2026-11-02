@@ -204,6 +204,28 @@ can seek; the thumbnail is sent whole. A failed job is an `ERROR` line whose `me
 identifies the row, and the row stays `failed` rather than pretending the upload never
 happened.
 
+**Uploads are retried at two levels (KNOT-037-fix12).** In `internal/storage` the S3 client
+is built with a `retry.NewStandard` policy of **10 attempts** and an exponential backoff
+capped at 20s, and the transfer manager sends **every** upload — however small — as a
+multipart upload (`multipartThreshold = 1`; 0 would be read as "use the 16 MiB default").
+Together those mean a dropped TLS handshake costs one part's retry rather than the whole
+file. In `internal/storymedia` the background job itself is attempted **3 times, 5s apart**
+(`maxJobAttempts`, `jobRetryDelay`), which covers the work between the requests and the case
+where every storage attempt was exhausted. A retry restarts the whole pipeline from the
+spooled upload, so it costs an extra encode; after the last attempt the row is `failed` and
+the reason is logged. The delays are fields on `Service` so the tests retry immediately.
+
+**The composer does not wait for its uploads (KNOT-037-fix12).** `CreateStoryScreen` awaits
+only `POST /stories`, then alerts the reader, hands the story to the feed, and uploads the
+picked media in the background. The feed inserts the story at the top with local
+`processing` placeholders and polls it (`useStoryPolling`). Because the server legitimately
+has no media rows while the bytes are still crossing the wire, the poll is started with
+`awaitingMedia: true` (an empty media array is "not yet", not "never") and
+`itemsWithStory` keeps the local placeholders until the server acknowledges at least one
+row. A background upload failure is logged and swallowed — there is no screen left to
+report it to — so the card keeps its placeholder; the next refresh shows what the server
+actually stored.
+
 **Both thumbnail encoders are pure Go**: `github.com/chai2010/webp` (libwebp compiled in)
 and `github.com/gen2brain/avif` (libavif compiled to WASM, run by `wazero`). Nothing native
 needs installing, and there is no cgo library to provision on CI. AVIF encoding is the

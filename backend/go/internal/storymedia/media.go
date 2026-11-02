@@ -578,7 +578,27 @@ type Service struct {
 	// pending tracks the background jobs, so tests can wait for them and a graceful
 	// shutdown can drain them (KNOT-037-fix7).
 	pending sync.WaitGroup
+	// retryAttempts and retryDelay are the job retry policy. They are fields rather
+	// than constants so a test can retry immediately instead of spending ten seconds
+	// waiting for a failure it expects (KNOT-037-fix12); production uses the values
+	// NewService installs.
+	retryAttempts int
+	retryDelay    time.Duration
 }
+
+// How a failed derivative job is retried (KNOT-037-fix12).
+const (
+	// maxJobAttempts is how many times one upload's derivatives are attempted before
+	// the row is marked failed. The storage layer already retries each S3 request ten
+	// times, so this is the second line: it covers the work between those requests —
+	// a transcode that could not read its spooled file, a local write that hit a full
+	// disk — and the case where every storage attempt was exhausted.
+	maxJobAttempts = 3
+	// jobRetryDelay is the wait between attempts. Long enough for the network fault
+	// that usually caused the failure to clear, short enough that the row is not
+	// stuck in `processing` for minutes.
+	jobRetryDelay = 5 * time.Second
+)
 
 // processor turns one uploaded file into its derivatives, and reports the size of
 // the primary object it stored so the row can describe what it serves.
@@ -640,10 +660,12 @@ func NewService(store StoryMediaStore, objects Storage, logger Logger) (*Service
 	}
 
 	service := &Service{
-		store:     store,
-		objects:   objects,
-		logger:    logger,
-		semaphore: make(chan struct{}, MaxConcurrentProcessing),
+		store:         store,
+		objects:       objects,
+		logger:        logger,
+		semaphore:     make(chan struct{}, MaxConcurrentProcessing),
+		retryAttempts: maxJobAttempts,
+		retryDelay:    jobRetryDelay,
 	}
 	service.processMedia = service.transcodeAndUpload
 

@@ -7,8 +7,10 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -26,13 +28,71 @@ import (
 // mean fewer round trips and less per-request overhead, which is what a slow,
 // high-latency link punishes; more concurrency than that only splits a saturated
 // uplink into smaller pieces. 8 MiB is also comfortably above S3's 5 MiB minimum
-// part size, so a small file still goes as a single PutObject.
+// part size, so even a two-part upload is valid.
 const (
 	// uploadPartSize is the size of one multipart part.
 	uploadPartSize = 8 << 20
 	// uploadConcurrency is how many parts are sent at once.
 	uploadConcurrency = 3
+
+	// multipartThreshold makes EVERY non-empty upload go through the multipart
+	// path (KNOT-037-fix12).
+	//
+	// The transfer manager treats a threshold of 0 as "use the 16 MiB default", so
+	// 1 is the smallest value that has the effect: a body of at least one byte is
+	// uploaded as parts, and each part is a separate request the SDK retries on its
+	// own. That is what keeps a TLS handshake timeout on one part from costing the
+	// whole file. The price is two extra round trips (create + complete) on a small
+	// object; on the link this was tuned for, that is cheaper than restarting a
+	// multi-megabyte upload.
+	multipartThreshold = 1
 )
+
+// How hard the client retries (KNOT-037-fix12).
+const (
+	// maxStorageAttempts is how many times one S3 request is attempted. The SDK's
+	// default of 3 is sized for a healthy network; the founder's uplink drops TLS
+	// handshakes and resets connections often enough that a request needs more
+	// chances than that before it is called a failure.
+	maxStorageAttempts = 10
+	// storageMaxBackoff caps the wait between two attempts. The backoff itself is
+	// exponential with jitter, so a run of failures spreads out instead of hammering
+	// a link that is already struggling.
+	storageMaxBackoff = 20 * time.Second
+)
+
+// storageRetryer is the retry policy every request in this package uses.
+//
+// It is built once per client. NewStandard's own backoff is exponential with
+// jitter; naming it explicitly records that the behaviour is a decision rather
+// than a default that could change under us (KNOT-037-fix12).
+func storageRetryer() aws.Retryer {
+	return retry.NewStandard(func(o *retry.StandardOptions) {
+		o.MaxAttempts = maxStorageAttempts
+		o.MaxBackoff = storageMaxBackoff
+		o.Backoff = retry.NewExponentialJitterBackoff(storageMaxBackoff)
+	})
+}
+
+// uploadOptions is the transfer manager's configuration, shared by the one client
+// this package builds. It is a named function so a test can assert the values the
+// production client is actually constructed with.
+func uploadOptions(o *transfermanager.Options) {
+	o.PartSizeBytes = uploadPartSize
+	o.MultipartUploadThreshold = multipartThreshold
+	o.Concurrency = uploadConcurrency
+	// Every upload carries a CRC32 that the store verifies per part, so integrity
+	// no longer rests on the transport alone. CRC32 rather than SHA256: the goal is
+	// detecting corruption in transit, not resisting an adversary who controls the
+	// bytes, and CRC32 is the cheapest algorithm R2 supports. The SDK would add a
+	// checksum by default anyway; naming it makes the guarantee explicit instead of
+	// dependent on a default that could change (KNOT-037-fix4).
+	//
+	// The value is transfermanager's own ChecksumAlgorithm type, not
+	// service/s3/types: the two are distinct string types and cannot be assigned
+	// across each other.
+	o.ChecksumAlgorithm = transfertypes.ChecksumAlgorithmCrc32
+}
 
 // putUploader is the one method this package needs from the transfer manager.
 //
@@ -94,6 +154,10 @@ func NewS3Storage(ctx context.Context, endpoint, region, accessKey, secretKey, b
 		return nil, fmt.Errorf("storage: load aws config: %w", err)
 	}
 
+	// Every request this client makes — a part upload, a ranged read, a delete —
+	// gets the aggressive policy (KNOT-037-fix12).
+	cfg.Retryer = storageRetryer
+
 	client := s3.NewFromConfig(cfg, func(options *s3.Options) {
 		options.BaseEndpoint = aws.String(endpoint)
 		options.UsePathStyle = true
@@ -113,41 +177,21 @@ func NewS3Storage(ctx context.Context, endpoint, region, accessKey, secretKey, b
 	// transient network fault costs one part rather than the whole upload
 	// (KNOT-037-fix2).
 	//
-	// MultipartUploadThreshold is set explicitly, which manager had no equivalent
-	// for: manager switched to multipart once the body exceeded PartSize, whereas
-	// transfermanager defaults the threshold to 16 MiB independently. Leaving the
-	// default would have silently sent an 8-16 MiB upload as one PutObject — the
-	// exact behaviour this was tuned to avoid (KNOT-037-fix3).
-	uploader := transfermanager.New(client, func(o *transfermanager.Options) {
-		o.PartSizeBytes = uploadPartSize
-		o.MultipartUploadThreshold = uploadPartSize
-		o.Concurrency = uploadConcurrency
-		// Every upload carries a CRC32 that the store verifies per part, so
-		// integrity no longer rests on the transport alone. CRC32 rather than
-		// SHA256: the goal is detecting corruption in transit, not resisting an
-		// adversary who controls the bytes, and CRC32 is the cheapest algorithm R2
-		// supports. The SDK would add a checksum by default anyway; naming it makes
-		// the guarantee explicit instead of dependent on a default that could change
-		// (KNOT-037-fix4).
-		//
-		// The value is transfermanager's own ChecksumAlgorithm type, not
-		// service/s3/types: the two are distinct string types and cannot be
-		// assigned across each other.
-		o.ChecksumAlgorithm = transfertypes.ChecksumAlgorithmCrc32
-	})
+	// MultipartUploadThreshold is set deliberately below every real file, so all
+	// uploads take the multipart path and every part is retried on its own
+	// (KNOT-037-fix12). The transfer manager's own default of 16 MiB is applied when
+	// the field is 0, which is why the threshold is 1 rather than 0.
+	uploader := transfermanager.New(client, uploadOptions)
 
 	return &S3Storage{client: client, uploader: uploader, bucket: bucket}, nil
 }
 
 // Put stores body under key with the given content type.
 //
-// It goes through the transfer manager rather than a bare PutObject. For a body
-// that fits in one part the manager sends a single PutObject — the same request as
-// before — and above that it splits the body into parts and sends them with bounded
-// concurrency. The point is not throughput on a fast link, where one request is
-// already efficient: it is that a large upload over a slow or unreliable one no
-// longer has to survive as a single long-lived request, and a failure retries a
-// part instead of restarting the file (KNOT-037-fix2).
+// It goes through the transfer manager rather than a bare PutObject. Every upload
+// takes the multipart path (KNOT-037-fix12), so a failure retries a part instead of
+// restarting the file, which is what makes an unstable uplink survivable rather
+// than merely slow (KNOT-037-fix2).
 func (s *S3Storage) Put(ctx context.Context, key string, body io.Reader, contentType string) error {
 	_, err := s.uploader.UploadObject(ctx, &transfermanager.UploadObjectInput{
 		Bucket:      aws.String(s.bucket),

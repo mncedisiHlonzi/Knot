@@ -9,9 +9,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager"
+	transfertypes "github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager/types"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
@@ -394,5 +397,73 @@ func TestS3StorageBuildsAMultipartUploader(t *testing.T) {
 	}
 	if _, ok := store.uploader.(*transfermanager.Client); !ok {
 		t.Errorf("S3Storage.uploader is %T, want *transfermanager.Client", store.uploader)
+	}
+}
+
+// TestStorageRetryerIsAggressive pins the KNOT-037-fix12 policy: a failing object
+// request is attempted ten times, not the SDK's default three, with an explicitly
+// configured exponential backoff.
+func TestStorageRetryerIsAggressive(t *testing.T) {
+	retryer := storageRetryer()
+
+	if got := retryer.MaxAttempts(); got != maxStorageAttempts {
+		t.Errorf("MaxAttempts() = %d, want %d", got, maxStorageAttempts)
+	}
+	if maxStorageAttempts <= 3 {
+		t.Errorf("maxStorageAttempts = %d, want more than the SDK default of 3", maxStorageAttempts)
+	}
+	if storageMaxBackoff != 20*time.Second {
+		t.Errorf("storageMaxBackoff = %v, want 20s", storageMaxBackoff)
+	}
+	if _, ok := retryer.(*retry.Standard); !ok {
+		t.Errorf("storageRetryer() is %T, want *retry.Standard (exponential backoff with jitter)", retryer)
+	}
+}
+
+// TestS3ClientUsesTheStorageRetryer proves the constructor actually attaches the
+// policy to the client every request goes through.
+func TestS3ClientUsesTheStorageRetryer(t *testing.T) {
+	store, err := NewS3Storage(
+		context.Background(),
+		"http://127.0.0.1:9000",
+		"us-east-1",
+		"knot",
+		"knot_local_only_change_me",
+		"knot-media",
+	)
+	if err != nil {
+		t.Fatalf("NewS3Storage() error = %v, want nil", err)
+	}
+
+	retryer := store.client.Options().Retryer
+	if retryer == nil {
+		t.Fatal("client Retryer = nil, want the storage policy")
+	}
+	if got := retryer.MaxAttempts(); got != maxStorageAttempts {
+		t.Errorf("client MaxAttempts() = %d, want %d", got, maxStorageAttempts)
+	}
+}
+
+// TestUploadOptionsSendEveryFileAsMultipart pins the other half of KNOT-037-fix12:
+// the threshold sits below any real file, so a part — not a whole upload — is what
+// a retry costs. A threshold of 0 would be read as "use the 16 MiB default".
+func TestUploadOptionsSendEveryFileAsMultipart(t *testing.T) {
+	var options transfermanager.Options
+	uploadOptions(&options)
+
+	if options.MultipartUploadThreshold == 0 {
+		t.Fatal("MultipartUploadThreshold = 0, which the manager replaces with its 16 MiB default")
+	}
+	if options.MultipartUploadThreshold != multipartThreshold || multipartThreshold != 1 {
+		t.Errorf("MultipartUploadThreshold = %d, want %d", options.MultipartUploadThreshold, multipartThreshold)
+	}
+	if options.PartSizeBytes != uploadPartSize {
+		t.Errorf("PartSizeBytes = %d, want %d", options.PartSizeBytes, uploadPartSize)
+	}
+	if options.Concurrency != uploadConcurrency {
+		t.Errorf("Concurrency = %d, want %d", options.Concurrency, uploadConcurrency)
+	}
+	if options.ChecksumAlgorithm != transfertypes.ChecksumAlgorithmCrc32 {
+		t.Errorf("ChecksumAlgorithm = %q, want crc32", options.ChecksumAlgorithm)
 	}
 }

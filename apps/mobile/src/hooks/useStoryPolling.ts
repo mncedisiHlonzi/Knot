@@ -42,6 +42,9 @@ export function useStoryPolling(
         return response.story;
       },
       onUpdate,
+      // The composer uploads after it publishes, so "no media yet" is expected for
+      // a while rather than a final answer (KNOT-037-fix12).
+      awaitingMedia: true,
       isCancelled: () => cancelled,
     });
 

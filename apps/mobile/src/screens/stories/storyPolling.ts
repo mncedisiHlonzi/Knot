@@ -90,11 +90,17 @@ export function firstProcessingStoryId(
  * The composer's optimistic entry has to survive a page load that raced it: the
  * feed may finish its first request before or after the story is handed over, and
  * either order must leave exactly one copy of it at the top (KNOT-037-fix8).
+ *
+ * It also has to survive a poll that runs BEFORE the uploads land. The composer
+ * hands the story over as soon as `POST /stories` answers and uploads the media
+ * afterwards (KNOT-037-fix12), so the server legitimately reports no media for a
+ * few seconds. Taking that answer literally would clear the card's "Processing"
+ * state and stop the feed asking again, so the local placeholders are kept until
+ * the server acknowledges at least one item.
  */
-export function itemsWithStory<T extends { readonly id: string }>(
-  items: readonly T[],
-  story: T | undefined,
-): readonly T[] {
+export function itemsWithStory<
+  T extends { readonly id: string; readonly media?: readonly StoryMedia[] },
+>(items: readonly T[], story: T | undefined): readonly T[] {
   if (story === undefined) {
     return items;
   }
@@ -104,8 +110,13 @@ export function itemsWithStory<T extends { readonly id: string }>(
     return [story, ...items];
   }
 
+  const existing = items[existingIndex];
+  const awaitingUpload = (story.media ?? []).length === 0 && hasProcessingMedia(existing.media);
+
   const updated = items.slice();
-  updated[existingIndex] = { ...items[existingIndex], ...story };
+  updated[existingIndex] = awaitingUpload
+    ? ({ ...story, media: existing.media } as T)
+    : { ...existing, ...story };
   return updated;
 }
 
@@ -184,6 +195,16 @@ export type StoryPollOptions = {
   readonly sleep?: (ms: number) => Promise<void>;
   /** Checked before and after every wait, so an unmounted screen stops the loop. */
   readonly isCancelled?: () => boolean;
+  /**
+   * True when media is known to be on its way but the server has not recorded it
+   * yet — the composer uploads after it publishes (KNOT-037-fix12).
+   *
+   * Without this, the first read that finds no media would be read as "nothing was
+   * ever attached" and end the loop, which is exactly what happened when the
+   * composer stopped waiting for its uploads. Defaults to `false`, so a story that
+   * genuinely has no media still finishes on its first answer.
+   */
+  readonly awaitingMedia?: boolean;
 };
 
 /** Waits for `ms` milliseconds. */
@@ -230,8 +251,18 @@ export async function runStoryPolling(options: StoryPollOptions): Promise<StoryP
 
     options.onUpdate(story);
 
-    if (!hasProcessingMedia(story.media)) {
-      return hasFailedMedia(story.media) ? 'failed' : 'ready';
+    const media = story.media ?? [];
+    if (options.awaitingMedia === true && media.length === 0) {
+      // The upload has not reached the server yet, so there is nothing to judge: a
+      // story with no media rows yet is not the same as a story without media.
+      if (now() - startedAt >= timeoutMs) {
+        return 'timeout';
+      }
+      continue;
+    }
+
+    if (!hasProcessingMedia(media)) {
+      return hasFailedMedia(media) ? 'failed' : 'ready';
     }
     if (now() - startedAt >= timeoutMs) {
       return 'timeout';

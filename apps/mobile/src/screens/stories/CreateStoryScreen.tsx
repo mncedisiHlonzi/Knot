@@ -1,5 +1,14 @@
 import React, { useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Alert,
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { FilmStrip, Flag, Globe, ImageSquare, MapPin, Plus, X } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
@@ -70,6 +79,47 @@ const BODY_PLACEHOLDER = 'Tell it the way you would tell it out loud';
  * (KNOT-020k-fix14).
  */
 const DRAFT_STATUS = 'Not published yet';
+
+/** The headline of the notice shown when a story is published (KNOT-037-fix12). */
+const PUBLISHED_TITLE = 'Story published';
+
+/**
+ * What publishing tells the reader.
+ *
+ * The story exists the moment the composer closes, but its pictures and videos are
+ * still being encoded by the backend, so the sentence says so instead of implying
+ * that everything is already on screen (KNOT-037-fix12).
+ */
+const PROCESSING_NOTICE =
+  'Your story is being processed. We will show the media here as soon as it is ready.';
+
+/**
+ * Uploads the composer's media after the reader has left it.
+ *
+ * Publishing closes the composer before these requests finish — the story exists
+ * and the feed is already showing it (KNOT-037-fix12) — so there is no screen left
+ * to report a failure to. Each item is sent one at a time, so a large video never
+ * competes with the next file for the same uplink (KNOT-ADR-032), and a failure is
+ * logged rather than thrown: the card keeps its placeholder, and the next refresh
+ * shows what the server actually stored.
+ */
+async function uploadPickedMedia(
+  storyId: string,
+  media: readonly PickedMedia[],
+  token: string,
+): Promise<void> {
+  for (const item of media) {
+    try {
+      await uploadStoryMedia(storyId, item.uri, item.mimeType, item.source, token, item.size, {
+        ...(item.width === undefined ? {} : { width: item.width }),
+        ...(item.height === undefined ? {} : { height: item.height }),
+        ...(item.duration === undefined ? {} : { durationMs: Math.round(item.duration * 1000) }),
+      });
+    } catch (caught) {
+      console.warn('[create] media upload failed after publishing', describeError(caught));
+    }
+  }
+}
 
 /**
  * Returns the first client-side validation problem, or undefined when the form is
@@ -145,9 +195,6 @@ export default function CreateStoryScreen({
   const [openPicker, setOpenPicker] = useState<'language' | 'place' | undefined>(undefined);
   // The inline notice shown when a pick is cut down to the free slots.
   const [mediaNotice, setMediaNotice] = useState<string | undefined>(undefined);
-  // Set once the story has been created. If a media upload then fails, the story
-  // already exists, so a retry reuses it rather than publishing a duplicate.
-  const [createdStory, setCreatedStory] = useState<Story | undefined>(undefined);
 
   /** The story is full: another item would exceed the server's cap (KNOT-ADR-054). */
   const atMediaCap = !canAddMedia(media.length);
@@ -220,33 +267,28 @@ export default function CreateStoryScreen({
     };
 
     try {
-      // Create the story once. On a retry after a media failure it is reused.
-      let story = createdStory;
-      if (story === undefined) {
-        const result = await storiesApi.createStory(token, payload);
-        story = result.story;
-        setCreatedStory(story);
-      }
+      // Only the story itself is awaited. It is one small JSON request, and its id
+      // is what the feed needs in order to insert the card and poll it; the media
+      // is uploaded afterwards, so a 20 MiB video no longer holds the reader on
+      // this screen while the bytes cross the wire (KNOT-037-fix12).
+      const result = await storiesApi.createStory(token, payload);
+      const story = result.story;
 
-      // Upload the media sequentially: one request at a time, so a large video
-      // is not competing for bandwidth with the next file (KNOT-ADR-032).
-      for (const item of media) {
-        await uploadStoryMedia(story.id, item.uri, item.mimeType, item.source, token, item.size, {
-          ...(item.width === undefined ? {} : { width: item.width }),
-          ...(item.height === undefined ? {} : { height: item.height }),
-          ...(item.duration === undefined ? {} : { durationMs: Math.round(item.duration * 1000) }),
-        });
-      }
+      Alert.alert(PUBLISHED_TITLE, PROCESSING_NOTICE);
 
-      // Hand over the story with the media the composer just uploaded marked
-      // `processing`: the detail and the feed draw a placeholder from it and poll
-      // until the backend has encoded the bytes (KNOT-037-fix8).
+      // The story is handled over with local `processing` placeholders, so the
+      // feed can draw it at once and fill it in when the server reports the real
+      // rows (KNOT-037-fix8).
       onCreated(withPendingMedia(story, media));
+
+      // The bytes follow the story instead of blocking it. The backend answers 202
+      // as soon as it has them and encodes in the background, and the feed polls
+      // the story until they are ready (KNOT-037-fix12).
+      void uploadPickedMedia(story.id, media, token);
     } catch (caught) {
-      // A media failure leaves the story in place: it is already published, so it
-      // is kept and the error shown rather than rolled back.
+      // The story was NOT created, so the composer stays open with the error and
+      // the reader can try again without losing what they wrote.
       setError(describeError(caught));
-    } finally {
       setSubmitting(false);
     }
   }

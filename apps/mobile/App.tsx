@@ -804,18 +804,19 @@ function ThemedApp(): React.ReactElement {
     switch (overlay.name) {
       // The composer is an overlay rather than a tab: it is a task you finish or
       // abandon, not a place you live in, so it slides over the feed and the bar
-      // hides until it closes (KNOT-020k-fix6). Publishing replaces it with the
-      // story it stored, so back from that story returns to the feed.
+      // hides until it closes (KNOT-020k-fix6). Publishing closes it and returns to
+      // the feed, which shows the new story at the top with a processing card and
+      // fills in the media as the backend encodes it (KNOT-037-fix12).
       case 'createStory':
         return (
           <CreateStoryScreen
             token={current.accessToken}
             onCreated={(story) => {
-              // The composer has already uploaded the media, so the story carries
-              // items marked `processing`: the detail shows placeholders and the
-              // feed keeps a copy for when the reader goes back (KNOT-037-fix8).
+              // The composer has handed the story over with local `processing`
+              // placeholders instead of waiting for its uploads, so the feed keeps
+              // a copy to show and poll (KNOT-037-fix12).
               setPendingStory(story);
-              setOverlays((stack) => replaceOverlay(stack, { name: 'detail', storyId: story.id }));
+              setOverlays((stack) => popOverlay(stack));
             }}
             onCancel={handleBack}
           />

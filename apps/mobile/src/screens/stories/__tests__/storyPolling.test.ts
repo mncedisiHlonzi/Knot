@@ -98,6 +98,30 @@ describe('itemsWithStory', () => {
   it('leaves the list alone when there is nothing to add', () => {
     expect(itemsWithStory(existing, undefined)).toEqual(existing);
   });
+
+  /**
+   * The composer publishes, then uploads (KNOT-037-fix12), so a poll can read the
+   * story while the server still has no media rows. Dropping the placeholders there
+   * would clear the processing card and stop the feed asking again.
+   */
+  it('keeps the optimistic placeholders while the server has seen no upload yet', () => {
+    const pending = { id: 'story-1', media: [media('processing', 'pending-story-1-0')] };
+    const unacknowledged = { id: 'story-1', media: [] as StoryMedia[] };
+
+    const updated = itemsWithStory([pending], unacknowledged);
+
+    expect(updated).toHaveLength(1);
+    expect(updated[0].media).toEqual(pending.media);
+  });
+
+  it('takes the server media as soon as it exists', () => {
+    const pending = { id: 'story-1', media: [media('processing', 'pending-story-1-0')] };
+    const real = { id: 'story-1', media: [media('ready', 'media-1')] };
+
+    const updated = itemsWithStory([pending], real);
+
+    expect(updated[0].media).toEqual(real.media);
+  });
 });
 
 describe('withPendingMedia', () => {
@@ -186,6 +210,45 @@ describe('runStoryPolling', () => {
   it('stops as soon as the server says the item is ready', async () => {
     const clock = fakeClock();
     const fetchStory = jest.fn().mockResolvedValue(storyWith([media('ready')]));
+
+    const outcome = await runStoryPolling({
+      storyId: 'story-1',
+      fetchStory,
+      onUpdate: () => undefined,
+      ...clock,
+    });
+
+    expect(outcome).toBe('ready');
+    expect(fetchStory).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The composer uploads AFTER it publishes (KNOT-037-fix12), so the first reads can
+   * legitimately see a story with no media at all. That is "not yet", not "never".
+   */
+  it('keeps asking while the upload has not reached the server', async () => {
+    const clock = fakeClock();
+    const fetchStory = jest
+      .fn()
+      .mockResolvedValueOnce(storyWith([]))
+      .mockResolvedValueOnce(storyWith([media('processing')]))
+      .mockResolvedValueOnce(storyWith([media('ready')]));
+
+    const outcome = await runStoryPolling({
+      storyId: 'story-1',
+      fetchStory,
+      onUpdate: () => undefined,
+      awaitingMedia: true,
+      ...clock,
+    });
+
+    expect(outcome).toBe('ready');
+    expect(fetchStory).toHaveBeenCalledTimes(3);
+  });
+
+  it('still finishes on the first answer when no media is expected', async () => {
+    const clock = fakeClock();
+    const fetchStory = jest.fn().mockResolvedValue(storyWith([]));
 
     const outcome = await runStoryPolling({
       storyId: 'story-1',

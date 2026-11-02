@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // CreateMedia validates the input, records the media row, and queues the work that
@@ -184,13 +185,52 @@ func (s *Service) enqueue(job processJob) {
 
 // runJob produces one upload's derivatives and records the outcome.
 //
-// A failure never loses the row: it is marked failed, the reason is logged, and
-// the row stays visible (with no bytes) rather than pretending the upload never
-// happened. The spooled file is removed either way (KNOT-037-fix7).
+// The work is retried up to `retryAttempts` times, `retryDelay` apart: the common
+// failure is the object store dropping a connection on an unstable uplink, which a
+// second attempt usually survives (KNOT-037-fix12). Each attempt restarts the whole
+// pipeline — the spooled upload is still on disk, and a partially uploaded set is
+// discarded by the pipeline itself — so a retry never leaves half an item behind.
+//
+// A failure never loses the row: after the last attempt it is marked failed, the
+// reason is logged, and the row stays visible (with no bytes) rather than pretending
+// the upload never happened. The spooled file is removed either way
+// (KNOT-037-fix7).
 func (s *Service) runJob(ctx context.Context, job processJob) {
 	defer removeTempFile(job.TempPath)
 
-	size, err := s.processMedia(ctx, job)
+	attempts := s.retryAttempts
+	if attempts < 1 {
+		attempts = 1
+	}
+
+	var (
+		size int64
+		err  error
+	)
+	for attempt := 1; attempt <= attempts; attempt++ {
+		size, err = s.processMedia(ctx, job)
+		if err == nil {
+			break
+		}
+		if attempt == attempts {
+			break
+		}
+
+		s.logger.WarnContext(
+			ctx,
+			"media processing attempt failed; retrying",
+			"media_id", job.MediaID,
+			"media_type", string(job.MediaType),
+			"attempt", attempt,
+			"attempts", attempts,
+			"retry_in", s.retryDelay.String(),
+			"error", err.Error(),
+		)
+		if !sleepBeforeRetry(ctx, s.retryDelay) {
+			break
+		}
+	}
+
 	if err != nil {
 		s.logger.ErrorContext(
 			ctx,
@@ -204,6 +244,25 @@ func (s *Service) runJob(ctx context.Context, job processJob) {
 	}
 
 	s.setStatus(ctx, job.MediaID, StatusReady, size)
+}
+
+// sleepBeforeRetry waits for d, and reports false when ctx ended first. A
+// cancelled context means the process is shutting down, so the job stops instead
+// of sleeping through it.
+func sleepBeforeRetry(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 // setStatus records a job's outcome. A failure to write it is logged rather than

@@ -262,6 +262,12 @@ func newTestService(t *testing.T, store StoryMediaStore, objects Storage) (*Serv
 		t.Fatalf("NewService() error = %v, want nil", err)
 	}
 
+	// The production policy waits five seconds between attempts. A test that
+	// exercises a failure would then spend ten seconds waiting for an outcome it
+	// already knows, so the retries stay switched on and the wait does not
+	// (KNOT-037-fix12).
+	service.retryDelay = time.Millisecond
+
 	return service, logger
 }
 
@@ -905,7 +911,9 @@ func TestCreateMediaMarksAFailedJob(t *testing.T) {
 	objects := newFakeObjects()
 	service, logger := newTestService(t, store, objects)
 
+	attempts := 0
 	service.processMedia = func(context.Context, processJob) (int64, error) {
+		attempts++
 		return 0, errors.New("ffmpeg said no")
 	}
 
@@ -914,6 +922,14 @@ func TestCreateMediaMarksAFailedJob(t *testing.T) {
 		t.Fatalf("CreateMedia() error = %v, want nil", err)
 	}
 	service.WaitForProcessing()
+
+	// The job is retried before it is given up on (KNOT-037-fix12).
+	if attempts != maxJobAttempts {
+		t.Errorf("processing attempts = %d, want %d", attempts, maxJobAttempts)
+	}
+	if maxJobAttempts != 3 {
+		t.Errorf("maxJobAttempts = %d, want 3", maxJobAttempts)
+	}
 
 	stored, err := store.GetMedia(context.Background(), created.ID)
 	if err != nil {
@@ -933,6 +949,54 @@ func TestCreateMediaMarksAFailedJob(t *testing.T) {
 	// "still processing" — otherwise a client would poll forever.
 	if _, _, _, err := service.StreamMedia(context.Background(), created.ID, VariantStream, "", newRangeRequest("")); !errors.Is(err, ErrProcessingFailed) {
 		t.Errorf("StreamMedia(failed) error = %v, want ErrProcessingFailed", err)
+	}
+}
+
+// TestCreateMediaRetriesAFailedJob is KNOT-037-fix12's promise: a transient
+// failure is retried instead of being branded onto the row.
+func TestCreateMediaRetriesAFailedJob(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, logger := newTestService(t, store, objects)
+
+	attempts := 0
+	service.processMedia = func(_ context.Context, job processJob) (int64, error) {
+		attempts++
+		if attempts == 1 {
+			return 0, errors.New("tls handshake timeout")
+		}
+
+		// The real pipeline, so the retry is proven to finish the work rather than
+		// merely to report success.
+		return service.transcodeAndUpload(context.Background(), job)
+	}
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 300, 200))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+	service.WaitForProcessing()
+
+	if attempts != 2 {
+		t.Errorf("processing attempts = %d, want 2 (one failure, one success)", attempts)
+	}
+	stored, err := store.GetMedia(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetMedia() error = %v", err)
+	}
+	if stored.Status != StatusReady {
+		t.Errorf("status = %q, want %q", stored.Status, StatusReady)
+	}
+	// Two objects: the display and the thumbnail, exactly once each — a retry must
+	// not duplicate them.
+	if len(objects.objects) != 2 {
+		t.Errorf("objects = %d, want the display and the thumbnail", len(objects.objects))
+	}
+	if len(logger.errors) != 0 {
+		t.Errorf("errors = %v, want none: the retry succeeded", logger.errors)
+	}
+	if len(logger.warnings) == 0 {
+		t.Error("the failed attempt should be logged as a warning")
 	}
 }
 

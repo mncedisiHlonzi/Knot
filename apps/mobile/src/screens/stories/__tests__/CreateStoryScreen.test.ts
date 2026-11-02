@@ -1,9 +1,12 @@
+import { Alert } from 'react-native';
+
 import Button from '../../../components/Button';
 import Header from '../../../components/Header';
 import LanguagePicker from '../../../components/LanguagePicker';
 import LocationPicker from '../../../components/LocationPicker';
 import { MAX_MEDIA_PER_STORY } from '../../../utils/mediaLimit';
 import { colors, typeScale } from '../../../theme';
+import { storiesApi, uploadStoryMedia } from '../../../api/stories';
 import CreateStoryScreen from '../CreateStoryScreen';
 
 /**
@@ -31,6 +34,8 @@ jest.mock('react', () => ({
 }));
 
 jest.mock('react-native', () => ({
+  // The publish notice is a native alert (KNOT-037-fix12).
+  Alert: { alert: jest.fn() },
   // Chip builds its animated pressable at module scope.
   Animated: {
     Value: class {
@@ -167,7 +172,7 @@ function findText(node: unknown, text: string): ElementLike | undefined {
 /**
  * Scripts the stubbed `useState` by slot index, in hook order: pillar 0, title 1,
  * body 2, language 3, locationText 4, selectedPlace 5, error 6, submitting 7,
- * **media 8**, pickerVisible 9, **openPicker 10**, mediaNotice 11, createdStory 12.
+ * **media 8**, pickerVisible 9, **openPicker 10**, mediaNotice 11.
  */
 function scriptState(values: Readonly<Record<number, unknown>>): void {
   const last = Math.max(...Object.keys(values).map((key) => Number(key)));
@@ -358,5 +363,84 @@ describe('CreateStoryScreen footer', () => {
 
     // A state updater, because the flip reads the previous value.
     expect(stateWrites().some((value) => typeof value === 'function')).toBe(true);
+  });
+});
+
+describe('CreateStoryScreen publish', () => {
+  /** The Publish action, which lives in the bar's trailing prop. */
+  function publishButton(tree: unknown): ElementLike | undefined {
+    const header = findElementByType(tree, Header);
+    return findElementByType(header?.props?.right, Button);
+  }
+
+  /** A story as `POST /stories` returns it: stored, with no media rows yet. */
+  function createdStory(): unknown {
+    return {
+      id: 'story-1',
+      author_id: 'user-1',
+      root_version_id: 'version-1',
+      pillar: 'wonder',
+      language: 'eng',
+      title: 'A title',
+      body: 'A body',
+      approximate_location: '',
+      media_urls: [],
+      created_at: '2026-11-02T08:00:00.000Z',
+      updated_at: '2026-11-02T08:00:00.000Z',
+    };
+  }
+
+  /** Taps Publish and lets the awaited story creation settle. */
+  async function publish(tree: unknown): Promise<void> {
+    (publishButton(tree)?.props?.onPress as () => void)();
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('tells the reader the media is still being processed', async () => {
+    (storiesApi.createStory as jest.Mock).mockResolvedValue({ story: createdStory() });
+    (uploadStoryMedia as jest.Mock).mockResolvedValue(undefined);
+
+    scriptState({ 1: 'A title', 2: 'A body' });
+    await publish(CreateStoryScreen(PROPS));
+
+    expect(Alert.alert).toHaveBeenCalledWith(
+      'Story published',
+      expect.stringContaining('being processed'),
+    );
+  });
+
+  it('hands the story over before the media upload has finished', async () => {
+    (storiesApi.createStory as jest.Mock).mockResolvedValue({ story: createdStory() });
+    // The upload never settles: the handoff must not be waiting for it.
+    (uploadStoryMedia as jest.Mock).mockReturnValue(new Promise(() => undefined));
+
+    const onCreated = jest.fn();
+    scriptState({ 1: 'A title', 2: 'A body', 8: [pickedImage('file:///a.jpg')] });
+    await publish(CreateStoryScreen({ ...PROPS, onCreated }));
+
+    expect(onCreated).toHaveBeenCalledTimes(1);
+    const handed = onCreated.mock.calls[0][0] as {
+      media?: readonly { status?: string }[];
+    };
+    expect(handed.media?.[0]?.status).toBe('processing');
+    expect(uploadStoryMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the composer open when the story itself cannot be created', async () => {
+    (storiesApi.createStory as jest.Mock).mockRejectedValue(new Error('offline'));
+    (uploadStoryMedia as jest.Mock).mockResolvedValue(undefined);
+
+    const onCreated = jest.fn();
+    scriptState({ 1: 'A title', 2: 'A body', 8: [pickedImage('file:///a.jpg')] });
+    await publish(CreateStoryScreen({ ...PROPS, onCreated }));
+
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(uploadStoryMedia).not.toHaveBeenCalled();
+    expect(stateWrites()).toContain('request failed');
   });
 });
