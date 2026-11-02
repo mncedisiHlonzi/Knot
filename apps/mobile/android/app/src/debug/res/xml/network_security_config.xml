@@ -2,12 +2,13 @@
 <!--
   The DEBUG network policy (KNOT-037-fix11).
 
-  A debug build talks to the backend on the developer's own machine over plain
-  HTTP: `DEV_API_URL` in `src/config/dev.ts` is a LAN address such as
-  http://10.92.86.173:8080, and there is no certificate for it. Android denies
-  cleartext for apps targeting API 28+, so without this override every API call
-  fails with "Network request failed" — the login screen cannot even reach the
-  server.
+  A debug build may point at a backend on the developer's own machine over plain
+  HTTP — `DEV_API_URL` in `src/config/dev.ts` is an HTTPS Render host by default
+  (KNOT-037-fix14), but switching it back to a LAN address such as
+  http://10.92.86.173:8080 for offline work leaves it with no certificate. Android
+  denies cleartext for apps targeting API 28+, so without this override every API
+  call fails with "Network request failed" — the login screen cannot even reach
+  the server.
 
   This file lives in the `debug` build-type source set, so it REPLACES
   `src/main/res/xml/network_security_config.xml` for debug builds only. A release
