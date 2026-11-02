@@ -2,6 +2,13 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- The cleartext permission a debug build actually depends on is NOT this
+         attribute: once a networkSecurityConfig is attached (it is, in the main
+         manifest) the platform ignores `usesCleartextTraffic` on API 24+. The
+         working switch is
+         `src/debug/res/xml/network_security_config.xml`, which overrides the strict
+         release policy for this build type only (KNOT-037-fix11). The attribute is
+         kept because it states the intent for any tool that reads it. -->
     <application
         android:usesCleartextTraffic="true"
         tools:targetApi="28"

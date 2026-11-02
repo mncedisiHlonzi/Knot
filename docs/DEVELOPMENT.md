@@ -2962,9 +2962,20 @@ already the proxy, and a build without the native module all keep the original U
 native pieces come with the library: `android/build.gradle` adds its bundled
 `com.danikula:videocache` AAR to the repositories, and
 `android/app/src/main/res/xml/network_security_config.xml` permits **cleartext to
-loopback only** (the proxy speaks plain HTTP to `127.0.0.1`, which a release build would
-otherwise refuse). iOS gets the pod from the library's podspec, so `pod install` is
+loopback only** — the proxy speaks plain HTTP to `127.0.0.1`, which Android would
+otherwise refuse. iOS gets the pod from the library's podspec, so `pod install` is
 needed after a fresh checkout.
+
+**Cleartext policy, and the trap that broke login (KNOT-037-fix11).** The main network
+security config is the RELEASE policy: `<base-config cleartextTrafficPermitted="false">`
+with a loopback-only exception for the cache proxy. Debug builds override it with
+`android/app/src/debug/res/xml/network_security_config.xml`, whose base config permits
+cleartext everywhere — a debug build talks to `DEV_API_URL` in `src/config/dev.ts`, which
+is a LAN address over plain HTTP. **Attaching a `networkSecurityConfig` makes the
+platform IGNORE `android:usesCleartextTraffic`** (API 24+), so the debug manifest's
+`usesCleartextTraffic="true"` alone does nothing: the permission has to be in the
+build-type's config. If a debug build reports "Network request failed" against the Mac,
+check that this file exists and that `./gradlew assembleDebug` was run again.
 
 **A comment count is version-scoped (KNOT-036-fix5).** `comment_count` on a feed entry is
 the number of **comments on that entry's version** — the root version's thread for a story
