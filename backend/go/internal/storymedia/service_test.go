@@ -5,12 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -325,19 +324,42 @@ func (l *fakeLogger) messages() []string {
 func newTestService(t *testing.T, store StoryMediaStore, objects Storage) (*Service, *fakeLogger) {
 	t.Helper()
 
+	service, _, logger := newTestServiceWithQueue(t, store, objects)
+	return service, logger
+}
+
+// newTestServiceWithQueue is newTestService for a test that asserts what was
+// queued. The publisher is the seam the Rust media worker sits behind, so a test
+// that checks the job is the closest a unit test gets to the worker
+// (KNOT-038).
+func newTestServiceWithQueue(t *testing.T, store StoryMediaStore, objects Storage) (*Service, *fakePublisher, *fakeLogger) {
+	t.Helper()
+
 	logger := &fakeLogger{}
-	service, err := NewService(store, objects, logger)
+	publisher := &fakePublisher{}
+	service, err := NewService(store, objects, publisher, logger)
 	if err != nil {
 		t.Fatalf("NewService() error = %v, want nil", err)
 	}
 
-	// The production policy waits five seconds between attempts. A test that
-	// exercises a failure would then spend ten seconds waiting for an outcome it
-	// already knows, so the retries stay switched on and the wait does not
-	// (KNOT-037-fix12).
-	service.retryDelay = time.Millisecond
+	return service, publisher, logger
+}
 
-	return service, logger
+// fakePublisher is the JobPublisher a test drives.
+//
+// It records every job, and can be made to fail, which is the only way an upload
+// can be refused after the bytes are already in the bucket.
+type fakePublisher struct {
+	jobs []Job
+	err  error
+}
+
+func (p *fakePublisher) Publish(_ context.Context, job Job) error {
+	if p.err != nil {
+		return p.err
+	}
+	p.jobs = append(p.jobs, job)
+	return nil
 }
 
 func validInput() CreateMediaInput {
@@ -357,13 +379,16 @@ func validInput() CreateMediaInput {
 // ---------------------------------------------------------------------------
 
 func TestNewServiceRejectsMissingDependencies(t *testing.T) {
-	if _, err := NewService(nil, newFakeObjects(), &fakeLogger{}); err == nil {
+	if _, err := NewService(nil, newFakeObjects(), &fakePublisher{}, &fakeLogger{}); err == nil {
 		t.Error("NewService(nil store) error = nil, want an error")
 	}
-	if _, err := NewService(newFakeStore(), nil, &fakeLogger{}); err == nil {
+	if _, err := NewService(newFakeStore(), nil, &fakePublisher{}, &fakeLogger{}); err == nil {
 		t.Error("NewService(nil objects) error = nil, want an error")
 	}
-	if _, err := NewService(newFakeStore(), newFakeObjects(), nil); err == nil {
+	if _, err := NewService(newFakeStore(), newFakeObjects(), nil, &fakeLogger{}); err == nil {
+		t.Error("NewService(nil publisher) error = nil, want an error")
+	}
+	if _, err := NewService(newFakeStore(), newFakeObjects(), &fakePublisher{}, nil); err == nil {
 		t.Error("NewService(nil logger) error = nil, want an error")
 	}
 }
@@ -372,12 +397,14 @@ func TestNewServiceRejectsMissingDependencies(t *testing.T) {
 // CreateMedia
 // ---------------------------------------------------------------------------
 
-func TestCreateMediaSuccess(t *testing.T) {
+// TestCreateMediaStoresTheUploadAndQueuesTheJob is the whole contract of the new
+// request path: one object, one processing row, one job (KNOT-038).
+func TestCreateMediaStoresTheUploadAndQueuesTheJob(t *testing.T) {
 	store := newFakeStore()
 	objects := newFakeObjects()
-	service, _ := newTestService(t, store, objects)
+	service, publisher, _ := newTestServiceWithQueue(t, store, objects)
 
-	created, err := service.CreateMedia(context.Background(), imageInput(t, 300, 200))
+	created, err := service.CreateMedia(context.Background(), pngInput())
 	if err != nil {
 		t.Fatalf("CreateMedia() error = %v, want nil", err)
 	}
@@ -391,18 +418,46 @@ func TestCreateMediaSuccess(t *testing.T) {
 	if created.UploaderID != authorID {
 		t.Errorf("uploader = %q, want %q", created.UploaderID, authorID)
 	}
+	if created.Status != StatusProcessing {
+		t.Errorf("status = %q, want %q: the worker finishes the row", created.Status, StatusProcessing)
+	}
+
+	// The row names the UPLOAD until the worker replaces it with the display
+	// rendition, and there is no thumbnail key yet because no thumbnail exists.
 	if !strings.HasPrefix(created.StorageKey, StoryMediaKeyPrefix(storyID)) {
 		t.Errorf("storage key = %q, want the story's prefix", created.StorageKey)
 	}
-	// The row's primary object is the derivative the pipeline writes, not the
-	// upload (KNOT-037-fix7).
-	if !strings.HasSuffix(created.StorageKey, "_display.avif") {
-		t.Errorf("storage key = %q, want a display avif", created.StorageKey)
+	if !strings.HasSuffix(created.StorageKey, "_original.png") {
+		t.Errorf("storage key = %q, want the uploaded png", created.StorageKey)
+	}
+	if created.ThumbnailKey == nil {
+		t.Error("thumbnail key = nil, want the key the worker will write")
+	} else if !strings.HasSuffix(*created.ThumbnailKey, "_thumb.webp") {
+		t.Errorf("thumbnail key = %q, want a webp thumbnail", *created.ThumbnailKey)
 	}
 
-	service.WaitForProcessing()
-	if _, ok := objects.objects[created.StorageKey]; !ok {
-		t.Error("the display rendition was not written to storage")
+	// The bytes are really in the bucket, under the key the row and the job name.
+	stored, ok := objects.objects[created.StorageKey]
+	if !ok {
+		t.Fatalf("the upload %q was not stored", created.StorageKey)
+	}
+	if !bytes.Equal(stored, pngFixture()) {
+		t.Error("the stored object is not the uploaded bytes")
+	}
+
+	// One job, naming the row, the story, the object and the pipeline.
+	if len(publisher.jobs) != 1 {
+		t.Fatalf("queued jobs = %d, want 1", len(publisher.jobs))
+	}
+	job := publisher.jobs[0]
+	if job.MediaID != created.ID || job.StoryID != storyID {
+		t.Errorf("job = %+v, want media %q of story %q", job, created.ID, storyID)
+	}
+	if job.ObjectKey != created.StorageKey {
+		t.Errorf("job object key = %q, want %q", job.ObjectKey, created.StorageKey)
+	}
+	if job.MediaType != MediaTypeImage {
+		t.Errorf("job media type = %q, want image", job.MediaType)
 	}
 }
 
@@ -564,23 +619,26 @@ func TestCreateMediaValidationFailures(t *testing.T) {
 	}
 }
 
-// TestCreateMediaLeavesTheBucketAloneWhenTheRowCannotBeWritten pins the order of
-// the new pipeline: the row is written first and nothing is uploaded until the
-// worker runs, so a failed insert cannot orphan an object (KNOT-037-fix7).
-func TestCreateMediaLeavesTheBucketAloneWhenTheRowCannotBeWritten(t *testing.T) {
+// TestCreateMediaDiscardsTheUploadWhenTheRowCannotBeWritten pins the rollback
+// order: the bytes are stored first (so the job can name them), which means a
+// failed insert must remove them again. A row naming an object nobody wrote and
+// an object no row names are both leaks (KNOT-038).
+func TestCreateMediaDiscardsTheUploadWhenTheRowCannotBeWritten(t *testing.T) {
 	store := newFakeStore()
 	store.createErr = errors.New("insert exploded")
 	objects := newFakeObjects()
-	service, _ := newTestService(t, store, objects)
+	service, publisher, _ := newTestServiceWithQueue(t, store, objects)
 
-	if _, err := service.CreateMedia(context.Background(), imageInput(t, 300, 200)); err == nil {
+	if _, err := service.CreateMedia(context.Background(), pngInput()); err == nil {
 		t.Fatal("CreateMedia() error = nil, want an error")
 	}
 
-	service.WaitForProcessing()
-	if len(objects.objects) != 0 || len(objects.deleted) != 0 {
-		t.Errorf("objects = %d, deletions = %d, want the bucket untouched (nothing was ever put)",
+	if len(objects.objects) != 0 || len(objects.deleted) != 1 {
+		t.Errorf("objects = %d, deletions = %d, want the upload removed again",
 			len(objects.objects), len(objects.deleted))
+	}
+	if len(publisher.jobs) != 0 {
+		t.Errorf("queued jobs = %d, want 0: nothing was recorded", len(publisher.jobs))
 	}
 }
 
@@ -661,7 +719,11 @@ func TestDeleteMediaRejectsStranger(t *testing.T) {
 	if err := service.DeleteMedia(context.Background(), created.ID, otherID); !errors.Is(err, ErrForbidden) {
 		t.Fatalf("DeleteMedia(stranger) error = %v, want ErrForbidden", err)
 	}
-	if _, ok := objects.objects[created.StorageKey]; !ok {
+	stored, err := store.GetMedia(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetMedia() error = %v", err)
+	}
+	if _, ok := objects.objects[stored.StorageKey]; !ok {
 		t.Error("a rejected delete must not touch storage")
 	}
 }
@@ -679,7 +741,7 @@ func TestDeleteMediaStorageFailureIsBestEffort(t *testing.T) {
 	objects := newFakeObjects()
 	objects.deleteErr = errors.New("object store down")
 	logger := &fakeLogger{}
-	service, err := NewService(store, objects, logger)
+	service, err := NewService(store, objects, &fakePublisher{}, logger)
 	if err != nil {
 		t.Fatalf("NewService() error = %v, want nil", err)
 	}
@@ -820,29 +882,39 @@ func newRangeRequest(header string) *http.Request {
 }
 
 // ---------------------------------------------------------------------------
-// Derivatives (KNOT-037)
+// The queued upload (KNOT-038)
 // ---------------------------------------------------------------------------
 
-// imageInput is a create input carrying a real PNG, so the derivative pipeline
-// runs instead of failing to decode.
-func imageInput(t *testing.T, width, height int) CreateMediaInput {
-	t.Helper()
-
-	payload := testPNG(t, width, height)
-	in := validInput()
-	in.MimeType = "image/png"
-	in.Body = bytes.NewReader(payload)
-	in.SizeBytes = int64(len(payload))
-
-	return in
+// pngFixture is a real 2x2 PNG.
+//
+// It is encoded here, in a test, because the SERVICE no longer decodes anything:
+// the only thing that matters to it is that the bytes are what the handler
+// sniffed as an image. The fixture stays real so the job's extension and the
+// stored bytes agree.
+func pngFixture() []byte {
+	var buffer bytes.Buffer
+	if err := png.Encode(&buffer, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		panic("storymedia: encoding the test PNG: " + err.Error())
+	}
+	return buffer.Bytes()
 }
 
-// videoInput is a create input carrying bytes the video pipeline is asked to
-// transcode. The bytes are not a real video unless a test replaces them: most
-// tests stub the processor, so only the type and metadata matter.
-func videoInput(t *testing.T, durationMS *int) CreateMediaInput {
-	t.Helper()
+// pngInput is a create input carrying the PNG fixture.
+func pngInput() CreateMediaInput {
+	payload := pngFixture()
+	return CreateMediaInput{
+		StoryID:    storyID,
+		UploaderID: authorID,
+		MimeType:   "image/png",
+		Source:     MediaSourceCamera,
+		Body:       bytes.NewReader(payload),
+		SizeBytes:  int64(len(payload)),
+	}
+}
 
+// videoInput is a create input for a video. The bytes are not a real video: the
+// service never transcodes, so only the type and the metadata matter here.
+func videoInput() CreateMediaInput {
 	payload := []byte("pretend mp4 bytes")
 	return CreateMediaInput{
 		StoryID:    storyID,
@@ -851,378 +923,151 @@ func videoInput(t *testing.T, durationMS *int) CreateMediaInput {
 		Source:     MediaSourceGallery,
 		Body:       bytes.NewReader(payload),
 		SizeBytes:  int64(len(payload)),
-		DurationMS: durationMS,
 	}
 }
 
-// blockingProcessor returns a processor that signals when it starts and waits for
-// release, so a test can observe the row while its derivatives are still missing.
-func blockingProcessor() (processor, <-chan struct{}, chan<- struct{}) {
-	started := make(chan struct{}, 1)
-	release := make(chan struct{})
-
-	return func(context.Context, processJob) (int64, error) {
-		select {
-		case started <- struct{}{}:
-		default:
-		}
-		<-release
-		return 0, nil
-	}, started, release
+// imageInput is kept for the read-path tests, which used it to get a real image
+// through the old encoder. The service no longer decodes anything, so the
+// dimensions have no meaning to it (KNOT-038).
+func imageInput(t *testing.T, _, _ int) CreateMediaInput {
+	t.Helper()
+	return pngInput()
 }
 
-func TestCreateMediaReturnsBeforeTheDerivativesExist(t *testing.T) {
+// WaitForProcessing is a TEST-ONLY stand-in for the background worker KNOT-038
+// removed from this process.
+//
+// In production the Rust media worker writes the derivatives and flips the row;
+// here the read-path tests still need a ready row to serve, so this shim applies
+// the same effect to the in-memory fakes: it writes a display AVIF (and a WebP
+// thumbnail for an image), records both keys on the row, marks it ready, and
+// removes the upload. It deliberately does no encoding — the encoders are gone
+// from this package — because the bytes only have to be distinguishable.
+func (s *Service) WaitForProcessing() {
+	store, ok := s.store.(*fakeStore)
+	if !ok {
+		return
+	}
+	objects, ok := s.objects.(*fakeObjects)
+	if !ok {
+		return
+	}
+
+	for id, media := range store.media {
+		if media.Status != StatusProcessing {
+			continue
+		}
+
+		base, _, found := strings.Cut(media.StorageKey, originalSuffix)
+		if !found {
+			continue
+		}
+
+		displayKey := base + displaySuffix + avifExtension
+		// Long enough for the Range assertions to exercise a real slice.
+		displayBody := append([]byte("display bytes for "+id+":"), bytes.Repeat([]byte("x"), 512)...)
+		objects.objects[displayKey] = displayBody
+
+		var thumbnailKey *string
+		if media.MediaType == MediaTypeImage {
+			key := base + thumbnailSuffix + webpExtension
+			objects.objects[key] = []byte("thumbnail bytes for " + id)
+			thumbnailKey = &key
+		}
+
+		delete(objects.objects, media.StorageKey)
+
+		media.Status = StatusReady
+		media.StorageKey = displayKey
+		media.ThumbnailKey = thumbnailKey
+		media.SizeBytes = int64(len(displayBody))
+		store.media[id] = media
+	}
+}
+
+// TestCreateMediaKeysTheUploadByItsSniffedType pins the object-key extension to
+// the allowlist entry rather than to a filename: the worker decodes the file from
+// its key, and the key is the only record of what was uploaded.
+func TestCreateMediaKeysTheUploadByItsSniffedType(t *testing.T) {
+	cases := map[string]string{
+		"image/png":       ".png",
+		"image/jpeg":      ".jpg",
+		"image/webp":      ".webp",
+		"video/mp4":       ".mp4",
+		"video/quicktime": ".mov",
+	}
+
+	for mimeType, extension := range cases {
+		t.Run(mimeType, func(t *testing.T) {
+			store := newFakeStore()
+			objects := newFakeObjects()
+			service, publisher, _ := newTestServiceWithQueue(t, store, objects)
+
+			in := videoInput()
+			in.MimeType = mimeType
+			created, err := service.CreateMedia(context.Background(), in)
+			if err != nil {
+				t.Fatalf("CreateMedia() error = %v, want nil", err)
+			}
+
+			if !strings.HasSuffix(created.StorageKey, "_original"+extension) {
+				t.Errorf("storage key = %q, want an %s upload", created.StorageKey, extension)
+			}
+			if publisher.jobs[0].ObjectKey != created.StorageKey {
+				t.Errorf("queued object key = %q, want %q", publisher.jobs[0].ObjectKey, created.StorageKey)
+			}
+		})
+	}
+}
+
+// TestCreateMediaQueuesTheUploadAndTellsReadersToWait is the async contract: by
+// the time the call returns the bytes are stored and the job is queued, and a
+// reader that arrives early is told to wait rather than shown a broken image.
+func TestCreateMediaQueuesTheUploadAndTellsReadersToWait(t *testing.T) {
 	store := newFakeStore()
 	objects := newFakeObjects()
-	service, logger := newTestService(t, store, objects)
+	service, publisher, _ := newTestServiceWithQueue(t, store, objects)
 
-	process, started, release := blockingProcessor()
-	service.processMedia = process
-
-	created, err := service.CreateMedia(context.Background(), imageInput(t, 300, 200))
+	created, err := service.CreateMedia(context.Background(), pngInput())
 	if err != nil {
 		t.Fatalf("CreateMedia() error = %v, want nil", err)
 	}
 
-	// The response describes what is coming: the keys are minted, but nothing is in
-	// the bucket and the row says it is still working (KNOT-037-fix7).
-	if created.Status != StatusProcessing {
-		t.Errorf("status = %q, want %q", created.Status, StatusProcessing)
+	if len(publisher.jobs) != 1 {
+		t.Fatalf("queued jobs = %d, want 1", len(publisher.jobs))
 	}
-	if !strings.HasSuffix(created.StorageKey, "_display.avif") {
-		t.Errorf("storage key = %q, want a display avif", created.StorageKey)
+	if _, ok := objects.objects[created.StorageKey]; !ok {
+		t.Fatalf("the upload %q is not in the bucket", created.StorageKey)
 	}
-	if created.ThumbnailKey == nil || !strings.HasSuffix(*created.ThumbnailKey, "_thumb.webp") {
-		t.Errorf("thumbnail key = %v, want a webp thumbnail", created.ThumbnailKey)
+
+	// No derivative exists yet, so every variant answers "still working".
+	for _, variant := range []Variant{VariantThumb, VariantDisplay} {
+		if _, _, _, err := service.StreamMedia(context.Background(), created.ID, variant, "", newRangeRequest("")); !errors.Is(err, ErrProcessing) {
+			t.Errorf("StreamMedia(%q) error = %v, want ErrProcessing", variant, err)
+		}
 	}
-	if created.MediumKey != nil || created.PosterKey != nil {
-		t.Errorf("medium/poster keys = (%v, %v), want nil: the pipeline writes neither",
-			created.MediumKey, created.PosterKey)
+}
+
+// TestCreateMediaRollsBackWhenTheQueueIsDown covers the one failure the new
+// request path can leave behind: the bytes are in the bucket and the row exists,
+// but nothing will ever process them. Both are removed, so a client that retries
+// starts from a clean state instead of leaving an orphan behind forever.
+func TestCreateMediaRollsBackWhenTheQueueIsDown(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, publisher, _ := newTestServiceWithQueue(t, store, objects)
+	publisher.err = errors.New("redis is down")
+
+	if _, err := service.CreateMedia(context.Background(), pngInput()); err == nil {
+		t.Fatal("CreateMedia() error = nil, want the queue failure")
 	}
+
 	if len(objects.objects) != 0 {
-		t.Errorf("objects = %d, want none until the worker runs", len(objects.objects))
+		t.Errorf("objects = %d, want the upload removed again", len(objects.objects))
 	}
-
-	// A content request in this window must be told to wait, not shown a broken
-	// image.
-	if _, _, _, err := service.StreamMedia(context.Background(), created.ID, VariantThumb, "", newRangeRequest("")); !errors.Is(err, ErrProcessing) {
-		t.Errorf("StreamMedia(processing) error = %v, want ErrProcessing", err)
+	if len(store.media) != 0 {
+		t.Errorf("media rows = %d, want the row removed again", len(store.media))
 	}
-
-	<-started
-	close(release)
-	service.WaitForProcessing()
-
-	stored, err := store.GetMedia(context.Background(), created.ID)
-	if err != nil {
-		t.Fatalf("GetMedia() error = %v", err)
-	}
-	if stored.Status != StatusReady {
-		t.Errorf("status after the job = %q, want %q", stored.Status, StatusReady)
-	}
-	if len(logger.errors) != 0 {
-		t.Errorf("errors = %v, want none", logger.errors)
-	}
-}
-
-func TestCreateMediaProcessesAnImageIntoDisplayAndThumbnail(t *testing.T) {
-	store := newFakeStore()
-	objects := newFakeObjects()
-	service, logger := newTestService(t, store, objects)
-
-	created, err := service.CreateMedia(context.Background(), imageInput(t, 1000, 500))
-	if err != nil {
-		t.Fatalf("CreateMedia() error = %v, want nil", err)
-	}
-	service.WaitForProcessing()
-
-	stored, err := store.GetMedia(context.Background(), created.ID)
-	if err != nil {
-		t.Fatalf("GetMedia() error = %v", err)
-	}
-	if stored.Status != StatusReady {
-		t.Fatalf("status = %q, want %q", stored.Status, StatusReady)
-	}
-
-	// Two files and nothing else: the upload itself is never stored.
-	if len(objects.objects) != 2 {
-		t.Fatalf("objects = %d, want the display and the thumbnail only", len(objects.objects))
-	}
-
-	display, ok := objects.objects[stored.StorageKey]
-	if !ok {
-		t.Fatalf("the display object %q was not written", stored.StorageKey)
-	}
-	// 1000 wide is under the 2048 cap, so the display keeps its own size.
-	if got := decodeAVIF(t, display).Bounds().Dx(); got != 1000 {
-		t.Errorf("display width = %d, want the source's 1000", got)
-	}
-
-	thumbnailKey, ok := stored.ThumbnailWebPKey()
-	if !ok {
-		t.Fatal("ThumbnailWebPKey() = false, want the stored webp thumbnail")
-	}
-	thumbnail, ok := objects.objects[thumbnailKey]
-	if !ok {
-		t.Fatalf("the thumbnail object %q was not written", thumbnailKey)
-	}
-	if got := decodeWebP(t, thumbnail).Bounds().Dx(); got != ThumbnailMaxWidth {
-		t.Errorf("thumbnail width = %d, want %d", got, ThumbnailMaxWidth)
-	}
-
-	if len(logger.errors) != 0 {
-		t.Errorf("errors = %v, want none", logger.errors)
-	}
-}
-
-func TestCreateMediaMarksAFailedJob(t *testing.T) {
-	store := newFakeStore()
-	objects := newFakeObjects()
-	service, logger := newTestService(t, store, objects)
-
-	attempts := 0
-	service.processMedia = func(context.Context, processJob) (int64, error) {
-		attempts++
-		return 0, errors.New("ffmpeg said no")
-	}
-
-	created, err := service.CreateMedia(context.Background(), videoInput(t, nil))
-	if err != nil {
-		t.Fatalf("CreateMedia() error = %v, want nil", err)
-	}
-	service.WaitForProcessing()
-
-	// The job is retried before it is given up on (KNOT-037-fix12).
-	if attempts != maxJobAttempts {
-		t.Errorf("processing attempts = %d, want %d", attempts, maxJobAttempts)
-	}
-	if maxJobAttempts != 3 {
-		t.Errorf("maxJobAttempts = %d, want 3", maxJobAttempts)
-	}
-
-	stored, err := store.GetMedia(context.Background(), created.ID)
-	if err != nil {
-		t.Fatalf("GetMedia() error = %v", err)
-	}
-	if stored.Status != StatusFailed {
-		t.Errorf("status = %q, want %q", stored.Status, StatusFailed)
-	}
-	if len(logger.errors) == 0 {
-		t.Error("a failed job must be logged")
-	}
-	if len(objects.objects) != 0 {
-		t.Errorf("objects = %d, want none", len(objects.objects))
-	}
-
-	// A failed row has nothing coming, so it is reported as missing rather than as
-	// "still processing" — otherwise a client would poll forever.
-	if _, _, _, err := service.StreamMedia(context.Background(), created.ID, VariantStream, "", newRangeRequest("")); !errors.Is(err, ErrProcessingFailed) {
-		t.Errorf("StreamMedia(failed) error = %v, want ErrProcessingFailed", err)
-	}
-}
-
-// TestCreateMediaRetriesAFailedJob is KNOT-037-fix12's promise: a transient
-// failure is retried instead of being branded onto the row.
-func TestCreateMediaRetriesAFailedJob(t *testing.T) {
-	store := newFakeStore()
-	objects := newFakeObjects()
-	service, logger := newTestService(t, store, objects)
-
-	attempts := 0
-	service.processMedia = func(_ context.Context, job processJob) (int64, error) {
-		attempts++
-		if attempts == 1 {
-			return 0, errors.New("tls handshake timeout")
-		}
-
-		// The real pipeline, so the retry is proven to finish the work rather than
-		// merely to report success.
-		return service.transcodeAndUpload(context.Background(), job)
-	}
-
-	created, err := service.CreateMedia(context.Background(), imageInput(t, 300, 200))
-	if err != nil {
-		t.Fatalf("CreateMedia() error = %v, want nil", err)
-	}
-	service.WaitForProcessing()
-
-	if attempts != 2 {
-		t.Errorf("processing attempts = %d, want 2 (one failure, one success)", attempts)
-	}
-	stored, err := store.GetMedia(context.Background(), created.ID)
-	if err != nil {
-		t.Fatalf("GetMedia() error = %v", err)
-	}
-	if stored.Status != StatusReady {
-		t.Errorf("status = %q, want %q", stored.Status, StatusReady)
-	}
-	// Two objects: the display and the thumbnail, exactly once each — a retry must
-	// not duplicate them.
-	if len(objects.objects) != 2 {
-		t.Errorf("objects = %d, want the display and the thumbnail", len(objects.objects))
-	}
-	if len(logger.errors) != 0 {
-		t.Errorf("errors = %v, want none: the retry succeeded", logger.errors)
-	}
-	if len(logger.warnings) == 0 {
-		t.Error("the failed attempt should be logged as a warning")
-	}
-}
-
-func TestCreateMediaFailsOnAnUndecodableImage(t *testing.T) {
-	store := newFakeStore()
-	objects := newFakeObjects()
-	service, logger := newTestService(t, store, objects)
-
-	// validInput() carries bytes that are not an image, so the real pipeline cannot
-	// produce a display or a thumbnail.
-	created, err := service.CreateMedia(context.Background(), validInput())
-	if err != nil {
-		t.Fatalf("CreateMedia() error = %v, want nil: the row is accepted and fails later", err)
-	}
-	service.WaitForProcessing()
-
-	stored, err := store.GetMedia(context.Background(), created.ID)
-	if err != nil {
-		t.Fatalf("GetMedia() error = %v", err)
-	}
-	if stored.Status != StatusFailed {
-		t.Errorf("status = %q, want %q", stored.Status, StatusFailed)
-	}
-	if len(objects.objects) != 0 {
-		t.Errorf("objects = %d, want none", len(objects.objects))
-	}
-	if len(logger.errors) == 0 {
-		t.Error("the decode failure was not logged")
-	}
-}
-
-// TestCreateMediaTranscodesAVideo proves the video half of the pipeline end to
-// end: one object, named as the row says, and it is an MP4.
-func TestCreateMediaTranscodesAVideo(t *testing.T) {
-	binary, err := exec.LookPath(ffmpegBinary)
-	if err != nil {
-		t.Skip("FFmpeg is not installed")
-	}
-
-	dir := t.TempDir()
-	clip := filepath.Join(dir, "clip.mp4")
-	build := exec.Command(binary, "-y",
-		"-f", "lavfi", "-i", "testsrc=size=320x240:rate=10:duration=1",
-		"-pix_fmt", "yuv420p", clip,
-	)
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building a test clip: %v: %s", err, output)
-	}
-	payload, err := os.ReadFile(clip)
-	if err != nil {
-		t.Fatalf("reading the test clip: %v", err)
-	}
-
-	store := newFakeStore()
-	objects := newFakeObjects()
-	service, logger := newTestService(t, store, objects)
-
-	duration := 1000
-	in := videoInput(t, &duration)
-	in.Body = bytes.NewReader(payload)
-	in.SizeBytes = int64(len(payload))
-
-	created, err := service.CreateMedia(context.Background(), in)
-	if err != nil {
-		t.Fatalf("CreateMedia() error = %v, want nil", err)
-	}
-	service.WaitForProcessing()
-
-	stored, err := store.GetMedia(context.Background(), created.ID)
-	if err != nil {
-		t.Fatalf("GetMedia() error = %v", err)
-	}
-	if stored.Status != StatusReady {
-		t.Fatalf("status = %q, want %q (errors: %v)", stored.Status, StatusReady, logger.errors)
-	}
-
-	// A video has no cover and no medium: one object, the stream (KNOT-037-fix7).
-	if stored.ThumbnailKey != nil || stored.MediumKey != nil || stored.PosterKey != nil {
-		t.Errorf("thumbnail/medium/poster keys = (%v, %v, %v), want all nil for a video",
-			stored.ThumbnailKey, stored.MediumKey, stored.PosterKey)
-	}
-	if !strings.HasSuffix(stored.StorageKey, "_stream.mp4") {
-		t.Errorf("storage key = %q, want a stream mp4", stored.StorageKey)
-	}
-	if len(objects.objects) != 1 {
-		t.Fatalf("objects = %d, want the stream only", len(objects.objects))
-	}
-
-	stream, ok := objects.objects[stored.StorageKey]
-	if !ok {
-		t.Fatalf("the stream object %q was not written", stored.StorageKey)
-	}
-	if len(stream) < 12 || string(stream[4:8]) != "ftyp" {
-		t.Errorf("the stream does not start with an MP4 ftyp box")
-	}
-}
-
-// TestProcessingIsCappedByTheSemaphore proves the worker runs at most
-// MaxConcurrentProcessing jobs at once, and that the rest queue up rather than
-// being dropped (KNOT-037-fix7).
-func TestProcessingIsCappedByTheSemaphore(t *testing.T) {
-	store := newFakeStore()
-	objects := newFakeObjects()
-	service, _ := newTestService(t, store, objects)
-
-	if got := cap(service.semaphore); got != MaxConcurrentProcessing {
-		t.Fatalf("semaphore capacity = %d, want %d", got, MaxConcurrentProcessing)
-	}
-
-	var mu sync.Mutex
-	running, peak := 0, 0
-	release := make(chan struct{})
-	service.processMedia = func(context.Context, processJob) (int64, error) {
-		mu.Lock()
-		running++
-		if running > peak {
-			peak = running
-		}
-		mu.Unlock()
-
-		<-release
-
-		mu.Lock()
-		running--
-		mu.Unlock()
-		return 0, nil
-	}
-
-	for i := 0; i < MaxConcurrentProcessing+2; i++ {
-		if _, err := service.CreateMedia(context.Background(), imageInput(t, 200, 100)); err != nil {
-			t.Fatalf("CreateMedia(%d) error = %v, want nil", i, err)
-		}
-	}
-
-	// Wait for the cap to be reached, then give any extra goroutine a moment to
-	// start: without the semaphore the peak would climb past the cap here.
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		mu.Lock()
-		reached := peak
-		mu.Unlock()
-		if reached >= MaxConcurrentProcessing || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	time.Sleep(50 * time.Millisecond)
-
-	mu.Lock()
-	got := peak
-	mu.Unlock()
-	if got != MaxConcurrentProcessing {
-		t.Errorf("peak concurrency = %d, want exactly %d", got, MaxConcurrentProcessing)
-	}
-
-	close(release)
-	service.WaitForProcessing()
 }
 
 func TestStreamMediaServesTheThumbnail(t *testing.T) {
@@ -1302,17 +1147,23 @@ func TestStreamMediaServesTheDisplay(t *testing.T) {
 	}
 	service.WaitForProcessing()
 
+	stored, err := store.GetMedia(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetMedia() error = %v", err)
+	}
+
 	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantDisplay, "", newRangeRequest(""))
 	if err != nil {
 		t.Fatalf("StreamMedia(display) error = %v, want nil", err)
 	}
 
 	served, _ := io.ReadAll(body)
-	if want := objects.objects[created.StorageKey]; !bytes.Equal(served, want) {
+	want := objects.objects[stored.StorageKey]
+	if !bytes.Equal(served, want) {
 		t.Error("StreamMedia(display) did not serve the display rendition")
 	}
-	if total != int64(len(objects.objects[created.StorageKey])) {
-		t.Errorf("total = %d, want the display's %d bytes", total, len(objects.objects[created.StorageKey]))
+	if total != int64(len(want)) {
+		t.Errorf("total = %d, want the display's %d bytes", total, len(want))
 	}
 	if mimeType != avifContentType {
 		t.Errorf("mime = %q, want %q", mimeType, avifContentType)
@@ -1493,27 +1344,25 @@ func TestStreamMediaAnswers404ForTheOtherFullVariant(t *testing.T) {
 	}
 }
 
-func TestDeleteMediaRemovesTheDerivatives(t *testing.T) {
+func TestDeleteMediaRemovesTheUpload(t *testing.T) {
 	store := newFakeStore()
 	objects := newFakeObjects()
 	service, _ := newTestService(t, store, objects)
 
-	created, err := service.CreateMedia(context.Background(), imageInput(t, 1000, 500))
+	created, err := service.CreateMedia(context.Background(), pngInput())
 	if err != nil {
 		t.Fatalf("CreateMedia() error = %v, want nil", err)
 	}
-	service.WaitForProcessing()
 
 	if err := service.DeleteMedia(context.Background(), created.ID, authorID); err != nil {
 		t.Fatalf("DeleteMedia() error = %v, want nil", err)
 	}
 
-	// Everything the upload created goes with the row, or the bucket keeps the
-	// bytes of a deleted item.
-	for _, key := range append([]string{created.StorageKey}, created.derivativeKeys()...) {
-		if _, ok := objects.objects[key]; ok {
-			t.Errorf("object %q still present after deleting the media", key)
-		}
+	// The upload goes with the row. Anything the worker may have written is named
+	// by the row's derivative columns, and deleting is best-effort for objects that
+	// were never created (a job that has not run yet has none).
+	if _, ok := objects.objects[created.StorageKey]; ok {
+		t.Errorf("object %q still present after deleting the media", created.StorageKey)
 	}
 	if len(objects.objects) != 0 {
 		t.Errorf("objects = %d, want none", len(objects.objects))
@@ -1521,94 +1370,9 @@ func TestDeleteMediaRemovesTheDerivatives(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Diagnostics (KNOT-037-fix17)
+// Spliced-out pipeline diagnostics (KNOT-038)
 // ---------------------------------------------------------------------------
-
-// TestMediaJobLogsEveryPipelineStep pins the trace an operator reads on Render: a
-// job that never finishes is otherwise indistinguishable from one that never
-// started.
-func TestMediaJobLogsEveryPipelineStep(t *testing.T) {
-	store := newFakeStore()
-	objects := newFakeObjects()
-	service, logger := newTestService(t, store, objects)
-
-	created, err := service.CreateMedia(context.Background(), imageInput(t, 800, 600))
-	if err != nil {
-		t.Fatalf("CreateMedia() error = %v, want nil", err)
-	}
-	service.WaitForProcessing()
-
-	for _, msg := range []string{
-		"media processing started",
-		"media decoded",
-		"uploading derivative to R2",
-		"derivative uploaded to R2",
-		"media processing complete",
-	} {
-		entry, ok := logger.find(msg)
-		if !ok {
-			t.Fatalf("no %q line logged; got %v", msg, logger.messages())
-		}
-		if entry.attrs["media_id"] != created.ID {
-			t.Errorf("%q media_id = %q, want %q", msg, entry.attrs["media_id"], created.ID)
-		}
-	}
-
-	decoded, _ := logger.find("media decoded")
-	if decoded.attrs["width"] != "800" || decoded.attrs["height"] != "600" {
-		t.Errorf("decoded dimensions = %sx%s, want 800x600", decoded.attrs["width"], decoded.attrs["height"])
-	}
-
-	uploaded, _ := logger.find("derivative uploaded to R2")
-	if uploaded.attrs["key"] == "" {
-		t.Error("the uploaded line has no object key")
-	}
-	if url := uploaded.attrs["url"]; !strings.Contains(url, created.ID) || !strings.Contains(url, "variant=") {
-		t.Errorf("uploaded url = %q, want an API path for this media", url)
-	}
-	if size := uploaded.attrs["size_bytes"]; size == "" || size == "0" {
-		t.Errorf("uploaded size_bytes = %q, want the stored object's size", size)
-	}
-
-	complete, _ := logger.find("media processing complete")
-	if complete.attrs["status"] != string(StatusReady) {
-		t.Errorf("complete status = %q, want %q", complete.attrs["status"], StatusReady)
-	}
-}
-
-// TestMediaJobLogsTheStepAndTheFullError pins the pair that makes a deployment
-// failure actionable: which stage failed, and the object store's own words.
-func TestMediaJobLogsTheStepAndTheFullError(t *testing.T) {
-	const storeMessage = "operation error S3: PutObject, https response error StatusCode: 403, RequestID: ABC123, api error AccessDenied"
-
-	store := newFakeStore()
-	objects := newFakeObjects()
-	objects.putErr = errors.New(storeMessage)
-	service, logger := newTestService(t, store, objects)
-
-	created, err := service.CreateMedia(context.Background(), imageInput(t, 40, 30))
-	if err != nil {
-		t.Fatalf("CreateMedia() error = %v, want nil", err)
-	}
-	service.WaitForProcessing()
-
-	failed, ok := logger.find("media processing failed")
-	if !ok {
-		t.Fatalf("no failure line logged; got %v", logger.messages())
-	}
-	wantStep := "upload " + string(VariantDisplay)
-	if failed.attrs["step"] != wantStep {
-		t.Errorf("step = %q, want %q", failed.attrs["step"], wantStep)
-	}
-	if !strings.Contains(failed.attrs["error"], storeMessage) {
-		t.Errorf("error = %q, want it to carry the store's full message", failed.attrs["error"])
-	}
-
-	stored, err := store.GetMedia(context.Background(), created.ID)
-	if err != nil {
-		t.Fatalf("GetMedia() error = %v", err)
-	}
-	if stored.Status != StatusFailed {
-		t.Errorf("status = %q, want %q", stored.Status, StatusFailed)
-	}
-}
+//
+// KNOT-037-fix17's step-level trace lived here because the pipeline ran in this
+// process. It now runs in the Rust worker, which logs the same steps from its own
+// modules; there is nothing left in the Go service to observe.

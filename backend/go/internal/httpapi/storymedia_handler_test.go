@@ -247,6 +247,24 @@ func (m *memoryMediaStore) SetStatus(_ context.Context, id string, status storym
 	return nil
 }
 
+// markReady applies what the media worker records: the derivatives it wrote, the
+// size of the object a reader is served, and the ready status (KNOT-038).
+func (m *memoryMediaStore) markReady(id, storageKey string, thumbnailKey *string, sizeBytes int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	media, ok := m.media[id]
+	if !ok {
+		return
+	}
+
+	media.Status = storymedia.StatusReady
+	media.StorageKey = storageKey
+	media.ThumbnailKey = thumbnailKey
+	media.SizeBytes = sizeBytes
+	m.media[id] = media
+}
+
 func (m *memoryMediaStore) StoryAuthor(_ context.Context, storyID string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -335,13 +353,34 @@ func (m *memoryObjects) has(key string) bool {
 	return ok
 }
 
+// memoryPublisher records the jobs the service queues, and is what a test asserts
+// after an upload: the API's job is to queue, not to encode (KNOT-038).
+type memoryPublisher struct {
+	mu   sync.Mutex
+	jobs []storymedia.Job
+}
+
+func (p *memoryPublisher) Publish(_ context.Context, job storymedia.Job) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.jobs = append(p.jobs, job)
+	return nil
+}
+
+func (p *memoryPublisher) queued() []storymedia.Job {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]storymedia.Job(nil), p.jobs...)
+}
+
 // storyMediaTestEnv wires the real service and handler over in-memory fakes.
 type storyMediaTestEnv struct {
-	handler *StoryMediaHandler
-	service *storymedia.Service
-	store   *memoryMediaStore
-	objects *memoryObjects
-	logger  *slog.Logger
+	handler   *StoryMediaHandler
+	service   *storymedia.Service
+	store     *memoryMediaStore
+	objects   *memoryObjects
+	publisher *memoryPublisher
+	logger    *slog.Logger
 }
 
 func newStoryMediaTestEnv(t *testing.T) *storyMediaTestEnv {
@@ -357,8 +396,9 @@ func newStoryMediaTestEnvWith(t *testing.T, details DetailCache, logger *slog.Lo
 
 	store := newMemoryMediaStore()
 	objects := newMemoryObjects()
+	publisher := &memoryPublisher{}
 
-	service, err := storymedia.NewService(store, objects, logger)
+	service, err := storymedia.NewService(store, objects, publisher, logger)
 	if err != nil {
 		t.Fatalf("storymedia.NewService() error = %v, want nil", err)
 	}
@@ -368,7 +408,7 @@ func newStoryMediaTestEnvWith(t *testing.T, details DetailCache, logger *slog.Lo
 		t.Fatalf("NewStoryMediaHandlerWithCaches() error = %v, want nil", err)
 	}
 
-	return &storyMediaTestEnv{handler: handler, service: service, store: store, objects: objects, logger: logger}
+	return &storyMediaTestEnv{handler: handler, service: service, store: store, objects: objects, publisher: publisher, logger: logger}
 }
 
 // router assembles the full router with this env's media handler as both the
@@ -482,18 +522,59 @@ func postMedia(router http.Handler, storyID string, body *bytes.Buffer, contentT
 	return recorder
 }
 
-// uploadMedia performs a full successful upload and returns the created item.
-// It fails the test if the upload did not answer 201.
-// uploadMedia posts one item and waits for its derivatives, so a test that reads
-// the bytes afterwards sees a ready row. The response itself is 202: the work is
-// queued, not done (KNOT-037-fix7).
+// uploadMedia posts one item and has the stand-in worker finish it, so a test that
+// reads the bytes afterwards sees a ready row. The response itself is 202: the work
+// is queued, not done (KNOT-037-fix7, KNOT-038).
 func (e *storyMediaTestEnv) uploadMedia(t *testing.T, router http.Handler, data []byte, source string) storyMediaResponse {
 	t.Helper()
 
 	created := e.postMedia(t, router, data, source)
-	e.service.WaitForProcessing()
+	e.completeMedia(t, created.ID)
 
 	return created
+}
+
+// completeMedia stands in for the Rust media worker: it writes the derivatives the
+// Go service used to encode itself, deletes the upload, and flips the row to ready.
+//
+// The worker's own behaviour is tested in its crate; here it only has to produce
+// the state every read path is written against, which is what lets these tests keep
+// asserting what a client actually receives.
+func (e *storyMediaTestEnv) completeMedia(t *testing.T, mediaID string) {
+	t.Helper()
+
+	media, err := e.store.GetMedia(context.Background(), mediaID)
+	if err != nil {
+		t.Fatalf("GetMedia(%q) error = %v", mediaID, err)
+	}
+
+	base, _, found := strings.Cut(media.StorageKey, "_original")
+	if !found {
+		t.Fatalf("storage key %q does not name an upload", media.StorageKey)
+	}
+
+	display := base + "_display.avif"
+	// Long enough for the Range assertions to exercise a real slice.
+	displayBody := append([]byte("display bytes for "+mediaID+":"), bytes.Repeat([]byte("x"), 512)...)
+	if err := e.objects.Put(context.Background(), display, bytes.NewReader(displayBody), "image/avif"); err != nil {
+		t.Fatalf("storing the display rendition: %v", err)
+	}
+
+	var thumbnail *string
+	if media.MediaType == storymedia.MediaTypeImage {
+		key := base + "_thumb.webp"
+		if err := e.objects.Put(context.Background(), key, strings.NewReader("thumb bytes for "+mediaID), "image/webp"); err != nil {
+			t.Fatalf("storing the thumbnail: %v", err)
+		}
+		thumbnail = &key
+	}
+
+	e.store.markReady(mediaID, display, thumbnail, int64(len(displayBody)))
+
+	// The upload is removed once its derivatives exist, exactly as the worker does.
+	if err := e.objects.Delete(context.Background(), media.StorageKey); err != nil {
+		t.Fatalf("removing the upload: %v", err)
+	}
 }
 
 // postMedia posts one item and returns the 202 response without waiting for the
@@ -950,11 +1031,12 @@ func TestStoryMediaDelete(t *testing.T) {
 	if recorder.Code != http.StatusNotFound {
 		t.Errorf("content after delete status = %d, want %d", recorder.Code, http.StatusNotFound)
 	}
-	// An image upload creates two objects — the display AVIF and the WebP thumbnail
-	// — and deleting the item must remove both, not just the one the row names
-	// (KNOT-037-fix7).
-	if len(env.objects.deleted) != 2 {
-		t.Errorf("deleted objects = %d, want 2 (display and thumbnail)", len(env.objects.deleted))
+	// An image upload produces three objects over its life: the upload (removed by
+	// the worker once the derivatives existed), the display AVIF and the WebP
+	// thumbnail. Deleting the item must remove the two the row still names, not just
+	// the one it serves (KNOT-037-fix7, KNOT-038).
+	if len(env.objects.deleted) != 3 {
+		t.Errorf("deleted objects = %d, want 3 (the upload, the display, and the thumbnail)", len(env.objects.deleted))
 	}
 }
 

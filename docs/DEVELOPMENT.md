@@ -166,22 +166,52 @@ Deleting a media row does **not** remove the object from the bucket in the conso
 until the `DELETE` endpoint is called; a row and its object are removed together by
 `DELETE /stories/{id}/media/{mid}`, which also removes that item's renditions.
 
-#### Media renditions (KNOT-037; derivatives-only async pipeline since KNOT-037-fix7)
+#### Media renditions (KNOT-037; encoded by the Rust worker since KNOT-038)
 
-**The bucket holds derivatives and nothing else.** An upload is never stored: an image
-becomes a 2048px **AVIF display** (`<uuid>_display.avif`, quality 80) and a 400px **WebP
-thumbnail** (`<uuid>_thumb.webp`, quality 80); a video is transcoded to a 1080p **H.264
-stream** (`<uuid>_stream.mp4`, CRF 23, preset medium, AAC 128k, yuv420p,
-`-movflags +faststart`). No cover frame is generated for a video — it autoplays in the feed,
-so a still would be a second copy of the same content.
+**The Go API no longer encodes anything.** It stores the upload, records the row, and
+queues a job; every CPU-bound step runs in the dedicated worker at
+`backend/rust-media-worker`. That split exists because AVIF encoding and video transcoding
+are precisely the workload a request-serving Go process handles badly — garbage
+collection, CGo, and unpredictable peak memory — while a small Rust binary with a
+deterministic memory model handles well (KNOT-038).
 
-**Processing is asynchronous.** `POST /stories/{id}/media` spools the body to a temporary
-file, writes the row with `status = 'processing'`, and answers **202** immediately. A
-background goroutine then takes one of `MaxConcurrentProcessing` (5) semaphore slots,
-produces the renditions, uploads them, records `status = 'ready'` and the served object's
-size, and deletes the temporary file. A failure marks the row `failed` and logs the reason;
-anything already uploaded is removed so half an item is never left behind. Queued jobs hold
-disk, not memory.
+**What the bucket holds.** The upload lands at `story-media/<story>/<uuid>_original.<ext>`
+and is deleted once its derivatives exist, so storage stays proportional to what a client
+downloads. An image becomes a **1200px AVIF display** (`<uuid>_display.avif`, quality 75)
+and a **400px WebP thumbnail** (`<uuid>_thumb.webp`, quality 80); a video becomes a 1080p
+**H.264 stream** (`<uuid>_stream.mp4`, CRF 23, preset medium, AAC 128k, yuv420p,
+`-movflags +faststart`). No cover frame is generated for a video: it autoplays in the feed,
+so a still would be a second copy of the same content. Nothing is upscaled.
+
+**The request path is three steps.** `POST /stories/{id}/media` writes the upload, inserts
+the row with `status = 'processing'` (its `storage_key` naming the upload, its
+`thumbnail_key` already naming the WebP the worker will write), and `RPUSH`es one JSON job
+to `knot:media:jobs`. It answers **202** immediately. If the job cannot be queued, the row
+and the object are removed again: a row nothing will ever process is worse than a refused
+upload.
+
+**The queue is reliable, not a plain pop.** The worker claims with
+`BLMOVE knot:media:jobs knot:media:processing LEFT LEFT`, so a job is never lost between the
+pop and the work. On success it `LREM`s the payload from `processing` and pushes it to
+`knot:media:completed`; on failure it counts an attempt in
+`knot:media:attempts:<media id>` and returns the job to the tail of `jobs` while attempts
+remain (3 by default), or moves it to `knot:media:failed` and marks the row `failed` once
+they are spent. A reclaimer returns jobs whose claim in `knot:media:claimed_at` is older
+than 5 minutes back to circulation, which is how a crashed or OOM-killed worker's work is
+recovered instead of stranded.
+
+**Running it locally.** The worker reads the same variables as the API, so there is no
+second configuration file:
+
+```bash
+cd backend/rust-media-worker
+# KNOT_POSTGRES_DSN, KNOT_REDIS_ADDR (+ password/db), KNOT_S3_* as for the API
+cargo run --release
+```
+
+It needs a Rust toolchain and FFmpeg on the machine; `KNOT_MEDIA_WORKER_CONCURRENCY`
+(default 2) sets how many jobs run at once, `KNOT_MEDIA_CLAIM_TIMEOUT_SECS` how long one
+`BLMOVE` blocks, and `KNOT_MEDIA_MAX_ATTEMPTS` how many tries a job gets.
 
 The rows record the objects in `storage_key` (the display AVIF or the stream MP4) and
 `thumbnail_key` (the WebP, images only). `medium_key` and `poster_key` are retired and left
@@ -226,16 +256,14 @@ row. A background upload failure is logged and swallowed — there is no screen 
 report it to — so the card keeps its placeholder; the next refresh shows what the server
 actually stored.
 
-**Both thumbnail encoders are pure Go**: `github.com/chai2010/webp` (libwebp compiled in)
-and `github.com/gen2brain/avif` (libavif compiled to WASM, run by `wazero`). Nothing native
-needs installing, and there is no cgo library to provision on CI. AVIF encoding is the
-expensive step: at speed 8 an 800px thumbnail costs about half a second of CPU for a simple
-image and a couple of seconds for a detailed one, and the FIRST encode in a process also pays
-about 2.5s to instantiate the WASM module. The upload response waits for it, so the first
-photo after a restart is slower than the ones after it.
+**The encoders live in the worker**: `image` (ravif for AVIF, `libwebp` for lossy WebP) and
+`ffmpeg-sidecar` for video. The Rust crates are pure Rust or compile their C dependency with
+the platform compiler, so nothing native needs installing for IMAGES; video needs FFmpeg.
+The brief for KNOT-038 named the `modernimage` crate, which ships prebuilt static libraries:
+its build script 404s for `darwin-x86_64`, so a plain `cargo build` cannot succeed on every
+developer machine. The same codecs are used through the portable crates instead.
 
-**FFmpeg is required for video poster frames**, and only for those. Image renditions are
-pure Go and need nothing installed:
+**FFmpeg is required by the media worker**, and only for video:
 
 ```bash
 # macOS
@@ -246,12 +274,13 @@ sudo apt-get install ffmpeg
 ffmpeg -version
 ```
 
-The backend calls `ffmpeg` from `PATH` when a **video** is uploaded: it is what produces the
+The worker calls `ffmpeg` from `PATH` when a **video** job runs: it is what produces the
 row's stream rendition. Without it the upload is still accepted (the row is written as
-`processing`), the background job fails with `storymedia: ffmpeg is not installed`, and the
-row is marked `failed` — so the item answers `404` and the log says why. Images never need
-it. FFmpeg is **not** a Go dependency and is not vendored: it is a system prerequisite, like
-Docker, and a production image that accepts video must install it.
+`processing` and queued), the job fails with a message saying FFmpeg is not installed, and
+after its attempts are spent the row is marked `failed` — so the item answers `404` and the
+log says why. Images never need it. FFmpeg is **not** a Rust dependency and is not vendored:
+it is a system prerequisite, like Docker, and a host that accepts video jobs must install
+it.
 
 #### Cloudflare R2 (production storage)
 

@@ -1032,11 +1032,11 @@ cannot both take the last slot (KNOT-ADR-054). Deleting an item frees a slot imm
 
 **202** — `{ "media": { ... } }`, the row that was created, with `"status": "processing"`.
 
-The upload is **accepted, not finished**: the bytes are spooled to disk, the row is written,
-and a background worker (at most five at once) produces the derivatives and flips the row to
+The upload is **accepted, not finished**: the bytes are stored, the row is written, and a job
+is queued for the dedicated media worker, which produces the derivatives and flips the row to
 `ready` (or `failed`). That is what keeps a 100 MiB video from holding the request open
-(KNOT-037-fix7). Poll the item — `GET /stories/{id}/media` carries `status` — until it is
-`ready`; a content address answers **202** while it is `processing`.
+(KNOT-037-fix7, KNOT-038). Poll the item — `GET /stories/{id}/media` carries `status` — until
+it is `ready`; a content address answers **202** while it is `processing`.
 
 **Errors:** `400 invalid_request` (not multipart, or no `file` field), `400 validation_error`
 (a bad `source`, or the story already holds 10 items), `401 unauthorized`, `403 forbidden`
@@ -1070,12 +1070,13 @@ Returns **200** with the story's media, in display order:
 while it is `processing` every content address answers **202** with `Retry-After`, and a
 `failed` item answers **404** because nothing is coming (KNOT-037-fix7).
 
-**`url` is the full rendition**, not an upload: since KNOT-037-fix7 the pipeline stores
-**derivatives only**. For an image it is the 2048px **AVIF display** (`?variant=display`); for
-a video it is the 1080p **H.264 stream** (`?variant=stream`), whose index is at the front of
-the file so playback starts immediately. A row written before that change names its original
-upload there; those originals are no longer stored, so such a row answers **404** rather than
-serving a full-size file (KNOT-037-fix10).
+**`url` is the full rendition**, not an upload: since KNOT-037-fix7 the bucket holds
+**derivatives only** (the upload is removed once they exist). For an image it is the 1200px
+**AVIF display** (`?variant=display`); for a video it is the 1080p **H.264 stream**
+(`?variant=stream`), whose index is at the front of the file so playback starts immediately.
+A row written before that change names its original upload there; those originals are no
+longer stored, so such a row answers **404** rather than serving a full-size file
+(KNOT-037-fix10).
 
 **`thumbnail_url` is the feed card's image** — a 400px **WebP** (`?variant=thumb`) — and is
 `null` for a video: a video autoplays in the feed, so no cover is generated at all

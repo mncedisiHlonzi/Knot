@@ -1,32 +1,35 @@
 package storymedia
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
-	"time"
 )
 
-// CreateMedia validates the input, records the media row, and queues the work that
-// produces its derivatives.
+// CreateMedia validates the input, writes the upload, records the media row, and
+// queues the work that produces its derivatives.
 //
-// Nothing is stored in the bucket by the time this returns: the upload is spooled
-// to a temporary file and a background worker turns it into the display rendition
-// and the thumbnail (or the stream rendition) before recording them. The row is
-// written with StatusProcessing, so a reader that arrives too early is told to
-// wait rather than shown a broken image (KNOT-037-fix7).
+// The request path does only what it can do quickly: it puts ONE object in the
+// bucket and writes ONE row. Everything CPU-bound — AVIF/WebP encoding, video
+// transcoding — belongs to the Rust media worker, which claims the Job from Redis,
+// writes the derivatives beside the upload, flips the row to ready and deletes the
+// upload (KNOT-038). The row is written with StatusProcessing, so a reader that
+// arrives too early is told to wait rather than shown a broken image.
+//
+// The upload is stored BEFORE the row, so a row never names an object that was
+// never written; and the row and the object are removed again if the job cannot be
+// queued, because a row nothing will ever process is worse than a refused upload:
+// the client has been told 202 and would wait forever.
 //
 // Only the story's author may attach media in the MVP, so an uploader who is not
 // the story's author is rejected with ErrForbidden. The story is resolved first,
 // so a missing story is ErrStoryNotFound rather than an authorization failure.
 func (s *Service) CreateMedia(ctx context.Context, in CreateMediaInput) (StoryMedia, error) {
-	mediaType, err := validateCreateMedia(in)
+	mediaType, extension, err := validateCreateMedia(in)
 	if err != nil {
 		return StoryMedia{}, err
 	}
@@ -42,7 +45,7 @@ func (s *Service) CreateMedia(ctx context.Context, in CreateMediaInput) (StoryMe
 		return StoryMedia{}, ErrForbidden
 	}
 
-	// Early cap check: refuse before spooling bytes the store would reject, so a
+	// Early cap check: refuse before storing bytes the store would reject, so a
 	// full story never costs the user an upload. The store re-checks the count
 	// under the story row lock when it inserts, which is what makes the cap
 	// race-safe (KNOT-ADR-054).
@@ -54,22 +57,32 @@ func (s *Service) CreateMedia(ctx context.Context, in CreateMediaInput) (StoryMe
 		return StoryMedia{}, ErrMediaLimit
 	}
 
-	// The upload is spooled to disk rather than held in memory: a queued job may
-	// wait for a semaphore slot, and 100 MiB of video per waiting upload is memory
-	// the request path cannot spare (KNOT-037-fix7).
-	tempPath, err := spoolUpload(in)
-	if err != nil {
-		return StoryMedia{}, err
-	}
-
 	name, err := newUUIDv4()
 	if err != nil {
-		removeTempFile(tempPath)
 		return StoryMedia{}, fmt.Errorf("storymedia: mint object key: %w", err)
 	}
 
-	base := StoryMediaKeyPrefix(in.StoryID) + name
-	keys := objectKeysFor(base, mediaType)
+	// The upload keeps its own extension, so the worker can decode it from the key
+	// alone and an operator can see at a glance what was uploaded (KNOT-038).
+	objectKey := StoryMediaKeyPrefix(in.StoryID) + name + originalSuffix + extension
+
+	// An image's thumbnail key is recorded now, before the file exists, so the 202
+	// response can carry a stable thumbnail_url: a client may fetch it immediately,
+	// and while the row is `processing` that read answers 202 rather than failing.
+	// The worker writes exactly this key, so the row never has to change its mind
+	// about where the thumbnail lives. A video has none — it plays instead of
+	// showing a cover.
+	var thumbnailKey *string
+	if mediaType == MediaTypeImage {
+		key := StoryMediaKeyPrefix(in.StoryID) + name + thumbnailSuffix + webpExtension
+		thumbnailKey = &key
+	}
+
+	// The declared size has already been validated against the media type's limit,
+	// and the handler bounds the body by the same limit, so the copy is bounded.
+	if err := s.objects.Put(ctx, objectKey, io.LimitReader(in.Body, in.SizeBytes), TrimMimeType(in.MimeType)); err != nil {
+		return StoryMedia{}, fmt.Errorf("storymedia: store upload: %w", err)
+	}
 
 	// A negative DisplayOrder asks the store to append the item after the story's
 	// current last one; a non-negative value places it explicitly.
@@ -78,10 +91,15 @@ func (s *Service) CreateMedia(ctx context.Context, in CreateMediaInput) (StoryMe
 		order = *in.DisplayOrder
 	}
 
+	// StorageKey names the UPLOAD for now; the worker replaces it with the display
+	// AVIF (or the stream MP4) as it marks the row ready. ThumbnailKey was already
+	// minted above and the worker writes exactly that key, so neither the row nor
+	// the response has to be rewritten when the file appears (KNOT-038).
 	stored, err := s.store.CreateMedia(ctx, StoryMedia{
 		StoryID:      in.StoryID,
 		UploaderID:   in.UploaderID,
-		StorageKey:   keys.primary,
+		StorageKey:   objectKey,
+		ThumbnailKey: thumbnailKey,
 		MediaType:    mediaType,
 		MimeType:     in.MimeType,
 		Source:       in.Source,
@@ -89,446 +107,44 @@ func (s *Service) CreateMedia(ctx context.Context, in CreateMediaInput) (StoryMe
 		Height:       in.Height,
 		DurationMS:   in.DurationMS,
 		SizeBytes:    in.SizeBytes,
-		ThumbnailKey: keys.thumbnail,
 		Status:       StatusProcessing,
 		DisplayOrder: order,
 	})
 	if err != nil {
-		removeTempFile(tempPath)
+		s.discardObject(ctx, objectKey)
 		return StoryMedia{}, fmt.Errorf("storymedia: create media: %w", err)
 	}
 
-	s.enqueue(processJob{
+	// The job names the whole file and the row, nothing else: the worker derives
+	// every derivative key from ObjectKey, so the two processes agree on the naming
+	// scheme without sharing code (KNOT-038).
+	if err := s.jobs.Publish(ctx, Job{
 		MediaID:   stored.ID,
+		StoryID:   in.StoryID,
+		ObjectKey: objectKey,
 		MediaType: mediaType,
-		TempPath:  tempPath,
-		BaseKey:   base,
-	})
+	}); err != nil {
+		s.discardObject(ctx, objectKey)
+		if deleteErr := s.store.DeleteMedia(ctx, stored.ID); deleteErr != nil {
+			s.logger.ErrorContext(
+				ctx,
+				"could not roll back an unqueued media row",
+				"media_id", stored.ID,
+				"error", deleteErr.Error(),
+			)
+		}
+		return StoryMedia{}, fmt.Errorf("storymedia: enqueue media job: %w", err)
+	}
+
+	s.logger.InfoContext(
+		ctx,
+		"media upload queued",
+		"media_id", stored.ID,
+		"media_type", string(mediaType),
+		"object_key", objectKey,
+	)
 
 	return stored, nil
-}
-
-// mediaObjectKeys is the set of object keys one upload writes.
-type mediaObjectKeys struct {
-	// primary is the row's StorageKey: the display AVIF or the stream MP4.
-	primary string
-	// thumbnail is the feed thumbnail's key, or nil for a video (which autoplays
-	// and therefore has no cover).
-	thumbnail *string
-}
-
-// objectKeysFor names the objects one upload of mediaType writes.
-//
-// It is the single place the suffixes and extensions of a new upload are chosen,
-// so the key the row stores and the key the worker writes cannot drift
-// (KNOT-037-fix7).
-func objectKeysFor(base string, mediaType MediaType) mediaObjectKeys {
-	if mediaType == MediaTypeVideo {
-		return mediaObjectKeys{primary: base + streamSuffix + mp4Extension}
-	}
-
-	thumbnail := base + thumbnailSuffix + webpExtension
-	return mediaObjectKeys{
-		primary:   base + displaySuffix + avifExtension,
-		thumbnail: &thumbnail,
-	}
-}
-
-// spoolUpload writes the request body to a temporary file and returns its path.
-//
-// The declared size has already been validated against the media type's limit, so
-// the copy is bounded. One byte more than declared is read so a caller that
-// under-reported its size is refused rather than silently truncated.
-func spoolUpload(in CreateMediaInput) (string, error) {
-	file, err := os.CreateTemp("", "knot-upload-*")
-	if err != nil {
-		return "", fmt.Errorf("storymedia: spool upload: %w", err)
-	}
-
-	path := file.Name()
-	written, copyErr := io.Copy(file, io.LimitReader(in.Body, in.SizeBytes+1))
-	closeErr := file.Close()
-
-	switch {
-	case copyErr != nil:
-		removeTempFile(path)
-		return "", fmt.Errorf("storymedia: spool upload: %w", copyErr)
-	case closeErr != nil:
-		removeTempFile(path)
-		return "", fmt.Errorf("storymedia: spool upload: %w", closeErr)
-	case written != in.SizeBytes:
-		removeTempFile(path)
-		return "", &ValidationError{Field: "file", Message: "does not match its declared size"}
-	}
-
-	return path, nil
-}
-
-// enqueue schedules one upload's derivatives.
-//
-// The goroutine takes a semaphore slot before it starts, so at most
-// MaxConcurrentProcessing jobs run at once while the rest wait in order. The
-// context is deliberately NOT the request's: the response has been sent and the
-// work must outlive it (KNOT-037-fix7).
-func (s *Service) enqueue(job processJob) {
-	s.pending.Add(1)
-
-	go func() {
-		defer s.pending.Done()
-
-		s.semaphore <- struct{}{}
-		defer func() { <-s.semaphore }()
-
-		s.runJob(context.Background(), job)
-	}()
-}
-
-// stageError tags a pipeline failure with the step that produced it, so the one
-// ERROR line a failed job emits names the stage and not only the wrapped cause
-// (KNOT-037-fix17).
-//
-// It changes no control flow: the cause still travels through errors.Is and
-// errors.As, and Error() carries its full text after the step name.
-type stageError struct {
-	step string
-	err  error
-}
-
-func (e *stageError) Error() string { return e.step + ": " + e.err.Error() }
-
-func (e *stageError) Unwrap() error { return e.err }
-
-// stage wraps err with the name of the step that produced it.
-func stage(step string, err error) error {
-	if err == nil {
-		return nil
-	}
-	return &stageError{step: step, err: err}
-}
-
-// failingStage names the step a pipeline error came from, for the job's ERROR log.
-func failingStage(err error) string {
-	var staged *stageError
-	if errors.As(err, &staged) {
-		return staged.step
-	}
-	return "pipeline"
-}
-
-// mediaContentPath is the API path that serves one stored derivative.
-//
-// The service deliberately knows nothing about the bucket's endpoint — the bucket
-// is private and no client is ever handed a link to it (KNOT-ADR-028) — so this is
-// the URL worth logging: if a job reports it uploaded, the bytes are in the bucket,
-// and a reader still seeing `processing` means the status write is what failed
-// (KNOT-037-fix17).
-func mediaContentPath(job processJob, variant Variant) string {
-	return "/stories/" + storyIDFromBaseKey(job.BaseKey) + "/media/" + job.MediaID + "/content?variant=" + string(variant)
-}
-
-// storyIDFromBaseKey reads the story id back out of a job's object-key stem,
-// which is `story-media/<story id>/<uuid>` (see StoryMediaKeyPrefix).
-func storyIDFromBaseKey(baseKey string) string {
-	parts := strings.Split(baseKey, "/")
-	if len(parts) < 2 {
-		return ""
-	}
-	return parts[len(parts)-2]
-}
-
-// runJob produces one upload's derivatives and records the outcome.
-//
-// The work is retried up to `retryAttempts` times, `retryDelay` apart: the common
-// failure is the object store dropping a connection on an unstable uplink, which a
-// second attempt usually survives (KNOT-037-fix12). Each attempt restarts the whole
-// pipeline — the spooled upload is still on disk, and a partially uploaded set is
-// discarded by the pipeline itself — so a retry never leaves half an item behind.
-//
-// A failure never loses the row: after the last attempt it is marked failed, the
-// reason is logged, and the row stays visible (with no bytes) rather than pretending
-// the upload never happened. The spooled file is removed either way
-// (KNOT-037-fix7).
-func (s *Service) runJob(ctx context.Context, job processJob) {
-	defer removeTempFile(job.TempPath)
-
-	attempts := s.retryAttempts
-	if attempts < 1 {
-		attempts = 1
-	}
-
-	// The first line of the job's trace. Without it a row that never leaves
-	// `processing` is indistinguishable from one whose worker never started
-	// (KNOT-037-fix17).
-	s.logger.InfoContext(
-		ctx,
-		"media processing started",
-		"media_id", job.MediaID,
-		"media_type", string(job.MediaType),
-		"object_base_key", job.BaseKey,
-		"attempts", attempts,
-	)
-
-	var (
-		size int64
-		err  error
-	)
-	for attempt := 1; attempt <= attempts; attempt++ {
-		size, err = s.processMedia(ctx, job)
-		if err == nil {
-			break
-		}
-		if attempt == attempts {
-			break
-		}
-
-		s.logger.WarnContext(
-			ctx,
-			"media processing attempt failed; retrying",
-			"media_id", job.MediaID,
-			"media_type", string(job.MediaType),
-			"attempt", attempt,
-			"attempts", attempts,
-			"retry_in", s.retryDelay.String(),
-			"error", err.Error(),
-		)
-		if !sleepBeforeRetry(ctx, s.retryDelay) {
-			break
-		}
-	}
-
-	if err != nil {
-		// `step` names the stage that failed, and `error` carries the whole wrapped
-		// chain: the storage error is never replaced by a summary, so an S3 status
-		// code, request id, or FFmpeg message survives into the log
-		// (KNOT-037-fix17).
-		s.logger.ErrorContext(
-			ctx,
-			"media processing failed",
-			"media_id", job.MediaID,
-			"media_type", string(job.MediaType),
-			"step", failingStage(err),
-			"error", err.Error(),
-		)
-		s.setStatus(ctx, job.MediaID, StatusFailed, 0)
-		return
-	}
-
-	s.setStatus(ctx, job.MediaID, StatusReady, size)
-	s.logger.InfoContext(
-		ctx,
-		"media processing complete",
-		"media_id", job.MediaID,
-		"media_type", string(job.MediaType),
-		"status", string(StatusReady),
-		"size_bytes", size,
-	)
-}
-
-// sleepBeforeRetry waits for d, and reports false when ctx ended first. A
-// cancelled context means the process is shutting down, so the job stops instead
-// of sleeping through it.
-func sleepBeforeRetry(ctx context.Context, d time.Duration) bool {
-	if d <= 0 {
-		return ctx.Err() == nil
-	}
-
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return false
-	case <-timer.C:
-		return true
-	}
-}
-
-// setStatus records a job's outcome. A failure to write it is logged rather than
-// retried: the row is already processing, so the TTL of a stuck row is an
-// operator's problem, not the request's.
-func (s *Service) setStatus(ctx context.Context, mediaID string, status Status, sizeBytes int64) {
-	if err := s.store.SetStatus(ctx, mediaID, status, sizeBytes); err != nil {
-		s.logger.ErrorContext(
-			ctx,
-			"could not record media status",
-			"media_id", mediaID,
-			"status", string(status),
-			"step", "record status",
-			"error", err.Error(),
-		)
-	}
-}
-
-// transcodeAndUpload is the real processor: it turns the spooled upload into its
-// derivatives and stores them.
-func (s *Service) transcodeAndUpload(ctx context.Context, job processJob) (int64, error) {
-	switch job.MediaType {
-	case MediaTypeImage:
-		return s.uploadImageDerivatives(ctx, job)
-	case MediaTypeVideo:
-		return s.uploadStreamRendition(ctx, job)
-	default:
-		return 0, stage("pipeline", fmt.Errorf("storymedia: unknown media type %q", job.MediaType))
-	}
-}
-
-// uploadImageDerivatives encodes and stores an image's display and thumbnail
-// renditions.
-//
-// Both must land: the display is what the story view shows and the thumbnail is
-// what the feed shows, so a row missing either is not a usable photo. Anything
-// already uploaded is removed when the second one fails, or the bucket would keep
-// half an item (KNOT-037-fix7).
-func (s *Service) uploadImageDerivatives(ctx context.Context, job processJob) (int64, error) {
-	data, err := os.ReadFile(job.TempPath)
-	if err != nil {
-		return 0, stage("read upload", fmt.Errorf("read spooled upload: %w", err))
-	}
-
-	renditions, err := ImageDerivatives(data)
-	if len(renditions) == 0 {
-		if err == nil {
-			err = fmt.Errorf("storymedia: the image produced no renditions")
-		}
-		return 0, stage("decode image", err)
-	}
-
-	// The widest rendition's dimensions ARE the decoded picture's: a source narrower
-	// than DisplayMaxWidth is re-encoded at its own size and nothing is upscaled. A
-	// partial set is logged too, so an encoder that failed first says how far the
-	// pipeline got (KNOT-037-fix17).
-	decoded := renditions[0]
-	for _, rendition := range renditions {
-		if rendition.Variant == VariantDisplay {
-			decoded = rendition
-			break
-		}
-	}
-	s.logger.InfoContext(
-		ctx,
-		"media decoded",
-		"media_id", job.MediaID,
-		"input_bytes", len(data),
-		"width", decoded.Width,
-		"height", decoded.Height,
-		"renditions", len(renditions),
-	)
-
-	if err != nil {
-		return 0, stage("encode derivatives", err)
-	}
-	if len(renditions) != 2 {
-		return 0, stage("encode derivatives", fmt.Errorf("storymedia: expected a display and a thumbnail, got %d renditions", len(renditions)))
-	}
-
-	uploaded := make([]string, 0, len(renditions))
-	var displaySize int64
-	for _, rendition := range renditions {
-		key := job.BaseKey + rendition.Suffix + rendition.Extension
-		s.logger.InfoContext(
-			ctx,
-			"uploading derivative to R2",
-			"media_id", job.MediaID,
-			"variant", string(rendition.Variant),
-			"format", string(rendition.Format),
-			"key", key,
-			"content_type", rendition.ContentType,
-			"size_bytes", len(rendition.Body),
-			"width", rendition.Width,
-			"height", rendition.Height,
-		)
-		if err := s.objects.Put(ctx, key, bytes.NewReader(rendition.Body), rendition.ContentType); err != nil {
-			s.discardObjects(ctx, uploaded)
-			return 0, stage("upload "+string(rendition.Variant), fmt.Errorf("store %s: %w", rendition.Variant, err))
-		}
-		uploaded = append(uploaded, key)
-		s.logger.InfoContext(
-			ctx,
-			"derivative uploaded to R2",
-			"media_id", job.MediaID,
-			"variant", string(rendition.Variant),
-			"key", key,
-			"size_bytes", len(rendition.Body),
-			"url", mediaContentPath(job, rendition.Variant),
-		)
-		if rendition.Variant == VariantDisplay {
-			displaySize = int64(len(rendition.Body))
-		}
-	}
-
-	return displaySize, nil
-}
-
-// uploadStreamRendition transcodes an uploaded video and stores the result.
-//
-// No cover frame is produced: the feed autoplays the stream, so a still would be a
-// second copy of the same content (KNOT-037-fix7).
-func (s *Service) uploadStreamRendition(ctx context.Context, job processJob) (int64, error) {
-	output := job.TempPath + mp4Extension
-	defer removeTempFile(output)
-
-	if err := TranscodeToStream(ctx, job.TempPath, output); err != nil {
-		return 0, stage("transcode video", err)
-	}
-
-	info, err := os.Stat(output)
-	if err != nil {
-		return 0, stage("stat transcoded stream", fmt.Errorf("stat transcoded stream: %w", err))
-	}
-
-	file, err := os.Open(output)
-	if err != nil {
-		return 0, stage("open transcoded stream", fmt.Errorf("open transcoded stream: %w", err))
-	}
-	defer func() { _ = file.Close() }()
-
-	key := job.BaseKey + streamSuffix + mp4Extension
-	s.logger.InfoContext(
-		ctx,
-		"video transcoded",
-		"media_id", job.MediaID,
-		"key", key,
-		"size_bytes", info.Size(),
-	)
-	s.logger.InfoContext(
-		ctx,
-		"uploading derivative to R2",
-		"media_id", job.MediaID,
-		"variant", string(VariantStream),
-		"key", key,
-		"content_type", videoContentType,
-		"size_bytes", info.Size(),
-	)
-	if err := s.objects.Put(ctx, key, file, videoContentType); err != nil {
-		return 0, stage("upload "+string(VariantStream), fmt.Errorf("store stream: %w", err))
-	}
-	s.logger.InfoContext(
-		ctx,
-		"derivative uploaded to R2",
-		"media_id", job.MediaID,
-		"variant", string(VariantStream),
-		"key", key,
-		"size_bytes", info.Size(),
-		"url", mediaContentPath(job, VariantStream),
-	)
-
-	return info.Size(), nil
-}
-
-// discardObjects removes objects an abandoned job already wrote, best-effort.
-func (s *Service) discardObjects(ctx context.Context, keys []string) {
-	for _, key := range keys {
-		s.discardObject(ctx, key)
-	}
-}
-
-// removeTempFile removes a spooled file without failing the job: the work is done
-// (or given up), and a leftover temporary file is housekeeping, not an error.
-func removeTempFile(path string) {
-	if path == "" {
-		return
-	}
-	_ = os.Remove(path)
 }
 
 // ListMedia returns every media item of a story, in display order.
@@ -656,32 +272,32 @@ func (s *Service) discardObject(ctx context.Context, key string) {
 	}
 }
 
-// validateCreateMedia applies every input rule and returns the resolved media
-// type.
-func validateCreateMedia(in CreateMediaInput) (MediaType, error) {
+// validateCreateMedia applies every input rule and returns the resolved media type
+// together with the object-key extension that type is stored with.
+func validateCreateMedia(in CreateMediaInput) (MediaType, string, error) {
 	if !isUUID(in.StoryID) {
-		return "", &ValidationError{Field: "story_id", Message: "must be a UUID"}
+		return "", "", &ValidationError{Field: "story_id", Message: "must be a UUID"}
 	}
 	if !isUUID(in.UploaderID) {
-		return "", &ValidationError{Field: "uploader_id", Message: "must be a UUID"}
+		return "", "", &ValidationError{Field: "uploader_id", Message: "must be a UUID"}
 	}
 
-	mediaType, _, allowed := AllowedMediaType(TrimMimeType(in.MimeType))
+	mediaType, extension, allowed := AllowedMediaType(TrimMimeType(in.MimeType))
 	if !allowed {
-		return "", ErrUnsupportedMediaType
+		return "", "", ErrUnsupportedMediaType
 	}
 	if !in.Source.Valid() {
-		return "", &ValidationError{
+		return "", "", &ValidationError{
 			Field:   "source",
 			Message: fmt.Sprintf("must be one of %s, %s", MediaSourceCamera, MediaSourceGallery),
 		}
 	}
 
 	if in.SizeBytes <= 0 {
-		return "", &ValidationError{Field: "file", Message: "is empty"}
+		return "", "", &ValidationError{Field: "file", Message: "is empty"}
 	}
 	if limit := MaxBytesFor(mediaType); in.SizeBytes > limit {
-		return "", ErrTooLarge
+		return "", "", ErrTooLarge
 	}
 
 	for _, field := range []struct {
@@ -693,14 +309,14 @@ func validateCreateMedia(in CreateMediaInput) (MediaType, error) {
 		{"duration_ms", in.DurationMS},
 	} {
 		if field.value != nil && *field.value < 0 {
-			return "", &ValidationError{Field: field.name, Message: "must not be negative"}
+			return "", "", &ValidationError{Field: field.name, Message: "must not be negative"}
 		}
 	}
 	if in.DisplayOrder != nil && *in.DisplayOrder < 0 {
-		return "", &ValidationError{Field: "display_order", Message: "must not be negative"}
+		return "", "", &ValidationError{Field: "display_order", Message: "must not be negative"}
 	}
 
-	return mediaType, nil
+	return mediaType, extension, nil
 }
 
 // newMediaKey mints the object key for a new piece of media.

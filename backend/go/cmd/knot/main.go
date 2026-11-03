@@ -365,7 +365,22 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	storyMediaService, err := storymedia.NewService(storyMediaStore, mediaStorage, logger)
+	// The media pipeline is a Redis list since KNOT-038: this process stores an
+	// upload and queues a job, and the Rust worker at backend/rust-media-worker
+	// does the encoding. The queue shares the Redis client (and therefore the
+	// pool) that sessions, caches and rate limits already use, rather than dialling
+	// a second one.
+	mediaQueue, err := cache.NewQueue(redisCache)
+	if err != nil {
+		return err
+	}
+
+	mediaJobs, err := storymedia.NewRedisJobPublisher(mediaQueue)
+	if err != nil {
+		return err
+	}
+
+	storyMediaService, err := storymedia.NewService(storyMediaStore, mediaStorage, mediaJobs, logger)
 	if err != nil {
 		return err
 	}

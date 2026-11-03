@@ -28,7 +28,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/knot/backend/internal/storage"
@@ -243,11 +242,13 @@ type StoryMedia struct {
 	// StorageKey is the object key in the media bucket. It never leaves the
 	// server; the wire format carries a relative URL instead.
 	//
-	// Since KNOT-037-fix7 the pipeline stores DERIVATIVES ONLY, so this names the
-	// full rendition rather than an upload: the 2048px AVIF display for an image,
-	// the 1080p H.264 stream for a video. A row written before that change still
-	// names its original upload here, and a `display`/`stream` request falls back
-	// to it, which is what keeps old media readable.
+	// While the row is `processing` it names the UPLOADED file
+	// (`..._original.<ext>`), which is what the worker downloads. When the worker
+	// finishes it replaces it with the full rendition: the display AVIF for an
+	// image, the 1080p H.264 stream for a video (KNOT-038). A row written before
+	// KNOT-037-fix7 still names its original upload here, and a `display`/`stream`
+	// request for such a row is refused rather than served, because that file would
+	// be the multi-megabyte upload the renditions exist to avoid.
 	StorageKey string
 	// MediaType is image or video.
 	MediaType MediaType
@@ -267,11 +268,14 @@ type StoryMedia struct {
 	// nil when this item has none. Each is a key, never a URL, exactly as
 	// StorageKey is (KNOT-ADR-029).
 	//
-	// Since KNOT-037-fix7 ThumbnailKey names a 400px WEBP thumbnail for an image and
-	// is nil for a video: a video autoplays in the feed, so no cover is generated
-	// at all. A row written earlier keeps whatever it stored here (a JPEG or AVIF
-	// thumbnail, or a video poster's key is in PosterKey), and the extension tells
-	// the reader which codec it is.
+	// Since KNOT-038 an image's thumbnail key is written WHEN THE ROW IS INSERTED,
+	// naming the WebP the worker will produce, so the 202 response can carry a
+	// stable `thumbnail_url`; a read that arrives before the file exists answers 202
+	// because the row is still `processing`. It is nil for a video, which autoplays
+	// in the feed, so no cover is generated at all. A row written before
+	// KNOT-037-fix7 keeps whatever it stored here (a JPEG or AVIF thumbnail, or a
+	// video poster's key is in PosterKey), and the extension tells the reader which
+	// codec it is.
 	//
 	// MediumKey and PosterKey are RETIRED by KNOT-037-fix7 — new rows leave both nil
 	// — but they stay part of the row so media written before the change keeps its
@@ -559,65 +563,20 @@ type StoryMediaStore interface {
 
 // Service holds the story-media business rules.
 //
-// It depends on the StoryMediaStore abstraction and the storage.Storage
-// contract, and it knows nothing about HTTP, JSON, or SQL.
+// It depends on the StoryMediaStore abstraction, the storage.Storage contract, and
+// the JobPublisher seam, and it knows nothing about HTTP, JSON, SQL, or Redis.
+//
+// Since KNOT-038 it does no encoding at all: the request path stores one upload and
+// one row, and the CPU-bound work happens in the Rust media worker. That is why
+// there is no semaphore, no retry loop, and no background goroutine left here.
 type Service struct {
 	store   StoryMediaStore
 	objects Storage
-	logger  Logger
-
-	// processMedia turns one uploaded file into its stored derivatives and uploads
-	// them. It is a field so tests can substitute a stand-in: production never
-	// replaces the default, which is the real FFmpeg/encoder pipeline
-	// (KNOT-037-fix7).
-	processMedia processor
-	// semaphore caps how many uploads are processed at once. It is a buffered
-	// channel used as a counting semaphore, so a burst of uploads queues instead of
-	// saturating the machine's CPU (KNOT-037-fix7).
-	semaphore chan struct{}
-	// pending tracks the background jobs, so tests can wait for them and a graceful
-	// shutdown can drain them (KNOT-037-fix7).
-	pending sync.WaitGroup
-	// retryAttempts and retryDelay are the job retry policy. They are fields rather
-	// than constants so a test can retry immediately instead of spending ten seconds
-	// waiting for a failure it expects (KNOT-037-fix12); production uses the values
-	// NewService installs.
-	retryAttempts int
-	retryDelay    time.Duration
-}
-
-// How a failed derivative job is retried (KNOT-037-fix12).
-const (
-	// maxJobAttempts is how many times one upload's derivatives are attempted before
-	// the row is marked failed. The storage layer already retries each S3 request ten
-	// times, so this is the second line: it covers the work between those requests —
-	// a transcode that could not read its spooled file, a local write that hit a full
-	// disk — and the case where every storage attempt was exhausted.
-	maxJobAttempts = 3
-	// jobRetryDelay is the wait between attempts. Long enough for the network fault
-	// that usually caused the failure to clear, short enough that the row is not
-	// stuck in `processing` for minutes.
-	jobRetryDelay = 5 * time.Second
-)
-
-// processor turns one uploaded file into its derivatives, and reports the size of
-// the primary object it stored so the row can describe what it serves.
-type processor func(ctx context.Context, job processJob) (int64, error)
-
-// processJob is one queued upload: what to read, where to write, and which row to
-// finish.
-type processJob struct {
-	// MediaID is the row the worker completes.
-	MediaID string
-	// MediaType decides which pipeline runs: an image or a video.
-	MediaType MediaType
-	// TempPath is the spooled upload. The worker deletes it when it finishes,
-	// whatever the outcome.
-	TempPath string
-	// BaseKey is the stem every object of this upload is named from:
-	// `story-media/<story id>/<uuid>`. The worker appends the same suffix and
-	// extension the row already stores, so a key cannot drift.
-	BaseKey string
+	// jobs queues a Job for the worker. If it is unreachable the upload is rolled
+	// back, because a row nothing will ever process is a promise the API cannot
+	// keep.
+	jobs   JobPublisher
+	logger Logger
 }
 
 // Storage is the slice of the object-storage contract this package needs:
@@ -646,44 +605,31 @@ type Logger interface {
 	ErrorContext(ctx context.Context, msg string, args ...any)
 }
 
-// MaxConcurrentProcessing is how many uploads the background worker processes at
-// once. Encoding a 2048px AVIF and transcoding a video are both CPU-bound, so the
-// cap is what stops a burst of uploads from starving the request path
-// (KNOT-037-fix7).
-const MaxConcurrentProcessing = 5
-
-// NewService wires a store, an object store, and a logger together.
-func NewService(store StoryMediaStore, objects Storage, logger Logger) (*Service, error) {
+// NewService wires a store, an object store, a job queue, and a logger together.
+//
+// The queue is required: without it an upload would be recorded and never
+// processed, which is the failure mode this architecture exists to avoid
+// (KNOT-038).
+func NewService(store StoryMediaStore, objects Storage, jobs JobPublisher, logger Logger) (*Service, error) {
 	if store == nil {
 		return nil, fmt.Errorf("storymedia: service requires a media store")
 	}
 	if objects == nil {
 		return nil, fmt.Errorf("storymedia: service requires an object store")
 	}
+	if jobs == nil {
+		return nil, fmt.Errorf("storymedia: service requires a job publisher")
+	}
 	if logger == nil {
 		return nil, fmt.Errorf("storymedia: service requires a logger")
 	}
 
-	service := &Service{
-		store:         store,
-		objects:       objects,
-		logger:        logger,
-		semaphore:     make(chan struct{}, MaxConcurrentProcessing),
-		retryAttempts: maxJobAttempts,
-		retryDelay:    jobRetryDelay,
-	}
-	service.processMedia = service.transcodeAndUpload
-
-	return service, nil
-}
-
-// WaitForProcessing blocks until every queued background job has finished.
-//
-// It exists for tests and for a graceful shutdown: the request path returns as
-// soon as the row is written, so nothing else would tell a caller when the work
-// is actually done (KNOT-037-fix7).
-func (s *Service) WaitForProcessing() {
-	s.pending.Wait()
+	return &Service{
+		store:   store,
+		objects: objects,
+		jobs:    jobs,
+		logger:  logger,
+	}, nil
 }
 
 // TrimMimeType normalises a MIME type by dropping any parameters, so

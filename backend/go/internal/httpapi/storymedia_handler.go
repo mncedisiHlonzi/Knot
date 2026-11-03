@@ -222,9 +222,10 @@ func (h *StoryMediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// delete (KNOT-036-fix4).
 	h.details.InvalidateForStory(r.Context(), r.PathValue("id"))
 
-	// 202: the row exists, the derivatives do not yet. A background worker produces
-	// them and flips the row to ready, which is what keeps a 100 MiB video upload
-	// from holding the request open (KNOT-037-fix7).
+	// 202: the row exists and its job is queued; the derivatives do not exist yet.
+	// The Rust media worker produces them and flips the row to ready, which is what
+	// keeps a 100 MiB video upload from holding the request open (KNOT-037-fix7,
+	// KNOT-038).
 	writeJSON(w, http.StatusAccepted, storyMediaEnvelope{Media: newStoryMediaResponse(created, r.PathValue("id"))})
 }
 

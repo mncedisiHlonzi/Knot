@@ -46,6 +46,13 @@ bin/
 vendor/
 
 # ---------------------------------------------------------------------------
+# Rust (backend/rust-media-worker)
+# ---------------------------------------------------------------------------
+# Cargo's build output is reproducible from Cargo.lock, and it is large: a release
+# build of the media worker's dependency tree is hundreds of megabytes (KNOT-038).
+target/
+
+# ---------------------------------------------------------------------------
 # IDE / editors
 # ---------------------------------------------------------------------------
 .idea/
