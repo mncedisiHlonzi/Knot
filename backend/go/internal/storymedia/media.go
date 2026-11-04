@@ -428,6 +428,22 @@ func (m StoryMedia) ThumbnailWebPKey() (string, bool) {
 	return webpRendition.key, ok
 }
 
+// DisplayWebPKey derives the WebP display's object key from the primary object,
+// and reports whether this row's display exists in WebP.
+//
+// An image's display is stored TWICE beside its upload — `<uuid>_display.avif` and
+// `<uuid>_display.webp` — and the WebP key is derived rather than stored, exactly
+// like the thumbnail's sibling, so the two files cannot disagree about which upload
+// they belong to. A row written before KNOT-038-fix3 has only the AVIF, so it
+// answers false and a WebP request falls back to the AVIF display (KNOT-038-fix3).
+func (m StoryMedia) DisplayWebPKey() (string, bool) {
+	if !strings.HasSuffix(m.StorageKey, displaySuffix+avifExtension) {
+		return "", false
+	}
+
+	return strings.TrimSuffix(m.StorageKey, avifExtension) + webpExtension, true
+}
+
 // rendition is one stored derivative a content request may be answered from.
 type rendition struct {
 	// key is the object key to read.
@@ -786,6 +802,24 @@ func (s *Service) StreamMedia(ctx context.Context, id string, variant Variant, f
 	}
 	if !servesFullRendition(media.StorageKey, full) {
 		return nil, 0, "", ErrNotFound
+	}
+
+	// An image's display exists in two codecs. A request that names WebP is answered
+	// from the WebP file when it is there, and falls back to the AVIF when it is not:
+	// a row produced before KNOT-038-fix3 has only the AVIF, and the address a client
+	// holds should keep working. Both files are small enough to read whole, and the
+	// row's size_bytes describes the AVIF, so the WebP's own size is measured here
+	// rather than taken from the row (KNOT-038-fix3).
+	if full == VariantDisplay && format == FormatWebP {
+		if webpKey, ok := media.DisplayWebPKey(); ok {
+			body, size, readErr := s.readRendition(ctx, webpKey)
+			switch {
+			case readErr == nil:
+				return body, size, webpContentType, nil
+			case !errors.Is(readErr, ErrNotFound):
+				return nil, 0, "", readErr
+			}
+		}
 	}
 
 	// Served with the type its key names: the display AVIF or the stream MP4, never

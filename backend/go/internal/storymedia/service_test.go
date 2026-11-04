@@ -939,10 +939,11 @@ func imageInput(t *testing.T, _, _ int) CreateMediaInput {
 //
 // In production the Rust media worker writes the derivatives and flips the row;
 // here the read-path tests still need a ready row to serve, so this shim applies
-// the same effect to the in-memory fakes: it writes a display AVIF (and a WebP
-// thumbnail for an image), records both keys on the row, marks it ready, and
-// removes the upload. It deliberately does no encoding — the encoders are gone
-// from this package — because the bytes only have to be distinguishable.
+// the same effect to the in-memory fakes: it writes a display AVIF (plus the WebP
+// display of KNOT-038-fix3 and a WebP thumbnail for an image), records the
+// thumbnail key on the row, marks it ready, and removes the upload. It
+// deliberately does no encoding — the encoders are gone from this package —
+// because the bytes only have to be distinguishable.
 func (s *Service) WaitForProcessing() {
 	store, ok := s.store.(*fakeStore)
 	if !ok {
@@ -970,6 +971,11 @@ func (s *Service) WaitForProcessing() {
 
 		var thumbnailKey *string
 		if media.MediaType == MediaTypeImage {
+			// The WebP display of KNOT-038-fix3: same size, a codec every supported
+			// device can decode, distinct bytes so a test can tell the two apart.
+			webpDisplayKey := base + displaySuffix + webpExtension
+			objects.objects[webpDisplayKey] = append([]byte("webp display bytes for "+id+":"), bytes.Repeat([]byte("w"), 512)...)
+
 			key := base + thumbnailSuffix + webpExtension
 			objects.objects[key] = []byte("thumbnail bytes for " + id)
 			thumbnailKey = &key
@@ -1167,6 +1173,92 @@ func TestStreamMediaServesTheDisplay(t *testing.T) {
 	}
 	if mimeType != avifContentType {
 		t.Errorf("mime = %q, want %q", mimeType, avifContentType)
+	}
+}
+
+// TestStreamMediaServesTheWebPDisplay pins the KNOT-038-fix3 contract: an image's
+// display exists in two codecs, and `format=webp` selects the WebP one. AVIF is
+// native only on Android 12+ and iOS 16+, so a device below those decodes the
+// primary display into a blank rectangle with no error to react to.
+func TestStreamMediaServesTheWebPDisplay(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, _ := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 1000, 500))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+	service.WaitForProcessing()
+
+	stored, err := store.GetMedia(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetMedia() error = %v", err)
+	}
+
+	webpKey, ok := stored.DisplayWebPKey()
+	if !ok {
+		t.Fatal("DisplayWebPKey() = false, want the stored webp display")
+	}
+
+	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantDisplay, FormatWebP, newRangeRequest(""))
+	if err != nil {
+		t.Fatalf("StreamMedia(display, webp) error = %v, want nil", err)
+	}
+
+	served, _ := io.ReadAll(body)
+	want := objects.objects[webpKey]
+	if !bytes.Equal(served, want) {
+		t.Error("StreamMedia(display, webp) did not serve the webp display")
+	}
+	if total != int64(len(want)) {
+		t.Errorf("total = %d, want the webp display's %d bytes", total, len(want))
+	}
+	if mimeType != webpContentType {
+		t.Errorf("mime = %q, want %q", mimeType, webpContentType)
+	}
+}
+
+// TestStreamMediaFallsBackToTheAVIFDisplayForAnOlderRow covers a row written
+// before KNOT-038-fix3, which has no WebP display. Asking for one must answer with
+// the bytes that exist rather than a 404: the client has no other address.
+func TestStreamMediaFallsBackToTheAVIFDisplayForAnOlderRow(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, _ := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 1000, 500))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+	service.WaitForProcessing()
+
+	stored, err := store.GetMedia(context.Background(), created.ID)
+	if err != nil {
+		t.Fatalf("GetMedia() error = %v", err)
+	}
+
+	webpKey, ok := stored.DisplayWebPKey()
+	if !ok {
+		t.Fatal("DisplayWebPKey() = false, want the stored webp display")
+	}
+	delete(objects.objects, webpKey)
+
+	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantDisplay, FormatWebP, newRangeRequest(""))
+	if err != nil {
+		t.Fatalf("StreamMedia(display, webp, missing webp) error = %v, want nil", err)
+	}
+
+	served, _ := io.ReadAll(body)
+	want := objects.objects[stored.StorageKey]
+	if !bytes.Equal(served, want) {
+		t.Error("the fallback did not serve the AVIF display")
+	}
+	if total != int64(len(want)) {
+		t.Errorf("total = %d, want the AVIF display's %d bytes", total, len(want))
+	}
+	if mimeType != avifContentType {
+		t.Errorf("mime = %q, want %q so the client sees what it really got", mimeType, avifContentType)
 	}
 }
 

@@ -80,6 +80,9 @@ const imageMedia: StoryMedia = {
   url: '/stories/story-1/media/media-1/content?variant=display',
   thumbnail_url: '/stories/story-1/media/media-1/content?variant=thumb',
   medium_url: '/stories/story-1/media/media-1/content?variant=medium',
+  // The same display in a codec devices below Android 12 / iOS 16 can decode
+  // (KNOT-038-fix3).
+  display_webp_url: '/stories/story-1/media/media-1/content?variant=display&format=webp',
 };
 
 /** A video: its full rendition is the stream, and it has no cover. */
@@ -104,6 +107,8 @@ const legacyImage: StoryMedia = {
   ...imageMedia,
   thumbnail_url: null,
   medium_url: null,
+  // A row written before KNOT-038-fix3 has one display codec only.
+  display_webp_url: null,
 };
 
 function storyWith(media: readonly StoryMedia[]): Story {
@@ -219,7 +224,7 @@ describe('StoryDetailScreen media strip', () => {
 });
 
 describe('StoryDetailScreen carousel', () => {
-  it('draws the full page from media.url, which is the display or stream rendition', () => {
+  it('draws a photo from the WebP display and a video from its stream', () => {
     const tree = renderLoaded([imageMedia, videoMedia]);
 
     const pages = elementsByFunctionName(tree, 'CarouselPage');
@@ -234,12 +239,35 @@ describe('StoryDetailScreen carousel', () => {
       return (page.type as (props: unknown) => unknown)(page.props);
     };
 
+    // AVIF is undecodable below Android 12 / iOS 16 and fails silently, so the page
+    // asks for the WebP display and keeps the AVIF address only as the fallback
+    // (KNOT-038-fix3).
     const imagePage = elementsOfType(draw(0), 'Image');
     expect(imagePage).toHaveLength(1);
-    expect(imagePage[0].props?.source).toEqual({ uri: API_BASE + imageMedia.url });
+    expect(imagePage[0].props?.source).toEqual({
+      uri: API_BASE + '/stories/story-1/media/media-1/content?variant=display&format=webp',
+    });
 
     const videoPage = elementsOfType(draw(1), FeedVideo);
     expect(videoPage).toHaveLength(1);
     expect(videoPage[0].props?.uri).toBe(API_BASE + videoMedia.url);
+  });
+
+  it('keeps the AVIF display when the server sent no WebP one', () => {
+    const tree = renderLoaded([legacyImage, videoMedia]);
+
+    const pages = elementsByFunctionName(tree, 'CarouselPage');
+    expect(pages).toHaveLength(2);
+
+    mockStateValues = [];
+    mockStateCursor = 0;
+    const page = pages[0];
+    const imagePage = elementsOfType(
+      (page.type as (props: unknown) => unknown)(page.props),
+      'Image',
+    );
+
+    expect(imagePage).toHaveLength(1);
+    expect(imagePage[0].props?.source).toEqual({ uri: API_BASE + legacyImage.url });
   });
 });

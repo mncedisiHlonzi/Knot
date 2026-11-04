@@ -43,11 +43,12 @@ export type StoryMedia = {
   readonly display_order: number;
   readonly created_at: string;
   /**
-   * The path on the API that serves the item's full rendition: the 2048px AVIF
+   * The path on the API that serves the item's full rendition: the 1200px AVIF
    * display for an image, the 1080p MP4 stream for a video. It is a relative path
    * (`/stories/{id}/media/{mid}/content?variant=display`), so resolve it against
    * the API base URL. A row written before KNOT-037-fix7 answers with its original
-   * upload instead (KNOT-037-fix7).
+   * upload instead (KNOT-037-fix7). An image also has `display_webp_url`, which is
+   * the same picture in a codec older devices can decode (KNOT-038-fix3).
    */
   readonly url: string;
   /**
@@ -60,12 +61,20 @@ export type StoryMedia = {
    * video autoplays its stream, so the server stopped generating and advertising a
    * cover frame (KNOT-037-fix10).
    *
-   * Both optional and nullable because the API types describe the wire format
+   * `display_webp_url` is `url` in a codec every supported device can decode: the
+   * same 1200px display as WebP rather than AVIF. AVIF is native only on Android 12+
+   * and iOS 16+, and a device below those draws nothing for it — no error, just a
+   * blank page in the viewer. Prefer it for an image and fall back to `url` when the
+   * server sends null, which is what a row written before KNOT-038-fix3 does
+   * (KNOT-038-fix3).
+   *
+   * All optional and nullable because the API types describe the wire format
    * optimistically: an older server omits them, and the client treats a missing
    * field as absent (KNOT-036-fix4).
    */
   readonly thumbnail_url?: string | null;
   readonly medium_url?: string | null;
+  readonly display_webp_url?: string | null;
   /**
    * Whether the bytes are ready to be rendered.
    *

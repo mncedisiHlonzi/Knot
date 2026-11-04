@@ -35,6 +35,10 @@ pub const ATTEMPTS_PREFIX: &str = "knot:media:attempts:";
 pub const ORIGINAL_SUFFIX: &str = "_original";
 
 /// Names an image's full rendition.
+///
+/// It exists in TWO codecs beside each other: `<uuid>_display.avif` (the primary)
+/// and `<uuid>_display.webp` (the same 1200px picture, for devices that cannot
+/// decode AVIF — Android below 12 and iOS below 16; KNOT-038-fix3).
 pub const DISPLAY_SUFFIX: &str = "_display";
 
 /// Names the feed thumbnail.

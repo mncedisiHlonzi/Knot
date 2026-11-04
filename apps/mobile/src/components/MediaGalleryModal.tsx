@@ -52,6 +52,13 @@ export type ViewerMedia = {
   readonly media_type: 'image' | 'video';
   /** The API-relative path (or an absolute URL, which is used verbatim). */
   readonly url: string;
+  /**
+   * The image's display in a codec every supported device can decode, or null when
+   * the server has none. AVIF is native only on Android 12+ and iOS 16+, and a
+   * device below those draws a blank page for it with no error, so the viewer
+   * prefers this address and keeps `url` as the fallback (KNOT-038-fix3).
+   */
+  readonly display_webp_url?: string | null;
   readonly width?: number | null;
   readonly height?: number | null;
   readonly duration_ms?: number | null;
@@ -130,6 +137,20 @@ const TOP_INSET =
 /** Resolves an API-relative media path, leaving an absolute URL untouched. */
 function resolveUri(url: string): string {
   return /^https?:\/\//.test(url) ? url : `${API_BASE_URL}${url}`;
+}
+
+/**
+ * The address a photo page is drawn from.
+ *
+ * It prefers the WebP display: AVIF is decodable only on Android 12+ and iOS 16+,
+ * and a device below those draws nothing for it — no error to react to, just an
+ * empty page. `display_webp_url` is the same picture in a codec every supported
+ * device reads, and a server that sends null (a row written before KNOT-038-fix3,
+ * or an older server) leaves the primary address as the answer (KNOT-038-fix3).
+ */
+function imageUri(item: ViewerMedia): string {
+  const webp = typeof item.display_webp_url === 'string' ? item.display_webp_url.trim() : '';
+  return resolveUri(webp === '' ? item.url : webp);
 }
 
 /** Keeps a pan inside the zoomed image's own edges. */
@@ -779,7 +800,7 @@ export function ViewerStage({
                   onToggleChrome={() => setChromeVisible((shown) => !shown)}
                 />
               ) : (
-                <ZoomableImage uri={resolveUri(item.url)} width={width} height={height} />
+                <ZoomableImage uri={imageUri(item)} width={width} height={height} />
               )
             }
           />

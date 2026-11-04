@@ -53,6 +53,7 @@ pub async fn process(job: &Job, store: &dyn ObjectStore, rows: &dyn MediaRows) -
         MediaType::Image => {
             let derivatives = images::image_derivatives(&upload)?;
             let display_key = job.display_key()?;
+            let display_webp_key = job.display_webp_key()?;
             let thumbnail_key = job.thumbnail_key()?;
 
             info!(
@@ -60,6 +61,7 @@ pub async fn process(job: &Job, store: &dyn ObjectStore, rows: &dyn MediaRows) -
                 width = derivatives.width,
                 height = derivatives.height,
                 display_bytes = derivatives.display.len(),
+                display_webp_bytes = derivatives.display_webp.len(),
                 thumbnail_bytes = derivatives.thumbnail.len(),
                 "encoded the image derivatives"
             );
@@ -73,6 +75,16 @@ pub async fn process(job: &Job, store: &dyn ObjectStore, rows: &dyn MediaRows) -
                 &display_key,
                 derivatives.display,
                 AVIF_CONTENT_TYPE,
+                &mut uploaded,
+            )
+            .await?;
+            // The same picture in the codec every device can decode: the API serves
+            // it to clients that cannot read AVIF (KNOT-038-fix3).
+            put(
+                store,
+                &display_webp_key,
+                derivatives.display_webp,
+                WEBP_CONTENT_TYPE,
                 &mut uploaded,
             )
             .await?;
@@ -363,6 +375,10 @@ mod tests {
         assert_eq!(outcome.storage_key, job.display_key().unwrap());
         assert_eq!(outcome.thumbnail_key, Some(job.thumbnail_key().unwrap()));
         assert!(store.has(&job.display_key().unwrap()));
+        assert!(
+            store.has(&job.display_webp_key().unwrap()),
+            "the WebP display is written beside the AVIF one"
+        );
         assert!(store.has(&job.thumbnail_key().unwrap()));
         assert!(!store.has(&key), "the upload is removed");
         assert_eq!(store.deleted(), vec![key]);
@@ -433,6 +449,10 @@ mod tests {
         assert!(
             !store.has(&job.display_key().unwrap()),
             "the display written before the failure is removed"
+        );
+        assert!(
+            !store.has(&job.display_webp_key().unwrap()),
+            "the WebP display written before the failure is removed too"
         );
         assert!(store.has(&key), "the upload survives, so a retry can succeed");
         assert!(rows.ready_calls().is_empty());

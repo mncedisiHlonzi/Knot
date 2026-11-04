@@ -604,6 +604,7 @@ and the pillar it belongs to.
       "url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=display",
       "thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb",
       "thumbnail_url_fallback": null,
+      "display_webp_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=display&format=webp",
       "medium_url": null
     }
   ],
@@ -1036,7 +1037,9 @@ The upload is **accepted, not finished**: the bytes are stored, the row is writt
 is queued for the dedicated media worker, which produces the derivatives and flips the row to
 `ready` (or `failed`). That is what keeps a 100 MiB video from holding the request open
 (KNOT-037-fix7, KNOT-038). Poll the item — `GET /stories/{id}/media` carries `status` — until
-it is `ready`; a content address answers **202** while it is `processing`.
+it is `ready`; a content address answers **202** while it is `processing`. The 202's
+`display_webp_url` is `null`: whether a WebP display exists is a property of the finished row,
+so the address arrives with the `ready` one (KNOT-038-fix3).
 
 **Errors:** `400 invalid_request` (not multipart, or no `file` field), `400 validation_error`
 (a bad `source`, or the story already holds 10 items), `401 unauthorized`, `403 forbidden`
@@ -1058,6 +1061,7 @@ Returns **200** with the story's media, in display order:
       "url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=display",
       "thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb",
       "thumbnail_url_fallback": null,
+      "display_webp_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=display&format=webp",
       "medium_url": null
     }
   ]
@@ -1084,6 +1088,13 @@ longer stored, so such a row answers **404** rather than serving a full-size fil
 pipeline. `thumbnail_url_fallback` and `medium_url` only exist on a row written by an earlier
 pipeline (KNOT-037-fix6 and before); a new item returns `null` for both.
 
+**`display_webp_url` is the same display in a codec older devices can read** — the 1200px
+display as **WebP** (`?variant=display&format=webp`). AVIF is native only on Android 12+ and
+iOS 16+: a device below those decodes nothing and draws a blank frame with no error to react
+to, so a client should prefer this address for an image and keep `url` as the fallback
+(KNOT-038-fix3). It is `null` for a video, and for a row whose display predates
+KNOT-038-fix3, which has the AVIF only.
+
 **`first_media_url`** is the same choice of rendition the card draws: the thumbnail for an
 image and the stream for a video, never a display image.
 
@@ -1100,7 +1111,7 @@ rendition (KNOT-037, KNOT-037-fix7):
 | `variant` | Serves | Content type |
 | --- | --- | --- |
 | absent | The item's primary object (the display AVIF or the stream MP4) | The type its key names |
-| `display` | An image's 2048px AVIF display | `image/avif` |
+| `display` | An image's 1200px AVIF display | `image/avif` |
 | `stream` | A video's 1080p H.264 stream, index first (`+faststart`) | `video/mp4` |
 | `thumb` | The feed thumbnail, max 400px wide | `image/webp` |
 | `medium` | A legacy story-detail rendition, max 1200px wide (older rows only) | `image/jpeg` |
@@ -1113,9 +1124,15 @@ file. `thumb`, `medium`, and `poster` are small and are sent whole.
 variant answers **202 Accepted** with `Retry-After` and no body — the bytes are coming, so a
 404 would be a lie. A `failed` item answers **404**, because nothing is coming.
 
-**The `format` parameter** is still accepted with `variant=thumb` (an older client sends it)
-but no longer selects a file: the thumbnail is the WebP. An unknown value, or `format` with
-any other variant, is `400 invalid_request` rather than a silent substitution.
+**The `format` parameter** selects the codec of a rendition that exists in two of them:
+`variant=thumb` and `variant=display`. The thumbnail is always the WebP, so there it is
+accepted and ignored (an older client sends it); on `display`, `webp` answers with the WebP
+sibling and `avif` with the AVIF. A display that has no WebP sibling — a row written before
+KNOT-038-fix3 — answers a `webp` request with the AVIF under `image/avif`, so the address a
+client holds keeps working. The WebP display is a second file whose size the row does not
+record, so it is sent whole and a `Range` header is not honoured for it. An unknown value, or
+`format` with any other variant, is `400 invalid_request` rather than a silent substitution
+(KNOT-037-fix6, KNOT-038-fix3).
 
 **A variant the item does not have is a 404** (KNOT-037-fix10). There is no fallback to the
 original upload: it either no longer exists, or it is exactly the multi-megabyte file the
@@ -1131,8 +1148,8 @@ answered **200** (KNOT-ADR-032). Multi-range requests are treated as unusable.
 A media id that does not exist — or a row whose object is missing — returns `404 not_found`.
 
 **Errors:** `400 invalid_request` (an unknown `variant`, an unknown `format`, or `format`
-without `variant=thumb`), `404 not_found` (missing, or processing failed), `500
-internal_error`, and **202** while processing.
+without `variant=thumb` or `variant=display`), `404 not_found` (missing, or processing
+failed), `500 internal_error`, and **202** while processing.
 
 ### DELETE /stories/{id}/media/{mid}
 

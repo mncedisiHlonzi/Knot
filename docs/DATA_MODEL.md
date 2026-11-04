@@ -596,8 +596,12 @@ KNOT-ADR-030.
 The three derivative columns name renditions generated beside the original in the same
 bucket. Like `storage_key` they hold **object keys, never URLs**. Since KNOT-037-fix7 the
 pipeline stores derivatives ONLY — the upload itself is never written — so `storage_key`
-and `thumbnail_key` name the two files a new image has, and the only file a new video has.
-`medium_key` and `poster_key` are retired and left NULL. There is deliberately no backfill:
+and `thumbnail_key` name the files a new image has, and the only file a new video has.
+An image's display is stored twice, but the WebP sibling is **derived from `storage_key`**
+(`_display.avif` → `_display.webp`) rather than recorded in a fourth column: it is written
+by the same worker step as the AVIF, so a stored key could only disagree with the file it
+names (KNOT-038-fix3). `medium_key` and `poster_key` are retired and left NULL. There is
+deliberately no backfill:
 rows written before migration `0024` keep working untouched, and the API answers `null` for
 a rendition a row
 does not have (KNOT-ADR-091).

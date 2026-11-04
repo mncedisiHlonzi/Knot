@@ -135,7 +135,13 @@ function CarouselPage({
   const styles = useThemedStyles(createStyles);
   const { colors } = useTheme();
   const { aspectRatio, onLoadSize } = useMediaAspectRatio(media.width, media.height);
-  const uri = resolveMediaUrl(media.url);
+  // A photo is drawn from its WebP display when the server has one: AVIF is
+  // decodable only on Android 12+ and iOS 16+, and a device below those draws a
+  // blank page for it with no error to react to. A video keeps its stream address,
+  // which is the only rendition it has (KNOT-038-fix3).
+  const uri = resolveMediaUrl(
+    media.media_type === 'image' && media.display_webp_url ? media.display_webp_url : media.url,
+  );
 
   // The backend has not encoded this item yet, so there is nothing to draw and
   // nothing to open: a placeholder that holds the page's shape is the honest

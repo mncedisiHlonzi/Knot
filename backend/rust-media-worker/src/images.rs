@@ -1,12 +1,17 @@
-//! Image derivatives: a 1200px AVIF display rendition and a 400px WebP
-//! thumbnail.
+//! Image derivatives: a 1200px display in two codecs (AVIF and WebP) and a 400px
+//! WebP thumbnail.
 //!
-//! Decoding is done once and both renditions come from the same decoded picture,
+//! Decoding is done once and every rendition comes from the same decoded picture,
 //! so a photo is never parsed twice. The ladder never upscales: a source narrower
 //! than a step is re-encoded at its own width, because the point of the pipeline is
-//! fewer bytes, not more. Transparency is composited onto white first, since
-//! neither target format is being asked to keep an alpha channel and letting one
+//! fewer bytes, not more. Transparency is composited onto white first, since none
+//! of the target formats is being asked to keep an alpha channel and letting one
 //! drop it turns a transparent PNG's background black (KNOT-038).
+//!
+//! The display exists twice because AVIF is only decodable natively on Android 12+
+//! and iOS 16+. A device below those renders an AVIF as a blank rectangle with no
+//! error, so the API advertises a same-size WebP for it to use instead
+//! (KNOT-038-fix3).
 
 use anyhow::{Context, Result};
 use image::codecs::avif::AvifEncoder;
@@ -17,11 +22,13 @@ use crate::keys::{
     AVIF_SPEED, DISPLAY_MAX_WIDTH, DISPLAY_QUALITY, THUMBNAIL_MAX_WIDTH, THUMBNAIL_QUALITY,
 };
 
-/// The two files one image produces.
+/// The files one image produces.
 #[derive(Debug)]
 pub struct Derivatives {
-    /// The AVIF the story view loads.
+    /// The AVIF display: the primary rendition, for devices that decode it.
     pub display: Vec<u8>,
+    /// The same 1200px display as WebP, for devices that cannot decode AVIF.
+    pub display_webp: Vec<u8>,
     /// The WebP the feed card loads.
     pub thumbnail: Vec<u8>,
     /// The display rendition's width, which is the source's unless it was capped.
@@ -30,7 +37,7 @@ pub struct Derivatives {
     pub height: u32,
 }
 
-/// Decodes `bytes` and encodes both renditions.
+/// Decodes `bytes` and encodes every rendition.
 pub fn image_derivatives(bytes: &[u8]) -> Result<Derivatives> {
     let source = image::load_from_memory(bytes).context("decode uploaded image")?;
     let source = flatten_onto_white(&source);
@@ -43,7 +50,10 @@ pub fn image_derivatives(bytes: &[u8]) -> Result<Derivatives> {
 
     Ok(Derivatives {
         display: encode_avif(&display)?,
-        thumbnail: encode_webp(&thumbnail)?,
+        // The same picture at the same quality: the two displays differ only in the
+        // codec a client can decode (KNOT-038-fix3).
+        display_webp: encode_webp(&display, f32::from(DISPLAY_QUALITY))?,
+        thumbnail: encode_webp(&thumbnail, THUMBNAIL_QUALITY)?,
         width,
         height,
     })
@@ -100,12 +110,12 @@ fn encode_avif(source: &DynamicImage) -> Result<Vec<u8>> {
     Ok(encoded)
 }
 
-/// Encodes the feed thumbnail as lossy WebP.
-fn encode_webp(source: &DynamicImage) -> Result<Vec<u8>> {
+/// Encodes a rendition as lossy WebP at `quality` (0–100).
+fn encode_webp(source: &DynamicImage, quality: f32) -> Result<Vec<u8>> {
     let rgba = source.to_rgba8();
     let encoder = webp::Encoder::from_rgba(rgba.as_raw(), rgba.width(), rgba.height());
 
-    Ok(encoder.encode(THUMBNAIL_QUALITY).to_vec())
+    Ok(encoder.encode(quality).to_vec())
 }
 
 #[cfg(test)]
@@ -147,12 +157,17 @@ mod tests {
     }
 
     #[test]
-    fn produces_an_avif_display_and_a_webp_thumbnail() {
+    fn produces_both_displays_and_a_webp_thumbnail() {
         let derivatives = image_derivatives(&png(320, 200)).expect("the fixture encodes");
 
         // The AVIF brand sits in the ftyp box, after the box length.
         assert_eq!(&derivatives.display[4..8], b"ftyp");
         assert_eq!(&derivatives.display[8..12], b"avif");
+
+        // The WebP display is the same picture in the codec devices below
+        // Android 12 / iOS 16 can decode (KNOT-038-fix3).
+        assert_eq!(&derivatives.display_webp[0..4], b"RIFF");
+        assert_eq!(&derivatives.display_webp[8..12], b"WEBP");
 
         assert_eq!(&derivatives.thumbnail[0..4], b"RIFF");
         assert_eq!(&derivatives.thumbnail[8..12], b"WEBP");
@@ -161,8 +176,10 @@ mod tests {
         assert_eq!(derivatives.width, 320);
         assert_eq!(derivatives.height, 200);
         assert!(
-            !derivatives.display.is_empty() && !derivatives.thumbnail.is_empty(),
-            "both renditions carry bytes"
+            !derivatives.display.is_empty()
+                && !derivatives.display_webp.is_empty()
+                && !derivatives.thumbnail.is_empty(),
+            "every rendition carries bytes"
         );
     }
 

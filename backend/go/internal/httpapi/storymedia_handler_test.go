@@ -562,6 +562,14 @@ func (e *storyMediaTestEnv) completeMedia(t *testing.T, mediaID string) {
 
 	var thumbnail *string
 	if media.MediaType == storymedia.MediaTypeImage {
+		// The same display picture in a codec every supported device can decode, which
+		// is what display_webp_url points at (KNOT-038-fix3).
+		webpDisplay := base + "_display.webp"
+		webpBody := append([]byte("webp display bytes for "+mediaID+":"), bytes.Repeat([]byte("w"), 512)...)
+		if err := e.objects.Put(context.Background(), webpDisplay, bytes.NewReader(webpBody), "image/webp"); err != nil {
+			t.Fatalf("storing the webp display: %v", err)
+		}
+
 		key := base + "_thumb.webp"
 		if err := e.objects.Put(context.Background(), key, strings.NewReader("thumb bytes for "+mediaID), "image/webp"); err != nil {
 			t.Fatalf("storing the thumbnail: %v", err)
@@ -872,6 +880,18 @@ func TestStoryMediaList(t *testing.T) {
 	if body.Media[0].DisplayOrder != 0 || body.Media[1].DisplayOrder != 1 {
 		t.Errorf("display orders = %d, %d, want 0 then 1", body.Media[0].DisplayOrder, body.Media[1].DisplayOrder)
 	}
+
+	// A ready image carries a second display address in WebP, so a device that
+	// cannot decode AVIF has something to draw (KNOT-038-fix3).
+	for i, item := range body.Media {
+		if item.DisplayWebPURL == nil {
+			t.Fatalf("media %d: display_webp_url = null, want the webp display address", i)
+		}
+		want := "/stories/" + testMediaStoryID + "/media/" + item.ID + "/content?variant=display&format=webp"
+		if *item.DisplayWebPURL != want {
+			t.Errorf("media %d: display_webp_url = %q, want %q", i, *item.DisplayWebPURL, want)
+		}
+	}
 }
 
 func TestStoryMediaListUnknownStory(t *testing.T) {
@@ -912,6 +932,48 @@ func TestStoryMediaContentServesBytes(t *testing.T) {
 	}
 	if !bytes.Equal(recorder.Body.Bytes(), display) {
 		t.Errorf("body = %d bytes, want the %d stored bytes", recorder.Body.Len(), len(display))
+	}
+}
+
+// TestStoryMediaContentServesTheWebPDisplay is KNOT-038-fix3 end to end: the
+// address the API advertises for a device that cannot decode AVIF answers with the
+// WebP display under the WebP type, while the primary address keeps answering with
+// the AVIF. It is what makes a story photo visible on a pre-Android-12 handset.
+func TestStoryMediaContentServesTheWebPDisplay(t *testing.T) {
+	env := newStoryMediaTestEnv(t)
+	router := env.router(t, testMediaAuthorID)
+
+	created := env.uploadMedia(t, router, pngImage(t), "camera")
+
+	listRecorder := doRequest(router, http.MethodGet, "/stories/"+testMediaStoryID+"/media", "")
+	if listRecorder.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d", listRecorder.Code, http.StatusOK)
+	}
+
+	var body listStoryMediaResponse
+	decodeBody(t, listRecorder, &body)
+	if len(body.Media) != 1 {
+		t.Fatalf("media count = %d, want 1", len(body.Media))
+	}
+	if body.Media[0].DisplayWebPURL == nil {
+		t.Fatal("display_webp_url = null, want the webp display address of a ready image")
+	}
+
+	recorder := doRequest(router, http.MethodGet, *body.Media[0].DisplayWebPURL, "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "image/webp" {
+		t.Errorf("content type = %q, want image/webp", got)
+	}
+	if webpDisplay := env.storedDerivative(t, "_display.webp"); !bytes.Equal(recorder.Body.Bytes(), webpDisplay) {
+		t.Errorf("body = %d bytes, want the %d stored webp bytes", recorder.Body.Len(), len(webpDisplay))
+	}
+
+	// The AVIF display is still what the primary address serves.
+	avifRecorder := doRequest(router, http.MethodGet, created.URL, "")
+	if got := avifRecorder.Header().Get("Content-Type"); got != "image/avif" {
+		t.Errorf("primary content type = %q, want image/avif", got)
 	}
 }
 
@@ -1140,6 +1202,13 @@ func TestStoryMediaCreateExposesDerivativeURLs(t *testing.T) {
 	if created.MediumURL != nil {
 		t.Errorf("medium_url = %q, want null: the pipeline writes no medium", *created.MediumURL)
 	}
+
+	// The 202 describes a row the worker has not finished, so it offers no second
+	// display codec yet: whether a WebP display exists is a property of the finished
+	// row, and the address appears with it (KNOT-038-fix3).
+	if created.DisplayWebPURL != nil {
+		t.Errorf("display_webp_url = %q, want null while the row is processing", *created.DisplayWebPURL)
+	}
 }
 
 // TestStoryMediaVideoURLsHaveNoThumbnail pins Item 5's rule for videos: the full
@@ -1165,6 +1234,10 @@ func TestStoryMediaVideoURLsHaveNoThumbnail(t *testing.T) {
 	}
 	if response.ThumbnailURLFallback != nil {
 		t.Errorf("thumbnail_url_fallback = %q, want null for a video", *response.ThumbnailURLFallback)
+	}
+	// A video is a single stream, so there is no second display codec to offer.
+	if response.DisplayWebPURL != nil {
+		t.Errorf("display_webp_url = %q, want null for a video", *response.DisplayWebPURL)
 	}
 }
 

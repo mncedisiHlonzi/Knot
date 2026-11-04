@@ -104,7 +104,7 @@ writes objects (KNOT-ADR-028, KNOT-ADR-029).
 | S3 API              | `http://127.0.0.1:9000`                                            |
 | Web console         | `http://127.0.0.1:9001`                                            |
 | Bucket              | `knot-media` (`KNOT_S3_BUCKET`)                                     |
-| Object layout       | Avatars: `avatars/<user id>/<uuid>.{jpg,png,webp}`. Story media: `story-media/<story id>/<uuid>.{jpg,png,webp,mp4,mov}`, with the renditions beside it as `<uuid>_thumb.avif`, `<uuid>_thumb.webp`, `<uuid>_medium.jpg` and `<uuid>_poster.jpg` (KNOT-037, KNOT-037-fix6) |
+| Object layout       | Avatars: `avatars/<user id>/<uuid>.{jpg,png,webp}`. Story media: `story-media/<story id>/<uuid>.{jpg,png,webp,mp4,mov}`, with the renditions beside it as `<uuid>_display.avif`, `<uuid>_display.webp`, `<uuid>_thumb.avif`, `<uuid>_thumb.webp`, `<uuid>_medium.jpg` and `<uuid>_poster.jpg` (KNOT-037, KNOT-037-fix6, KNOT-038-fix3) |
 | Data directory      | `/bitnami/minio/data` in the container, on the `knot_minio_data` named volume |
 | Credentials         | `KNOT_S3_ACCESS_KEY` / `KNOT_S3_SECRET_KEY`, which are the same values the container is given as `KNOT_MINIO_ROOT_USER` / `KNOT_MINIO_ROOT_PASSWORD` |
 | Health              | `curl -f http://127.0.0.1:9000/minio/health/live`                   |
@@ -177,11 +177,18 @@ deterministic memory model handles well (KNOT-038).
 
 **What the bucket holds.** The upload lands at `story-media/<story>/<uuid>_original.<ext>`
 and is deleted once its derivatives exist, so storage stays proportional to what a client
-downloads. An image becomes a **1200px AVIF display** (`<uuid>_display.avif`, quality 75)
-and a **400px WebP thumbnail** (`<uuid>_thumb.webp`, quality 80); a video becomes a 1080p
-**H.264 stream** (`<uuid>_stream.mp4`, CRF 23, preset medium, AAC 128k, yuv420p,
-`-movflags +faststart`). No cover frame is generated for a video: it autoplays in the feed,
-so a still would be a second copy of the same content. Nothing is upscaled.
+downloads. An image becomes a **1200px display in two codecs** — the AVIF
+(`<uuid>_display.avif`, quality 75) and the same picture as WebP (`<uuid>_display.webp`, the
+same width and quality) — plus a **400px WebP thumbnail** (`<uuid>_thumb.webp`, quality 80);
+a video becomes a 1080p **H.264 stream** (`<uuid>_stream.mp4`, CRF 23, preset medium, AAC
+128k, yuv420p, `-movflags +faststart`). No cover frame is generated for a video: it autoplays
+in the feed, so a still would be a second copy of the same content. Nothing is upscaled.
+
+The display exists twice because **AVIF is native only on Android 12+ and iOS 16+**: a device
+below those decodes nothing, and the failure is silent — the viewer draws a blank frame
+instead of reporting an error. WebP is read everywhere the app runs, so the same picture is
+stored in both and the API advertises the address a given device can use
+(KNOT-038-fix3).
 
 **The request path is three steps.** `POST /stories/{id}/media` writes the upload, inserts
 the row with `status = 'processing'` (its `storage_key` naming the upload, its
@@ -226,11 +233,15 @@ Renditions are served by the same content endpoint: `?variant=display|stream|thu
 curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=display"
 curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=stream"
 curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=thumb"
+# The same display as WebP, for a device that cannot decode AVIF
+curl -i "http://localhost:8080/stories/$KNOT_STORY_ID/media/$KNOT_MEDIA_ID/content?variant=display&format=webp"
 # Still processing? 202 with Retry-After. Failed? 404. Ready? 200 and the bytes.
 ```
 
 `display` and `stream` are the row's primary object, so `Range` applies to them and a video
-can seek; the thumbnail is sent whole. A failed job is an `ERROR` line whose `media_id`
+can seek; the thumbnail is sent whole. A `display&format=webp` request reads the whole WebP
+file (no `Range`): it is a second file whose size the row does not record, and it falls back
+to the AVIF when the row predates it. A failed job is an `ERROR` line whose `media_id`
 identifies the row, and the row stays `failed` rather than pretending the upload never
 happened.
 

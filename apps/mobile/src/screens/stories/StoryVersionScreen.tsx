@@ -128,7 +128,13 @@ function CarouselPage({
 }): React.ReactElement {
   const styles = useThemedStyles(createStyles);
   const { aspectRatio, onLoadSize } = useMediaAspectRatio(media.width, media.height);
-  const uri = resolveMediaUrl(media.url);
+  // The same rule as Story Detail's carousel, because these are the parent story's
+  // pages: a photo is drawn from its WebP display when the server has one, since
+  // AVIF is undecodable below Android 12 / iOS 16 and fails silently
+  // (KNOT-038-fix3).
+  const uri = resolveMediaUrl(
+    media.media_type === 'image' && media.display_webp_url ? media.display_webp_url : media.url,
+  );
 
   // The carousel's frame takes the active page's shape, so a page reports the
   // ratio it resolved. `null` means the media has not reported one yet, which the

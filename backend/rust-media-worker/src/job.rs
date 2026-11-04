@@ -111,6 +111,15 @@ impl Job {
         ))
     }
 
+    /// The display WebP's key: the same rendition in the one codec every device
+    /// can decode (KNOT-038-fix3).
+    pub fn display_webp_key(&self) -> Result<String> {
+        Ok(format!(
+            "{}{DISPLAY_SUFFIX}{WEBP_EXTENSION}",
+            self.base_key()?
+        ))
+    }
+
     /// The thumbnail's key: the 400px WebP the feed card loads.
     pub fn thumbnail_key(&self) -> Result<String> {
         Ok(format!(
@@ -191,6 +200,10 @@ mod tests {
         assert_eq!(
             job.display_key().unwrap(),
             format!("story-media/{STORY}/abc_display.avif")
+        );
+        assert_eq!(
+            job.display_webp_key().unwrap(),
+            format!("story-media/{STORY}/abc_display.webp")
         );
         assert_eq!(
             job.thumbnail_key().unwrap(),

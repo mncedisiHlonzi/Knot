@@ -128,6 +128,14 @@ type storyMediaResponse struct {
 	// autoplays, so there is no cover and no `poster_url`, and no row written since
 	// the async pipeline has either file.
 	MediumURL *string `json:"medium_url"`
+	// DisplayWebPURL is the same 1200px display as WebP, for devices that cannot
+	// decode AVIF: AVIF is native only on Android 12+ and iOS 16+, and a device below
+	// those draws a blank frame instead of reporting an error (KNOT-038-fix3).
+	//
+	// It is null for a video, whose full rendition is the stream, and for a row
+	// written before KNOT-038-fix3, which has only the AVIF; a client falls back to
+	// URL in either case.
+	DisplayWebPURL *string `json:"display_webp_url"`
 }
 
 // storyMediaEnvelope wraps a single item, so the response shape can gain sibling
@@ -253,7 +261,7 @@ func (h *StoryMediaHandler) List(w http.ResponseWriter, r *http.Request) {
 // is answered 200 with the whole object.
 //
 // The optional `variant` parameter selects the rendition: `display` (an image's
-// 2048px AVIF), `stream` (a video's 1080p MP4), `thumb` (the 400px WebP feed
+// 1200px display), `stream` (a video's 1080p MP4), `thumb` (the 400px WebP feed
 // thumbnail), or — for a row written before KNOT-037-fix7 — `medium` or `poster`.
 // An absent variant means the item's full rendition, chosen from its media type.
 // An unknown value is a 400 rather than a silent full-size response, because
@@ -265,9 +273,10 @@ func (h *StoryMediaHandler) List(w http.ResponseWriter, r *http.Request) {
 // uploaded file — it either does not exist or is the multi-megabyte object this
 // contract exists to stop transferring.
 //
-// For `variant=thumb` the `format` parameter selects the codec: `avif` (the
-// default) or `webp` (KNOT-037-fix6). A codec the item does not have falls back to
-// the other one, so the address a client holds keeps working. `format` with any
+// For `variant=thumb` and `variant=display` the `format` parameter selects the
+// codec: `avif` (the default) or `webp` (KNOT-037-fix6). A codec the item does not
+// have falls back to the other one, so the address a client holds keeps working —
+// a display produced before KNOT-038-fix3 has only the AVIF. `format` with any
 // other variant is rejected rather than ignored.
 //
 // A row whose derivatives are still being generated answers **202 Accepted** with
@@ -290,11 +299,13 @@ func (h *StoryMediaHandler) Content(w http.ResponseWriter, r *http.Request) {
 			"format must be avif or webp")
 		return
 	}
-	// A format only means something for a thumbnail. Rejecting the combination
-	// rather than ignoring it keeps a client from believing it negotiated a codec.
-	if format != "" && variant != storymedia.VariantThumb {
+	// A format only means something for a rendition that exists in two codecs: the
+	// thumbnail and the image display. Rejecting any other combination rather than
+	// ignoring it keeps a client from believing it negotiated a codec
+	// (KNOT-037-fix6, KNOT-038-fix3).
+	if format != "" && variant != storymedia.VariantThumb && variant != storymedia.VariantDisplay {
 		writeError(w, http.StatusBadRequest, codeInvalidRequest,
-			"format may only be used with variant=thumb")
+			"format may only be used with variant=thumb or display")
 		return
 	}
 
@@ -450,6 +461,7 @@ func newStoryMediaResponse(media storymedia.StoryMedia, storyID string) storyMed
 		ThumbnailURL:         storyMediaImageThumbnailURL(storyID, media),
 		ThumbnailURLFallback: storyMediaThumbnailFallbackURL(storyID, media),
 		MediumURL:            storyMediaVariantURL(storyID, media.ID, media.MediumKey, storymedia.VariantMedium),
+		DisplayWebPURL:       storyMediaDisplayWebPURL(storyID, media),
 	}
 }
 
@@ -478,6 +490,28 @@ func storyMediaImageThumbnailURL(storyID string, media storymedia.StoryMedia) *s
 	}
 
 	url := storyMediaURL(storyID, media.ID) + "?variant=" + string(storymedia.VariantThumb)
+	return &url
+}
+
+// storyMediaDisplayWebPURL is the WebP address of an image's display, or nil when
+// the row has no WebP display.
+//
+// It exists because AVIF is native only on Android 12+ and iOS 16+: a device below
+// those decodes nothing and draws a blank rectangle, with no error to react to.
+// WebP is the same picture at the same size in a codec every supported device can
+// read, so the client is given an address it can actually use rather than being
+// asked to sniff support (KNOT-038-fix3).
+func storyMediaDisplayWebPURL(storyID string, media storymedia.StoryMedia) *string {
+	if media.MediaType != storymedia.MediaTypeImage {
+		return nil
+	}
+	if _, ok := media.DisplayWebPKey(); !ok {
+		return nil
+	}
+
+	url := storyMediaURL(storyID, media.ID) +
+		"?variant=" + string(storymedia.VariantDisplay) +
+		"&format=" + string(storymedia.FormatWebP)
 	return &url
 }
 

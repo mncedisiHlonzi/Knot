@@ -39,10 +39,17 @@ export function toViewerMedia(media: readonly StoryMedia[] | null | undefined): 
       continue;
     }
 
+    // The WebP display is copied as-is when the server sent one, and left
+    // undefined otherwise; the viewer falls back to `url`. `url` itself is never
+    // rewritten, because it is the identity a tapped card matches on.
+    const displayWebPURL =
+      typeof item.display_webp_url === 'string' ? item.display_webp_url.trim() : '';
+
     items.push({
       id: typeof item.id === 'string' && item.id !== '' ? item.id : url,
       media_type: item.media_type,
       url,
+      display_webp_url: displayWebPURL === '' ? null : displayWebPURL,
       width: typeof item.width === 'number' ? item.width : null,
       height: typeof item.height === 'number' ? item.height : null,
       duration_ms: typeof item.duration_ms === 'number' ? item.duration_ms : null,

@@ -35,16 +35,34 @@ describe('toViewerMedia', () => {
     ]);
 
     expect(items).toHaveLength(2);
+    // A video has no second display codec, so its WebP address stays absent
+    // (KNOT-038-fix3).
     expect(items[0]).toEqual({
       id: 'media-1',
       media_type: 'image',
       url: '/stories/story-1/media/media-1/content',
+      display_webp_url: null,
       width: 1200,
       height: 800,
       duration_ms: null,
     });
     expect(items[1].media_type).toBe('video');
     expect(items[1].duration_ms).toBe(42000);
+  });
+
+  it('carries the WebP display without disturbing the url the viewer opens on', () => {
+    const webp = '/stories/story-1/media/media-1/content?variant=display&format=webp';
+    const [item] = toViewerMedia([storyMedia({ display_webp_url: webp })]);
+
+    expect(item.display_webp_url).toBe(webp);
+    // `url` is how a tapped card is matched to its page, so it is never rewritten.
+    expect(item.url).toBe('/stories/story-1/media/media-1/content');
+    expect(viewerIndexByUrl([item], '/stories/story-1/media/media-1/content')).toBe(0);
+  });
+
+  it('treats a blank WebP address as one the server did not send', () => {
+    const [item] = toViewerMedia([storyMedia({ display_webp_url: '   ' })]);
+    expect(item.display_webp_url).toBeNull();
   });
 
   it('treats unknown dimensions as unconstrained rather than zero', () => {

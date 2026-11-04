@@ -298,3 +298,47 @@ describe('MediaGalleryModal story overlay', () => {
     expect(labels).not.toContain('Open the language tree');
   });
 });
+
+/** The address the viewer's image page of `media` draws from. */
+function imagePageUri(media: readonly ViewerMedia[]): string | undefined {
+  const list = elements(renderStage({ media }).tree).find(
+    (element) => typeof element.props?.renderItem === 'function',
+  );
+  if (list === undefined) {
+    throw new Error('the stage drew no pager');
+  }
+
+  const renderItem = list.props?.renderItem as (info: {
+    item: ViewerMedia;
+    index: number;
+  }) => unknown;
+  const page = elements(renderItem({ item: media[0], index: 0 }));
+  const image = page.find(
+    (element) => typeof element.type === 'function' && element.type.name === 'ZoomableImage',
+  );
+
+  return image?.props?.uri as string | undefined;
+}
+
+describe('MediaGalleryModal display codec', () => {
+  const webp = '/stories/story-1/media/media-1/content?variant=display&format=webp';
+
+  it('draws a photo from its WebP display, which every supported device decodes', () => {
+    expect(imagePageUri([{ ...MEDIA[0], display_webp_url: webp }])).toBe(
+      'http://localhost:8080' + webp,
+    );
+  });
+
+  it('keeps the primary display when the server sent no WebP one', () => {
+    expect(imagePageUri(MEDIA)).toBe('http://localhost:8080/stories/story-1/media/media-1/content');
+    expect(imagePageUri([{ ...MEDIA[0], display_webp_url: null }])).toBe(
+      'http://localhost:8080/stories/story-1/media/media-1/content',
+    );
+  });
+
+  it('ignores a blank WebP address rather than prefetching the base URL', () => {
+    expect(imagePageUri([{ ...MEDIA[0], display_webp_url: '  ' }])).toBe(
+      'http://localhost:8080/stories/story-1/media/media-1/content',
+    );
+  });
+});
