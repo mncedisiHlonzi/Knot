@@ -11,6 +11,7 @@ async-trait = "0.1"
 aws-config = { version = "1.13", features = ["behavior-version-latest"] }
 aws-sdk-s3 = "1.157"
 bytes = "1"
+dotenvy = "0.15"
 ffmpeg-sidecar = { version = "2.7", default-features = false }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "avif"] }
 redis = { version = "1.8", features = ["tokio-comp"] }

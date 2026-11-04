@@ -1843,6 +1843,7 @@ dependencies = [
  "aws-config",
  "aws-sdk-s3",
  "bytes",
+ "dotenvy",
  "ffmpeg-sidecar",
  "image",
  "redis",

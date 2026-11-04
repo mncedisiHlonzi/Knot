@@ -36,6 +36,12 @@ recording it.
 
 ## Configuration
 
+Started from this directory, the worker reads the repository's files before it looks
+at the environment: `../../.env.example` (committed defaults) and then `../../.env`
+(secrets), with the local file overriding the example. That is why `cargo run
+--release` works without exporting anything by hand; a deployment with no files at
+all keeps working too, because a missing file is only a warning.
+
 The worker reads the same variables as the API — `KNOT_POSTGRES_DSN`,
 `KNOT_REDIS_ADDR`/`PASSWORD`/`DB` (or `KNOT_REDIS_URL`), and `KNOT_S3_*` — plus its
 own tuning:

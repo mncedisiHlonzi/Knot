@@ -14,6 +14,7 @@
 
 mod config;
 mod db;
+mod envfile;
 mod images;
 mod job;
 mod keys;
@@ -43,20 +44,70 @@ fn now() -> i64 {
         .unwrap_or(0)
 }
 
+/// Logs which configuration keys the process can see.
+///
+/// NAMES ONLY: this is the line an operator reads to tell "the file was not found"
+/// from "the key is there but empty", and printing a value here would put a
+/// database password or an R2 secret in the log stream. It runs before
+/// [`Config::from_env`], so a missing key is still reported when startup fails on
+/// it.
+fn log_configuration() {
+    let (resolved, missing) = envfile::resolved_keys();
+
+    info!(
+        resolved = %resolved.join(", "),
+        count = resolved.len(),
+        "configuration keys resolved"
+    );
+
+    if !missing.is_empty() {
+        warn!(
+            missing = %missing.join(", "),
+            count = missing.len(),
+            "configuration keys not set"
+        );
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    // The repository's env files are read BEFORE the logger exists, so a `RUST_LOG`
+    // in `.env` can take effect. Whatever loading has to say is collected and
+    // logged immediately below, so nothing is lost by the ordering.
+    let loaded = envfile::load();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .init();
 
+    for warning in &loaded.warnings {
+        warn!("{warning}");
+    }
+    for path in &loaded.files {
+        info!(path = %path.display(), "loaded an environment file");
+    }
+    info!(
+        files = loaded.files.len(),
+        skipped_lines = loaded.skipped_lines,
+        "environment load complete"
+    );
+
+    log_configuration();
+
     let config = Config::from_env()?;
+
+    // A label, not a secret, and the one value that proves which file won: the
+    // example says `minio`, the local file says `r2`. The Go API logs the same
+    // choice at startup (KNOT-038-fix).
+    let provider = std::env::var("KNOT_STORAGE_PROVIDER").unwrap_or_else(|_| "minio".to_string());
 
     info!(
         concurrency = config.concurrency,
         queue = keys::JOBS,
         bucket = %config.bucket,
+        provider = %provider,
         "starting the Knot media worker"
     );
 
