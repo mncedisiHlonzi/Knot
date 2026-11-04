@@ -52,6 +52,12 @@ vendor/
 # build of the media worker's dependency tree is hundreds of megabytes (KNOT-038).
 target/
 
+# The Rust worker's Railway build copies its compiled binary into bin/ so it
+# survives into the runtime image (KNOT-039-fix). Nixpacks assembles that image
+# from the paths this file allows, so this path must be re-included after the Go
+# rule above — otherwise the copy would be filtered out exactly like target/ is.
+!backend/rust-media-worker/bin/
+
 # ---------------------------------------------------------------------------
 # IDE / editors
 # ---------------------------------------------------------------------------

@@ -1,12 +1,23 @@
-# Nixpacks build plan for the Knot media worker (KNOT-038-fix5).
+# Nixpacks build plan for the Knot media worker (KNOT-038-fix5, KNOT-039-fix).
 #
-# The worker shells out to a system FFmpeg (src/video.rs uses
+# FFmpeg: the worker shells out to a system FFmpeg (src/video.rs uses
 # ffmpeg_sidecar::paths::ffmpeg_path(), and the crate is built with
 # default-features = false, so it never downloads a binary of its own). The
-# Nixpacks Rust image does not include FFmpeg, so without this file every video
-# job fails while image jobs succeed.
+# Nixpacks Rust image does not include FFmpeg, so without it every video job
+# fails while image jobs succeed.
 #
-# aptPkgs merges into Nixpacks' own setup phase; the build command and start
-# command stay where railway.toml already declares them.
+# Runtime binary: Nixpacks does not carry target/ into the runtime image — it is
+# a git-ignored, hundreds-of-megabytes build directory — so a start command
+# pointing at ./target/release/knot-media-worker dies with "No such file or
+# directory" even though the build succeeded. The build phase therefore copies
+# the binary to ./bin/, which is shipped.
+#
+# railway.toml's [build] buildCommand repeats the same two commands: Railway
+# applies that as an override, so keeping the copy in both places means
+# ./bin/knot-media-worker exists whichever one the builder honours. Keep them in
+# step if either changes.
 [phases.setup]
 aptPkgs = ["ffmpeg"]
+
+[phases.build]
+cmds = ["cargo build --release", "mkdir -p bin && cp target/release/knot-media-worker bin/"]

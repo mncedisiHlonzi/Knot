@@ -2761,12 +2761,12 @@ The whole backend runs on [Railway](https://railway.com) as **four services in o
 project**. Each service is deployed from this repository with its own root directory, and
 Railway reads the `railway.toml` in that directory (created in KNOT-038-fix4).
 
-| Service              | Root directory              | Build                             | Start                                     |
-| -------------------- | --------------------------- | --------------------------------- | ----------------------------------------- |
-| API (Go)             | `backend/go`                | `go build -o knot ./cmd/knot`     | `./knot`                                  |
-| Media worker (Rust)  | `backend/rust-media-worker` | `cargo build --release`           | `./target/release/knot-media-worker`      |
-| PostgreSQL           | Postgres plugin             | —                                 | —                                         |
-| Redis                | Redis plugin                | —                                 | —                                         |
+| Service              | Root directory              | Build                                      | Start                                |
+| -------------------- | --------------------------- | ------------------------------------------ | ------------------------------------ |
+| API (Go)             | `backend/go`                | `go build -o knot ./cmd/knot`              | `./knot`                             |
+| Media worker (Rust)  | `backend/rust-media-worker` | `cargo build --release`, then copy to `./bin/` | `./bin/knot-media-worker`        |
+| PostgreSQL           | Postgres plugin             | —                                          | —                                    |
+| Redis                | Redis plugin                | —                                          | —                                    |
 
 Both builds use Railway's `nixpacks` builder; there is no Dockerfile in this repository.
 The worker also ships a `nixpacks.toml` whose setup phase installs **FFmpeg**
@@ -2775,6 +2775,32 @@ transcoding needs it on `PATH` (KNOT-038-fix5). The API declares
 `healthcheckPath = "/health"` — unauthenticated and dependent on nothing — so Railway
 waits for a real answer before routing traffic. The worker declares **no** healthcheck: it
 has no HTTP server and proves liveness by claiming jobs from Redis.
+
+### Worker build output
+
+Nixpacks does **not** carry `target/` into the runtime image — it is a git-ignored,
+hundreds-of-megabytes build directory, and the image is assembled from the paths
+`.gitignore` allows. A start command pointing at `./target/release/knot-media-worker`
+therefore fails with `/bin/bash: line 1: ./target/release/knot-media-worker: No such file
+or directory` even though `cargo build --release` succeeded (KNOT-039-fix).
+
+The worker's build copies the binary out of `target/` and into `./bin/`:
+
+```bash
+cargo build --release
+mkdir -p bin && cp target/release/knot-media-worker bin/
+```
+
+and the start command is `./bin/knot-media-worker`.
+
+`./bin/` would have been filtered out for the same reason `target/` is, because the Go
+section of `.gitignore` ignores every `bin/` directory. The Rust section therefore
+re-includes `backend/rust-media-worker/bin/`; removing that exception silently breaks the
+deploy again.
+
+Both files carry the two commands — `nixpacks.toml`'s `[phases.build].cmds` and
+`railway.toml`'s `buildCommand`, which Railway applies as an override — so the binary
+lands in `./bin/` whichever one the builder honours. Keep them in step if either changes.
 
 ### Go toolchain
 
