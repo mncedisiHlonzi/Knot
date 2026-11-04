@@ -2864,6 +2864,70 @@ The worker reports the state at startup: `ffmpeg is not on PATH: every video job
 until it is installed` is a warning worth alerting on. If the build is ever moved off
 Nixpacks, the replacement image must keep FFmpeg in it.
 
+## Switching Between Railway and Local Backend
+
+`apps/mobile/src/config/dev.ts` is the single place that decides which API the app talks
+to: `API_BASE_URL` in `src/config/api.ts` derives from `DEV_API_URL`. Since KNOT-039 the
+default is the **live Railway deployment**,
+`https://go-api-production-ee4e.up.railway.app`, and the Mac's LAN address sits directly
+below it as a commented-out alternative.
+
+### Railway (the default)
+
+Leave the constant as it is:
+
+```ts
+export const DEV_API_URL = 'https://go-api-production-ee4e.up.railway.app';
+```
+
+Check the backend before blaming the app — `/health` needs no login, so a 200 proves
+routing and the process:
+
+```bash
+curl -i https://go-api-production-ee4e.up.railway.app/health
+# HTTP/2 200 ... {"status":"ok","version":"0.1.0","time":"..."}
+```
+
+### Local (office-only)
+
+1. Start the stack: `scripts/dev-up.sh`, then apply migrations
+   (`cd backend/go && go run ./cmd/knot migrate up`) and start the API
+   (`go run ./cmd/knot`).
+2. Read the Mac's address: `ipconfig getifaddr en0`.
+3. Swap the comment on the two `DEV_API_URL` lines in `apps/mobile/src/config/dev.ts`, so
+   the LAN address is the live export.
+4. Rebuild, below. The debug build already permits cleartext to any host; a release build
+   permits it only for the on-device video-cache proxy, so a local server cannot be used
+   from a release APK.
+
+### Rebuilding after a switch
+
+`DEV_API_URL` is a module constant compiled into the JavaScript bundle, so a running app
+does not see a change until the bundle is rebuilt:
+
+```bash
+cd apps/mobile/android
+./gradlew clean
+cd ../.. && npx react-native run-android
+```
+
+A debug build attached to Metro also picks the change up on a reload, because Metro
+re-bundles the edited module; a standalone build — release, or debug without Metro — keeps
+the old value until it is rebuilt. A native rebuild is not otherwise needed: this is a
+JavaScript-only change.
+
+To confirm which URL a bundle actually carries:
+
+```bash
+npx react-native bundle --platform android --dev false --reset-cache \
+  --entry-file index.js --bundle-output /tmp/knot.bundle --assets-dest /tmp/knot-assets
+grep -c 'go-api-production-ee4e.up.railway.app' /tmp/knot.bundle   # 1
+grep -c '10.92.86.173' /tmp/knot.bundle                            # 0
+```
+
+The LAN address survives only in comments and in the commented-out export, and the
+production bundle strips comments.
+
 ## Moderation: reports and blocks (KNOT-017a)
 
 `internal/moderation` is the safety foundation: `role.go` (the `Role` type and its

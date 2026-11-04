@@ -3,34 +3,40 @@ import { KNOT_MAPBOX_TOKEN as LOCAL_MAPBOX_TOKEN } from './secrets.local';
 /**
  * The backend URL the app talks to.
  *
- * LOCAL DEVELOPMENT (the default): the API runs on the founder's Mac, and a
- * physical phone reaches it over the same Wi-Fi network. `localhost` on the phone
- * means the phone itself, so the Mac's LAN address is the only host that works
- * from a device — and it changes whenever the Mac joins a different network, which
- * is why this constant is the single place to update. To read the current
- * address: `ipconfig getifaddr en0`. Start the server with
- * `cd backend/go && go run ./cmd/knot` (it listens on port 8080).
+ * LIVE BACKEND (the default): the Go API, the Rust media worker, PostgreSQL and
+ * Redis run on Railway (KNOT-039). The URL is HTTPS, so requests work from any
+ * network and in a release build, and a physical phone does not have to be on the
+ * same Wi-Fi network as the Mac.
  *
- * The value below is the Mac's Wi-Fi address on the office network
- * (KNOT-037-fix20). Host rules while pointing at a local server:
+ * LOCAL DEVELOPMENT (commented out below): the API runs on the founder's Mac and
+ * a physical phone reaches it over the same Wi-Fi network. `localhost` on the
+ * phone means the phone itself, so the Mac's LAN address is the only host that
+ * works from a device — and it changes whenever the Mac joins a different
+ * network. Read the current address with `ipconfig getifaddr en0` and start the
+ * server with `cd backend/go && go run ./cmd/knot` (it listens on port 8080).
+ * This is for office-only development; switch to it by swapping the comment on
+ * the two lines below and rebuilding (see "Switching Between Railway and Local
+ * Backend" in docs/DEVELOPMENT.md).
+ *
+ * Host rules while pointing at a local server:
  *
  *   - iOS Simulator     → http://localhost:8080    (shares the Mac's loopback)
  *   - Android emulator  → http://10.0.2.2:8080     (the emulator's host-loopback alias)
  *   - Physical device   → the Mac's Wi-Fi address  (http://10.92.86.173:8080)
  *
- * A debug build permits cleartext for that local server
- * (android/app/src/debug/res/xml/network_security_config.xml, KNOT-037-fix11).
+ * A debug build permits cleartext to a local server
+ * (android/app/src/debug/res/xml/network_security_config.xml, KNOT-037-fix11); a
+ * release build permits it only for the on-device video-cache proxy, which is a
+ * further reason the HTTPS Railway URL is the default.
  *
- * CLOUD ALTERNATIVE (Render): the API was deployed at
- * https://knot-backend-lsx0.onrender.com (KNOT-037-fix14). To use it, replace the
- * constant with that URL — it is HTTPS, so it also works in a release build. The
- * free tier could not run the AVIF media pipeline fast enough, which is why local
- * is the default again (KNOT-037-fix20); switching back is this one line.
+ * Before Railway the API ran on Render (https://knot-backend-lsx0.onrender.com,
+ * KNOT-037-fix14); Railway replaced it in KNOT-039.
  *
  * `API_BASE_URL` in `./api.ts` derives from this constant and strips a trailing
  * slash, so a URL may be written either way.
  */
-export const DEV_API_URL = 'http://10.92.86.173:8080';
+export const DEV_API_URL = 'https://go-api-production-ee4e.up.railway.app';
+// export const DEV_API_URL = 'http://10.92.86.173:8080';
 
 /**
  * The Mapbox public access token (starts with `pk.`), used by the Discovery Map.
