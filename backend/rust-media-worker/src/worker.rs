@@ -370,6 +370,7 @@ mod tests {
         let ready = rows.ready_calls();
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].media_id, MEDIA_ID);
+        assert_eq!(ready[0].storage_key, job.display_key().unwrap());
         assert_eq!(ready[0].thumbnail_key.as_deref(), Some(job.thumbnail_key().unwrap().as_str()));
         assert!(ready[0].size_bytes > 0, "the size describes the derivative");
         // The row learns the shape it never had, from the encoded picture.

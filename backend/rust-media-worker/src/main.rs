@@ -119,7 +119,10 @@ async fn main() -> Result<()> {
     let rows = Arc::new(PgMediaRows::connect(&config.database_url).await?);
 
     let reclaimer = tokio::spawn(reclaim_loop(
-        Queue::new(RedisQueue::connect(&config.redis_url).await?, config.max_attempts),
+        Queue::new(
+            RedisQueue::connect(&config.redis_url, config.claim_timeout).await?,
+            config.max_attempts,
+        ),
         rows.clone(),
         config.clone(),
     ));
@@ -127,7 +130,7 @@ async fn main() -> Result<()> {
     let mut workers = Vec::with_capacity(config.concurrency);
     for index in 0..config.concurrency {
         let queue = Queue::new(
-            RedisQueue::connect(&config.redis_url).await?,
+            RedisQueue::connect(&config.redis_url, config.claim_timeout).await?,
             config.max_attempts,
         );
         workers.push(tokio::spawn(worker_loop(

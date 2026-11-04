@@ -257,12 +257,50 @@ pub struct RedisQueue {
     commands: redis::aio::MultiplexedConnection,
 }
 
+/// How much longer than the claim's block the client waits before giving up.
+///
+/// `redis` 1.x sets `DEFAULT_RESPONSE_TIMEOUT` to **500 ms**
+/// (`src/client.rs`, `DEFAULT_RESPONSE_TIMEOUT: Some(Duration::from_millis(500))`),
+/// which is shorter than any blocking command: a `BLMOVE … 5` would time out on
+/// the client before Redis had held it for even one second. The worker's longest
+/// command is the claim itself, so the response timeout is the claim's block plus
+/// this headroom (KNOT-038-fix2).
+///
+/// Thirty seconds is deliberately generous: a response timeout that is merely
+/// "bigger" would turn a slow Redis into a stream of confusing timeouts instead of
+/// a queue that waits. The headroom is also what keeps a raised
+/// `KNOT_MEDIA_CLAIM_TIMEOUT_SECS` from silently reintroducing this bug.
+pub const RESPONSE_TIMEOUT_HEADROOM: Duration = Duration::from_secs(30);
+
+/// The response timeout that belongs to a given claim block.
+fn response_timeout_for(claim_timeout: Duration) -> Duration {
+    claim_timeout.saturating_add(RESPONSE_TIMEOUT_HEADROOM)
+}
+
 impl RedisQueue {
     /// Opens both connections.
-    pub async fn connect(url: &str) -> Result<Self> {
+    ///
+    /// `claim_timeout` is the block the worker passes to `BLMOVE`; the client's
+    /// response timeout is derived from it, because a timeout shorter than the
+    /// block makes the block impossible (KNOT-038-fix2).
+    ///
+    /// `AsyncConnectionConfig::set_response_timeout` is applied at construction
+    /// rather than by mutating the connection afterwards, so there is no window in
+    /// which the 500 ms default applies. Both connections get it: the blocking one
+    /// needs it for `BLMOVE`, and the command connection is only ever faster than
+    /// that.
+    pub async fn connect(url: &str, claim_timeout: Duration) -> Result<Self> {
         let client = redis::Client::open(url)?;
-        let blocking = client.get_multiplexed_async_connection().await?;
-        let commands = client.get_multiplexed_async_connection().await?;
+        let config = redis::AsyncConnectionConfig::new()
+            .set_response_timeout(Some(response_timeout_for(claim_timeout)));
+
+        let blocking = client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await?;
+        let commands = client
+            .get_multiplexed_async_connection_with_config(&config)
+            .await?;
+
         Ok(Self { blocking, commands })
     }
 }
@@ -513,6 +551,9 @@ impl QueueOps for FakeQueue {
 mod tests {
     use super::*;
     use crate::job::MediaType;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::time::Instant;
 
     const STORY: &str = "55555555-5555-4555-8555-555555555555";
     const MEDIA: &str = "00000000-0000-4000-8000-000000000001";
@@ -728,5 +769,141 @@ mod tests {
         let queue = Queue::new(FakeQueue::default(), 0);
 
         assert_eq!(queue.max_attempts(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // The response timeout (KNOT-038-fix2)
+    // -----------------------------------------------------------------------
+
+    /// The bytes of one `CLIENT` command header in redis-rs's setup pipeline.
+    const CLIENT_COMMAND: &[u8] = b"$6\r\nCLIENT\r\n";
+
+    /// The command whose block the response timeout has to outlive.
+    const BLMOVE_COMMAND: &[u8] = b"BLMOVE";
+
+    /// RESP2's null array, which redis-rs reads as `Option::None`.
+    const NIL_ARRAY: &[u8] = b"*-1\r\n";
+
+    /// Runs a Redis stand-in that holds `BLMOVE` for `delay` and then answers
+    /// "no such element".
+    ///
+    /// A real server would do the same thing, but requiring one would make this
+    /// test depend on a developer's machine (and skip silently everywhere else),
+    /// which is exactly the kind of test that stops proving anything. The stand-in
+    /// is a plain TCP listener: it answers the handshake and then performs the one
+    /// behaviour the assertion is about.
+    fn stub_redis(delay: Duration) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a port");
+        let address = listener.local_addr().expect("read the bound port");
+
+        let server = std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { break };
+                std::thread::spawn(move || serve_stub(stream, delay));
+            }
+        });
+
+        (format!("redis://{address}/0"), server)
+    }
+
+    /// Serves one client connection: acknowledges the setup pipeline, then holds
+    /// each `BLMOVE` for the configured delay.
+    fn serve_stub(mut stream: TcpStream, delay: Duration) {
+        // The handshake is a pipeline, so it arrives quickly but possibly in
+        // several reads. Reading until a short silence and then answering each
+        // CLIENT command is enough for the connection to become usable.
+        if stream
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .is_err()
+        {
+            return;
+        }
+
+        let mut buffer = Vec::new();
+        let mut chunk = [0u8; 2048];
+
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) => return,
+                Ok(read) => buffer.extend_from_slice(&chunk[..read]),
+                // The client is now waiting for the handshake replies.
+                Err(_) => break,
+            }
+        }
+
+        let acknowledgements = buffer
+            .windows(CLIENT_COMMAND.len())
+            .filter(|window| *window == CLIENT_COMMAND)
+            .count();
+        for _ in 0..acknowledgements {
+            if stream.write_all(b"+OK\r\n").is_err() {
+                return;
+            }
+        }
+
+        buffer.clear();
+        loop {
+            match stream.read(&mut chunk) {
+                Ok(0) => return,
+                Ok(read) => buffer.extend_from_slice(&chunk[..read]),
+                // Idle between commands, which is the normal case for a queue.
+                Err(_) => continue,
+            }
+
+            if buffer
+                .windows(BLMOVE_COMMAND.len())
+                .any(|window| window == BLMOVE_COMMAND)
+            {
+                buffer.clear();
+                std::thread::sleep(delay);
+                if stream.write_all(NIL_ARRAY).is_err() {
+                    return;
+                }
+            }
+        }
+    }
+
+    /// A blocking claim must wait for its block and come back empty — not fail
+    /// after the client's default 500 ms response timeout.
+    ///
+    /// The first two assertions pin the policy, so a raised
+    /// `KNOT_MEDIA_CLAIM_TIMEOUT_SECS` cannot silently reintroduce the bug. The
+    /// rest is the behaviour: `redis` 1.x defaults the response timeout to 500 ms,
+    /// and with that default this call returns an error long before the stand-in's
+    /// one-second reply.
+    #[tokio::test]
+    async fn a_blocking_claim_waits_instead_of_timing_out() {
+        assert!(
+            response_timeout_for(Duration::from_secs(5)) > Duration::from_secs(5),
+            "the response timeout must outlive the claim's block"
+        );
+        assert!(
+            response_timeout_for(Duration::ZERO) > Duration::from_millis(500),
+            "the crate default is 500 ms, which is what made the claim fail"
+        );
+
+        let (url, _server) = stub_redis(Duration::from_secs(1));
+        let mut queue = Queue::new(
+            RedisQueue::connect(&url, Duration::from_secs(1))
+                .await
+                .expect("the stand-in accepts the connection handshake"),
+            3,
+        );
+
+        let started = Instant::now();
+        let claimed = tokio::time::timeout(
+            Duration::from_secs(5),
+            queue.claim(Duration::from_secs(1), 0),
+        )
+        .await
+        .expect("the claim must finish, not hang")
+        .expect("a blocking claim returns Ok(None), not an error");
+        let elapsed = started.elapsed();
+
+        assert!(claimed.is_none(), "the queue was empty");
+        assert!(
+            elapsed >= Duration::from_millis(800) && elapsed <= Duration::from_millis(1500),
+            "the claim returned after {elapsed:?}, want about one second of blocking"
+        );
     }
 }
