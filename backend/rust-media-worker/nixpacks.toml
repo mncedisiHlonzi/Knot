@@ -1,0 +1,12 @@
+# Nixpacks build plan for the Knot media worker (KNOT-038-fix5).
+#
+# The worker shells out to a system FFmpeg (src/video.rs uses
+# ffmpeg_sidecar::paths::ffmpeg_path(), and the crate is built with
+# default-features = false, so it never downloads a binary of its own). The
+# Nixpacks Rust image does not include FFmpeg, so without this file every video
+# job fails while image jobs succeed.
+#
+# aptPkgs merges into Nixpacks' own setup phase; the build command and start
+# command stay where railway.toml already declares them.
+[phases.setup]
+aptPkgs = ["ffmpeg"]

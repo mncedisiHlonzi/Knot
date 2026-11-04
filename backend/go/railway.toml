@@ -1,0 +1,20 @@
+# Railway deployment for the Knot Go API (KNOT-038-fix4).
+#
+# The Railway service's root directory is backend/go, so this file is the one
+# Railway reads. The build produces a single binary at ./knot next to the module
+# root, and the start command runs exactly that binary.
+#
+# The port is NOT set here: Railway injects PORT, and internal/config reads
+# KNOT_HTTP_PORT first, then PORT, then 8080. /health is unauthenticated and
+# touches no dependency, so it is safe as the healthcheck.
+
+[build]
+builder = "nixpacks"
+buildCommand = "go build -o knot ./cmd/knot"
+
+[deploy]
+startCommand = "./knot"
+healthcheckPath = "/health"
+healthcheckTimeout = 120
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

@@ -1,0 +1,18 @@
+# Railway deployment for the Knot media worker (KNOT-038-fix4).
+#
+# The Railway service's root directory is backend/rust-media-worker. The crate's
+# package name is knot-media-worker, so cargo writes the binary to
+# target/release/knot-media-worker.
+#
+# There is deliberately no healthcheckPath: the worker has no HTTP server. It
+# proves liveness by claiming jobs from Redis (BLMOVE), and Railway restarts it
+# according to the policy below.
+
+[build]
+builder = "nixpacks"
+buildCommand = "cargo build --release"
+
+[deploy]
+startCommand = "./target/release/knot-media-worker"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3

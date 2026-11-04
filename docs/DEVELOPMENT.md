@@ -2755,6 +2755,99 @@ There are **no deployment steps**. CI verifies the foundation only.
 
 > The first CI run is the real test of the version pins — see "Version drift" above.
 
+## Deploying to Railway
+
+The whole backend runs on [Railway](https://railway.com) as **four services in one
+project**. Each service is deployed from this repository with its own root directory, and
+Railway reads the `railway.toml` in that directory (created in KNOT-038-fix4).
+
+| Service              | Root directory              | Build                             | Start                                     |
+| -------------------- | --------------------------- | --------------------------------- | ----------------------------------------- |
+| API (Go)             | `backend/go`                | `go build -o knot ./cmd/knot`     | `./knot`                                  |
+| Media worker (Rust)  | `backend/rust-media-worker` | `cargo build --release`           | `./target/release/knot-media-worker`      |
+| PostgreSQL           | Postgres plugin             | —                                 | —                                         |
+| Redis                | Redis plugin                | —                                 | —                                         |
+
+Both builds use Railway's `nixpacks` builder; there is no Dockerfile in this repository.
+The worker also ships a `nixpacks.toml` whose setup phase installs **FFmpeg**
+(`aptPkgs = ["ffmpeg"]`), because the Nixpacks Rust image does not include it and video
+transcoding needs it on `PATH` (KNOT-038-fix5). The API declares
+`healthcheckPath = "/health"` — unauthenticated and dependent on nothing — so Railway
+waits for a real answer before routing traffic. The worker declares **no** healthcheck: it
+has no HTTP server and proves liveness by claiming jobs from Redis.
+
+### Environment variables
+
+Every value is set in the **Railway dashboard** (or with `railway variables`), never in a
+tracked file. `.env.example` documents the names and local placeholders; real secrets stay
+in Railway.
+
+Set `KNOT_ENV` to something other than `local` (for example `production`). That is what
+makes `internal/config` strict: outside `local` it requires the Postgres DSN, the Redis
+address, the JWT secret, the admin secret, and the three S3 credentials, and it **fails
+fast, naming every missing variable**, instead of silently using the local placeholders.
+
+| Variable                   | API | Worker | Notes                                                                                          |
+| -------------------------- | --- | ------ | ---------------------------------------------------------------------------------------------- |
+| `KNOT_ENV`                 | Yes | Yes    | `production` (anything but `local` enables strict validation)                                   |
+| `KNOT_POSTGRES_DSN`        | Yes | Yes    | `${{Postgres.DATABASE_URL}}`                                                                    |
+| `KNOT_REDIS_ADDR`          | Yes | —      | `redis.railway.internal:6379`. The Go config does **not** read `KNOT_REDIS_URL`                  |
+| `KNOT_REDIS_PASSWORD`      | Yes | —      | Only when the Redis plugin sets one; it is read verbatim and may be empty                       |
+| `KNOT_REDIS_DB`            | Yes | —      | `0`                                                                                              |
+| `KNOT_REDIS_URL`           | —   | Yes    | `${{Redis.REDIS_URL}}`; the worker prefers this over `ADDR`/`PASSWORD`/`DB`                     |
+| `KNOT_JWT_SECRET`          | Yes | —      | At least 32 random bytes; a short one is rejected outside `local`                               |
+| `KNOT_ADMIN_SECRET`        | Yes | —      | Required outside `local`; guards the operator-only purge endpoint                               |
+| `KNOT_HTTP_PORT`           | —   | —      | Leave unset. Railway injects `PORT`, and the config reads `KNOT_HTTP_PORT` → `PORT` → `8080`     |
+| `KNOT_LOG_LEVEL`           | Yes | Yes    | `info`                                                                                          |
+| `KNOT_STORAGE_PROVIDER`    | Yes | —      | `r2` (a startup label only; both stores speak the S3 API)                                       |
+| `KNOT_S3_ENDPOINT`         | Yes | Yes    | The R2 endpoint, `https://<account-id>.r2.cloudflarestorage.com`                                 |
+| `KNOT_S3_REGION`           | Yes | Yes    | `auto`                                                                                          |
+| `KNOT_S3_ACCESS_KEY`       | Yes | Yes    | Required outside `local`                                                                        |
+| `KNOT_S3_SECRET_KEY`       | Yes | Yes    | Required outside `local`                                                                        |
+| `KNOT_S3_BUCKET`           | Yes | Yes    | The bucket must already exist; nothing creates it                                               |
+| `KNOT_RESEND_API_KEY`      | Yes | —      | Empty is supported: emails are logged instead of sent                                           |
+| `KNOT_EMAIL_FROM`          | Yes | —      | Must be a sender the Resend account may use                                                     |
+| `KNOT_WEB_URL`             | Yes | —      | The origin the emailed links point at                                                           |
+| `KNOT_MEDIA_*`             | —   | Yes    | Worker tuning (`CONCURRENCY`, `CLAIM_TIMEOUT_SECS`, `RECLAIM_INTERVAL_SECS`, `STALE_SECS`, `MAX_ATTEMPTS`); defaults are fine |
+
+The feed and detail caches (`KNOT_FEED_CACHE_ENABLED`, `KNOT_DETAIL_CACHE_ENABLED`) need no
+values: both default to on, and Redis is already required for sessions and the media queue.
+
+### Private networking
+
+Services reach each other over Railway's private network using
+`<service>.railway.internal` as the hostname — for example `postgres.railway.internal:5432`
+and `redis.railway.internal:6379` — with the port the plugin's own image listens on.
+Reference variables (`${{Postgres.DATABASE_URL}}`, `${{Redis.REDIS_URL}}`) already carry
+those internal hostnames, so no service needs a public domain or an egress hop.
+
+Only the **API** needs public networking (or a domain) for the mobile client. The worker,
+PostgreSQL, and Redis talk exclusively over the private network.
+
+### Migrations
+
+Schema changes stay an explicit action — the server never migrates on start. Run them once
+per deploy, from inside the API container (the built binary sits at `./knot`):
+
+```bash
+railway ssh --service <api-service>
+```
+
+```bash
+./knot migrate up
+```
+
+### FFmpeg in the worker
+
+Video jobs shell out to a system `ffmpeg`, and the Nixpacks Rust image does not include it.
+`backend/rust-media-worker/nixpacks.toml` therefore installs it in the setup phase with
+`aptPkgs = ["ffmpeg"]`, so every Railway build produces an image with FFmpeg on `PATH`
+(KNOT-038-fix5). Image derivatives need no FFmpeg.
+
+The worker reports the state at startup: `ffmpeg is not on PATH: every video job will fail
+until it is installed` is a warning worth alerting on. If the build is ever moved off
+Nixpacks, the replacement image must keep FFmpeg in it.
+
 ## Moderation: reports and blocks (KNOT-017a)
 
 `internal/moderation` is the safety foundation: `role.go` (the `Role` type and its
