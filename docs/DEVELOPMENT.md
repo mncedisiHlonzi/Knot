@@ -2776,6 +2776,22 @@ transcoding needs it on `PATH` (KNOT-038-fix5). The API declares
 waits for a real answer before routing traffic. The worker declares **no** healthcheck: it
 has no HTTP server and proves liveness by claiming jobs from Redis.
 
+### Go toolchain
+
+`backend/go/go.mod` declares **`go 1.24.0`**, not `go 1.24`. Keep a full patch version
+there. The directive is what the builder resolves a toolchain from, and a bare `1.24` asks
+for a distribution named `go1.24`, which Go never publishes — it publishes `go1.24.0`,
+`go1.24.1`, and so on. The Railway build then fails before compiling with:
+
+```text
+go: downloading go1.24 (linux/amd64)
+go: download go1.24 for linux/amd64: toolchain not available
+```
+
+(KNOT-038-fix6.) CI is not affected by this: `setup-go`'s `go-version: '1.24'` is a
+release-series selector that resolves to the newest 1.24.x by itself, which is why the
+workflow and the module directive are written differently on purpose.
+
 ### Environment variables
 
 Every value is set in the **Railway dashboard** (or with `railway variables`), never in a
