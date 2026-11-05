@@ -60,6 +60,8 @@ import {
 } from '../../utils/viewability';
 import { useStoryPolling } from '../../hooks/useStoryPolling';
 import { hasProcessingMedia, itemsWithStory, mediaStatusOf } from './storyPolling';
+import { mediaUploadLabel } from './mediaUpload';
+import type { MediaUploadProgress } from './mediaUpload';
 import {
   PROMPT_PILLARS,
   nextPromptIndex,
@@ -141,6 +143,18 @@ type FeedScreenProps = {
   /** Called once `pendingStory` has been taken into the list. */
   readonly onPendingStoryConsumed?: () => void;
   /**
+   * The media upload of the story that was just published, while its bytes are
+   * still going up from this device (KNOT-040).
+   *
+   * Publishing closes the composer before the uploads run, so the new card is the
+   * only place the person can see them. It is matched by story id, so it can only
+   * ever label the entry it belongs to.
+   */
+  readonly mediaUpload?: {
+    readonly storyId: string;
+    readonly progress: MediaUploadProgress;
+  };
+  /**
    * Called when the prompt card's call to action is used: the "Write it" button or
    * the prompt itself. Create used to be the bar's elevated tab and then a simple
    * composer row; it is the prompt card now (KNOT-020k-fix6, KNOT-020k-fix7).
@@ -198,6 +212,7 @@ export default function FeedScreen({
   onCreateStory,
   pendingStory,
   onPendingStoryConsumed,
+  mediaUpload,
 }: FeedScreenProps): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -650,6 +665,13 @@ export default function FeedScreen({
               isVisible={item.id === activeItemId}
               isNextInLine={item.id === nextItemId}
               mediaStatus={item.kind === 'story' ? mediaStatusOf(item.media) : undefined}
+              // While this entry's bytes are still going up from this device, the
+              // placeholder names the upload rather than the encode (KNOT-040).
+              processingLabel={
+                item.id === mediaUpload?.storyId
+                  ? mediaUploadLabel(mediaUpload.progress)
+                  : undefined
+              }
               onToggleMute={toggleMute}
               onPress={() =>
                 item.kind === 'version' ? onOpenVersion(item.id) : onOpenStory(item.id)

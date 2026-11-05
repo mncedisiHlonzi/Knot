@@ -180,12 +180,19 @@ func (s *fakeStore) SetStatus(_ context.Context, id string, status Status, sizeB
 
 // fakeObjects is an in-memory Storage.
 type fakeObjects struct {
-	objects   map[string][]byte
-	deleted   []string
-	putErr    error
-	getErr    error
-	rangeErr  error
-	deleteErr error
+	objects    map[string][]byte
+	deleted    []string
+	putErr     error
+	getErr     error
+	rangeErr   error
+	deleteErr  error
+	existsErr  error
+	presignErr error
+
+	// What the last PresignPut was asked for (KNOT-040).
+	presignedKey         string
+	presignedContentType string
+	presignedExpiry      time.Duration
 }
 
 func newFakeObjects() *fakeObjects {
@@ -236,6 +243,29 @@ func (o *fakeObjects) Delete(_ context.Context, key string) error {
 	o.deleted = append(o.deleted, key)
 	delete(o.objects, key)
 	return nil
+}
+
+// Exists reports whether the key was written, which is what the notify path asks
+// before it records a row (KNOT-040).
+func (o *fakeObjects) Exists(_ context.Context, key string) (bool, error) {
+	if o.existsErr != nil {
+		return false, o.existsErr
+	}
+	_, ok := o.objects[key]
+	return ok, nil
+}
+
+// PresignPut records what was asked for and answers with a URL-shaped value, so a
+// test can assert the key, the content type and the expiry the service chose
+// (KNOT-040).
+func (o *fakeObjects) PresignPut(_ context.Context, key, contentType string, expires time.Duration) (string, error) {
+	if o.presignErr != nil {
+		return "", o.presignErr
+	}
+	o.presignedKey = key
+	o.presignedContentType = contentType
+	o.presignedExpiry = expires
+	return fmt.Sprintf("https://objects.test/%s?content-type=%s&expires=%d", key, contentType, int(expires.Seconds())), nil
 }
 
 // fakeLogger records the lines the service emits. The mutex is required: the media

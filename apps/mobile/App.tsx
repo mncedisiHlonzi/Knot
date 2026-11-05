@@ -77,6 +77,7 @@ import { SPLASH_DURATION_MS, postSplashDestination } from './src/screens/splash/
 import AdaptStoryScreen from './src/screens/stories/AdaptStoryScreen';
 import CreateStoryScreen from './src/screens/stories/CreateStoryScreen';
 import FeedScreen from './src/screens/stories/FeedScreen';
+import type { MediaUploadProgress } from './src/screens/stories/mediaUpload';
 import LanguageTreeScreen from './src/screens/stories/LanguageTreeScreen';
 import StoryDetailScreen from './src/screens/stories/StoryDetailScreen';
 import StoryVersionScreen from './src/screens/stories/StoryVersionScreen';
@@ -265,6 +266,18 @@ function ThemedApp(): React.ReactElement {
    * placeholder its `processing` media earns (KNOT-037-fix8).
    */
   const [pendingStory, setPendingStory] = useState<Story | undefined>(undefined);
+  /**
+   * The media upload of that story, while its bytes are still leaving the device.
+   *
+   * Publishing closes the composer before the uploads run (KNOT-037-fix12), and
+   * the bytes now go straight to the object store (KNOT-040), so the feed's card
+   * for the new story is the only place the upload can be reported. It is held
+   * here because the composer that reports it unmounts as soon as the story is
+   * handed over.
+   */
+  const [mediaUpload, setMediaUpload] = useState<
+    { readonly storyId: string; readonly progress: MediaUploadProgress } | undefined
+  >(undefined);
   // The unread notification count drawn on the bell tab. It is read here rather
   // than inside the bar so the bar stays stateless, and it is re-read whenever
   // the visible tab changes — which covers coming back from the inbox after it
@@ -684,6 +697,7 @@ function ThemedApp(): React.ReactElement {
             // (KNOT-037-fix8).
             pendingStory={pendingStory}
             onPendingStoryConsumed={() => setPendingStory(undefined)}
+            mediaUpload={mediaUpload}
             onOpenStory={(id) =>
               setOverlays((stack) => pushOverlay(stack, { name: 'detail', storyId: id }))
             }
@@ -816,8 +830,12 @@ function ThemedApp(): React.ReactElement {
               // placeholders instead of waiting for its uploads, so the feed keeps
               // a copy to show and poll (KNOT-037-fix12).
               setPendingStory(story);
+              setMediaUpload(undefined);
               setOverlays((stack) => popOverlay(stack));
             }}
+            // The uploads run after this screen is gone, so their progress is
+            // reported upwards and drawn on the feed's card (KNOT-040).
+            onUploadProgress={(storyId, progress) => setMediaUpload({ storyId, progress })}
             onCancel={handleBack}
           />
         );

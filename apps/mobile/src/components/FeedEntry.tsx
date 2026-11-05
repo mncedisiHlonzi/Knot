@@ -207,6 +207,14 @@ type FeedEntryProps = {
    */
   readonly mediaStatus?: MediaStatus;
   /**
+   * What the processing placeholder says instead of "Processing media...".
+   *
+   * The feed uses it while the bytes are still going up from this device, which is
+   * an earlier stage than the server's encoding and deserves its own words
+   * (KNOT-040). Absent means the default copy.
+   */
+  readonly processingLabel?: string;
+  /**
    * True only for the entry immediately after the active one, so its video prepares
    * itself before it is scrolled into view (KNOT-037-fix7). Defaults to `false`.
    */
@@ -319,6 +327,7 @@ export default function FeedEntry({
   onToggleMute = NOOP,
   isNextInLine = false,
   mediaStatus,
+  processingLabel,
   testID,
 }: FeedEntryProps): React.ReactElement {
   const { colors } = useTheme();
@@ -599,7 +608,9 @@ export default function FeedEntry({
         <View style={[styles.mediaFrame, { aspectRatio: mediaFrame }]} testID="media-processing">
           <View style={styles.processingBox}>
             <ActivityIndicator color={colors.text.tertiary} />
-            <Text style={[typeScale.caption, styles.processingLabel]}>Processing media...</Text>
+            <Text style={[typeScale.caption, styles.processingLabel]}>
+              {processingLabel ?? 'Processing media...'}
+            </Text>
           </View>
         </View>
       ) : mediaUrl !== '' ? (

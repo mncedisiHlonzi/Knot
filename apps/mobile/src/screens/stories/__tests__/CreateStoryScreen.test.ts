@@ -374,7 +374,7 @@ describe('CreateStoryScreen publish', () => {
   }
 
   /** A story as `POST /stories` returns it: stored, with no media rows yet. */
-  function createdStory(): unknown {
+  function createdStory(): { id: string; [key: string]: unknown } {
     return {
       id: 'story-1',
       author_id: 'user-1',
@@ -442,5 +442,47 @@ describe('CreateStoryScreen publish', () => {
     expect(onCreated).not.toHaveBeenCalled();
     expect(uploadStoryMedia).not.toHaveBeenCalled();
     expect(stateWrites()).toContain('request failed');
+  });
+
+  it('reports the direct upload of each item as it starts', async () => {
+    (storiesApi.createStory as jest.Mock).mockResolvedValue({ story: createdStory() });
+    // Never settles: the first progress report must not wait for the bytes.
+    (uploadStoryMedia as jest.Mock).mockReturnValue(new Promise(() => undefined));
+
+    const onUploadProgress = jest.fn();
+    scriptState({
+      1: 'A title',
+      2: 'A body',
+      8: [pickedImage('file:///a.jpg'), pickedImage('file:///b.jpg')],
+    });
+    await publish(CreateStoryScreen({ ...PROPS, onUploadProgress }));
+
+    // Two files: the card is told "1 of 2" before the first byte moves (KNOT-040).
+    expect(onUploadProgress).toHaveBeenCalledWith(createdStory().id, {
+      completed: 0,
+      total: 2,
+      failed: false,
+    });
+  });
+
+  it('tells the reader when an upload fails, and keeps the story', async () => {
+    (storiesApi.createStory as jest.Mock).mockResolvedValue({ story: createdStory() });
+    (uploadStoryMedia as jest.Mock).mockRejectedValue(new Error('storage refused'));
+
+    const onUploadProgress = jest.fn();
+    scriptState({ 1: 'A title', 2: 'A body', 8: [pickedImage('file:///a.jpg')] });
+    await publish(CreateStoryScreen({ ...PROPS, onUploadProgress }));
+
+    // The upload runs after the handoff, so give its promise chain room to finish.
+    for (let step = 0; step < 8; step += 1) {
+      await Promise.resolve();
+    }
+
+    expect(onUploadProgress).toHaveBeenLastCalledWith(createdStory().id, {
+      completed: 1,
+      total: 1,
+      failed: true,
+    });
+    expect(Alert.alert).toHaveBeenCalledWith('Media upload failed', 'request failed');
   });
 });

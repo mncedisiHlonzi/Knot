@@ -38,6 +38,7 @@ import {
 import { layout, radius, spacing, typeScale, useTheme, useThemedStyles } from '../../theme';
 import type { ThemeColors } from '../../theme';
 import { withPendingMedia } from './storyPolling';
+import type { MediaUploadProgress } from './mediaUpload';
 
 type CreateStoryScreenProps = {
   /** The signed-in user's access token. The server derives the author from it. */
@@ -46,6 +47,16 @@ type CreateStoryScreenProps = {
   readonly onCreated: (story: Story) => void;
   /** Called when the person abandons the form. */
   readonly onCancel: () => void;
+  /**
+   * Called as the background upload of the just-published story's media advances,
+   * and once more if one of them fails.
+   *
+   * The bytes now go straight from the device to the object store (KNOT-040), so
+   * the composer is already closed while they travel; the feed's card for the new
+   * story is what shows this. The screen reports it upwards rather than drawing it
+   * itself, because there is no screen left when the first byte moves.
+   */
+  readonly onUploadProgress?: (storyId: string, progress: MediaUploadProgress) => void;
 };
 
 /** The language the form starts with. */
@@ -83,6 +94,9 @@ const DRAFT_STATUS = 'Not published yet';
 /** The headline of the notice shown when a story is published (KNOT-037-fix12). */
 const PUBLISHED_TITLE = 'Story published';
 
+/** The headline shown when a published story's media could not be uploaded. */
+const UPLOAD_FAILED_TITLE = 'Media upload failed';
+
 /**
  * What publishing tells the reader.
  *
@@ -98,16 +112,27 @@ const PROCESSING_NOTICE =
  *
  * Publishing closes the composer before these requests finish — the story exists
  * and the feed is already showing it (KNOT-037-fix12) — so there is no screen left
- * to report a failure to. Each item is sent one at a time, so a large video never
- * competes with the next file for the same uplink (KNOT-ADR-032), and a failure is
- * logged rather than thrown: the card keeps its placeholder, and the next refresh
- * shows what the server actually stored.
+ * to report a failure to; the caller shows it and the card carries the progress.
+ * Each item is sent one at a time, so a large video never competes with the next
+ * file for the same uplink (KNOT-ADR-032), and every item's bytes go straight to
+ * the object store rather than through the API (KNOT-040).
+ *
+ * Returns the first failure's message, or undefined when every item was attached.
  */
 async function uploadPickedMedia(
   storyId: string,
   media: readonly PickedMedia[],
   token: string,
-): Promise<void> {
+  onProgress?: (progress: MediaUploadProgress) => void,
+): Promise<string | undefined> {
+  const total = media.length;
+  let completed = 0;
+  let failure: string | undefined;
+
+  if (total > 0) {
+    onProgress?.({ completed, total, failed: false });
+  }
+
   for (const item of media) {
     try {
       await uploadStoryMedia(storyId, item.uri, item.mimeType, item.source, token, item.size, {
@@ -116,9 +141,18 @@ async function uploadPickedMedia(
         ...(item.duration === undefined ? {} : { durationMs: Math.round(item.duration * 1000) }),
       });
     } catch (caught) {
-      console.warn('[create] media upload failed after publishing', describeError(caught));
+      const message = describeError(caught);
+      console.warn('[create] media upload failed after publishing', message);
+      if (failure === undefined) {
+        failure = message;
+      }
     }
+
+    completed += 1;
+    onProgress?.({ completed, total, failed: failure !== undefined });
   }
+
+  return failure;
 }
 
 /**
@@ -178,6 +212,7 @@ export default function CreateStoryScreen({
   token,
   onCreated,
   onCancel,
+  onUploadProgress,
 }: CreateStoryScreenProps): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -281,10 +316,17 @@ export default function CreateStoryScreen({
       // rows (KNOT-037-fix8).
       onCreated(withPendingMedia(story, media));
 
-      // The bytes follow the story instead of blocking it. The backend answers 202
-      // as soon as it has them and encodes in the background, and the feed polls
-      // the story until they are ready (KNOT-037-fix12).
-      void uploadPickedMedia(story.id, media, token);
+      // The bytes follow the story instead of blocking it. The bytes go straight
+      // to the object store, then the API is told where they are, answers 202, and
+      // the feed polls the story until the worker has produced the renditions
+      // (KNOT-037-fix12, KNOT-040).
+      void uploadPickedMedia(story.id, media, token, (progress) => {
+        onUploadProgress?.(story.id, progress);
+      }).then((failure) => {
+        if (failure !== undefined) {
+          Alert.alert(UPLOAD_FAILED_TITLE, failure);
+        }
+      });
     } catch (caught) {
       // The story was NOT created, so the composer stays open with the error and
       // the reader can try again without losing what they wrote.

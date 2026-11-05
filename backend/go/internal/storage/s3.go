@@ -105,12 +105,13 @@ type putUploader interface {
 }
 
 // S3Storage is the S3-compatible implementation of Storage. It holds the client,
-// the multipart uploader and the bucket name, and no other state, so it is safe
-// for concurrent use.
+// the multipart uploader, the presigner and the bucket name, and no other state,
+// so it is safe for concurrent use.
 type S3Storage struct {
-	client   *s3.Client
-	uploader putUploader
-	bucket   string
+	client    *s3.Client
+	uploader  putUploader
+	presigner *s3.PresignClient
+	bucket    string
 }
 
 // Compile-time proof that the implementation satisfies the contract.
@@ -183,7 +184,51 @@ func NewS3Storage(ctx context.Context, endpoint, region, accessKey, secretKey, b
 	// the field is 0, which is why the threshold is 1 rather than 0.
 	uploader := transfermanager.New(client, uploadOptions)
 
-	return &S3Storage{client: client, uploader: uploader, bucket: bucket}, nil
+	// The presigner shares the same client, so a signed URL points at the same
+	// endpoint, uses the same path-style addressing and is signed with the same
+	// static credentials the rest of the package uses (KNOT-040).
+	presigner := s3.NewPresignClient(client)
+
+	return &S3Storage{client: client, uploader: uploader, presigner: presigner, bucket: bucket}, nil
+}
+
+// PresignPut returns a time-limited URL that uploads one object to key with a PUT
+// carrying contentType (KNOT-040).
+//
+// Signing is what makes the URL safe to hand to a client: the holder can write
+// exactly this key with exactly this content type until the window closes, and
+// nothing else. The bucket stays private, so the object is still served only
+// through this API (KNOT-ADR-029).
+//
+// The content type is part of the signature, so the uploader must send it. That is
+// deliberate: the service decided the type from the client's declaration and
+// derived the object key's extension from it, and a URL that accepted any header
+// would let the two disagree.
+func (s *S3Storage) PresignPut(ctx context.Context, key, contentType string, expires time.Duration) (string, error) {
+	if strings.TrimSpace(key) == "" {
+		return "", fmt.Errorf("storage: presign key is required")
+	}
+	if strings.TrimSpace(contentType) == "" {
+		return "", fmt.Errorf("storage: presign content type is required")
+	}
+	if expires <= 0 {
+		return "", fmt.Errorf("storage: presign expiry must be positive")
+	}
+
+	request, err := s.presigner.PresignPutObject(
+		ctx,
+		&s3.PutObjectInput{
+			Bucket:      aws.String(s.bucket),
+			Key:         aws.String(key),
+			ContentType: aws.String(contentType),
+		},
+		s3.WithPresignExpires(expires),
+	)
+	if err != nil {
+		return "", fmt.Errorf("storage: presign put %q: %w", key, err)
+	}
+
+	return request.URL, nil
 }
 
 // Put stores body under key with the given content type.

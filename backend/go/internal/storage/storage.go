@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"time"
 )
 
 // ErrObjectNotFound is returned by Get for a key that does not exist. Callers map
@@ -59,4 +60,20 @@ type Storage interface {
 
 	// Exists reports whether key is present.
 	Exists(ctx context.Context, key string) (bool, error)
+
+	// PresignPut returns a time-limited URL that lets the holder upload ONE object
+	// to key with a PUT whose Content-Type is contentType (KNOT-040).
+	//
+	// It exists so a client can send media bytes straight to the object store
+	// instead of through this API: the request path then costs one small JSON
+	// round trip rather than the whole file, and a slow uplink can no longer time
+	// out a request that never had anything to do with the bytes.
+	//
+	// The URL carries its own signature, so it needs no credentials and must be
+	// treated as a secret until it expires. The content type is part of what is
+	// signed, so the uploader must send exactly the type given here — a different
+	// one is refused by the store, not by this code. expires is clamped by the
+	// implementation to whatever the service allows; an expiry the service rejects
+	// is an error, never a silently shorter or longer window.
+	PresignPut(ctx context.Context, key, contentType string, expires time.Duration) (string, error)
 }

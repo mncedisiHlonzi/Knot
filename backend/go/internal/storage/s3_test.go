@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -113,6 +114,23 @@ func (m *memoryStorage) Exists(ctx context.Context, key string) (bool, error) {
 	defer m.mu.Unlock()
 	_, ok := m.objects[key]
 	return ok, nil
+}
+
+// PresignPut returns a URL-shaped stand-in. The contract only promises a URL the
+// caller can hand out, so the double echoes the key and the expiry instead of
+// pretending to sign anything.
+func (m *memoryStorage) PresignPut(ctx context.Context, key, contentType string, expires time.Duration) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(key) == "" || strings.TrimSpace(contentType) == "" {
+		return "", fmt.Errorf("memoryStorage: presign needs a key and a content type")
+	}
+	if expires <= 0 {
+		return "", fmt.Errorf("memoryStorage: presign expiry must be positive")
+	}
+
+	return fmt.Sprintf("https://objects.test/%s?X-Amz-Expires=%d", key, int(expires.Seconds())), nil
 }
 
 // runStorageContract asserts the behaviour every Storage implementation promises.
@@ -397,6 +415,97 @@ func TestS3StorageBuildsAMultipartUploader(t *testing.T) {
 	}
 	if _, ok := store.uploader.(*transfermanager.Client); !ok {
 		t.Errorf("S3Storage.uploader is %T, want *transfermanager.Client", store.uploader)
+	}
+}
+
+// TestS3StoragePresignPutSignsAStoryMediaKey pins the direct-upload contract
+// (KNOT-040): the signed URL addresses the exact key and content type the service
+// asked for, carries a usable signature, and expires inside the window it
+// requested.
+//
+// Signing is local, so this runs with no object store: the SDK computes the
+// signature from the request and the static credentials.
+func TestS3StoragePresignPutSignsAStoryMediaKey(t *testing.T) {
+	store, err := NewS3Storage(
+		context.Background(),
+		"https://example.r2.cloudflarestorage.com",
+		"auto",
+		"knot-access-key",
+		"knot-secret-key",
+		"knot-media",
+	)
+	if err != nil {
+		t.Fatalf("NewS3Storage() error = %v, want nil", err)
+	}
+
+	const key = "story-media/55555555-5555-4555-8555-555555555555/abc_original.jpg"
+	signed, err := store.PresignPut(context.Background(), key, "image/jpeg", 15*time.Minute)
+	if err != nil {
+		t.Fatalf("PresignPut() error = %v, want nil", err)
+	}
+
+	parsed, err := url.Parse(signed)
+	if err != nil {
+		t.Fatalf("PresignPut() url %q is not a URL: %v", signed, err)
+	}
+	if parsed.Scheme != "https" || parsed.Host != "example.r2.cloudflarestorage.com" {
+		t.Errorf("url = %q, want the configured endpoint", signed)
+	}
+	// Path-style addressing is what the client is built with, so the bucket is the
+	// first path segment.
+	if parsed.Path != "/knot-media/"+key {
+		t.Errorf("url path = %q, want %q", parsed.Path, "/knot-media/"+key)
+	}
+
+	query := parsed.Query()
+	if query.Get("X-Amz-Signature") == "" {
+		t.Error("url carries no signature")
+	}
+	if got := query.Get("X-Amz-Expires"); got != "900" {
+		t.Errorf("X-Amz-Expires = %q, want 900", got)
+	}
+	if query.Get("X-Amz-Algorithm") != "AWS4-HMAC-SHA256" {
+		t.Errorf("X-Amz-Algorithm = %q, want AWS4-HMAC-SHA256", query.Get("X-Amz-Algorithm"))
+	}
+	// The content type is part of the signature, so an uploader that omits it is
+	// refused by the store rather than silently storing the wrong type.
+	if !strings.Contains(query.Get("X-Amz-SignedHeaders"), "content-type") {
+		t.Errorf("X-Amz-SignedHeaders = %q, want it to include content-type", query.Get("X-Amz-SignedHeaders"))
+	}
+}
+
+// TestS3StoragePresignPutRejectsIncompleteInput keeps a programming mistake from
+// reaching the signer, where it would produce a URL that cannot work.
+func TestS3StoragePresignPutRejectsIncompleteInput(t *testing.T) {
+	store, err := NewS3Storage(
+		context.Background(),
+		"http://127.0.0.1:9000",
+		"us-east-1",
+		"knot",
+		"knot_local_only_change_me",
+		"knot-media",
+	)
+	if err != nil {
+		t.Fatalf("NewS3Storage() error = %v, want nil", err)
+	}
+
+	tests := []struct {
+		name        string
+		key         string
+		contentType string
+		expires     time.Duration
+	}{
+		{name: "blank key", key: " ", contentType: "image/jpeg", expires: time.Minute},
+		{name: "blank content type", key: "story-media/a.jpg", contentType: "", expires: time.Minute},
+		{name: "zero expiry", key: "story-media/a.jpg", contentType: "image/jpeg", expires: 0},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := store.PresignPut(context.Background(), test.key, test.contentType, test.expires); err == nil {
+				t.Error("PresignPut() error = nil, want an error")
+			}
+		})
 	}
 }
 

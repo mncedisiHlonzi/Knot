@@ -267,8 +267,23 @@ func (r *Router) Handler() http.Handler {
 
 	// Story media: images and videos attached to a story. Attaching and deleting
 	// require an access token; listing and streaming are open, because a story's
-	// media is part of a public story. The bytes are proxied by this backend, so
-	// the object store is never reachable from a client (KNOT-ADR-029).
+	// media is part of a public story.
+	//
+	// Since KNOT-040 the bytes do not travel through this API. The client signs one
+	// upload URL here, PUTs the file straight to the object store, then reports the
+	// object key; the handler confirms the object exists and queues the job that
+	// produces the derivatives. The bucket stays private (KNOT-ADR-029): the signed
+	// URL can only write one key, and every read is still served by this API.
+	//
+	// The multipart form is still accepted on the attach route, so a build released
+	// before that change keeps working.
+	//
+	//	POST   /media/upload-url                  sign a direct upload URL
+	//	POST   /stories/{id}/media                attach an uploaded object (or a multipart file)
+	//	GET    /stories/{id}/media                list a story's media
+	//	DELETE /stories/{id}/media/{mid}          remove one item
+	//	GET    /stories/{id}/media/{mid}/content  stream a rendition
+	mux.HandleFunc("POST /media/upload-url", r.authMiddleware.Require(r.storyMedia.UploadURL))
 	mux.HandleFunc("POST /stories/{id}/media", r.authMiddleware.Require(r.storyMedia.Create))
 	mux.HandleFunc("GET /stories/{id}/media", r.storyMedia.List)
 	mux.HandleFunc("DELETE /stories/{id}/media/{mid}", r.authMiddleware.Require(r.storyMedia.Delete))

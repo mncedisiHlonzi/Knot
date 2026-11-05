@@ -7,8 +7,10 @@ foundation and early Phase 1.
 - Base URL: `http://localhost:8080` (see `KNOT_HTTP_PORT` and `KNOT_API_URL`).
 - All request and response bodies are JSON, sent with `Content-Type: application/json`.
 - Request bodies are limited to **1 MiB**. Unknown fields are **rejected**.
-- The one exception is `POST /users/me/avatar`, which takes `multipart/form-data` and is
-  limited to **5 MiB** (see [Avatars](#avatars)).
+- The exceptions are `POST /users/me/avatar`, which takes `multipart/form-data` and is
+  limited to **5 MiB** (see [Avatars](#avatars)), and `POST /stories/{id}/media`, which
+  takes JSON when the client has already uploaded the bytes itself and still accepts
+  `multipart/form-data` from an older build (see [Story media](#story-media)).
 - Every request is logged with a request id. Send `X-Request-ID` to correlate your own
   logs; the server echoes it back, and generates one when it is absent.
 
@@ -25,7 +27,7 @@ Every error uses the same envelope:
 | Status | `code`              | Meaning                                              |
 | ------ | ------------------- | ---------------------------------------------------- |
 | 400    | `validation_error`  | A field failed validation; `message` names the field  |
-| 400    | `invalid_request`   | Body is not a single valid JSON object, or has unknown fields; or an avatar upload is not `multipart/form-data` with a `file` field |
+| 400    | `invalid_request`   | Body is not a single valid JSON object, or has unknown fields; or an avatar upload is not `multipart/form-data` with a `file` field; or a media `object_key` does not name an uploaded file |
 | 401    | `invalid_credentials` | Login failed. Deliberately identical for a wrong password and an unknown email |
 | 401    | `unauthorized`      | A protected route was called without a valid access token. Identical for a missing, malformed, expired, or wrong-type token |
 | 403    | `forbidden`         | You are not allowed to change this resource: only a story's author may attach media, and only the author or the uploader may delete it |
@@ -960,11 +962,39 @@ positive integer), `500 internal_error`.
 
 ## Story media
 
-Images and videos attached to a story. The bytes live in object storage, but they are
-**only ever read and written by the backend**: no presigned URL is issued, no bucket is
-public, and a media item's `url` is a path on this API rather than a link to a store
-(KNOT-ADR-028, KNOT-ADR-029). See [the story object](#the-story-object) for the `media`
-array they appear in.
+Images and videos attached to a story. The bytes live in object storage, and since
+KNOT-040 a client **uploads them straight to the store with a URL this API signed**:
+the file never passes through the backend, so the only requests on the path are two
+small JSON exchanges. The bucket itself stays private (KNOT-ADR-028): a signed URL can
+write exactly one key, every read is served by this API, and a media item's `url` is a
+path on this API rather than a link to a store (KNOT-ADR-029). See
+[the story object](#the-story-object) for the `media` array they appear in.
+
+### The three-step upload
+
+```
+1. POST /media/upload-url    {story_id, filename, content_type}
+                             -> {upload_url, object_key, expires_in}
+2. PUT  <upload_url>         the file's bytes, Content-Type: <content_type>
+                             -> 200 from the object store (no API involved)
+3. POST /stories/{id}/media  {object_key, source?, width?, height?, duration_ms?}
+                             -> 202 {media: {..., "status": "processing"}}
+```
+
+Step 1 checks that the caller is the story's author, that the story has room, and that
+the content type is accepted — so a client is refused before it spends a byte. Step 2 is
+the only step that moves the file, and it talks to Cloudflare, not to Knot. Step 3
+confirms with a `HEAD` that the object exists, writes the row, and queues the job that
+produces the derivatives.
+
+The URL is valid for **15 minutes** (`expires_in` is 900). It is signed for one object
+key and one content type, so it cannot be reused for another file, and its holder needs
+no credentials. Treat it as a secret until it expires.
+
+A signed URL that is never used leaves an orphan object in the bucket. The API cannot
+distinguish that from an upload in flight, so buckets should carry a lifecycle rule that
+deletes `story-media/` objects with no matching row (a deployment step, not an API
+behaviour).
 
 Each uploaded file records how it was obtained: `source` is `camera` when it was captured
 with the device camera and `gallery` when it was chosen from the photo library. The mobile
@@ -972,6 +1002,7 @@ client draws a capture badge from it (KNOT-ADR-030, KNOT-ADR-031).
 
 | Route                                       | Auth     | Purpose                                |
 | ------------------------------------------- | -------- | -------------------------------------- |
+| `POST /media/upload-url`                    | `Bearer` | Sign one direct-to-storage upload URL   |
 | `POST /stories/{id}/media`                  | `Bearer` | Attach an image or video to a story     |
 | `GET /stories/{id}/media`                   | public   | List a story's media, in display order  |
 | `GET /stories/{id}/media/{mid}/content`     | public   | Stream the bytes (supports `Range`)     |
@@ -999,12 +1030,80 @@ client draws a capture badge from it (KNOT-ADR-030, KNOT-ADR-031).
 and `duration_ms` are `null` when the client did not report them. `url` is a **relative**
 path: resolve it against the API base URL. The object's storage key is never returned.
 
+### POST /media/upload-url
+
+Signs one direct-to-storage upload (KNOT-040). The route requires `Bearer` auth, and only
+the story's **author** may sign a URL for it.
+
+```json
+{ "story_id": "d6b53a2c-...", "filename": "photo.jpg", "content_type": "image/jpeg" }
+```
+
+| Field          | Rule                                                                    |
+| -------------- | ----------------------------------------------------------------------- |
+| `story_id`     | Required, a canonical UUID. The story the media will be attached to     |
+| `filename`     | Required. The client's own name for the file; never used in the key     |
+| `content_type` | Required, in the media allowlist. It decides the object key's extension |
+
+`filename` is validated (non-empty, no path, no control characters, at most 255 bytes) and
+then discarded: the object key is a fresh UUID, so two uploads of `photo.jpg` cannot
+collide and the key cannot be guessed from the name.
+
+**200**
+
+```json
+{
+  "upload_url": "https://<account>.r2.cloudflarestorage.com/knot-media/story-media/...&X-Amz-Signature=...",
+  "object_key": "story-media/d6b53a2c-.../0f6c..._original.jpg",
+  "expires_in": 900
+}
+```
+
+`upload_url` accepts exactly one `PUT` of the file's bytes, with the `Content-Type` that
+was declared — that header is part of the signature, so a different type is refused by the
+store. `object_key` is what step 3 must carry. `expires_in` is 900 seconds.
+
+The extension is chosen from `content_type`, not from `filename`: `image/jpeg` gives
+`.jpg`, `image/png` gives `.png`, `image/webp` gives `.webp`, `video/mp4` gives `.mp4`, and
+`video/quicktime` gives `.mov`. Signing a URL writes no row, stores no object, and queues
+no job.
+
+**Errors:** `400 invalid_request` (not a single JSON object, or an unknown field), `400
+validation_error` (a bad `story_id`, `filename`, or a story already holding 10 items),
+`401 unauthorized`, `403 forbidden` (not the story's author), `404 not_found` (the story
+does not exist), `415 unsupported_media_type`, `500 internal_error`.
+
 ### POST /stories/{id}/media
 
-`Content-Type: multipart/form-data`, with the file in a field named **`file`** and the
-origin in a field named **`source`**. Optional fields `width`, `height`, and `duration_ms`
-may carry the picker's metadata. Only the story's **author** may attach media in the MVP;
-any other authenticated user is `403 forbidden`.
+The notify call for a direct upload (KNOT-040). `Content-Type: application/json`:
+
+```json
+{
+  "object_key": "story-media/d6b53a2c-.../0f6c..._original.jpg",
+  "source": "camera",
+  "width": 1024,
+  "height": 768,
+  "duration_ms": null
+}
+```
+
+| Field         | Rule                                                                       |
+| ------------- | -------------------------------------------------------------------------- |
+| `object_key`  | Required. The key step 1 returned; it must be an `_original` object of THIS story |
+| `source`      | Optional: `camera` or `gallery`. Defaults to `gallery`                      |
+| `width`/`height` | Optional picker metadata                                                 |
+| `duration_ms` | Optional, videos                                                           |
+
+The object is confirmed with a `HEAD` before anything is written, so a key that was signed
+but never used — or used and since removed — is refused with `400 invalid_request` and
+nothing is stored. The media type and content type are read back from the key's extension,
+not from a second client declaration, so the two cannot disagree. The key must be
+`story-media/{story}/{uuid}_original.{ext}` for **this** story: another story's key, a
+derivative key (`_display`, `_thumb`, `_stream`), or an arbitrary bucket key is refused with
+`400 invalid_request`.
+
+Only the story's **author** may attach media in the MVP; any other authenticated user is
+`403 forbidden`.
 
 Send **`width` and `height`** whenever the picker can measure the file. They are what a list
 frames the item with: the feed, a place page, and a profile wall all set the frame's aspect
@@ -1018,11 +1117,10 @@ so a video uploaded without them is the common case that takes the fallback
 | ---------- | ---------------------------------------------------------------------------- |
 | Images     | JPEG, PNG, or WebP, at most **10 MiB**                                        |
 | Videos     | MP4 or MOV, at most **100 MiB**                                               |
-| Type       | Decided by inspecting the bytes, not by the `Content-Type` you declare        |
-| Body       | Must be `multipart/form-data` carrying a `file` field                         |
+| Type       | Decided when the URL was signed, and read back from the object key's extension |
 | Count      | At most **10** items per story, images and videos together (KNOT-ADR-054)     |
 
-`display_order` is assigned by the server: each upload appends after the story's current
+`display_order` is assigned by the server: each attach appends after the story's current
 last item, so the order matches the upload order.
 
 **The 10-item cap.** A story may hold at most ten media items, images and videos counted
@@ -1030,21 +1128,33 @@ together. An attempt to attach an eleventh returns **400 `validation_error`** wi
 message `a story may have at most 10 media items`, and nothing is stored. The cap is
 enforced inside the insert, under a lock on the story row, so two uploads arriving at once
 cannot both take the last slot (KNOT-ADR-054). Deleting an item frees a slot immediately.
+Step 1 checks the same cap, so a client that is already at it is refused before uploading.
 
 **202** — `{ "media": { ... } }`, the row that was created, with `"status": "processing"`.
 
-The upload is **accepted, not finished**: the bytes are stored, the row is written, and a job
-is queued for the dedicated media worker, which produces the derivatives and flips the row to
-`ready` (or `failed`). That is what keeps a 100 MiB video from holding the request open
-(KNOT-037-fix7, KNOT-038). Poll the item — `GET /stories/{id}/media` carries `status` — until
-it is `ready`; a content address answers **202** while it is `processing`. The 202's
-`display_webp_url` is `null`: whether a WebP display exists is a property of the finished row,
-so the address arrives with the `ready` one (KNOT-038-fix3).
+The attach is **accepted, not finished**: a job is queued for the dedicated media worker,
+which produces the derivatives and flips the row to `ready` (or `failed`). That is what
+keeps a 100 MiB video from holding a request open (KNOT-037-fix7, KNOT-038). Poll the item
+— `GET /stories/{id}/media` carries `status` — until it is `ready`; a content address
+answers **202** while it is `processing`. The 202's `display_webp_url` is `null`: whether a
+WebP display exists is a property of the finished row, so the address arrives with the
+`ready` one (KNOT-038-fix3). `size_bytes` is `0` until the worker reports the size of the
+rendition it produced — the upload's own size is not what a reader is served.
 
-**Errors:** `400 invalid_request` (not multipart, or no `file` field), `400 validation_error`
-(a bad `source`, or the story already holds 10 items), `401 unauthorized`, `403 forbidden`
-(not the story's author), `404 not_found` (the story does not exist), `413
-request_too_large`, `415 unsupported_media_type`, `500 internal_error`.
+**Errors:** `400 invalid_request` (not a single JSON object, a missing `object_key`, an
+`object_key` that does not name an uploaded file for this story, or an unknown field), `400
+validation_error` (a bad `source`, negative metadata, or the story already holds 10 items),
+`401 unauthorized`, `403 forbidden` (not the story's author), `404 not_found` (the story
+does not exist), `415 unsupported_media_type`, `500 internal_error`.
+
+#### The multipart form is still accepted
+
+A build released before KNOT-040 sends `Content-Type: multipart/form-data`, with the file in
+a field named **`file`** and the origin in a field named **`source`** (plus optional `width`,
+`height`, and `duration_ms`). That request is still served exactly as it was: the backend
+reads the bytes, sniffs the type, writes the object itself, and answers the same 202. New
+clients should use the three-step flow instead — it exists so a slow uplink cannot time out
+a request that had nothing to do with the file.
 
 ### GET /stories/{id}/media
 

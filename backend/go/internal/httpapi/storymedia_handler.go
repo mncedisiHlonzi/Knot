@@ -47,6 +47,10 @@ const (
 // handler tests free of a database and an object store.
 type StoryMediaService interface {
 	CreateMedia(ctx context.Context, in storymedia.CreateMediaInput) (storymedia.StoryMedia, error)
+	// PresignUpload signs one direct-to-bucket upload URL (KNOT-040).
+	PresignUpload(ctx context.Context, in storymedia.PresignUploadInput) (storymedia.PresignedUpload, error)
+	// AttachUpload records a media row for an object the client uploaded itself.
+	AttachUpload(ctx context.Context, in storymedia.AttachUploadInput) (storymedia.StoryMedia, error)
 	ListMedia(ctx context.Context, storyID string) ([]storymedia.StoryMedia, error)
 	StreamMedia(ctx context.Context, id string, variant storymedia.Variant, format storymedia.Format, r *http.Request) (io.ReadCloser, int64, string, error)
 	DeleteMedia(ctx context.Context, id, byUserID string) error
@@ -144,6 +148,44 @@ type storyMediaEnvelope struct {
 	Media storyMediaResponse `json:"media"`
 }
 
+// mediaUploadURLRequest is the body of POST /media/upload-url (KNOT-040).
+//
+// It names the story the media will be attached to, so the story's author can be
+// checked before a URL exists at all, and declares the content type, which decides
+// the object key's extension — there is no body here to sniff.
+type mediaUploadURLRequest struct {
+	StoryID     string `json:"story_id"`
+	Filename    string `json:"filename"`
+	ContentType string `json:"content_type"`
+}
+
+// mediaUploadURLResponse is what the client uploads to, and what it reports back
+// to POST /stories/{id}/media afterwards.
+type mediaUploadURLResponse struct {
+	// UploadURL is the signed URL the bytes are PUT to, straight to the object
+	// store, never through this API.
+	UploadURL string `json:"upload_url"`
+	// ObjectKey is the key the upload lands on; it is the only thing the notify
+	// call needs.
+	ObjectKey string `json:"object_key"`
+	// ExpiresIn is the URL's remaining lifetime in seconds.
+	ExpiresIn int `json:"expires_in"`
+}
+
+// attachMediaRequest is the JSON body of POST /stories/{id}/media since
+// KNOT-040: the client already uploaded the bytes and reports where they landed.
+//
+// `source` and the metadata are optional. They describe the file rather than the
+// upload, so the client is still the only party that knows them; a missing source
+// is recorded as `gallery`.
+type attachMediaRequest struct {
+	ObjectKey  string `json:"object_key"`
+	Source     string `json:"source,omitempty"`
+	Width      *int   `json:"width,omitempty"`
+	Height     *int   `json:"height,omitempty"`
+	DurationMS *int   `json:"duration_ms,omitempty"`
+}
+
 // listStoryMediaResponse is the GET /stories/{id}/media body. Media is always an
 // array, never null.
 type listStoryMediaResponse struct {
@@ -152,6 +194,12 @@ type listStoryMediaResponse struct {
 
 // Create handles POST /stories/{id}/media. The route is protected, and only the
 // story's author may attach media in the MVP.
+//
+// Since KNOT-040 there are two ways in. A client that uploaded the bytes itself
+// sends `{"object_key": "..."}` and is answered from the JSON path below. A client
+// that still sends the file here is served by the multipart path, which is kept so
+// a build released before the direct-upload change keeps working — it is the same
+// flow as before, with the API writing the object.
 func (h *StoryMediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 	userID, ok := UserIDFromContext(r.Context())
 	if !ok {
@@ -159,6 +207,11 @@ func (h *StoryMediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 		// a fail-closed guard so a future wiring mistake cannot write media with
 		// no uploader.
 		writeError(w, http.StatusUnauthorized, codeUnauthorized, "authentication required")
+		return
+	}
+
+	if isJSONRequest(r) {
+		h.attachUploadedObject(w, r, userID)
 		return
 	}
 
@@ -235,6 +288,95 @@ func (h *StoryMediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// keeps a 100 MiB video upload from holding the request open (KNOT-037-fix7,
 	// KNOT-038).
 	writeJSON(w, http.StatusAccepted, storyMediaEnvelope{Media: newStoryMediaResponse(created, r.PathValue("id"))})
+}
+
+// UploadURL handles POST /media/upload-url. The route is protected.
+//
+// It answers with a signed URL the client PUTs the file to, straight to the
+// object store, and the object key to report once the upload has landed
+// (KNOT-040). The API never sees the bytes, which is the point: the two calls on
+// this path are small JSON exchanges, so a slow uplink can no longer time out a
+// request that had nothing to do with the file.
+//
+// Authorization is checked before a URL is signed — the caller must be the story's
+// author, and the story must have room for another item — so a client is refused
+// at the cheapest possible moment.
+func (h *StoryMediaHandler) UploadURL(w http.ResponseWriter, r *http.Request) {
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, codeUnauthorized, "authentication required")
+		return
+	}
+
+	var request mediaUploadURLRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, codeInvalidRequest,
+			"request body must be a JSON object with story_id, filename, and content_type")
+		return
+	}
+
+	target, err := h.service.PresignUpload(r.Context(), storymedia.PresignUploadInput{
+		StoryID:     request.StoryID,
+		UploaderID:  userID,
+		Filename:    request.Filename,
+		ContentType: request.ContentType,
+	})
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, mediaUploadURLResponse{
+		UploadURL: target.UploadURL,
+		ObjectKey: target.ObjectKey,
+		ExpiresIn: target.ExpiresIn,
+	})
+}
+
+// attachUploadedObject handles the JSON form of POST /stories/{id}/media: the
+// client has already put the bytes in the bucket and reports the key.
+//
+// The object is confirmed to exist before a row is written, and the row is queued
+// exactly as the multipart path queues it, so the media worker processes both
+// paths identically (KNOT-040).
+func (h *StoryMediaHandler) attachUploadedObject(w http.ResponseWriter, r *http.Request, userID string) {
+	var request attachMediaRequest
+	if err := decodeJSON(w, r, &request); err != nil {
+		writeError(w, http.StatusBadRequest, codeInvalidRequest,
+			"request body must be a JSON object with an object_key")
+		return
+	}
+	if strings.TrimSpace(request.ObjectKey) == "" {
+		writeError(w, http.StatusBadRequest, codeInvalidRequest, "object_key is required")
+		return
+	}
+
+	created, err := h.service.AttachUpload(r.Context(), storymedia.AttachUploadInput{
+		StoryID:    r.PathValue("id"),
+		UploaderID: userID,
+		ObjectKey:  request.ObjectKey,
+		Source:     storymedia.MediaSource(request.Source),
+		Width:      request.Width,
+		Height:     request.Height,
+		DurationMS: request.DurationMS,
+	})
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+
+	// The detail's media array just changed, exactly as on the multipart path.
+	h.details.InvalidateForStory(r.Context(), r.PathValue("id"))
+
+	// 202: the row exists and its job is queued; the worker produces the
+	// derivatives and flips the row to ready.
+	writeJSON(w, http.StatusAccepted, storyMediaEnvelope{Media: newStoryMediaResponse(created, r.PathValue("id"))})
+}
+
+// isJSONRequest reports whether the request carries a JSON body rather than the
+// multipart form the pre-KNOT-040 client sends.
+func isJSONRequest(r *http.Request) bool {
+	return strings.EqualFold(storymedia.TrimMimeType(r.Header.Get("Content-Type")), "application/json")
 }
 
 // List handles GET /stories/{id}/media. The route is public.
@@ -416,6 +558,11 @@ func (h *StoryMediaHandler) writeServiceError(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, codeValidation, fmt.Sprintf("%s %s", validation.Field, validation.Message))
 	case errors.Is(err, storymedia.ErrForbidden):
 		writeError(w, http.StatusForbidden, codeForbidden, "you may not change this story's media")
+	case errors.Is(err, storymedia.ErrUploadNotFound):
+		// The URL was signed but nothing was uploaded to it, or the object was
+		// removed. There is no row to answer 404 for, so it is a bad request.
+		writeError(w, http.StatusBadRequest, codeInvalidRequest,
+			"object_key does not name an uploaded file")
 	case errors.Is(err, storymedia.ErrNotFound), errors.Is(err, storymedia.ErrStoryNotFound):
 		writeError(w, http.StatusNotFound, codeNotFound, "media not found")
 	case errors.Is(err, storymedia.ErrTooLarge):

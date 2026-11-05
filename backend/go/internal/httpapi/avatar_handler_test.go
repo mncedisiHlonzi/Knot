@@ -128,6 +128,12 @@ func (s *memStorage) Exists(_ context.Context, key string) (bool, error) {
 	return ok, nil
 }
 
+// PresignPut satisfies storage.Storage. The avatar endpoints never presign, so
+// the double answers with a URL-shaped value rather than failing (KNOT-040).
+func (s *memStorage) PresignPut(_ context.Context, key, contentType string, expires time.Duration) (string, error) {
+	return fmt.Sprintf("https://objects.test/%s?type=%s&expires=%d", key, contentType, int(expires.Seconds())), nil
+}
+
 // object returns the stored object, and whether it exists.
 func (s *memStorage) object(key string) (memObject, bool) {
 	s.mu.Lock()

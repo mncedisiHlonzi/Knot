@@ -190,12 +190,12 @@ instead of reporting an error. WebP is read everywhere the app runs, so the same
 stored in both and the API advertises the address a given device can use
 (KNOT-038-fix3).
 
-**The request path is three steps.** `POST /stories/{id}/media` writes the upload, inserts
-the row with `status = 'processing'` (its `storage_key` naming the upload, its
-`thumbnail_key` already naming the WebP the worker will write), and `RPUSH`es one JSON job
-to `knot:media:jobs`. It answers **202** immediately. If the job cannot be queued, the row
-and the object are removed again: a row nothing will ever process is worse than a refused
-upload.
+**What the job does.** Whichever way the upload arrives — the client's direct `PUT` since
+KNOT-040, or the multipart form an older build sends — the API inserts the row with
+`status = 'processing'` (its `storage_key` naming the upload, its `thumbnail_key` already
+naming the WebP the worker will write) and `RPUSH`es one JSON job to `knot:media:jobs`. The
+attach request answers **202** immediately. If the job cannot be queued, the row and the
+object are removed again: a row nothing will ever process is worse than a refused upload.
 
 **The queue is reliable, not a plain pop.** The worker claims with
 `BLMOVE knot:media:jobs knot:media:processing LEFT LEFT`, so a job is never lost between the
@@ -263,9 +263,10 @@ picked media in the background. The feed inserts the story at the top with local
 has no media rows while the bytes are still crossing the wire, the poll is started with
 `awaitingMedia: true` (an empty media array is "not yet", not "never") and
 `itemsWithStory` keeps the local placeholders until the server acknowledges at least one
-row. A background upload failure is logged and swallowed — there is no screen left to
-report it to — so the card keeps its placeholder; the next refresh shows what the server
-actually stored.
+row. Since KNOT-040 the background upload reports its progress upward (the composer is gone
+by then, so the new card in the feed names it — "Uploading media 1 of 2...") and a failure
+is alerted once and left on the card as "Media upload failed"; the next refresh shows what
+the server actually stored.
 
 **The encoders live in the worker**: `image` (ravif for AVIF, `libwebp` for lossy WebP) and
 `ffmpeg-sidecar` for video. The Rust crates are pure Rust or compile their C dependency with
@@ -293,6 +294,62 @@ log says why. Images never need it. FFmpeg is **not** a Rust dependency and is n
 it is a system prerequisite, like Docker, and a host that accepts video jobs must install
 it.
 
+#### Direct-to-bucket uploads (KNOT-040)
+
+The bytes no longer pass through the Go API for story media. A publish is three steps, and
+only two of them are requests to Knot:
+
+```
+1. POST /media/upload-url    {story_id, filename, content_type}
+                             -> {upload_url, object_key, expires_in: 900}
+2. PUT  <upload_url>         the file's bytes, straight to the object store
+3. POST /stories/{id}/media  {object_key, source?, width?, height?, duration_ms?}
+                             -> 202 {media: {..., "status": "processing"}}
+```
+
+**Why.** The request path used to receive the file and write it to the store itself, which
+meant a slow uplink held a request open for as long as the upload took. The measured numbers
+behind that (KNOT-037-fix2) were 250-350 s for a 34.7 MB video against R2, and the second
+limit was the server's own `WriteTimeout` — the handler could finish after the client had
+stopped listening. A signed URL moves the transfer out of the request entirely: step 1 and
+step 3 are small JSON exchanges whose duration does not depend on the file's size, and a
+large video can take as long as the link needs.
+
+**Where the pieces live.**
+
+- `storage.S3Storage.PresignPut` (`internal/storage/s3.go`) wraps `s3.NewPresignClient` over
+the same client the rest of the package uses, so the URL points at the configured endpoint
+with path-style addressing and the static credentials. The content type is part of the
+signature: an uploader that sends a different one is refused by the store, not re-labelled.
+- `storymedia.Service.PresignUpload` (`internal/storymedia/upload.go`) applies the rules that
+were already on the old path — the story exists, the caller is its author, it has room for
+another item — plus the one only this path needs: the declared content type must be in the
+allowlist, because it decides the key's extension and there is no body to sniff. It mints
+`story-media/{story}/{uuid}_original.{ext}`, the same shape the old path minted, which is why
+the Rust worker needed no change at all.
+- `storymedia.Service.AttachUpload` parses the reported key back (story prefix, one path
+segment, UUID name, `_original` suffix, allowlisted extension), confirms the object with a
+`HEAD` (`Exists`), writes the row as `processing`, pre-mints the image thumbnail key, and
+queues the job. A refused write or queue deletes the object, exactly as the multipart path
+does.
+- `StoryMediaHandler.UploadURL` and the JSON branch of `StoryMediaHandler.Create` own the
+wire format. `Create` still serves `multipart/form-data` request bodies, so a build released
+before this change keeps working; `isJSONRequest` is the only switch.
+
+**What the server cannot check.** There is no body to inspect, so the media type comes from
+the key's extension rather than from the bytes. A client that asked for `image/jpeg` and then
+uploaded a PDF lands in the bucket as `..._original.jpg`; the worker's decode fails, the job
+is retried, and the row ends up `failed` — a visible 404 on the content address rather than
+a wrong-looking image. The declared size is likewise not enforced at upload time: a
+presigned PUT cannot cap the body, so the 10 MiB / 100 MiB limits are checked by the client
+before it starts and by the worker's decode afterwards.
+
+**Abandoned uploads.** A signed URL that is never used leaves an `_original` object with no
+row. That is the one new way this design can leak storage; the fix is a bucket lifecycle
+rule that expires `story-media/` objects not confirmed by a row (a founder/deployment step,
+not an API behaviour). Note that a `PUT` to a URL whose signature has expired is refused by
+the store, so nothing is written at all.
+
 #### Cloudflare R2 (production storage)
 
 Both local and production speak the S3 API through `internal/storage`, so moving to R2 is
@@ -316,10 +373,12 @@ R2's region is `auto`; MinIO ignores the value, so one default serves both.
 
 `storage.Put` goes through the transfer manager from
 `github.com/aws/aws-sdk-go-v2/feature/s3/transfermanager`, not a bare `PutObject`
-(KNOT-037-fix2, KNOT-037-fix3). Below the part size it issues exactly one `PutObject`, so a
-thumbnail or a poster behaves as it always did; above it the body is split into parts sent
-with bounded concurrency, and a failed part is retried with the SDK's exponential backoff
-instead of the whole file being restarted.
+(KNOT-037-fix2, KNOT-037-fix3). Since KNOT-040 story media is uploaded by the client, so
+this path serves avatars and the multipart form an older app build still sends; the tuning
+below is unchanged and still applies whenever this process writes an object. Below the part
+size it issues exactly one `PutObject`, so a thumbnail or a poster behaves as it always did;
+above it the body is split into parts sent with bounded concurrency, and a failed part is
+**retried** with the SDK's exponential backoff instead of the whole file being restarted.
 
 The tuning is three numbers in `internal/storage/s3.go` — `uploadPartSize` (8 MiB),
 `uploadConcurrency` (3) and, set to the part size, `MultipartUploadThreshold` — and the values

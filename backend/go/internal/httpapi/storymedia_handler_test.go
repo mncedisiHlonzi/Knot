@@ -80,6 +80,14 @@ type fakeStoryMediaService struct {
 	gotVariant storymedia.Variant
 	// gotFormat is the format the content handler asked for.
 	gotFormat storymedia.Format
+
+	// The direct-upload path (KNOT-040).
+	presignResult storymedia.PresignedUpload
+	presignErr    error
+	attachResult  storymedia.StoryMedia
+	attachErr     error
+	gotPresign    storymedia.PresignUploadInput
+	gotAttach     storymedia.AttachUploadInput
 }
 
 func (f *fakeStoryMediaService) CreateMedia(_ context.Context, _ storymedia.CreateMediaInput) (storymedia.StoryMedia, error) {
@@ -107,6 +115,19 @@ func (f *fakeStoryMediaService) DeleteMedia(_ context.Context, id, byUserID stri
 	f.gotDeleteID = id
 	f.gotDeleteUser = byUserID
 	return f.deleteErr
+}
+
+// PresignUpload answers with the canned result, and records what the handler
+// asked for so a test can assert the wire request was decoded (KNOT-040).
+func (f *fakeStoryMediaService) PresignUpload(_ context.Context, in storymedia.PresignUploadInput) (storymedia.PresignedUpload, error) {
+	f.gotPresign = in
+	return f.presignResult, f.presignErr
+}
+
+// AttachUpload answers with the canned result, and records the decoded input.
+func (f *fakeStoryMediaService) AttachUpload(_ context.Context, in storymedia.AttachUploadInput) (storymedia.StoryMedia, error) {
+	f.gotAttach = in
+	return f.attachResult, f.attachErr
 }
 
 // newTestStoryMediaHandler returns a handler over an inert fake service. The
@@ -351,6 +372,27 @@ func (m *memoryObjects) has(key string) bool {
 	defer m.mu.Unlock()
 	_, ok := m.objects[key]
 	return ok
+}
+
+// Exists backs the notify path's HEAD: a key only resolves when something was
+// actually uploaded to it (KNOT-040).
+func (m *memoryObjects) Exists(_ context.Context, key string) (bool, error) {
+	return m.has(key), nil
+}
+
+// PresignPut answers with a URL shaped like a real presigned one, so the handler
+// test can assert the response is a usable URL rather than a placeholder
+// (KNOT-040). The signature is fixed because nothing verifies it here.
+func (m *memoryObjects) PresignPut(_ context.Context, key, contentType string, expires time.Duration) (string, error) {
+	if key == "" || contentType == "" || expires <= 0 {
+		return "", fmt.Errorf("memoryObjects: presign needs a key, a content type and an expiry")
+	}
+
+	return fmt.Sprintf(
+		"https://objects.test/knot-media/%s?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Expires=%d&X-Amz-Signature=test-signature",
+		key,
+		int(expires.Seconds()),
+	), nil
 }
 
 // memoryPublisher records the jobs the service queues, and is what a test asserts

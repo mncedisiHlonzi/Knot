@@ -5,7 +5,7 @@
  * handling is identical to the auth endpoints: a failure is always an `ApiError`
  * carrying the server's machine-readable code.
  */
-import { request, uploadFile } from './client';
+import { request } from './client';
 import type { ReactionCounts } from './reactions';
 import type { AuthorRooted } from './rooted';
 import { MAX_IMAGE_BYTES, MAX_VIDEO_BYTES } from '../config/dev';
@@ -432,7 +432,7 @@ const MEDIA_EXTENSIONS: Readonly<Record<string, string>> = {
   'video/quicktime': 'mov',
 };
 
-/** Picks a filename for the multipart upload; the server re-sniffs the bytes. */
+/** Picks a filename to declare for the upload. Only the type decides the key. */
 function mediaFileName(mimeType: string): string {
   return `story-media.${MEDIA_EXTENSIONS[mimeType] ?? 'bin'}`;
 }
@@ -449,15 +449,106 @@ function assertWithinLimit(mimeType: string, fileSize: number): void {
 }
 
 /**
- * POST /stories/{id}/media — attaches one image or video to a story.
+ * What `POST /media/upload-url` answers with (KNOT-040).
  *
- * The uploader is taken from `token` by the server; it is never sent in the body.
- * The response carries the stored media, including its stable `url`.
- *
- * `source` records whether the file came from the camera or the gallery, which is
- * what the capture badge is drawn from.
+ * `upload_url` is a signed, short-lived URL that accepts exactly one PUT: the
+ * object it names, with the content type that was declared. `object_key` is what
+ * must be reported back afterwards — it is the only thing the notify call needs,
+ * because the server can confirm the object exists from the key alone.
  */
-export function uploadStoryMedia(
+export type MediaUploadTarget = {
+  readonly upload_url: string;
+  readonly object_key: string;
+  readonly expires_in: number;
+};
+
+/**
+ * POST /media/upload-url — signs one direct-to-storage upload (KNOT-040).
+ *
+ * The server checks that the caller is the story's author, that the story has room
+ * for another item, and that the content type is accepted, then signs a URL for
+ * `story-media/{story}/{uuid}_original.{ext}`. No bytes move yet.
+ *
+ * This call is deliberately small and fast: it is the only part of a publish that
+ * can time out for a reason other than the file, and a JSON round trip does not
+ * depend on the file's size at all.
+ */
+export function requestMediaUploadUrl(
+  storyId: string,
+  mimeType: string,
+  token: string,
+): Promise<MediaUploadTarget> {
+  return request<MediaUploadTarget>('/media/upload-url', {
+    method: 'POST',
+    body: {
+      story_id: storyId,
+      filename: mediaFileName(mimeType),
+      content_type: mimeType,
+    },
+    token,
+  });
+}
+
+/**
+ * Sends the picked file's bytes straight to the signed URL.
+ *
+ * React Native's `fetch` reads a `file://` (or `content://`) URI and exposes it as
+ * a Blob, which is what makes a direct upload possible without a native module.
+ * The content type is sent explicitly: it is part of the URL's signature, so a
+ * mismatch is refused by the store rather than silently stored.
+ *
+ * Every failure is turned into a sentence a person can read — an unreadable file,
+ * an unreachable store, or a rejection — because the caller shows it.
+ */
+export async function putMediaBytes(
+  uploadUrl: string,
+  uri: string,
+  mimeType: string,
+): Promise<void> {
+  let file: Response;
+  try {
+    file = await fetch(uri);
+  } catch {
+    throw new Error('The selected file could not be read from this device.');
+  }
+
+  const blob = await file.blob();
+  if (blob.size === 0) {
+    throw new Error('The selected file is empty.');
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(uploadUrl, {
+      method: 'PUT',
+      body: blob,
+      headers: { 'Content-Type': mimeType },
+    });
+  } catch {
+    throw new Error('The upload could not reach storage. Check the connection and try again.');
+  }
+
+  if (!response.ok) {
+    throw new Error(`Storage refused the upload (${response.status}).`);
+  }
+}
+
+/**
+ * Attaches one image or video to a story, directly to storage (KNOT-040).
+ *
+ * Three steps, and only the first and last touch the API:
+ *
+ *  1. sign an upload URL (`POST /media/upload-url`);
+ *  2. PUT the file's bytes to that URL, straight to the object store;
+ *  3. report the object key (`POST /stories/{id}/media`), which writes the row and
+ *     queues the job that produces the derivatives.
+ *
+ * The bytes never pass through the API, which is what removes the timeout the old
+ * proxied upload suffered on a slow connection. `source` records whether the file
+ * came from the camera or the gallery, which is what the capture badge is drawn
+ * from.
+ */
+export async function uploadStoryMedia(
   storyId: string,
   uri: string,
   mimeType: string,
@@ -468,22 +559,25 @@ export function uploadStoryMedia(
 ): Promise<StoryMedia> {
   assertWithinLimit(mimeType, fileSize);
 
-  const fields: Record<string, string> = { source };
-  if (metadata.width !== undefined) {
-    fields.width = String(metadata.width);
-  }
-  if (metadata.height !== undefined) {
-    fields.height = String(metadata.height);
-  }
-  if (metadata.durationMs !== undefined) {
-    fields.duration_ms = String(metadata.durationMs);
-  }
+  const target = await requestMediaUploadUrl(storyId, mimeType, token);
+  await putMediaBytes(target.upload_url, uri, mimeType);
 
-  return uploadFile<StoryMediaResponse>(`/stories/${encodeURIComponent(storyId)}/media`, {
-    file: { uri, name: mediaFileName(mimeType), type: mimeType },
-    fields,
-    token,
-  }).then((response) => response.media);
+  const response = await request<StoryMediaResponse>(
+    `/stories/${encodeURIComponent(storyId)}/media`,
+    {
+      method: 'POST',
+      body: {
+        object_key: target.object_key,
+        source,
+        ...(metadata.width === undefined ? {} : { width: metadata.width }),
+        ...(metadata.height === undefined ? {} : { height: metadata.height }),
+        ...(metadata.durationMs === undefined ? {} : { duration_ms: metadata.durationMs }),
+      },
+      token,
+    },
+  );
+
+  return response.media;
 }
 
 /** The story endpoints. */

@@ -65,6 +65,11 @@ var (
 	// ErrProcessingFailed is returned when the background worker could not produce
 	// the derivatives. The row keeps the reason in the log, not in the response.
 	ErrProcessingFailed = errors.New("storymedia: media processing failed")
+	// ErrUploadNotFound is returned when a client reports an object key that does
+	// not name a file in the bucket (KNOT-040). It is a client error, not a
+	// missing media row: the upload either expired, never happened, or was
+	// mistyped, and no row exists to answer 404 for.
+	ErrUploadNotFound = errors.New("storymedia: uploaded object not found")
 )
 
 // ValidationError describes a rejected field on a request. Handlers expose the
@@ -215,6 +220,23 @@ func AllowedMediaType(mimeType string) (MediaType, string, bool) {
 		return "", "", false
 	}
 	return entry.mediaType, entry.extension, true
+}
+
+// contentTypeForExtension is AllowedMediaType's inverse: the MIME type and media
+// type an object key's extension implies.
+//
+// A client that uploaded straight to the bucket told the service its content type
+// when the URL was signed, so the key it comes back with carries the extension
+// that type maps to. Reading the type back from the key is what keeps the two
+// facts from disagreeing — an uploaded `.gif` can never be attached as an image
+// just because the request said `image/jpeg` (KNOT-040).
+func contentTypeForExtension(extension string) (string, MediaType, bool) {
+	for mimeType, entry := range mediaAllowlist {
+		if entry.extension == extension {
+			return mimeType, entry.mediaType, true
+		}
+	}
+	return "", "", false
 }
 
 // MaxBytesFor returns the upload limit for a media type. An unknown type has no
@@ -596,14 +618,21 @@ type Service struct {
 }
 
 // Storage is the slice of the object-storage contract this package needs:
-// writing an object, reading a byte range, and deleting one. Depending on this
-// narrow interface (rather than the concrete S3Storage) keeps the service tests
-// free of an object store.
+// writing an object, reading a byte range, deleting one, and signing one upload
+// URL. Depending on this narrow interface (rather than the concrete S3Storage)
+// keeps the service tests free of an object store.
 type Storage interface {
 	Put(ctx context.Context, key string, body io.Reader, contentType string) error
 	Get(ctx context.Context, key string) (io.ReadCloser, string, error)
 	GetRange(ctx context.Context, key string, start, end int64) (io.ReadCloser, error)
 	Delete(ctx context.Context, key string) error
+	// Exists reports whether an object is present. It is a HEAD, so the answer
+	// costs no bytes; the notify path uses it to refuse a key nothing was uploaded
+	// to (KNOT-040).
+	Exists(ctx context.Context, key string) (bool, error)
+	// PresignPut signs one upload URL, which is how a client sends media bytes
+	// straight to the bucket instead of through this API (KNOT-040).
+	PresignPut(ctx context.Context, key, contentType string, expires time.Duration) (string, error)
 }
 
 // Logger is the slice of slog.Logger this package needs: a warning when a
