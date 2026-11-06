@@ -241,6 +241,11 @@ type storyResponse struct {
 	// player had decoded it (KNOT-042).
 	FirstMediaThumbnailURL *string `json:"first_media_thumbnail_url"`
 	FirstMediaPosterURL    *string `json:"first_media_poster_url"`
+	// FirstMediaLQIPURL is that item's ~20px placeholder: about a kilobyte, drawn
+	// stretched and blurred while the thumbnail, the poster and the full rendition
+	// are all still in flight. It is null for a row produced before KNOT-043 and for
+	// a story with no media, and a client then draws its own skeleton (KNOT-043).
+	FirstMediaLQIPURL *string `json:"first_media_lqip_url"`
 	// FirstMediaWidth and FirstMediaHeight are that item's pixel dimensions, or
 	// null when the uploader's client did not report them. They let a list frame
 	// the media at its natural width:height ratio instead of a fixed one, so a
@@ -371,9 +376,11 @@ type feedVersionItem struct {
 	FirstMediaHeight *int    `json:"first_media_height"`
 	// FirstMediaThumbnailURL and FirstMediaPosterURL are the stills that let the
 	// card draw instantly: a thumbnail for an image, a poster for a video
-	// (KNOT-042).
+	// (KNOT-042). FirstMediaLQIPURL is the ~20px placeholder under them, which is
+	// what a card shows before even those have arrived (KNOT-043).
 	FirstMediaThumbnailURL *string                `json:"first_media_thumbnail_url"`
 	FirstMediaPosterURL    *string                `json:"first_media_poster_url"`
+	FirstMediaLQIPURL      *string                `json:"first_media_lqip_url"`
 	Reactions              reactionCountsResponse `json:"reactions"`
 	MyReactions            []string               `json:"my_reactions"`
 	// VersionCount, LanguageCount, and CommentCount describe the story, so the
@@ -788,6 +795,7 @@ func attachStoryCounts(response *storyResponse, lookup StoryStatsLookup, r *http
 	response.FirstMediaURL = first.url
 	response.FirstMediaThumbnailURL = first.thumbnailURL
 	response.FirstMediaPosterURL = first.posterURL
+	response.FirstMediaLQIPURL = first.lqipURL
 	response.FirstMediaWidth = first.width
 	response.FirstMediaHeight = first.height
 }
@@ -806,6 +814,7 @@ type firstMedia struct {
 	url          *string
 	thumbnailURL *string
 	posterURL    *string
+	lqipURL      *string
 	width        *int
 	height       *int
 }
@@ -843,6 +852,7 @@ func firstMediaFields(media []storyMediaResponse) firstMedia {
 		url:          &url,
 		thumbnailURL: media[0].ThumbnailURL,
 		posterURL:    media[0].PosterURL,
+		lqipURL:      media[0].LQIPURL,
 		width:        media[0].Width,
 		height:       media[0].Height,
 	}

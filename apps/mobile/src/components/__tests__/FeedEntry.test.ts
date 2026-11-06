@@ -7,6 +7,7 @@ import { ArrowsClockwise } from 'phosphor-react-native';
 import AuthorLine from '../AuthorLine';
 import FeedEntry from '../FeedEntry';
 import FeedVideo from '../FeedVideo';
+import MediaPlaceholder from '../MediaPlaceholder';
 import PillarTag from '../PillarTag';
 import SocialProofHeader from '../SocialProofHeader';
 
@@ -450,6 +451,46 @@ describe('FeedEntry', () => {
       // absent, and the player keeps its own placeholder.
       expect(video?.props?.posterUri).toBeUndefined();
     }
+  });
+
+  /**
+   * The placeholder is what removes the last gap: the poster still needs a round
+   * trip of its own, and a ~1KB LQIP fills it (KNOT-043).
+   */
+  it('hands the video the low-quality placeholder the payload carried', () => {
+    const element = FeedEntry({
+      story: {
+        ...withMedia,
+        first_media_type: 'video',
+        first_media_url: '/stories/x/media/y/content?variant=stream',
+        first_media_lqip_url: '/stories/x/media/y/content?variant=lqip',
+      },
+      onPress: () => undefined,
+    });
+    const video = findElementByType(element, FeedVideo);
+
+    expect(video?.props?.lqipUri).toBe(
+      'http://localhost:8080/stories/x/media/y/content?variant=lqip',
+    );
+  });
+
+  it('draws the placeholder under an image, from the same address', () => {
+    const element = FeedEntry({
+      story: {
+        ...story,
+        first_media_type: 'image',
+        first_media_url: '/stories/x/media/y/content?variant=thumb',
+        first_media_lqip_url: '/stories/x/media/y/content?variant=lqip',
+      },
+      onPress: () => undefined,
+    });
+
+    // The image is drawn over it; the placeholder is unmounted once that image has
+    // painted, which a static call cannot reach (KNOT-043).
+    const drawn = findElementByType(element, MediaPlaceholder);
+    expect(drawn?.props?.lqipUri).toBe(
+      'http://localhost:8080/stories/x/media/y/content?variant=lqip',
+    );
   });
 
   describe('the version variant', () => {
@@ -1125,33 +1166,7 @@ describe('FeedEntry hide control', () => {
   });
 });
 
-/** The string children of every `Text`, so a caption can be asserted directly. */
-function textContent(node: unknown, found: string[] = []): string[] {
-  if (Array.isArray(node)) {
-    for (const child of node) {
-      textContent(child, found);
-    }
-    return found;
-  }
-  if (node === null || node === undefined || typeof node !== 'object') {
-    return found;
-  }
-
-  const element = node as { type?: unknown; props?: { children?: unknown } };
-  if (element.type === 'Text' && typeof element.props?.children === 'string') {
-    found.push(element.props.children);
-  }
-  if (element.props !== undefined) {
-    textContent(element.props.children, found);
-  }
-
-  return found;
-}
-
-/**
- * The first element carrying a test identifier, depth-first — the direct-call
- * equivalent of `getByTestId` (KNOT-020k-fix21).
- */
+/** The first element carrying a test identifier, at any depth. */
 function findByTestID(
   node: unknown,
   testID: string,
@@ -1221,7 +1236,8 @@ describe('the meta row', () => {
   /**
    * The backend answers an upload before it has encoded the bytes, so a card whose
    * media is still `processing` must say so rather than draw an empty frame
-   * (KNOT-037-fix8).
+   * (KNOT-037-fix8). The frame is a pulsing skeleton, so it is never a black box
+   * either (KNOT-043).
    */
   describe('media still being processed', () => {
     it('draws a placeholder instead of an empty media frame', () => {
@@ -1233,7 +1249,8 @@ describe('the meta row', () => {
       const types = elementTypes(element);
 
       expect(findByTestID(element, 'media-processing')).toBeDefined();
-      expect(types).toContain('ActivityIndicator');
+      // A skeleton, not a still: nothing exists on the server yet.
+      expect(findElementByType(element, MediaPlaceholder)?.props?.variant).toBe('skeleton');
       // No player and no image: there is nothing to fetch yet.
       expect(types).not.toContain(FeedVideo);
       expect(types).not.toContain('Image');
@@ -1246,7 +1263,9 @@ describe('the meta row', () => {
         mediaStatus: 'processing',
       });
 
-      expect(textContent(element)).toContain('Processing media...');
+      expect(findElementByType(element, MediaPlaceholder)?.props?.label).toBe(
+        'Processing media...',
+      );
     });
 
     it('draws the real media once the status is ready', () => {

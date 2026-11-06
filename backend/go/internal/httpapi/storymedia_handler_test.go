@@ -1135,12 +1135,12 @@ func TestStoryMediaDelete(t *testing.T) {
 	if recorder.Code != http.StatusNotFound {
 		t.Errorf("content after delete status = %d, want %d", recorder.Code, http.StatusNotFound)
 	}
-	// An image upload produces three objects over its life: the upload (removed by
-	// the worker once the derivatives existed), the display AVIF and the WebP
-	// thumbnail. Deleting the item must remove the two the row still names, not just
-	// the one it serves (KNOT-037-fix7, KNOT-038).
-	if len(env.objects.deleted) != 3 {
-		t.Errorf("deleted objects = %d, want 3 (the upload, the display, and the thumbnail)", len(env.objects.deleted))
+	// An image upload produces four objects over its life: the upload (removed by
+	// the worker once the derivatives existed), the display AVIF, the WebP thumbnail
+	// and the ~20px placeholder. Deleting the item must remove the three the row
+	// still names, not just the one it serves (KNOT-037-fix7, KNOT-038, KNOT-043).
+	if len(env.objects.deleted) != 4 {
+		t.Errorf("deleted objects = %d, want 4 (the upload, the display, the thumbnail, and the placeholder)", len(env.objects.deleted))
 	}
 }
 

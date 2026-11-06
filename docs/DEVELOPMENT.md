@@ -3602,3 +3602,45 @@ payload change needs no migration — the version is the guarantee that a page
 written by an older build is never read by a newer one. The detail cache *does*
 store a serialized response, so bumping its version is what retires payloads that
 predate a new field. Bump both whenever a cached shape changes.
+
+## Low-quality placeholders (KNOT-043)
+
+KNOT-042 closed most of the gap between a card appearing and its media arriving,
+but two windows were left: the still itself costs a round trip, and an image slot
+had nothing behind it at all. Both are filled by a **low-quality image placeholder**
+— a ~20px WebP of about a kilobyte, minted for every item.
+
+**The pipeline.** `images::image_derivatives` produces the placeholder from the same
+decoded picture as the display and thumbnail (`LQIP_MAX_WIDTH` 20,
+`LQIP_QUALITY` 40). A video gets one too: `video::extract_stills` returns the poster
+*and* the placeholder, both from the single frame it extracts, so the two can never
+show different moments. Both are written as `<base>_lqip.webp` beside the upload and
+removed with it.
+
+**No new column.** `StoryMedia.LQIPKey()` derives the key from the row's thumbnail
+(`_thumb.webp`/`_thumb.avif`) or its poster (`_poster.webp`), exactly as the WebP
+siblings already are — `lqipBaseKey` accepts only the suffixes the pipeline mints, so
+a row written before KNOT-043 answers "none" instead of naming a file that was never
+written. `?variant=lqip` serves it, falling back to the row's smallest still when the
+placeholder itself is missing.
+
+**The client ladder.** Media is drawn smallest-first, and each step replaces the one
+before it once it is really on screen:
+
+| Layer | Drawn from | Removed when |
+| --- | --- | --- |
+| `MediaPlaceholder` (LQIP + spinner, or a skeleton) | `lqip_url` | the poster paints, or the player reports its first frame |
+| Poster (`FeedVideo`) | `poster_url` | `onReadyForDisplay`, or the first `onProgress` tick |
+| Still / thumbnail (`MediaGalleryModal`) | `thumbnail_url` | covered by the display rendition |
+| Full media | `url` / `display_webp_url` | — |
+
+`MediaPlaceholder` also owns the **skeleton**: the same component with
+`variant="skeleton"` draws a pulsing `bg.raised` wash instead of a picture, which is
+what a card shows while the backend is still encoding an upload (there is nothing to
+photograph yet). It replaced the flat grey box the Feed used to draw.
+
+**A video is mounted, then uncovered.** `react-native-video` has no `preload` prop
+(6.19.3), and readiness is only knowable from a mounted player, so the player is
+created as usual and the placeholder is drawn *over* it until `onReadyForDisplay`.
+That is also why the placeholder sits above the poster rather than under it: the
+player's surface is opaque, so anything behind it would never be seen.

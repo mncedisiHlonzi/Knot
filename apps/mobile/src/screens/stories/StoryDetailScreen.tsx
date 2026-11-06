@@ -24,6 +24,7 @@ import { versionsApi } from '../../api/versions';
 import AuthorLine from '../../components/AuthorLine';
 import Button from '../../components/Button';
 import FeedVideo from '../../components/FeedVideo';
+import MediaPlaceholder from '../../components/MediaPlaceholder';
 import type { ViewerMedia, ViewerStory } from '../../components/MediaGalleryModal';
 import Header from '../../components/Header';
 import PillarTag from '../../components/PillarTag';
@@ -147,6 +148,12 @@ function CarouselPage({
   // a picture (KNOT-042). Absent on a row whose job produced no poster.
   const posterPath = typeof media.poster_url === 'string' ? media.poster_url.trim() : '';
   const posterUri = posterPath === '' ? undefined : resolveMediaUrl(posterPath);
+  // The ~1KB placeholder under everything: the first thing drawn on this page, so
+  // a slow network shows a blurred frame instead of the canvas (KNOT-043).
+  const lqipPath = typeof media.lqip_url === 'string' ? media.lqip_url.trim() : '';
+  const lqipUri = lqipPath === '' ? undefined : resolveMediaUrl(lqipPath);
+  // An image page keeps its placeholder until the file has painted.
+  const [imageVisible, setImageVisible] = useState(false);
 
   // The backend has not encoded this item yet, so there is nothing to draw and
   // nothing to open: a placeholder that holds the page's shape is the honest
@@ -188,6 +195,7 @@ function CarouselPage({
         <FeedVideo
           uri={uri}
           posterUri={posterUri}
+          lqipUri={lqipUri}
           isVisible={isActive}
           isMuted={isMuted}
           onToggleMute={onToggleMute}
@@ -197,13 +205,21 @@ function CarouselPage({
           durationPosition="bottom-left"
         />
       ) : (
-        <Image
-          source={{ uri }}
-          style={styles.pageMedia}
-          resizeMode="cover"
-          onLoad={handleImageLoad}
-          accessibilityIgnoresInvertColors
-        />
+        <>
+          {imageVisible ? null : (
+            <MediaPlaceholder lqipUri={lqipUri} testID="detail-image-placeholder" />
+          )}
+          <Image
+            source={{ uri }}
+            style={styles.pageMedia}
+            resizeMode="cover"
+            onLoad={(event) => {
+              setImageVisible(true);
+              handleImageLoad(event);
+            }}
+            accessibilityIgnoresInvertColors
+          />
+        </>
       )}
     </Pressable>
   );

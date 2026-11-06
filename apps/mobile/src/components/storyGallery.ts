@@ -47,7 +47,7 @@ export function toViewerMedia(media: readonly StoryMedia[] | null | undefined): 
 
     // The still the viewer draws while the full rendition downloads: a video's
     // extracted poster, or an image's thumbnail. Either can be absent, and an
-    // absent still is what the loader is for (KNOT-042).
+    // absent still is what the placeholder is for (KNOT-042).
     const stillURL = stillPath(item);
 
     items.push({
@@ -57,6 +57,7 @@ export function toViewerMedia(media: readonly StoryMedia[] | null | undefined): 
       display_webp_url: displayWebPURL === '' ? null : displayWebPURL,
       thumbnail_url: stillURL.image,
       poster_url: stillURL.poster,
+      lqip_url: stillURL.lqip,
       width: typeof item.width === 'number' ? item.width : null,
       height: typeof item.height === 'number' ? item.height : null,
       duration_ms: typeof item.duration_ms === 'number' ? item.duration_ms : null,
@@ -74,13 +75,19 @@ export function toViewerMedia(media: readonly StoryMedia[] | null | undefined): 
  * They are read independently rather than switched on the media type, because the
  * wire is the authority: a row produced before KNOT-042 has neither (KNOT-042).
  */
-function stillPath(item: StoryMedia): { image: string | null; poster: string | null } {
+function stillPath(item: StoryMedia): {
+  image: string | null;
+  poster: string | null;
+  lqip: string | null;
+} {
   const thumbnail = typeof item.thumbnail_url === 'string' ? item.thumbnail_url.trim() : '';
   const poster = typeof item.poster_url === 'string' ? item.poster_url.trim() : '';
+  const lqip = typeof item.lqip_url === 'string' ? item.lqip_url.trim() : '';
 
   return {
     image: thumbnail === '' ? null : thumbnail,
     poster: poster === '' ? null : poster,
+    lqip: lqip === '' ? null : lqip,
   };
 }
 

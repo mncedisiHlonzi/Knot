@@ -44,6 +44,7 @@ describe('toViewerMedia', () => {
       display_webp_url: null,
       thumbnail_url: null,
       poster_url: null,
+      lqip_url: null,
       width: 1200,
       height: 800,
       duration_ms: null,

@@ -314,6 +314,11 @@ function imagePageStill(media: readonly ViewerMedia[]): string | null | undefine
   return imagePage(media)?.props?.stillUri as string | null | undefined;
 }
 
+/** The ~20px placeholder the viewer's image page draws UNDER the still. */
+function imagePageLQIP(media: readonly ViewerMedia[]): string | null | undefined {
+  return imagePage(media)?.props?.lqipUri as string | null | undefined;
+}
+
 /** The viewer's image page element, or undefined when the stage drew none. */
 function imagePage(media: readonly ViewerMedia[]): Element | undefined {
   const list = elements(renderStage({ media }).tree).find(
@@ -397,6 +402,49 @@ describe('MediaGalleryModal progressive loading', () => {
     // The still is drawn first, then the full rendition over it: the fade only
     // ever happens upwards (KNOT-042).
     expect(images.map((element) => element.props?.testID)).toEqual([
+      'viewer-still',
+      'viewer-full-rendition',
+    ]);
+  });
+});
+
+/**
+ * The lowest layer of a photo page (KNOT-043): a ~1KB placeholder, drawn before the
+ * thumbnail and long before the display rendition, so the page opens on a blurred
+ * picture rather than on the room's white.
+ */
+describe('MediaGalleryModal placeholder', () => {
+  const lqip = '/stories/story-1/media/media-1/content?variant=lqip';
+  const thumb = '/stories/story-1/media/media-1/content?variant=thumb';
+  const display = '/stories/story-1/media/media-1/content?variant=display&format=webp';
+
+  it('opens the page on the placeholder', () => {
+    expect(imagePageLQIP([{ ...MEDIA[0], lqip_url: lqip, thumbnail_url: thumb }])).toBe(
+      'http://localhost:8080' + lqip,
+    );
+  });
+
+  it('draws no placeholder when the row was produced without one', () => {
+    expect(imagePageLQIP(MEDIA)).toBeNull();
+    expect(imagePageLQIP([{ ...MEDIA[0], lqip_url: '   ' }])).toBeNull();
+  });
+
+  it('stacks every layer smallest first', () => {
+    const page = imagePage([
+      { ...MEDIA[0], lqip_url: lqip, thumbnail_url: thumb, display_webp_url: display },
+    ]);
+    if (page === undefined) {
+      throw new Error('the stage drew no image page');
+    }
+
+    const render = page.type as (props: unknown) => unknown;
+    const layers = elements(render(page.props)).filter((element) => {
+      const testID = element.props?.testID;
+      return typeof testID === 'string' && testID.startsWith('viewer-');
+    });
+
+    expect(layers.map((element) => element.props?.testID)).toEqual([
+      'viewer-lqip',
       'viewer-still',
       'viewer-full-rendition',
     ]);

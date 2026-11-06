@@ -137,6 +137,12 @@ type storyMediaResponse struct {
 	// screen every video preview used to open on. It is null for an image (which is
 	// its own poster) and for any row whose job did not produce one.
 	PosterURL *string `json:"poster_url"`
+	// LQIPURL addresses the ~20px WebP placeholder every item produced since
+	// KNOT-043 has: about a kilobyte, stretched and blurred behind a spinner while
+	// the thumbnail, the poster and the full rendition are all still in flight. It
+	// is null for a row written before the placeholder existed, and a client then
+	// draws its own skeleton.
+	LQIPURL *string `json:"lqip_url"`
 	// DisplayWebPURL is the same 1200px display as WebP, for devices that cannot
 	// decode AVIF: AVIF is native only on Android 12+ and iOS 16+, and a device below
 	// those draws a blank frame instead of reporting an error (KNOT-038-fix3).
@@ -614,6 +620,7 @@ func newStoryMediaResponse(media storymedia.StoryMedia, storyID string) storyMed
 		ThumbnailURLFallback: storyMediaThumbnailFallbackURL(storyID, media),
 		MediumURL:            storyMediaVariantURL(storyID, media.ID, media.MediumKey, storymedia.VariantMedium),
 		PosterURL:            storyMediaVariantURL(storyID, media.ID, media.PosterKey, storymedia.VariantPoster),
+		LQIPURL:              storyMediaLQIPURL(storyID, media),
 		DisplayWebPURL:       storyMediaDisplayWebPURL(storyID, media),
 	}
 }
@@ -643,6 +650,22 @@ func storyMediaImageThumbnailURL(storyID string, media storymedia.StoryMedia) *s
 	}
 
 	url := storyMediaURL(storyID, media.ID) + "?variant=" + string(storymedia.VariantThumb)
+	return &url
+}
+
+// storyMediaLQIPURL is the placeholder's address, or nil when the row has none.
+//
+// It is the FIRST thing a card or the viewer draws, so it is deliberately its own
+// address rather than something the client could derive: the key is a server
+// detail, and a client that guessed it would keep asking for a file an older row
+// never had. A nil answer tells the client to draw its own skeleton instead
+// (KNOT-043).
+func storyMediaLQIPURL(storyID string, media storymedia.StoryMedia) *string {
+	if _, ok := media.LQIPKey(); !ok {
+		return nil
+	}
+
+	url := storyMediaURL(storyID, media.ID) + "?variant=" + string(storymedia.VariantLQIP)
 	return &url
 }
 

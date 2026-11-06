@@ -59,6 +59,7 @@ pub async fn process(job: &Job, store: &dyn ObjectStore, rows: &dyn MediaRows) -
             let display_key = job.display_key()?;
             let display_webp_key = job.display_webp_key()?;
             let thumbnail_key = job.thumbnail_key()?;
+            let lqip_key = job.lqip_key()?;
 
             info!(
                 media_id = %job.media_id,
@@ -67,6 +68,7 @@ pub async fn process(job: &Job, store: &dyn ObjectStore, rows: &dyn MediaRows) -
                 display_bytes = derivatives.display.len(),
                 display_webp_bytes = derivatives.display_webp.len(),
                 thumbnail_bytes = derivatives.thumbnail.len(),
+                lqip_bytes = derivatives.lqip.len(),
                 "encoded the image derivatives"
             );
 
@@ -100,6 +102,17 @@ pub async fn process(job: &Job, store: &dyn ObjectStore, rows: &dyn MediaRows) -
                 &mut uploaded,
             )
             .await?;
+            // The placeholder is written from the same decoded picture, so a card
+            // has something to draw while even the thumbnail is in flight
+            // (KNOT-043).
+            put(
+                store,
+                &lqip_key,
+                derivatives.lqip,
+                WEBP_CONTENT_TYPE,
+                &mut uploaded,
+            )
+            .await?;
 
             Outcome {
                 storage_key: display_key,
@@ -126,17 +139,25 @@ pub async fn process(job: &Job, store: &dyn ObjectStore, rows: &dyn MediaRows) -
 
             put(store, &stream_key, stream, VIDEO_CONTENT_TYPE, &mut uploaded).await?;
 
-            // The poster is what a card draws while the player has no frame. It is
-            // deliberately best-effort: a clip FFmpeg can transcode but cannot
-            // still-frame is still a playable video, and losing the cover must
-            // never lose the video. A missing poster leaves the client on its own
-            // placeholder, which is where every video was before KNOT-042
-            // (KNOT-042).
-            let poster_key = match video::extract_poster(&upload) {
-                Ok(poster) => {
-                    let key = job.poster_key()?;
-                    put(store, &key, poster, WEBP_CONTENT_TYPE, &mut uploaded).await?;
-                    Some(key)
+            // The poster is what a card draws while the player has no frame, and
+            // the placeholder is what it draws before even the poster arrives.
+            // Both are deliberately best-effort: a clip FFmpeg can transcode but
+            // cannot still-frame is still a playable video, and losing the stills
+            // must never lose the video. Without them the client falls back to its
+            // own skeleton, which is where every video was before KNOT-042
+            // (KNOT-042, KNOT-043).
+            let poster_key = match video::extract_stills(&upload) {
+                Ok(stills) => {
+                    let poster = job.poster_key()?;
+                    put(store, &poster, stills.poster, WEBP_CONTENT_TYPE, &mut uploaded).await?;
+
+                    // The placeholder key is not a column: the row keeps the
+                    // poster, and the API derives `<base>_lqip.webp` from it
+                    // (KNOT-043).
+                    let lqip = job.lqip_key()?;
+                    put(store, &lqip, stills.lqip, WEBP_CONTENT_TYPE, &mut uploaded).await?;
+
+                    Some(poster)
                 }
                 Err(error) => {
                     warn!(
@@ -415,6 +436,10 @@ mod tests {
             "the WebP display is written beside the AVIF one"
         );
         assert!(store.has(&job.thumbnail_key().unwrap()));
+        assert!(
+            store.has(&job.lqip_key().unwrap()),
+            "the placeholder is written beside the thumbnail (KNOT-043)"
+        );
         assert!(!store.has(&key), "the upload is removed");
         assert_eq!(store.deleted(), vec![key]);
 
@@ -460,6 +485,10 @@ mod tests {
             store.has(&job.poster_key().unwrap()),
             "the video is given a poster still for the card to draw (KNOT-042)"
         );
+        assert!(
+            store.has(&job.lqip_key().unwrap()),
+            "the poster frame is also written as a placeholder (KNOT-043)"
+        );
         assert_eq!(
             outcome.poster_key,
             Some(job.poster_key().unwrap()),
@@ -485,6 +514,10 @@ mod tests {
         assert!(outcome.abandoned);
         assert!(!store.has(&job.display_key().unwrap()));
         assert!(!store.has(&job.thumbnail_key().unwrap()));
+        assert!(
+            !store.has(&job.lqip_key().unwrap()),
+            "the placeholder is discarded with the rest (KNOT-043)"
+        );
         assert!(!store.has(&key));
     }
 

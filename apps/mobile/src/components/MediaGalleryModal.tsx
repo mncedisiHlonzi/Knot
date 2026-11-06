@@ -44,6 +44,7 @@ import {
   type ViewableItemsInfo,
 } from '../utils/viewability';
 import Avatar from './Avatar';
+import { LQIP_BLUR_RADIUS } from './MediaPlaceholder';
 import {
   clampViewerIndex,
   viewerImageLayers,
@@ -73,6 +74,11 @@ export type ViewerMedia = {
    */
   readonly thumbnail_url?: string | null;
   readonly poster_url?: string | null;
+  /**
+   * The ~20px placeholder: the bottom layer of a photo page, drawn before the
+   * thumbnail and long before the display rendition (KNOT-043).
+   */
+  readonly lqip_url?: string | null;
   readonly width?: number | null;
   readonly height?: number | null;
   readonly duration_ms?: number | null;
@@ -161,11 +167,17 @@ function resolveUri(url: string): string {
  * and the full rendition fades in over it. That is what removes the white screen
  * a viewer used to show for the whole download (KNOT-042).
  */
-function pageLayers(item: ViewerMedia): { still: string | null; full: string } {
+function pageLayers(item: ViewerMedia): {
+  still: string | null;
+  full: string;
+  lqip: string | null;
+} {
   const layers = viewerImageLayers(item);
+  const lqip = typeof item.lqip_url === 'string' ? item.lqip_url.trim() : '';
   return {
     still: layers.still === null ? null : resolveUri(layers.still),
     full: resolveUri(layers.full),
+    lqip: lqip === '' ? null : resolveUri(lqip),
   };
 }
 
@@ -183,6 +195,11 @@ type ZoomableImageProps = {
    * (KNOT-042).
    */
   readonly stillUri?: string | null;
+  /**
+   * The ~20px placeholder drawn UNDER the still, so the page opens on a blurred
+   * picture instead of the room's white (KNOT-043).
+   */
+  readonly lqipUri?: string | null;
   readonly width: number;
   readonly height: number;
 };
@@ -208,6 +225,7 @@ type ZoomableImageProps = {
 function ZoomableImage({
   uri,
   stillUri = null,
+  lqipUri = null,
   width,
   height,
 }: ZoomableImageProps): React.ReactElement {
@@ -367,6 +385,16 @@ function ZoomableImage({
         <Animated.View
           style={[styles.pageLayer, { transform: [{ scale }, { translateX }, { translateY }] }]}
         >
+          {lqipUri === null ? null : (
+            <Image
+              source={{ uri: lqipUri }}
+              style={styles.pageLayer}
+              resizeMode="cover"
+              blurRadius={LQIP_BLUR_RADIUS}
+              accessibilityIgnoresInvertColors
+              testID="viewer-lqip"
+            />
+          )}
           {stillUri === null ? null : (
             <Image
               source={{ uri: stillUri }}
@@ -850,14 +878,15 @@ export function ViewerStage({
                 );
               }
 
-              // Both layers come from one read, so the pair cannot disagree
-              // (KNOT-042).
+              // The three addresses come from one read, so they cannot disagree
+              // about the item they describe (KNOT-042, KNOT-043).
               const layers = pageLayers(item);
 
               return (
                 <ZoomableImage
                   uri={layers.full}
                   stillUri={layers.still}
+                  lqipUri={layers.lqip}
                   width={width}
                   height={height}
                 />

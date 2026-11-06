@@ -23,8 +23,8 @@ use ffmpeg_sidecar::command::FfmpegCommand;
 
 use crate::images::{encode_webp, scale_to_width};
 use crate::keys::{
-    POSTER_MAX_WIDTH, POSTER_OFFSET_SECONDS, POSTER_QUALITY, STREAM_AUDIO_BITRATE, STREAM_CRF,
-    STREAM_PRESET, STREAM_SCALE_FILTER,
+    LQIP_MAX_WIDTH, LQIP_QUALITY, POSTER_MAX_WIDTH, POSTER_OFFSET_SECONDS, POSTER_QUALITY,
+    STREAM_AUDIO_BITRATE, STREAM_CRF, STREAM_PRESET, STREAM_SCALE_FILTER,
 };
 
 /// Reports whether an FFmpeg binary can be executed.
@@ -97,19 +97,33 @@ pub fn transcode_to_stream(input: &[u8]) -> Result<Vec<u8>> {
     Ok(encoded)
 }
 
-/// Extracts one still frame from `input` and encodes it as a WebP poster.
+/// The stills a video produces.
+///
+/// Two sizes of the same frame: the poster a card draws once it has arrived, and
+/// the placeholder it draws until then. Both come from ONE decode, so the pair can
+/// never disagree about which frame they show (KNOT-043).
+#[derive(Debug)]
+pub struct VideoStills {
+    /// The poster: the frame at `POSTER_MAX_WIDTH`.
+    pub poster: Vec<u8>,
+    /// The low-quality placeholder: the same frame at `LQIP_MAX_WIDTH`.
+    pub lqip: Vec<u8>,
+}
+
+/// Extracts one still frame from `input` and encodes it twice: a WebP poster and a
+/// ~20px WebP placeholder.
 ///
 /// The frame is taken `POSTER_OFFSET_SECONDS` into the clip, because a clip
 /// usually opens on black or a fade and the poster is the only picture a card
 /// shows until playback starts. A clip shorter than the offset — or one whose
 /// seek lands past its last frame — falls back to its very first frame, so a
-/// poster is produced for every decodable video (KNOT-042).
+/// still is produced for every decodable video (KNOT-042).
 ///
-/// The still is scaled to at most `POSTER_MAX_WIDTH` and never upscaled, exactly
-/// like an image rendition, and encoded with the same WebP quality as a
-/// thumbnail. Both steps go through the image pipeline's own helpers so the two
-/// paths cannot drift into different codecs or different scaling rules.
-pub fn extract_poster(input: &[u8]) -> Result<Vec<u8>> {
+/// The poster is scaled to at most `POSTER_MAX_WIDTH` and the placeholder to
+/// `LQIP_MAX_WIDTH`, neither ever upscaled, and both are encoded with the image
+/// pipeline's own helpers so the paths cannot drift into different codecs or
+/// different scaling rules (KNOT-043).
+pub fn extract_stills(input: &[u8]) -> Result<VideoStills> {
     let workspace = Workspace::new()?;
     let source = workspace.path.join("input");
     let frame = workspace.path.join("poster.png");
@@ -132,9 +146,14 @@ pub fn extract_poster(input: &[u8]) -> Result<Vec<u8>> {
 
     let bytes = fs::read(&frame).context("read the poster frame")?;
     let decoded = image::load_from_memory(&bytes).context("decode the poster frame")?;
-    let scaled = scale_to_width(&decoded, POSTER_MAX_WIDTH);
+    let poster_frame = scale_to_width(&decoded, POSTER_MAX_WIDTH);
+    let placeholder = scale_to_width(&poster_frame, LQIP_MAX_WIDTH);
 
-    encode_webp(&scaled, POSTER_QUALITY).context("encode the poster as webp")
+    Ok(VideoStills {
+        poster: encode_webp(&poster_frame, POSTER_QUALITY).context("encode the poster as webp")?,
+        lqip: encode_webp(&placeholder, LQIP_QUALITY)
+            .context("encode the placeholder as webp")?,
+    })
 }
 
 /// Runs FFmpeg to write one frame at `offset` seconds next to the upload, and
@@ -280,24 +299,37 @@ mod tests {
     }
 
     #[test]
-    fn extracts_a_webp_poster_from_a_clip() {
+    fn extracts_a_webp_poster_and_a_tiny_placeholder_from_a_clip() {
         if !ffmpeg_is_available() {
             eprintln!("skipping: ffmpeg is not on PATH");
             return;
         }
 
-        let poster = extract_poster(&fixture()).expect("the fixture yields a poster");
+        let stills = extract_stills(&fixture()).expect("the fixture yields stills");
 
         // RIFF....WEBP
-        assert_eq!(&poster[0..4], b"RIFF");
-        assert_eq!(&poster[8..12], b"WEBP");
+        assert_eq!(&stills.poster[0..4], b"RIFF");
+        assert_eq!(&stills.poster[8..12], b"WEBP");
+        assert_eq!(&stills.lqip[0..4], b"RIFF");
+        assert_eq!(&stills.lqip[8..12], b"WEBP");
 
-        let decoded = image::load_from_memory(&poster).expect("the poster decodes");
+        let poster = image::load_from_memory(&stills.poster).expect("the poster decodes");
         // The fixture is 320x240, so the ladder re-encodes at its own width: a
         // poster is never upscaled (KNOT-042).
-        assert_eq!(decoded.width(), 320);
-        assert_eq!(decoded.height(), 240);
-        assert!(decoded.width() <= POSTER_MAX_WIDTH);
+        assert_eq!(poster.width(), 320);
+        assert_eq!(poster.height(), 240);
+        assert!(poster.width() <= POSTER_MAX_WIDTH);
+
+        // The placeholder is the same frame at 20px, and small enough to belong in
+        // a first paint rather than a network round trip (KNOT-043).
+        let placeholder = image::load_from_memory(&stills.lqip).expect("the placeholder decodes");
+        assert_eq!(placeholder.width(), LQIP_MAX_WIDTH);
+        assert_eq!(placeholder.height(), 15);
+        assert!(
+            stills.lqip.len() < 2048,
+            "a placeholder is about a kilobyte, got {} bytes",
+            stills.lqip.len()
+        );
     }
 
     #[test]
@@ -318,6 +350,6 @@ mod tests {
             return;
         }
 
-        assert!(extract_poster(b"not a video").is_err());
+        assert!(extract_stills(b"not a video").is_err());
     }
 }

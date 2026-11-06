@@ -1,4 +1,5 @@
 import FeedVideo from '../FeedVideo';
+import MediaPlaceholder from '../MediaPlaceholder';
 
 /**
  * The state each hook slot holds, in call order, plus the cursor that maps a
@@ -327,5 +328,70 @@ describe('FeedVideo poster', () => {
     expect(still).toBeGreaterThanOrEqual(0);
     // Drawn after the still, so the still can never swallow the control's tap.
     expect(mute).toBeGreaterThan(still);
+  });
+});
+
+/** The `MediaPlaceholder` element, or undefined when none is drawn. */
+function placeholder(tree: unknown): Element | undefined {
+  return elements(tree).find((element) => element.type === MediaPlaceholder);
+}
+
+/**
+ * The ladder a reader actually sees, in order: the ~1KB placeholder, then the
+ * poster, then the player's own first frame. Each step replaces the one before it
+ * once it is really on screen, so no step is ever a black rectangle (KNOT-043).
+ */
+describe('FeedVideo placeholder', () => {
+  const POSTER = `${URI}?variant=poster`;
+  const LQIP = `${URI}?variant=lqip`;
+
+  it('draws the placeholder first, with the address the server minted', () => {
+    const drawn = placeholder(render({ uri: URI, lqipUri: LQIP }));
+
+    expect(drawn).toBeDefined();
+    expect(drawn?.props?.lqipUri).toBe(LQIP);
+  });
+
+  it('draws the placeholder even when there is no placeholder picture', () => {
+    // A row produced before KNOT-043 has no LQIP; the component then draws its
+    // skeleton, which is still better than the player's black surface.
+    expect(placeholder(visibleTree())).toBeDefined();
+  });
+
+  it('draws the placeholder above the poster, so the still never covers it', () => {
+    const all = elements(render({ uri: URI, posterUri: POSTER, lqipUri: LQIP }));
+    const still = all.findIndex((element) => element.props?.testID === 'feed-video-poster');
+    const drawn = all.findIndex((element) => element.type === MediaPlaceholder);
+
+    expect(still).toBeGreaterThanOrEqual(0);
+    expect(drawn).toBeGreaterThan(still);
+  });
+
+  it('removes the placeholder once the player has rendered a frame', () => {
+    const first = render({ uri: URI, lqipUri: LQIP, isVisible: true });
+    expect(placeholder(first)).toBeDefined();
+
+    const ready = firstOfType(first, 'Video')?.props?.onReadyForDisplay;
+    (ready as () => void)();
+
+    expect(placeholder(render({ uri: URI, lqipUri: LQIP, isVisible: true }))).toBeUndefined();
+  });
+
+  it('removes the placeholder as soon as the poster has painted', () => {
+    const first = render({ uri: URI, posterUri: POSTER, lqipUri: LQIP, isVisible: false });
+
+    const loaded = poster(first)?.props?.onLoad;
+    expect(typeof loaded).toBe('function');
+    (loaded as () => void)();
+
+    // The poster is a sharper version of the same frame, so it takes over before
+    // the player is ready — which is what closes the one-to-two second gap.
+    expect(
+      placeholder(render({ uri: URI, posterUri: POSTER, lqipUri: LQIP, isVisible: false })),
+    ).toBeUndefined();
+  });
+
+  it('keeps the placeholder while the player is paused and unready', () => {
+    expect(placeholder(render({ uri: URI, lqipUri: LQIP, isVisible: false }))).toBeDefined();
   });
 });

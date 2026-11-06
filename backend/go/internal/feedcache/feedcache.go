@@ -65,7 +65,10 @@ const (
 	// v2: the feed payload was hydrated with the media stills a card draws before
 	// the full rendition arrives — `first_media_thumbnail_url` and
 	// `first_media_poster_url` (KNOT-042).
-	FeedPayloadVersion = "v2"
+	//
+	// v3: the payload gained `first_media_lqip_url`, the ~20px placeholder drawn
+	// before either still (KNOT-043).
+	FeedPayloadVersion = "v3"
 
 	feedKeyPrefix               = "knot:feed:" + FeedPayloadVersion + ":"
 	feedVersionsKeyPrefix       = "knot:feed_versions:" + FeedPayloadVersion + ":"

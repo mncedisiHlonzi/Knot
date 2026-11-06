@@ -44,7 +44,10 @@ const (
 	// v2: the media array gained `poster_url`, a video's extracted still, and the
 	// story gained `first_media_thumbnail_url` / `first_media_poster_url`
 	// (KNOT-042).
-	PayloadVersion = "v2"
+	//
+	// v3: every media item gained `lqip_url`, the ~20px placeholder, and the story
+	// gained `first_media_lqip_url` (KNOT-043).
+	PayloadVersion = "v3"
 
 	storyKeyPrefix   = "knot:story:" + PayloadVersion + ":"
 	versionKeyPrefix = "knot:version:" + PayloadVersion + ":"

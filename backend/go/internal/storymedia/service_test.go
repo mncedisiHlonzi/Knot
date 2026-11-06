@@ -1498,3 +1498,119 @@ func TestDeleteMediaRemovesTheUpload(t *testing.T) {
 // KNOT-037-fix17's step-level trace lived here because the pipeline ran in this
 // process. It now runs in the Rust worker, which logs the same steps from its own
 // modules; there is nothing left in the Go service to observe.
+
+// ---------------------------------------------------------------------------
+// The low-quality placeholder (KNOT-043)
+// ---------------------------------------------------------------------------
+
+// TestLQIPKeyIsDerivedFromTheStill pins the naming rule: the placeholder sits
+// beside whichever still the row has, from the same `<uuid>` base, so it needs no
+// column of its own.
+func TestLQIPKeyIsDerivedFromTheStill(t *testing.T) {
+	webpThumb := "story-media/s/abc_thumb.webp"
+	avifThumb := "story-media/s/abc_thumb.avif"
+	legacyThumb := "story-media/s/abc_thumb.jpg"
+	poster := "story-media/s/abc_poster.webp"
+	legacyPoster := "story-media/s/abc_poster.jpg"
+	want := "story-media/s/abc_lqip.webp"
+
+	for _, testCase := range []struct {
+		name  string
+		media StoryMedia
+		want  string
+		ok    bool
+	}{
+		{name: "a webp thumbnail", media: StoryMedia{ThumbnailKey: &webpThumb}, want: want, ok: true},
+		{name: "an avif thumbnail", media: StoryMedia{ThumbnailKey: &avifThumb}, want: want, ok: true},
+		{name: "a video poster", media: StoryMedia{PosterKey: &poster}, want: want, ok: true},
+		// A row written before the placeholder existed has no file to name: the
+		// answer is false, not a key that would 404 on every read.
+		{name: "a legacy jpeg thumbnail", media: StoryMedia{ThumbnailKey: &legacyThumb}},
+		{name: "a legacy jpeg poster", media: StoryMedia{PosterKey: &legacyPoster}},
+		{name: "no stills at all", media: StoryMedia{}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			got, ok := testCase.media.LQIPKey()
+			if ok != testCase.ok {
+				t.Fatalf("LQIPKey() ok = %v, want %v (key %q)", ok, testCase.ok, got)
+			}
+			if ok && got != testCase.want {
+				t.Errorf("LQIPKey() = %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestStreamMediaServesTheLQIP proves the placeholder is served whole, as WebP,
+// from the derivative beside the still.
+func TestStreamMediaServesTheLQIP(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, _ := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 900, 600))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+	service.WaitForProcessing()
+
+	lqipKey, ok := created.LQIPKey()
+	if !ok {
+		t.Fatalf("LQIPKey() = false for %+v, want the derived placeholder", created)
+	}
+	placeholder := []byte("RIFF....WEBP")
+	objects.objects[lqipKey] = placeholder
+
+	body, total, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantLQIP, "", newRangeRequest(""))
+	if err != nil {
+		t.Fatalf("StreamMedia(lqip) error = %v, want nil", err)
+	}
+
+	served, _ := io.ReadAll(body)
+	if !bytes.Equal(served, placeholder) {
+		t.Error("StreamMedia(lqip) did not serve the stored placeholder")
+	}
+	if total != int64(len(placeholder)) {
+		t.Errorf("total = %d, want %d", total, len(placeholder))
+	}
+	if mimeType != webpContentType {
+		t.Errorf("mime = %q, want %q", mimeType, webpContentType)
+	}
+}
+
+// TestStreamMediaFallsBackToTheStillWithoutAPlaceholder covers the rows that
+// predate KNOT-043: asking for a placeholder must still answer with the smallest
+// picture the row has rather than 404, because a card draws whatever it gets.
+func TestStreamMediaFallsBackToTheStillWithoutAPlaceholder(t *testing.T) {
+	store := newFakeStore()
+	objects := newFakeObjects()
+	service, _ := newTestService(t, store, objects)
+
+	created, err := service.CreateMedia(context.Background(), imageInput(t, 300, 200))
+	if err != nil {
+		t.Fatalf("CreateMedia() error = %v, want nil", err)
+	}
+	service.WaitForProcessing()
+
+	// No placeholder was written for this row.
+	lqipKey, ok := created.LQIPKey()
+	if !ok {
+		t.Fatal("LQIPKey() = false, want a derived key")
+	}
+	delete(objects.objects, lqipKey)
+
+	thumbnailKey, _ := created.ThumbnailWebPKey()
+
+	body, _, mimeType, err := service.StreamMedia(context.Background(), created.ID, VariantLQIP, "", newRangeRequest(""))
+	if err != nil {
+		t.Fatalf("StreamMedia(lqip) error = %v, want nil", err)
+	}
+
+	served, _ := io.ReadAll(body)
+	if !bytes.Equal(served, objects.objects[thumbnailKey]) {
+		t.Error("StreamMedia(lqip) did not fall back to the thumbnail")
+	}
+	if mimeType != webpContentType {
+		t.Errorf("mime = %q, want %q", mimeType, webpContentType)
+	}
+}
