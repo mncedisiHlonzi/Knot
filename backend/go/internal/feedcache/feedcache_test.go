@@ -3,6 +3,7 @@ package feedcache
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -389,6 +390,29 @@ func TestReadOfAnUnknownReaderIsEmptyNotAnError(t *testing.T) {
 	}
 	if len(ids) != 0 {
 		t.Errorf("Read() = %v, want empty", ids)
+	}
+}
+
+// TestKeysCarryThePayloadVersion proves the invalidation lever works: every key
+// this package writes names the payload generation, so a change in what a cached
+// page means retires the previous generation instead of being read with the new
+// rules (KNOT-042).
+func TestKeysCarryThePayloadVersion(t *testing.T) {
+	marker := ":" + FeedPayloadVersion + ":"
+
+	for name, key := range map[string]string{
+		"reader story feed":   FeedKey("u1"),
+		"reader version feed": FeedVersionsKey("u1"),
+		"author story feed":   AuthorFeedKey("a1"),
+		"author version feed": AuthorFeedVersionsKey("a1"),
+	} {
+		if !strings.Contains(key, marker) {
+			t.Errorf("%s key %q does not name the payload version %q", name, key, FeedPayloadVersion)
+		}
+	}
+
+	if FeedPayloadVersion == "" {
+		t.Error("FeedPayloadVersion is empty, so no generation can be retired")
 	}
 }
 

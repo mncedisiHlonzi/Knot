@@ -23,8 +23,12 @@ pub struct Outcome {
     /// The object a reader is served for the full rendition.
     pub storage_key: String,
     /// The feed thumbnail's key, absent for a video (it plays instead of showing a
-    /// cover).
+    /// still).
     pub thumbnail_key: Option<String>,
+    /// The video's poster still: the WebP a card draws before the first frame
+    /// decodes. Absent for an image, which is its own poster, and for a video
+    /// whose frame could not be extracted (KNOT-042).
+    pub poster_key: Option<String>,
     /// The primary object's size, which is what `Content-Length` and Range
     /// arithmetic describe.
     pub size_bytes: i64,
@@ -100,6 +104,9 @@ pub async fn process(job: &Job, store: &dyn ObjectStore, rows: &dyn MediaRows) -
             Outcome {
                 storage_key: display_key,
                 thumbnail_key: Some(thumbnail_key),
+                // An image IS its own poster; a second copy of the same picture
+                // would be pure waste.
+                poster_key: None,
                 size_bytes: display_bytes,
                 width: Some(derivatives.width as i32),
                 height: Some(derivatives.height as i32),
@@ -119,9 +126,32 @@ pub async fn process(job: &Job, store: &dyn ObjectStore, rows: &dyn MediaRows) -
 
             put(store, &stream_key, stream, VIDEO_CONTENT_TYPE, &mut uploaded).await?;
 
+            // The poster is what a card draws while the player has no frame. It is
+            // deliberately best-effort: a clip FFmpeg can transcode but cannot
+            // still-frame is still a playable video, and losing the cover must
+            // never lose the video. A missing poster leaves the client on its own
+            // placeholder, which is where every video was before KNOT-042
+            // (KNOT-042).
+            let poster_key = match video::extract_poster(&upload) {
+                Ok(poster) => {
+                    let key = job.poster_key()?;
+                    put(store, &key, poster, WEBP_CONTENT_TYPE, &mut uploaded).await?;
+                    Some(key)
+                }
+                Err(error) => {
+                    warn!(
+                        media_id = %job.media_id,
+                        error = %error,
+                        "could not extract a poster frame; the video plays without a cover"
+                    );
+                    None
+                }
+            };
+
             Outcome {
                 storage_key: stream_key,
                 thumbnail_key: None,
+                poster_key,
                 size_bytes,
                 // A video's frame size is FFmpeg's business until someone asks;
                 // the row keeps whatever the uploader reported rather than a
@@ -142,6 +172,7 @@ pub async fn process(job: &Job, store: &dyn ObjectStore, rows: &dyn MediaRows) -
             &job.media_id,
             &outcome.storage_key,
             outcome.thumbnail_key.as_deref(),
+            outcome.poster_key.as_deref(),
             size_bytes,
             outcome.width,
             outcome.height,
@@ -185,6 +216,7 @@ pub async fn process(job: &Job, store: &dyn ObjectStore, rows: &dyn MediaRows) -
         media_id = %job.media_id,
         storage_key = %outcome.storage_key,
         thumbnail_key = outcome.thumbnail_key.as_deref().unwrap_or(""),
+        poster_key = outcome.poster_key.as_deref().unwrap_or(""),
         size_bytes,
         "media is ready"
     );
@@ -299,6 +331,7 @@ mod tests {
         media_id: String,
         storage_key: String,
         thumbnail_key: Option<String>,
+        poster_key: Option<String>,
         size_bytes: i64,
         width: Option<i32>,
         height: Option<i32>,
@@ -324,6 +357,7 @@ mod tests {
             media_id: &str,
             storage_key: &str,
             thumbnail_key: Option<&str>,
+            poster_key: Option<&str>,
             size_bytes: i64,
             width: Option<i32>,
             height: Option<i32>,
@@ -336,6 +370,7 @@ mod tests {
                 media_id: media_id.to_string(),
                 storage_key: storage_key.to_string(),
                 thumbnail_key: thumbnail_key.map(str::to_string),
+                poster_key: poster_key.map(str::to_string),
                 size_bytes,
                 width,
                 height,
@@ -392,6 +427,10 @@ mod tests {
         // The row learns the shape it never had, from the encoded picture.
         assert_eq!(ready[0].width, Some(320));
         assert_eq!(ready[0].height, Some(200));
+        assert_eq!(
+            ready[0].poster_key, None,
+            "an image is its own poster; no still is generated for it"
+        );
     }
 
     #[tokio::test]
@@ -417,8 +456,21 @@ mod tests {
         assert_eq!(outcome.storage_key, job.stream_key().unwrap());
         assert_eq!(outcome.thumbnail_key, None, "a video autoplays; it has no cover");
         assert!(store.has(&job.stream_key().unwrap()));
+        assert!(
+            store.has(&job.poster_key().unwrap()),
+            "the video is given a poster still for the card to draw (KNOT-042)"
+        );
+        assert_eq!(
+            outcome.poster_key,
+            Some(job.poster_key().unwrap()),
+            "the row is told where the poster lives"
+        );
         assert!(!store.has(&key));
         assert_eq!(rows.ready_calls()[0].width, None);
+        assert_eq!(
+            rows.ready_calls()[0].poster_key.as_deref(),
+            Some(job.poster_key().unwrap().as_str())
+        );
     }
 
     #[tokio::test]

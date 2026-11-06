@@ -12,6 +12,7 @@ import (
 	"github.com/knot/backend/internal/moderation"
 	"github.com/knot/backend/internal/reactions"
 	"github.com/knot/backend/internal/stories"
+	"github.com/knot/backend/internal/storymedia"
 	"github.com/knot/backend/internal/versions"
 )
 
@@ -495,3 +496,77 @@ func TestAdaptFansOutTheVersion(t *testing.T) {
 }
 
 var _ = io.Discard
+
+// TestStoryDetailWithProcessingMediaIsNotCached proves the exception to the
+// detail cache: a response whose media is still being encoded is never stored.
+//
+// The worker writes the finished row straight to PostgreSQL and never touches
+// Redis, so a cached "processing" payload would keep answering that for the whole
+// TTL — ten minutes of a placeholder on a story that finished seconds after it was
+// opened. A ready story is cached as before (KNOT-042).
+func TestStoryDetailWithProcessingMediaIsNotCached(t *testing.T) {
+	const storyID = "0a000000-0000-4000-8000-000000000001"
+	const mediaID = "0b000000-0000-4000-8000-000000000002"
+
+	for _, testCase := range []struct {
+		name     string
+		status   storymedia.Status
+		wantSets int
+	}{
+		{name: "processing", status: storymedia.StatusProcessing, wantSets: 0},
+		{name: "failed", status: storymedia.StatusFailed, wantSets: 0},
+		{name: "ready", status: storymedia.StatusReady, wantSets: 1},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			store := &memoryStoryStore{}
+			store.stories = append(store.stories, storyFixture(storyID, testUserID))
+
+			details := newDetailCacheRecorder()
+			media := &fakeStoryMediaLookup{
+				byStory: map[string][]storymedia.StoryMedia{
+					storyID: {{
+						ID:         mediaID,
+						StoryID:    storyID,
+						MediaType:  storymedia.MediaTypeVideo,
+						StorageKey: "story-media/" + storyID + "/clip_stream.mp4",
+						Status:     testCase.status,
+					}},
+				},
+			}
+
+			service, err := stories.NewService(store)
+			if err != nil {
+				t.Fatalf("stories.NewService() error = %v, want nil", err)
+			}
+
+			handler := newRouterWithFeedLookups(t, discardLogger(), service, feedLookups{
+				authors:      &fakeAuthorService{},
+				rooted:       &fakeRootedService{},
+				media:        media,
+				reactions:    &fakeReactionsLookup{},
+				stats:        &fakeStoryStatsLookup{},
+				chains:       &fakeVersionChainLookup{},
+				interactions: &fakeInteractionsLookup{},
+				caches:       Caches{Details: details},
+			})
+
+			recorder := doStoryRequest(handler, http.MethodGet, "/stories/"+storyID, "", testAccessToken)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+			}
+
+			var envelope storyEnvelope
+			decodeBody(t, recorder, &envelope)
+			if len(envelope.Story.Media) != 1 {
+				t.Fatalf("media = %d items, want 1", len(envelope.Story.Media))
+			}
+			if got := envelope.Story.Media[0].Status; got != string(testCase.status) {
+				t.Errorf("status = %q, want %q", got, testCase.status)
+			}
+
+			if state := details.snapshot(); state.setCalls != testCase.wantSets {
+				t.Errorf("cache writes = %d, want %d for a %s item", state.setCalls, testCase.wantSets, testCase.status)
+			}
+		})
+	}
+}

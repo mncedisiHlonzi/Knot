@@ -57,9 +57,12 @@ export type StoryMedia = {
    * API base URL exactly like `url`.
    *
    * `medium_url` addresses the 1200px JPEG a row written before KNOT-037-fix7
-   * still holds; the current pipeline writes none. There is no `poster_url`: a
-   * video autoplays its stream, so the server stopped generating and advertising a
-   * cover frame (KNOT-037-fix10).
+   * still holds; the current pipeline writes none.
+   *
+   * `poster_url` is a video's extracted still — the WebP frame the media worker
+   * takes one second into the clip — and is null for an image, which is its own
+   * poster (KNOT-042). It is what a card or the detail carousel draws before the
+   * player has a frame, so a video never opens on black.
    *
    * `display_webp_url` is `url` in a codec every supported device can decode: the
    * same 1200px display as WebP rather than AVIF. AVIF is native only on Android 12+
@@ -74,6 +77,7 @@ export type StoryMedia = {
    */
   readonly thumbnail_url?: string | null;
   readonly medium_url?: string | null;
+  readonly poster_url?: string | null;
   readonly display_webp_url?: string | null;
   /**
    * Whether the bytes are ready to be rendered.
@@ -156,11 +160,23 @@ export type Story = {
   readonly media_count?: number;
   /**
    * The first media item's kind and its relative path on the API, or null when
-   * the story has no media. The feed uses them so a video preview can be drawn as
-   * a placeholder (no poster frame is stored yet) and an image rendered directly.
+   * the story has no media. The feed uses them so a video preview can be drawn
+   * from its poster and an image rendered directly.
    */
   readonly first_media_type?: 'image' | 'video' | null;
   readonly first_media_url?: string | null;
+  /**
+   * The still a card draws before (or instead of) the full rendition: the 400px
+   * WebP thumbnail of an image, and the extracted WebP poster of a video. They are
+   * hydrated into the feed payload, so a card renders from its first response with
+   * no follow-up request — the thumbnail arrives in milliseconds and the poster
+   * replaces the black frame a video used to open on (KNOT-042).
+   *
+   * Each is null for the kind that does not have one (a video has no thumbnail, an
+   * image no poster), and absent from an older server.
+   */
+  readonly first_media_thumbnail_url?: string | null;
+  readonly first_media_poster_url?: string | null;
   /**
    * The first media item's pixel dimensions, or null when the uploader's client
    * did not report them. The feed frames the media at its natural width:height
@@ -293,6 +309,9 @@ export type VersionFeedItem = {
   readonly media_count?: number;
   readonly first_media_type?: 'image' | 'video' | null;
   readonly first_media_url?: string | null;
+  /** The still this entry draws first: a thumbnail for an image, a poster for a video (KNOT-042). */
+  readonly first_media_thumbnail_url?: string | null;
+  readonly first_media_poster_url?: string | null;
   readonly first_media_width?: number | null;
   readonly first_media_height?: number | null;
   /** The VERSION's own counts: a reader reacts to the adaptation they are reading. */

@@ -607,7 +607,8 @@ and the pillar it belongs to.
       "thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb",
       "thumbnail_url_fallback": null,
       "display_webp_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=display&format=webp",
-      "medium_url": null
+      "medium_url": null,
+      "poster_url": null
     }
   ],
   "created_at": "2026-10-07T18:26:37.134182+02:00",
@@ -618,6 +619,8 @@ and the pillar it belongs to.
   "media_count": 5,
   "first_media_type": "image",
   "first_media_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb",
+  "first_media_thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb",
+  "first_media_poster_url": null,
   "first_media_width": 1080,
   "first_media_height": 1920,
   "attribution_line": "Original story by Ada Lovelace in English.",
@@ -671,8 +674,16 @@ the thread's length. It is never a total across the tree (KNOT-036-fix5).
 
 `first_media_type` is `"image"` or `"video"`, and `first_media_url` is the path on this
 API that serves the first media item's bytes — or both are `null` when the story has no
-media. They let the feed draw a preview (an image, or a placeholder for a video, since no
-poster frame is stored yet) without reading the `media` array (KNOT-020c-fix).
+media. They let the feed draw a preview without reading the `media` array
+(KNOT-020c-fix).
+
+`first_media_thumbnail_url` and `first_media_poster_url` are the **stills a card draws
+first**, hydrated into the payload so a card needs no second request: the 400px WebP
+`thumbnail` of an image, and the WebP `poster` frame extracted from a video one second in.
+Each is `null` for the kind that does not have one (a video has no thumbnail, an image no
+poster), and both are `null` for a story with no media. For a video these are what remove
+the black frame: `first_media_url` is the whole stream, so a player given only that has
+nothing to draw until it has decoded a frame (KNOT-042).
 
 `first_media_width` and `first_media_height` are that item's pixel dimensions, or `null`
 when the uploader's client did not report them (a story uploaded before the columns
@@ -1172,7 +1183,8 @@ Returns **200** with the story's media, in display order:
       "thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb",
       "thumbnail_url_fallback": null,
       "display_webp_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=display&format=webp",
-      "medium_url": null
+      "medium_url": null,
+      "poster_url": null
     }
   ]
 }
@@ -1193,10 +1205,16 @@ longer stored, so such a row answers **404** rather than serving a full-size fil
 (KNOT-037-fix10).
 
 **`thumbnail_url` is the feed card's image** — a 400px **WebP** (`?variant=thumb`) — and is
-`null` for a video: a video autoplays in the feed, so no cover is generated at all
-(KNOT-037-fix7). There is no `poster_url`: the cover frame was retired with the async
-pipeline. `thumbnail_url_fallback` and `medium_url` only exist on a row written by an earlier
-pipeline (KNOT-037-fix6 and before); a new item returns `null` for both.
+`null` for a video, which has no thumbnail. `thumbnail_url_fallback` and `medium_url` only
+exist on a row written by an earlier pipeline (KNOT-037-fix6 and before); a new item returns
+`null` for both.
+
+**`poster_url` is a video's extracted still** — a **WebP** frame taken one second into the
+clip, at most 800px wide (`?variant=poster`) — and `null` for an image, which is its own
+poster. It is what a card or the detail carousel draws until the player has a frame of its
+own, so a video preview never opens on the black surface an undecoded player shows
+(KNOT-042). A row whose job could not extract a frame also reports `null`, so a client can
+tell "no poster" from "a poster" instead of fetching a 404.
 
 **`display_webp_url` is the same display in a codec older devices can read** — the 1200px
 display as **WebP** (`?variant=display&format=webp`). AVIF is native only on Android 12+ and
@@ -1225,7 +1243,7 @@ rendition (KNOT-037, KNOT-037-fix7):
 | `stream` | A video's 1080p H.264 stream, index first (`+faststart`) | `video/mp4` |
 | `thumb` | The feed thumbnail, max 400px wide | `image/webp` |
 | `medium` | A legacy story-detail rendition, max 1200px wide (older rows only) | `image/jpeg` |
-| `poster` | A legacy video poster frame (older rows only) | `image/jpeg` |
+| `poster` | A video's poster still, max 800px wide (`image/webp`); a legacy row's poster frame is `image/jpeg` | `image/webp` / `image/jpeg` |
 
 `display` and `stream` are the row's **primary object**, so they honour `Range` like any
 file. `thumb`, `medium`, and `poster` are small and are sent whole.

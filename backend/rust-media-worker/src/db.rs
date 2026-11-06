@@ -22,11 +22,16 @@ pub trait MediaRows: Send + Sync {
     /// `width` and `height` are the decoded dimensions, and they are only used
     /// when the row has none: a client that reported dimensions keeps them, and a
     /// row that has none learns the true shape of its media.
+    ///
+    /// `poster_key` is the WebP still written for a video, and `None` for an
+    /// image: an image has its own picture, so a poster would be a second copy of
+    /// it (KNOT-042).
     async fn mark_ready(
         &self,
         media_id: &str,
         storage_key: &str,
         thumbnail_key: Option<&str>,
+        poster_key: Option<&str>,
         size_bytes: i64,
         width: Option<i32>,
         height: Option<i32>,
@@ -63,6 +68,7 @@ impl MediaRows for PgMediaRows {
         media_id: &str,
         storage_key: &str,
         thumbnail_key: Option<&str>,
+        poster_key: Option<&str>,
         size_bytes: i64,
         width: Option<i32>,
         height: Option<i32>,
@@ -73,15 +79,17 @@ impl MediaRows for PgMediaRows {
             SET status = 'ready',
                 storage_key = $2,
                 thumbnail_key = $3,
-                size_bytes = $4,
-                width = COALESCE(width, $5),
-                height = COALESCE(height, $6)
+                poster_key = $4,
+                size_bytes = $5,
+                width = COALESCE(width, $6),
+                height = COALESCE(height, $7)
             WHERE id = $1::uuid
             "#,
         )
         .bind(media_id)
         .bind(storage_key)
         .bind(thumbnail_key)
+        .bind(poster_key)
         .bind(size_bytes)
         .bind(width)
         .bind(height)

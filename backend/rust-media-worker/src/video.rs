@@ -1,22 +1,30 @@
-//! Video derivatives: one H.264 + AAC MP4 whose index is at the front.
+//! Video derivatives: one H.264 + AAC MP4 whose index is at the front, and the
+//! still a card draws before the first frame arrives.
 //!
-//! `-movflags +faststart` is the whole point: it moves the `moov` box to the start
-//! of the file, so a player can begin on the first bytes it receives instead of
-//! downloading the file to find out where the frames are. Everything else is the
-//! ladder the Go pipeline used — 1080 wide at most, CRF 23, `yuv420p` for hardware
-//! decoders — because the worker replaces the encoder, not the format
-//! (KNOT-038).
+//! `-movflags +faststart` is the whole point of the stream: it moves the `moov`
+//! box to the start of the file, so a player can begin on the first bytes it
+//! receives instead of downloading the file to find out where the frames are.
+//! Everything else is the ladder the Go pipeline used — 1080 wide at most, CRF
+//! 23, `yuv420p` for hardware decoders — because the worker replaces the encoder,
+//! not the format (KNOT-038).
+//!
+//! The poster exists because a player spends its first moments with nothing on
+//! screen: the surface is black until a frame decodes. A still taken one second
+//! in, encoded as WebP, gives the feed and the detail carousel something to draw
+//! in that gap (KNOT-042).
 
 use std::fs;
-use std::path::PathBuf;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use ffmpeg_sidecar::command::FfmpegCommand;
 
+use crate::images::{encode_webp, scale_to_width};
 use crate::keys::{
-    STREAM_AUDIO_BITRATE, STREAM_CRF, STREAM_PRESET, STREAM_SCALE_FILTER,
+    POSTER_MAX_WIDTH, POSTER_OFFSET_SECONDS, POSTER_QUALITY, STREAM_AUDIO_BITRATE, STREAM_CRF,
+    STREAM_PRESET, STREAM_SCALE_FILTER,
 };
 
 /// Reports whether an FFmpeg binary can be executed.
@@ -87,6 +95,91 @@ pub fn transcode_to_stream(input: &[u8]) -> Result<Vec<u8>> {
     }
 
     Ok(encoded)
+}
+
+/// Extracts one still frame from `input` and encodes it as a WebP poster.
+///
+/// The frame is taken `POSTER_OFFSET_SECONDS` into the clip, because a clip
+/// usually opens on black or a fade and the poster is the only picture a card
+/// shows until playback starts. A clip shorter than the offset — or one whose
+/// seek lands past its last frame — falls back to its very first frame, so a
+/// poster is produced for every decodable video (KNOT-042).
+///
+/// The still is scaled to at most `POSTER_MAX_WIDTH` and never upscaled, exactly
+/// like an image rendition, and encoded with the same WebP quality as a
+/// thumbnail. Both steps go through the image pipeline's own helpers so the two
+/// paths cannot drift into different codecs or different scaling rules.
+pub fn extract_poster(input: &[u8]) -> Result<Vec<u8>> {
+    let workspace = Workspace::new()?;
+    let source = workspace.path.join("input");
+    let frame = workspace.path.join("poster.png");
+
+    fs::write(&source, input).context("write the upload to a temporary file")?;
+
+    // The offset first (the frame worth showing), the first frame second (the
+    // frame that always exists).
+    let mut extracted = false;
+    for offset in [POSTER_OFFSET_SECONDS, 0.0] {
+        if extract_frame_file(&source, &frame, offset).is_ok() {
+            extracted = true;
+            break;
+        }
+    }
+
+    if !extracted {
+        bail!("ffmpeg produced no poster frame");
+    }
+
+    let bytes = fs::read(&frame).context("read the poster frame")?;
+    let decoded = image::load_from_memory(&bytes).context("decode the poster frame")?;
+    let scaled = scale_to_width(&decoded, POSTER_MAX_WIDTH);
+
+    encode_webp(&scaled, POSTER_QUALITY).context("encode the poster as webp")
+}
+
+/// Runs FFmpeg to write one frame at `offset` seconds next to the upload, and
+/// fails when no frame came out.
+///
+/// `-nostdin` and a null stdin are both set on purpose: without them FFmpeg
+/// attaches to the worker's own terminal, and a background service can then block
+/// forever on a frame extraction that is otherwise finished. `FfmpegCommand` above
+/// handles this for the transcode; a plain `Command` does not (KNOT-042).
+fn extract_frame_file(source: &Path, frame: &Path, offset: f64) -> Result<()> {
+    let arguments = vec![
+        "-y".to_string(),
+        "-nostdin".to_string(),
+        "-loglevel".to_string(),
+        "error".to_string(),
+        "-ss".to_string(),
+        offset.to_string(),
+        "-i".to_string(),
+        source.to_string_lossy().into_owned(),
+        "-frames:v".to_string(),
+        "1".to_string(),
+        "-f".to_string(),
+        "image2".to_string(),
+        frame.to_string_lossy().into_owned(),
+    ];
+
+    let status = Command::new(ffmpeg_sidecar::paths::ffmpeg_path())
+        .args(arguments)
+        .stdin(Stdio::null())
+        .status()
+        .context("start ffmpeg to extract a poster frame")?;
+
+    if !status.success() || !file_has_bytes(frame) {
+        let _ = fs::remove_file(frame);
+        bail!("ffmpeg wrote no poster frame at {offset}s");
+    }
+
+    Ok(())
+}
+
+/// Reports whether a path holds a non-empty file.
+fn file_has_bytes(path: &Path) -> bool {
+    fs::metadata(path)
+        .map(|metadata| metadata.is_file() && metadata.len() > 0)
+        .unwrap_or(false)
 }
 
 /// A temporary directory that removes itself, even when a step fails.
@@ -184,5 +277,47 @@ mod tests {
         }
 
         assert!(transcode_to_stream(b"not a video").is_err());
+    }
+
+    #[test]
+    fn extracts_a_webp_poster_from_a_clip() {
+        if !ffmpeg_is_available() {
+            eprintln!("skipping: ffmpeg is not on PATH");
+            return;
+        }
+
+        let poster = extract_poster(&fixture()).expect("the fixture yields a poster");
+
+        // RIFF....WEBP
+        assert_eq!(&poster[0..4], b"RIFF");
+        assert_eq!(&poster[8..12], b"WEBP");
+
+        let decoded = image::load_from_memory(&poster).expect("the poster decodes");
+        // The fixture is 320x240, so the ladder re-encodes at its own width: a
+        // poster is never upscaled (KNOT-042).
+        assert_eq!(decoded.width(), 320);
+        assert_eq!(decoded.height(), 240);
+        assert!(decoded.width() <= POSTER_MAX_WIDTH);
+    }
+
+    #[test]
+    fn caps_a_wide_frame_at_the_poster_width() {
+        // The scaling rule is arithmetic, so it is checked without FFmpeg: a
+        // 1920px frame is capped at POSTER_MAX_WIDTH and keeps its shape.
+        let source = image::DynamicImage::ImageRgb8(image::RgbImage::new(1920, 1080));
+        let scaled = scale_to_width(&source, POSTER_MAX_WIDTH);
+
+        assert_eq!(scaled.width(), POSTER_MAX_WIDTH);
+        assert_eq!(scaled.height(), 450);
+    }
+
+    #[test]
+    fn a_poster_needs_a_decodable_video() {
+        if !ffmpeg_is_available() {
+            eprintln!("skipping: ffmpeg is not on PATH");
+            return;
+        }
+
+        assert!(extract_poster(b"not a video").is_err());
     }
 }

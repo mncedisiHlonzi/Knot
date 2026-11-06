@@ -41,11 +41,16 @@ jest.mock('react-native', () => {
     Animated: {
       Value,
       View: 'Animated.View',
+      // The full rendition is an `Animated.Image` (it fades in), so the mock has to
+      // provide one: an undefined JSX type produces an element the tree walker
+      // cannot see at all (KNOT-042).
+      Image: 'Animated.Image',
       spring: () => ({ start: () => undefined }),
       timing: () => ({ start: () => undefined }),
     },
     Easing: { bezier: () => undefined },
     FlatList: 'FlatList',
+    Image: 'Image',
     Modal: 'Modal',
     PanResponder: { create: () => ({ panHandlers: {} }) },
     Platform: { OS: 'ios' },
@@ -301,6 +306,16 @@ describe('MediaGalleryModal story overlay', () => {
 
 /** The address the viewer's image page of `media` draws from. */
 function imagePageUri(media: readonly ViewerMedia[]): string | undefined {
+  return imagePage(media)?.props?.uri as string | undefined;
+}
+
+/** The still the viewer's image page draws UNDER the full rendition. */
+function imagePageStill(media: readonly ViewerMedia[]): string | null | undefined {
+  return imagePage(media)?.props?.stillUri as string | null | undefined;
+}
+
+/** The viewer's image page element, or undefined when the stage drew none. */
+function imagePage(media: readonly ViewerMedia[]): Element | undefined {
   const list = elements(renderStage({ media }).tree).find(
     (element) => typeof element.props?.renderItem === 'function',
   );
@@ -313,11 +328,9 @@ function imagePageUri(media: readonly ViewerMedia[]): string | undefined {
     index: number;
   }) => unknown;
   const page = elements(renderItem({ item: media[0], index: 0 }));
-  const image = page.find(
+  return page.find(
     (element) => typeof element.type === 'function' && element.type.name === 'ZoomableImage',
   );
-
-  return image?.props?.uri as string | undefined;
 }
 
 describe('MediaGalleryModal display codec', () => {
@@ -340,5 +353,52 @@ describe('MediaGalleryModal display codec', () => {
     expect(imagePageUri([{ ...MEDIA[0], display_webp_url: '  ' }])).toBe(
       'http://localhost:8080/stories/story-1/media/media-1/content',
     );
+  });
+});
+
+describe('MediaGalleryModal progressive loading', () => {
+  const thumb = '/stories/story-1/media/media-1/content?variant=thumb';
+  const display = '/stories/story-1/media/media-1/content?variant=display&format=webp';
+
+  it('draws the thumbnail under the full rendition, so the page is never blank', () => {
+    const media = [{ ...MEDIA[0], thumbnail_url: thumb, display_webp_url: display }];
+
+    // Two layers: the still that is already decoded arrives first, and the full
+    // rendition fades in over it (KNOT-042).
+    expect(imagePageStill(media)).toBe('http://localhost:8080' + thumb);
+    expect(imagePageUri(media)).toBe('http://localhost:8080' + display);
+  });
+
+  it('draws no still when the item has none, leaving the loader in charge', () => {
+    expect(imagePageStill(MEDIA)).toBeNull();
+    expect(imagePageStill([{ ...MEDIA[0], thumbnail_url: '   ' }])).toBeNull();
+    expect(imagePageStill([{ ...MEDIA[0], thumbnail_url: null }])).toBeNull();
+  });
+
+  it('does not draw the same file twice when the still IS the display', () => {
+    expect(
+      imagePageStill([{ ...MEDIA[0], thumbnail_url: display, display_webp_url: display }]),
+    ).toBeNull();
+  });
+
+  it('stacks both layers in one transformed box so a pinch cannot split them', () => {
+    const page = imagePage([{ ...MEDIA[0], thumbnail_url: thumb, display_webp_url: display }]);
+    if (page === undefined) {
+      throw new Error('the stage drew no image page');
+    }
+
+    // The page is a file-local component, so it is expanded by calling it: the
+    // two image layers only exist once it has rendered.
+    const render = page.type as (props: unknown) => unknown;
+    const images = elements(render(page.props)).filter(
+      (element) => element.props?.testID !== undefined,
+    );
+
+    // The still is drawn first, then the full rendition over it: the fade only
+    // ever happens upwards (KNOT-042).
+    expect(images.map((element) => element.props?.testID)).toEqual([
+      'viewer-still',
+      'viewer-full-rendition',
+    ]);
   });
 });

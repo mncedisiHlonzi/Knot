@@ -97,10 +97,18 @@ type FeedEntryStory = {
    *
    * The server sends the SMALLEST rendition that can fill this frame: the item's
    * `thumbnail_url` (a 400px WebP) for an image, and its stream for a video, which
-   * has no cover because it autoplays. The card therefore never requests a full
+   * has no thumbnail because it plays. The card therefore never requests a full
    * display image (KNOT-037, KNOT-037-fix10).
    */
   readonly first_media_url?: string | null;
+  /**
+   * The still this card draws before (or instead of) the media itself: the
+   * thumbnail of an image and the extracted poster of a video. They arrive with
+   * the feed payload, so a card never waits for a second request — and a video
+   * never opens on black (KNOT-042).
+   */
+  readonly first_media_thumbnail_url?: string | null;
+  readonly first_media_poster_url?: string | null;
   /**
    * The first media item's pixel dimensions, or null when the uploader's client
    * did not report them. They let the media render at its natural width:height
@@ -334,6 +342,12 @@ export default function FeedEntry({
   const styles = useThemedStyles(createStyles);
   const mediaUrl = resolveMediaUrl(story.first_media_url);
   const isVideo = story.first_media_type === 'video';
+  // The extracted still a video shows until its first frame decodes. Resolved the
+  // same way as `mediaUrl`, and `undefined` when the server sent none, which keeps
+  // the player's own placeholder (KNOT-042).
+  const posterPath =
+    typeof story.first_media_poster_url === 'string' ? story.first_media_poster_url.trim() : '';
+  const posterUrl = posterPath === '' ? undefined : resolveMediaUrl(posterPath);
   // The bytes are still being encoded, so there is nothing to fetch yet
   // (KNOT-037-fix8).
   const isProcessing = mediaStatus === 'processing';
@@ -359,6 +373,10 @@ export default function FeedEntry({
             id: story.id,
             media_type: isVideo ? 'video' : 'image',
             url: firstMediaPath,
+            // The stills the card already knows, so the viewer opens on a picture
+            // and then fades the full rendition in over it (KNOT-042).
+            thumbnail_url: story.first_media_thumbnail_url ?? null,
+            poster_url: posterPath === '' ? null : posterPath,
             width: story.first_media_width ?? null,
             height: story.first_media_height ?? null,
           },
@@ -633,6 +651,7 @@ export default function FeedEntry({
             {isVideo ? (
               <FeedVideo
                 uri={mediaUrl}
+                posterUri={posterUrl}
                 isVisible={isVisible}
                 isMuted={isMuted}
                 onToggleMute={onToggleMute}

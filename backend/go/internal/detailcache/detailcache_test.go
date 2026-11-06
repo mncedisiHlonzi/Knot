@@ -43,10 +43,13 @@ func newTestCache(t *testing.T, ttl time.Duration) (*Cache, *miniredis.Miniredis
 }
 
 func TestKeysAreNamespaced(t *testing.T) {
-	if got, want := StoryKey(storyID), "knot:story:"+storyID; got != want {
+	// A key carries the payload version, so a response-shape change retires every
+	// payload written by an older build instead of serving it for the TTL
+	// (KNOT-042).
+	if got, want := StoryKey(storyID), "knot:story:"+PayloadVersion+":"+storyID; got != want {
 		t.Errorf("StoryKey() = %q, want %q", got, want)
 	}
-	if got, want := VersionKey(versionID), "knot:version:"+versionID; got != want {
+	if got, want := VersionKey(versionID), "knot:version:"+PayloadVersion+":"+versionID; got != want {
 		t.Errorf("VersionKey() = %q, want %q", got, want)
 	}
 }

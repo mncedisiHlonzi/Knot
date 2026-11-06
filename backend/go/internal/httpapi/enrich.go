@@ -750,6 +750,8 @@ func applyStoryCardFields(
 	first := firstMediaFields(item.Media)
 	item.FirstMediaType = first.mediaType
 	item.FirstMediaURL = first.url
+	item.FirstMediaThumbnailURL = first.thumbnailURL
+	item.FirstMediaPosterURL = first.posterURL
 	item.FirstMediaWidth = first.width
 	item.FirstMediaHeight = first.height
 }
@@ -922,9 +924,8 @@ func applyVersionCardFields(
 	first := firstMediaFields(previews[item.StoryID])
 	item.FirstMediaType = first.mediaType
 	item.FirstMediaURL = first.url
-	item.FirstMediaWidth = first.width
-	item.FirstMediaHeight = first.height
-
+	item.FirstMediaThumbnailURL = first.thumbnailURL
+	item.FirstMediaPosterURL = first.posterURL
 	chain, ok := chains[item.ID]
 	if !ok {
 		return

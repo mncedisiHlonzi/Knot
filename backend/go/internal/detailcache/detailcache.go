@@ -33,9 +33,21 @@ import (
 
 // Key prefixes. Every key names its owner, so two services can never collide on
 // one Redis instance (internal/cache documents the rule).
+//
+// A key also carries PayloadVersion. Unlike the feed cache, this one DOES store a
+// whole serialized response, so a response shape that gains a field would otherwise
+// keep serving the old shape for up to the TTL. A new key generation retires every
+// payload written by an older build in one step (KNOT-042).
 const (
-	storyKeyPrefix   = "knot:story:"
-	versionKeyPrefix = "knot:version:"
+	// PayloadVersion names the schema of a cached detail response.
+	//
+	// v2: the media array gained `poster_url`, a video's extracted still, and the
+	// story gained `first_media_thumbnail_url` / `first_media_poster_url`
+	// (KNOT-042).
+	PayloadVersion = "v2"
+
+	storyKeyPrefix   = "knot:story:" + PayloadVersion + ":"
+	versionKeyPrefix = "knot:version:" + PayloadVersion + ":"
 )
 
 // DefaultTTL is how long a cached detail response lives.

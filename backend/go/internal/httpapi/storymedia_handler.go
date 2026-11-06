@@ -128,10 +128,15 @@ type storyMediaResponse struct {
 	// WebP.
 	ThumbnailURLFallback *string `json:"thumbnail_url_fallback"`
 	// MediumURL addresses the 1200px JPEG a row written before KNOT-037-fix7 has.
-	// Since KNOT-037-fix10 it is the only retired rendition still advertised: a video
-	// autoplays, so there is no cover and no `poster_url`, and no row written since
-	// the async pipeline has either file.
+	// It is retired by that task: no row written since has one, so it is null
+	// everywhere except on old media.
 	MediumURL *string `json:"medium_url"`
+	// PosterURL addresses a video's poster still: the WebP frame the media worker
+	// extracts one second into the clip (KNOT-042). It is what a card or the detail
+	// carousel draws before the player has a frame to show, which is the black
+	// screen every video preview used to open on. It is null for an image (which is
+	// its own poster) and for any row whose job did not produce one.
+	PosterURL *string `json:"poster_url"`
 	// DisplayWebPURL is the same 1200px display as WebP, for devices that cannot
 	// decode AVIF: AVIF is native only on Android 12+ and iOS 16+, and a device below
 	// those draws a blank frame instead of reporting an error (KNOT-038-fix3).
@@ -608,6 +613,7 @@ func newStoryMediaResponse(media storymedia.StoryMedia, storyID string) storyMed
 		ThumbnailURL:         storyMediaImageThumbnailURL(storyID, media),
 		ThumbnailURLFallback: storyMediaThumbnailFallbackURL(storyID, media),
 		MediumURL:            storyMediaVariantURL(storyID, media.ID, media.MediumKey, storymedia.VariantMedium),
+		PosterURL:            storyMediaVariantURL(storyID, media.ID, media.PosterKey, storymedia.VariantPoster),
 		DisplayWebPURL:       storyMediaDisplayWebPURL(storyID, media),
 	}
 }

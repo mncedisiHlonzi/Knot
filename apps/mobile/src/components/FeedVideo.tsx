@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SpeakerHigh, SpeakerSlash } from 'phosphor-react-native';
 import Video, { type BufferConfig, type OnLoadData, type OnProgressData } from 'react-native-video';
 
@@ -100,6 +100,14 @@ type FeedVideoProps = {
    * `false` (KNOT-037-fix7).
    */
   readonly isNextInLine?: boolean;
+  /**
+   * The extracted poster still: the WebP frame the media worker took one second
+   * into the clip. It is drawn OVER the player until the player has a frame of its
+   * own, so a card opens on a picture instead of the black surface a video shows
+   * while it decodes. Absent for a video whose poster could not be extracted, which
+   * keeps the previous behaviour (KNOT-042).
+   */
+  readonly posterUri?: string | null;
   /** Test identifier. */
   readonly testID?: string;
 };
@@ -140,6 +148,7 @@ export default function FeedVideo({
   showTag = true,
   durationPosition = 'top-right',
   isNextInLine = false,
+  posterUri,
   testID,
 }: FeedVideoProps): React.ReactElement {
   const { colors } = useTheme();
@@ -157,6 +166,15 @@ export default function FeedVideo({
   // preview keeps the last position it reached instead of ticking on unseen
   // (KNOT-020k-fix8).
   const [currentSeconds, setCurrentSeconds] = useState(0);
+
+  // The poster covers the player until the player has something to show. It is
+  // what removes the black frame: the native video surface is opaque but empty
+  // until the first frame decodes, so a still drawn UNDER it would never be seen
+  // (KNOT-042).
+  const [posterVisible, setPosterVisible] = useState(true);
+
+  const poster = typeof posterUri === 'string' && posterUri.trim() !== '' ? posterUri : null;
+  const showPoster = poster !== null && posterVisible;
 
   // The duration and the natural size are both known only once the file's
   // metadata has loaded; before that the duration badge is simply absent and the
@@ -186,11 +204,23 @@ export default function FeedVideo({
   // that is not a real position (missing, `NaN`, negative) is ignored rather than
   // written into the badge, so a broken report can never print "NaN:NaN".
   const handleProgress = useCallback((data: OnProgressData): void => {
+    // Progress only ticks while the picture is playing, which means a frame is
+    // definitely on screen: the poster has done its job. This is the fallback for
+    // a platform that never reports `onReadyForDisplay` (KNOT-042).
+    setPosterVisible(false);
+
     const position = data.currentTime;
     if (typeof position !== 'number' || !Number.isFinite(position) || position < 0) {
       return;
     }
     setCurrentSeconds(position);
+  }, []);
+
+  // The first frame has been rendered, so the still is no longer needed. It fires
+  // for a paused player too: from then on the player draws the frame the poster
+  // was standing in for (KNOT-042).
+  const handleReadyForDisplay = useCallback((): void => {
+    setPosterVisible(false);
   }, []);
 
   const playing = isVisible;
@@ -232,6 +262,7 @@ export default function FeedVideo({
           // A deeper buffer for the next entry, so the handover is instant.
           bufferConfig={preloading ? PRELOAD_BUFFER_CONFIG : undefined}
           onLoad={handleLoad}
+          onReadyForDisplay={handleReadyForDisplay}
           // Progress is only subscribed while this video is the visible entry:
           // the timer that drives it is wasted work on a paused preview, and a
           // late event could otherwise move a badge on a card that is off screen
@@ -239,6 +270,23 @@ export default function FeedVideo({
           onProgress={playing ? handleProgress : undefined}
         />
       </View>
+
+      {/* The still, over the player and under the chrome. Removed the moment the
+          player renders a frame, so a video that is playing is never hidden by
+          its own poster (KNOT-042). The wrapper is what makes it untouchable: an
+          `Image` has no pointerEvents prop, and a touch that landed on the still
+          would never reach the card's own tap target. */}
+      {showPoster ? (
+        <View style={styles.poster} pointerEvents="none">
+          <Image
+            source={{ uri: poster }}
+            style={styles.posterImage}
+            resizeMode="cover"
+            accessibilityIgnoresInvertColors
+            testID="feed-video-poster"
+          />
+        </View>
+      ) : null}
 
       {showTag ? (
         <View style={styles.mediaTag} pointerEvents="none">
@@ -322,6 +370,15 @@ const createStyles = (colors: ThemeColors) =>
       position: 'absolute',
       right: spacing.sm,
       width: VIDEO_MUTE_BUTTON_SIZE,
+    },
+    // The extracted still sits exactly where the picture will, so removing it is
+    // invisible: the player's first frame has the same framing (KNOT-042).
+    poster: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    posterImage: {
+      height: '100%',
+      width: '100%',
     },
     video: {
       ...StyleSheet.absoluteFillObject,

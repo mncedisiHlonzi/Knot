@@ -38,6 +38,7 @@ jest.mock('react', () => ({
 }));
 
 jest.mock('react-native', () => ({
+  Image: 'Image',
   Pressable: 'Pressable',
   StyleSheet: { create: (styles: unknown) => styles },
   Text: 'Text',
@@ -261,5 +262,70 @@ describe('FeedVideo timestamp', () => {
     const tree = render({ uri: URI, isVisible: true });
 
     expect(badgeText(tree)).toBe('');
+  });
+});
+
+/** The extracted still, or undefined when none is drawn. */
+function poster(tree: unknown): Element | undefined {
+  return elements(tree).find((element) => element.props?.testID === 'feed-video-poster');
+}
+
+describe('FeedVideo poster', () => {
+  /** The address the media worker's extracted frame is served from. */
+  const POSTER = `${URI}?variant=poster`;
+
+  /**
+   * The black screen this task removes: the native video surface is opaque but
+   * empty until the first frame decodes, so a still drawn UNDER it would never be
+   * seen. The poster is a layer over the player and under the chrome (KNOT-042).
+   */
+  it('draws the extracted still over the player so the frame is never black', () => {
+    const still = poster(render({ uri: URI, posterUri: POSTER, isVisible: false }));
+
+    expect(still).toBeDefined();
+    expect(still?.type).toBe('Image');
+    expect(still?.props?.source).toEqual({ uri: POSTER });
+    expect(still?.props?.resizeMode).toBe('cover');
+  });
+
+  it('draws no still when the server sent none', () => {
+    expect(poster(visibleTree())).toBeUndefined();
+    expect(poster(render({ uri: URI, posterUri: '   ' }))).toBeUndefined();
+    expect(poster(render({ uri: URI, posterUri: null }))).toBeUndefined();
+  });
+
+  it('removes the still once the player has rendered a frame', () => {
+    const first = render({ uri: URI, posterUri: POSTER, isVisible: true });
+    expect(poster(first)).toBeDefined();
+
+    const ready = firstOfType(first, 'Video')?.props?.onReadyForDisplay;
+    expect(typeof ready).toBe('function');
+    (ready as () => void)();
+
+    expect(poster(render({ uri: URI, posterUri: POSTER, isVisible: true }))).toBeUndefined();
+  });
+
+  it('also removes the still on the first progress tick', () => {
+    // The fallback for a platform that never reports `onReadyForDisplay`: progress
+    // only ticks while the picture is playing, so a tick proves a frame is up.
+    const first = render({ uri: URI, posterUri: POSTER, isVisible: true });
+    const progress = firstOfType(first, 'Video')?.props?.onProgress;
+    expect(typeof progress).toBe('function');
+    (progress as (data: { currentTime: number }) => void)({ currentTime: 0.2 });
+
+    expect(poster(render({ uri: URI, posterUri: POSTER, isVisible: true }))).toBeUndefined();
+  });
+
+  it('leaves the mute control tappable above the still', () => {
+    const tree = render({ uri: URI, posterUri: POSTER, isVisible: true });
+    const all = elements(tree);
+    const still = all.findIndex((element) => element.props?.testID === 'feed-video-poster');
+    const mute = all.findIndex(
+      (element) => element.type === 'Pressable' && element.props?.accessibilityLabel !== undefined,
+    );
+
+    expect(still).toBeGreaterThanOrEqual(0);
+    // Drawn after the still, so the still can never swallow the control's tap.
+    expect(mute).toBeGreaterThan(still);
   });
 });

@@ -45,11 +45,18 @@ export function toViewerMedia(media: readonly StoryMedia[] | null | undefined): 
     const displayWebPURL =
       typeof item.display_webp_url === 'string' ? item.display_webp_url.trim() : '';
 
+    // The still the viewer draws while the full rendition downloads: a video's
+    // extracted poster, or an image's thumbnail. Either can be absent, and an
+    // absent still is what the loader is for (KNOT-042).
+    const stillURL = stillPath(item);
+
     items.push({
       id: typeof item.id === 'string' && item.id !== '' ? item.id : url,
       media_type: item.media_type,
       url,
       display_webp_url: displayWebPURL === '' ? null : displayWebPURL,
+      thumbnail_url: stillURL.image,
+      poster_url: stillURL.poster,
       width: typeof item.width === 'number' ? item.width : null,
       height: typeof item.height === 'number' ? item.height : null,
       duration_ms: typeof item.duration_ms === 'number' ? item.duration_ms : null,
@@ -57,6 +64,24 @@ export function toViewerMedia(media: readonly StoryMedia[] | null | undefined): 
   }
 
   return items;
+}
+
+/**
+ * The still addresses an item carries, each only when the server sent a non-empty
+ * path.
+ *
+ * A video has a poster and no thumbnail; an image has a thumbnail and no poster.
+ * They are read independently rather than switched on the media type, because the
+ * wire is the authority: a row produced before KNOT-042 has neither (KNOT-042).
+ */
+function stillPath(item: StoryMedia): { image: string | null; poster: string | null } {
+  const thumbnail = typeof item.thumbnail_url === 'string' ? item.thumbnail_url.trim() : '';
+  const poster = typeof item.poster_url === 'string' ? item.poster_url.trim() : '';
+
+  return {
+    image: thumbnail === '' ? null : thumbnail,
+    poster: poster === '' ? null : poster,
+  };
 }
 
 /**

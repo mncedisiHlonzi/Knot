@@ -42,12 +42,50 @@ describe('toViewerMedia', () => {
       media_type: 'image',
       url: '/stories/story-1/media/media-1/content',
       display_webp_url: null,
+      thumbnail_url: null,
+      poster_url: null,
       width: 1200,
       height: 800,
       duration_ms: null,
     });
     expect(items[1].media_type).toBe('video');
     expect(items[1].duration_ms).toBe(42000);
+  });
+
+  /**
+   * The stills the viewer draws while the full rendition downloads. They are
+   * carried through untouched so the page can open on a picture instead of a white
+   * rectangle (KNOT-042).
+   */
+  it('carries the thumbnail and poster addresses the page draws first', () => {
+    const [image] = toViewerMedia([
+      storyMedia({
+        thumbnail_url: '/stories/story-1/media/media-1/content?variant=thumb',
+      }),
+    ]);
+    const [video] = toViewerMedia([
+      storyMedia({
+        id: 'media-2',
+        media_type: 'video',
+        url: '/stories/story-1/media/media-2/content?variant=stream',
+        poster_url: '/stories/story-1/media/media-2/content?variant=poster',
+      }),
+    ]);
+
+    expect(image.thumbnail_url).toBe('/stories/story-1/media/media-1/content?variant=thumb');
+    expect(image.poster_url).toBeNull();
+    expect(video.poster_url).toBe('/stories/story-1/media/media-2/content?variant=poster');
+    expect(video.thumbnail_url).toBeNull();
+    // The address the page opens on is never rewritten, because it is the identity
+    // a tapped card is matched by.
+    expect(video.url).toBe('/stories/story-1/media/media-2/content?variant=stream');
+  });
+
+  it('treats a blank still address as one the server did not send', () => {
+    const [item] = toViewerMedia([storyMedia({ thumbnail_url: '   ', poster_url: '  ' })]);
+
+    expect(item.thumbnail_url).toBeNull();
+    expect(item.poster_url).toBeNull();
   });
 
   it('carries the WebP display without disturbing the url the viewer opens on', () => {

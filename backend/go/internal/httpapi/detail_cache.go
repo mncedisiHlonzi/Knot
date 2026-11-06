@@ -15,6 +15,7 @@ import (
 	"github.com/knot/backend/internal/conversations"
 	"github.com/knot/backend/internal/moderation"
 	"github.com/knot/backend/internal/reactions"
+	"github.com/knot/backend/internal/storymedia"
 	"github.com/knot/backend/internal/versions"
 )
 
@@ -107,6 +108,16 @@ func (h *StoriesHandler) storeStoryDetail(ctx context.Context, response storyRes
 		return
 	}
 
+	// A response whose media is still being encoded must NOT be cached. The
+	// worker writes the finished row straight to PostgreSQL and never touches
+	// Redis, so a cached `processing` payload would keep answering "wait" for the
+	// whole TTL — ten minutes of a placeholder on a story that finished encoding
+	// seconds after it was opened (KNOT-042). Everything is cacheable again once
+	// the derivatives exist.
+	if hasUnencodedMedia(response.Media) {
+		return
+	}
+
 	response.MyReactions = []string{}
 
 	payload, err := json.Marshal(storyEnvelope{Story: response})
@@ -130,8 +141,22 @@ func (h *StoriesHandler) storeStoryDetail(ctx context.Context, response storyRes
 	}
 }
 
-// invalidateStoryDetail deletes one story's cached detail.
+// hasUnencodedMedia reports whether any of a story's media items is still waiting
+// for the worker's derivatives.
 //
+// A `failed` item counts: it cannot change again without a re-upload, but a
+// cached failure is worth no more than a cached success, and leaving it uncached
+// keeps the rule simple — only a finished story is ever stored (KNOT-042).
+func hasUnencodedMedia(media []storyMediaResponse) bool {
+	for _, item := range media {
+		if item.Status != "" && item.Status != string(storymedia.StatusReady) {
+			return true
+		}
+	}
+	return false
+}
+
+// invalidateStoryDetail deletes one story's cached detail.
 // It runs on the request path of the write that changed the story — a publish, or an
 // adaptation (which changes version_count) — because a deterministic invalidation is
 // worth one Redis DEL, and a failed DEL is only logged: the entry will expire.

@@ -47,6 +47,10 @@ pub const THUMBNAIL_SUFFIX: &str = "_thumb";
 /// Names a video's full rendition.
 pub const STREAM_SUFFIX: &str = "_stream";
 
+/// Names a video's poster frame: the still a card draws before (or instead of)
+/// the first decoded frame, so a feed never opens on black (KNOT-042).
+pub const POSTER_SUFFIX: &str = "_poster";
+
 /// The bucket prefix every story's media lives under. Every key is namespaced by
 /// the story id, so a key can always be traced back to exactly one story.
 pub const STORY_MEDIA_NAMESPACE: &str = "story-media/";
@@ -90,3 +94,21 @@ pub const STREAM_AUDIO_BITRATE: &str = "128k";
 /// Caps the width at 1080 and lets FFmpeg derive an even height (`-2`), which is
 /// what `yuv420p` requires. Portrait video keeps its own width.
 pub const STREAM_SCALE_FILTER: &str = "scale='min(1080,iw)':-2";
+
+/// Where in the clip the poster frame is taken from, in seconds.
+///
+/// One second in rather than the very first frame: a clip routinely opens on a
+/// fade or a black leader, and a poster is the card's only picture, so the frame
+/// has to be something worth showing. A clip shorter than a second falls back to
+/// its first frame (KNOT-042).
+pub const POSTER_OFFSET_SECONDS: f64 = 1.0;
+
+/// The widest a poster may be. A story-detail frame is at most a phone's width,
+/// and a feed card is narrower still, so 800px is sharp on a 3x screen and small
+/// enough to arrive in one round trip.
+pub const POSTER_MAX_WIDTH: u32 = 800;
+
+/// The WebP quality of the poster. The same 80 the thumbnails use: a poster is
+/// shown large, so it cannot go lower, and it is shown instantly, so it cannot go
+/// much higher (KNOT-042).
+pub const POSTER_QUALITY: f32 = 80.0;

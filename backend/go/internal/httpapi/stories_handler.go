@@ -229,6 +229,18 @@ type storyResponse struct {
 	// (KNOT-020c-fix).
 	FirstMediaType *string `json:"first_media_type"`
 	FirstMediaURL  *string `json:"first_media_url"`
+	// FirstMediaThumbnailURL is that item's small still: the 400px WebP of an
+	// image, or null for a video, which has no thumbnail. FirstMediaPosterURL is
+	// the WebP frame extracted from a video one second in, or null for an image,
+	// which is its own poster (KNOT-042).
+	//
+	// They are hydrated INTO the feed payload — and therefore into the cached page,
+	// which is assembled from the same projection — so a card can draw its still
+	// from the first response. Before them a card held only `first_media_url`, which
+	// for a video is the multi-megabyte stream, so the frame stayed black until the
+	// player had decoded it (KNOT-042).
+	FirstMediaThumbnailURL *string `json:"first_media_thumbnail_url"`
+	FirstMediaPosterURL    *string `json:"first_media_poster_url"`
 	// FirstMediaWidth and FirstMediaHeight are that item's pixel dimensions, or
 	// null when the uploader's client did not report them. They let a list frame
 	// the media at its natural width:height ratio instead of a fixed one, so a
@@ -352,13 +364,18 @@ type feedVersionItem struct {
 	// an adaptation entry shows the story's pictures. The version's own text is
 	// what the card shows as content, and the card renders media from these fields
 	// rather than from a media array, so the entry carries no array.
-	MediaCount       int                    `json:"media_count"`
-	FirstMediaType   *string                `json:"first_media_type"`
-	FirstMediaURL    *string                `json:"first_media_url"`
-	FirstMediaWidth  *int                   `json:"first_media_width"`
-	FirstMediaHeight *int                   `json:"first_media_height"`
-	Reactions        reactionCountsResponse `json:"reactions"`
-	MyReactions      []string               `json:"my_reactions"`
+	MediaCount       int     `json:"media_count"`
+	FirstMediaType   *string `json:"first_media_type"`
+	FirstMediaURL    *string `json:"first_media_url"`
+	FirstMediaWidth  *int    `json:"first_media_width"`
+	FirstMediaHeight *int    `json:"first_media_height"`
+	// FirstMediaThumbnailURL and FirstMediaPosterURL are the stills that let the
+	// card draw instantly: a thumbnail for an image, a poster for a video
+	// (KNOT-042).
+	FirstMediaThumbnailURL *string                `json:"first_media_thumbnail_url"`
+	FirstMediaPosterURL    *string                `json:"first_media_poster_url"`
+	Reactions              reactionCountsResponse `json:"reactions"`
+	MyReactions            []string               `json:"my_reactions"`
 	// VersionCount, LanguageCount, and CommentCount describe the story, so the
 	// entry can say how much adaptation has already happened to it. CommentCount is
 	// scoped to THIS version rather than the story: the entry opens a conversation,
@@ -769,21 +786,28 @@ func attachStoryCounts(response *storyResponse, lookup StoryStatsLookup, r *http
 	first := firstMediaFields(response.Media)
 	response.FirstMediaType = first.mediaType
 	response.FirstMediaURL = first.url
+	response.FirstMediaThumbnailURL = first.thumbnailURL
+	response.FirstMediaPosterURL = first.posterURL
 	response.FirstMediaWidth = first.width
 	response.FirstMediaHeight = first.height
 }
 
 // firstMedia is the projection of a story's first media item onto the fields
-// that describe it: its kind, its relative URL, and its pixel dimensions.
+// that describe it: its kind, its relative URL, the still a card draws while the
+// full rendition arrives, and its pixel dimensions.
 //
 // Every field is a pointer so "the story has no media" is a null on the wire
 // rather than an empty string or a zero dimension. The dimensions are null when
-// the uploader's device did not report them (KNOT-020g-fix5).
+// the uploader's device did not report them (KNOT-020g-fix5). The thumbnail is
+// null for a video and the poster is null for an image: each names the still that
+// item actually has (KNOT-042).
 type firstMedia struct {
-	mediaType *string
-	url       *string
-	width     *int
-	height    *int
+	mediaType    *string
+	url          *string
+	thumbnailURL *string
+	posterURL    *string
+	width        *int
+	height       *int
 }
 
 // firstMediaFields projects the first item of a story's media onto the wire
@@ -793,6 +817,12 @@ type firstMedia struct {
 // instead of a fixed one, so a portrait photo or video is not cropped
 // (KNOT-020g-fix5). They are null when the uploader's client did not report
 // them, so a consumer falls back to its own default ratio.
+//
+// The thumbnail and the poster ride alongside `url` so a card can draw something
+// instantly without a second request: an image's thumbnail is the 400px WebP that
+// arrives in milliseconds, and a video's poster is the WebP frame the media worker
+// extracted. With only `url` a card had nothing to show until the full rendition
+// had streamed, which is the blank frame this exists to remove (KNOT-042).
 func firstMediaFields(media []storyMediaResponse) firstMedia {
 	if len(media) == 0 {
 		return firstMedia{}
@@ -809,9 +839,11 @@ func firstMediaFields(media []storyMediaResponse) firstMedia {
 		url = *media[0].ThumbnailURL
 	}
 	return firstMedia{
-		mediaType: &kind,
-		url:       &url,
-		width:     media[0].Width,
-		height:    media[0].Height,
+		mediaType:    &kind,
+		url:          &url,
+		thumbnailURL: media[0].ThumbnailURL,
+		posterURL:    media[0].PosterURL,
+		width:        media[0].Width,
+		height:       media[0].Height,
 	}
 }

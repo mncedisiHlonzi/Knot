@@ -142,6 +142,11 @@ function CarouselPage({
   const uri = resolveMediaUrl(
     media.media_type === 'image' && media.display_webp_url ? media.display_webp_url : media.url,
   );
+  // The extracted still, drawn over the player until it has a frame of its own:
+  // the difference between a video page that opens on black and one that opens on
+  // a picture (KNOT-042). Absent on a row whose job produced no poster.
+  const posterPath = typeof media.poster_url === 'string' ? media.poster_url.trim() : '';
+  const posterUri = posterPath === '' ? undefined : resolveMediaUrl(posterPath);
 
   // The backend has not encoded this item yet, so there is nothing to draw and
   // nothing to open: a placeholder that holds the page's shape is the honest
@@ -182,6 +187,7 @@ function CarouselPage({
       {media.media_type === 'video' ? (
         <FeedVideo
           uri={uri}
+          posterUri={posterUri}
           isVisible={isActive}
           isMuted={isMuted}
           onToggleMute={onToggleMute}
@@ -522,11 +528,18 @@ export default function StoryDetailScreen({
                           <ActivityIndicator color={colors.text.tertiary} size="small" />
                         </View>
                       ) : item.media_type === 'video' ? (
-                        // A video has no cover: the server generates no poster, so
-                        // the tile keeps its sunken placeholder and play disc rather
-                        // than drawing the MP4 an Image cannot render
-                        // (KNOT-037-fix10).
-                        <VideoThumbnail size={THUMBNAIL_SIZE} />
+                        // The extracted poster is the tile's picture; a row with
+                        // none keeps the sunken placeholder and play disc rather
+                        // than drawing an MP4 an Image cannot render
+                        // (KNOT-037-fix10, KNOT-042).
+                        <VideoThumbnail
+                          size={THUMBNAIL_SIZE}
+                          posterUrl={
+                            typeof item.poster_url === 'string' && item.poster_url.trim() !== ''
+                              ? resolveMediaUrl(item.poster_url)
+                              : undefined
+                          }
+                        />
                       ) : (
                         <Image
                           source={{ uri: resolveMediaUrl(stripImagePath(item)) }}

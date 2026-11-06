@@ -3554,3 +3554,51 @@ Groups are separated by whitespace and an overline heading — **no rules betwee
 rows** (KNOT-020k-fix23). A handler that needs a new destination is a prop on the
 screen, wired in `App.tsx` like the existing ones.
 
+
+## Media stills: posters and progressive loading (KNOT-042)
+
+A player spends its first moments with nothing on screen — the native video
+surface is opaque but empty until a frame decodes — and the viewer used to show a
+white rectangle for the whole duration of a display download. Both gaps are close
+by giving every item a **still** and drawing it first.
+
+**The pipeline.** The Rust worker takes one frame from a video one second in
+(`POSTER_OFFSET_SECONDS`; a clip shorter than that falls back to its first frame),
+scales it to `POSTER_MAX_WIDTH` (800, never upscaled) and encodes it as WebP at
+`POSTER_QUALITY` (80). It is written beside the stream as
+`story-media/<story>/<uuid>_poster.webp` and recorded in `story_media.poster_key`,
+which already existed for the retired legacy poster. Poster extraction is
+**best-effort**: a clip FFmpeg can transcode but cannot still-frame is still a
+playable video, so the job logs a warning and finishes without a poster.
+
+Key derivation for both processes lives in `keys.rs` / `internal/storymedia/keys.go`
+(`_poster` + `.webp`), and the Go side serves it as `?variant=poster` through the
+same rendition path as any other small object — no new route, no new column.
+
+**The wire.** Every media item carries `poster_url` (a video's still, `null` for an
+image), and both the feed and the detail hydrate the first item's stills as
+`first_media_thumbnail_url` and `first_media_poster_url`. A card therefore draws
+from its first response: the thumbnail arrives in milliseconds and the poster
+replaces the black frame.
+
+**The client.** `FeedVideo` draws the poster as a layer **over** the player (a
+still drawn under it would never be seen, because the native surface is opaque) and
+removes it when the player reports `onReadyForDisplay` — or, on a platform that
+never reports it, on the first `onProgress` tick, which only fires while the
+picture is playing. `MediaGalleryModal`'s photo page stacks two layers in one
+transformed box: the thumbnail, and the WebP display fading in over it. The rule
+that decides the pair is pure (`viewerImageLayers` in `components/mediaViewer.ts`),
+so it is covered without a renderer.
+
+**A processing story is never cached.** `storeStoryDetail` skips the write while any
+of the story's media is still `processing` or has `failed`. The worker finishes a
+row by writing PostgreSQL directly and never touches Redis, so a cached "wait"
+would keep answering 202 for the whole detail TTL — a placeholder that outlives
+the encode by up to ten minutes (KNOT-042).
+
+**Cache generations.** `feedcache` and `detailcache` keys carry a payload version
+(`FeedPayloadVersion`, `PayloadVersion`). The feed cache stores ids only, so a
+payload change needs no migration — the version is the guarantee that a page
+written by an older build is never read by a newer one. The detail cache *does*
+store a serialized response, so bumping its version is what retires payloads that
+predate a new field. Bump both whenever a cached shape changes.

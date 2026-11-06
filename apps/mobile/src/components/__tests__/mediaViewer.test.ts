@@ -1,6 +1,7 @@
 import {
   clampViewerIndex,
   scrubSeconds,
+  viewerImageLayers,
   viewerIndexForId,
   viewerProgress,
   viewerSnippet,
@@ -170,5 +171,47 @@ describe('viewerIndexForId', () => {
     expect(viewerIndexForId(['a', 'b'], 'gone')).toBe(-1);
     expect(viewerIndexForId([], 'a')).toBe(-1);
     expect(viewerIndexForId(['a'], '')).toBe(-1);
+  });
+});
+
+/**
+ * The two layers a photo page is drawn from (KNOT-042).
+ *
+ * The rule is what removes the white screen: the still is whatever the card
+ * already had — a 400px thumbnail that arrives in milliseconds — and the full
+ * rendition fades in over it.
+ */
+describe('viewerImageLayers', () => {
+  const url = '/stories/s/media/m/content?variant=display';
+  const webp = '/stories/s/media/m/content?variant=display&format=webp';
+  const thumb = '/stories/s/media/m/content?variant=thumb';
+
+  it('prefers the WebP display and keeps the thumbnail as the still', () => {
+    expect(viewerImageLayers({ url, display_webp_url: webp, thumbnail_url: thumb })).toEqual({
+      still: thumb,
+      full: webp,
+    });
+  });
+
+  it('falls back to the primary address when the server sent no WebP display', () => {
+    expect(viewerImageLayers({ url, display_webp_url: null, thumbnail_url: thumb })).toEqual({
+      still: thumb,
+      full: url,
+    });
+    expect(viewerImageLayers({ url, display_webp_url: '   ' })).toEqual({ still: null, full: url });
+  });
+
+  it('draws no still when the item has none, so the page shows its loader', () => {
+    expect(viewerImageLayers({ url }).still).toBeNull();
+    expect(viewerImageLayers({ url, thumbnail_url: null }).still).toBeNull();
+    expect(viewerImageLayers({ url, thumbnail_url: '  ' }).still).toBeNull();
+  });
+
+  it('never draws the same file twice', () => {
+    // A row whose "thumbnail" is the display would otherwise be decoded twice for
+    // one picture, and the fade would be invisible.
+    expect(
+      viewerImageLayers({ url: webp, display_webp_url: webp, thumbnail_url: webp }).still,
+    ).toBeNull();
   });
 });

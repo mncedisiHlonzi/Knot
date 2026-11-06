@@ -11,8 +11,8 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::keys::{
-    AVIF_EXTENSION, DISPLAY_SUFFIX, MP4_EXTENSION, ORIGINAL_SUFFIX, STORY_MEDIA_NAMESPACE,
-    STREAM_SUFFIX, THUMBNAIL_SUFFIX, WEBP_EXTENSION,
+    AVIF_EXTENSION, DISPLAY_SUFFIX, MP4_EXTENSION, ORIGINAL_SUFFIX, POSTER_SUFFIX,
+    STORY_MEDIA_NAMESPACE, STREAM_SUFFIX, THUMBNAIL_SUFFIX, WEBP_EXTENSION,
 };
 
 /// Which pipeline a job runs.
@@ -132,6 +132,15 @@ impl Job {
     pub fn stream_key(&self) -> Result<String> {
         Ok(format!("{}{STREAM_SUFFIX}{MP4_EXTENSION}", self.base_key()?))
     }
+
+    /// The poster's key: the WebP still a card draws before the first frame.
+    ///
+    /// A video's poster is written beside its stream, so the two files always
+    /// describe the same upload and deleting one row can find both from the key
+    /// alone (KNOT-042).
+    pub fn poster_key(&self) -> Result<String> {
+        Ok(format!("{}{POSTER_SUFFIX}{WEBP_EXTENSION}", self.base_key()?))
+    }
 }
 
 #[cfg(test)]
@@ -212,6 +221,12 @@ mod tests {
         assert_eq!(
             job.stream_key().unwrap(),
             format!("story-media/{STORY}/abc_stream.mp4")
+        );
+        // The poster is written beside the stream from the same base key, so the
+        // two files cannot disagree about which upload they belong to (KNOT-042).
+        assert_eq!(
+            job.poster_key().unwrap(),
+            format!("story-media/{STORY}/abc_poster.webp")
         );
     }
 

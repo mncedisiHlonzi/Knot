@@ -49,11 +49,28 @@ const (
 // keeps every existing story write and the story set itself unchanged. The merge
 // happens at read time, which is where the SQL feed's UNION also happens
 // (KNOT-036-fix).
+//
+// Every prefix carries FeedPayloadVersion, which is the invalidation lever for a
+// change in what a cached page MEANS. A cached page holds ids only — the entries
+// themselves are hydrated by the same projection the SQL feed uses — so a payload
+// change needs no migration; what it does need is a guarantee that a page written
+// by an older build is never read by a newer one, and a new key generation is that
+// guarantee. The previous generation is simply never read again and expires on its
+// own (KNOT-042).
 const (
-	feedKeyPrefix               = "knot:feed:"
-	feedVersionsKeyPrefix       = "knot:feed_versions:"
-	authorFeedKeyPrefix         = "knot:author_feed:"
-	authorFeedVersionsKeyPrefix = "knot:author_feed_versions:"
+	// FeedPayloadVersion names the schema of a cached page. Bump it whenever the
+	// page's meaning changes: the next read misses, the SQL feed answers, and the
+	// cold-start seed repopulates the new keys.
+	//
+	// v2: the feed payload was hydrated with the media stills a card draws before
+	// the full rendition arrives — `first_media_thumbnail_url` and
+	// `first_media_poster_url` (KNOT-042).
+	FeedPayloadVersion = "v2"
+
+	feedKeyPrefix               = "knot:feed:" + FeedPayloadVersion + ":"
+	feedVersionsKeyPrefix       = "knot:feed_versions:" + FeedPayloadVersion + ":"
+	authorFeedKeyPrefix         = "knot:author_feed:" + FeedPayloadVersion + ":"
+	authorFeedVersionsKeyPrefix = "knot:author_feed_versions:" + FeedPayloadVersion + ":"
 )
 
 // FeedKey is the sorted-set key holding one reader's precomputed story feed.

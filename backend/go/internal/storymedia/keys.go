@@ -20,11 +20,13 @@ const (
 	displaySuffix   = "_display"
 	thumbnailSuffix = "_thumb"
 	streamSuffix    = "_stream"
-	// mediumSuffix and posterSuffix only ever appear in rows written before
-	// KNOT-037-fix7; those files are still served, but nothing new is written with
-	// them.
-	mediumSuffix = "_medium"
+	// posterSuffix names a video's extracted still, written by the media worker
+	// beside the stream since KNOT-042. A row written before KNOT-037-fix7 may also
+	// hold a legacy JPEG poster under the same suffix, which is still served.
 	posterSuffix = "_poster"
+	// mediumSuffix only ever appears in rows written before KNOT-037-fix7; those
+	// files are still served, but nothing new is written with it.
+	mediumSuffix = "_medium"
 )
 
 // The content types a rendition can have. Serving one never echoes the row's

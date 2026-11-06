@@ -415,6 +415,43 @@ describe('FeedEntry', () => {
     expect(typeof video?.props?.onLoadSize).toBe('function');
   });
 
+  /**
+   * The black frame this removes: a video card used to hand the player a stream
+   * and nothing else, so the card stayed black until the first frame decoded.
+   * The payload now carries the extracted poster, and it reaches the player
+   * (KNOT-042).
+   */
+  it('hands the video its extracted poster, resolved against the API', () => {
+    const element = FeedEntry({
+      story: {
+        ...withMedia,
+        first_media_type: 'video',
+        first_media_url: '/stories/x/media/y/content?variant=stream',
+        first_media_poster_url: '/stories/x/media/y/content?variant=poster',
+      },
+      onPress: () => undefined,
+    });
+    const video = findElementByType(element, FeedVideo);
+
+    expect(video?.props?.posterUri).toBe(
+      'http://localhost:8080/stories/x/media/y/content?variant=poster',
+    );
+  });
+
+  it('hands the video no poster when the server sent none', () => {
+    for (const poster of [undefined, null, '   ']) {
+      const element = FeedEntry({
+        story: { ...withMedia, first_media_type: 'video', first_media_poster_url: poster },
+        onPress: () => undefined,
+      });
+      const video = findElementByType(element, FeedVideo);
+
+      // `undefined`, not an empty string: FeedVideo treats a blank address as
+      // absent, and the player keeps its own placeholder.
+      expect(video?.props?.posterUri).toBeUndefined();
+    }
+  });
+
   describe('the version variant', () => {
     const versionFeedItem = {
       ...withMedia,

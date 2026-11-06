@@ -83,7 +83,11 @@ fn flatten_onto_white(source: &DynamicImage) -> DynamicImage {
 
 /// Shrinks a picture to `max_width`, preserving its aspect ratio, and returns it
 /// untouched when it is already narrow enough.
-fn scale_to_width(source: &DynamicImage, max_width: u32) -> DynamicImage {
+///
+/// It is crate-visible because the video pipeline scales a poster frame with the
+/// same rule: a rendition never upscales, whatever produced the picture
+/// (KNOT-042).
+pub(crate) fn scale_to_width(source: &DynamicImage, max_width: u32) -> DynamicImage {
     let width = source.width();
     if width <= max_width {
         return source.clone();
@@ -111,7 +115,11 @@ fn encode_avif(source: &DynamicImage) -> Result<Vec<u8>> {
 }
 
 /// Encodes a rendition as lossy WebP at `quality` (0–100).
-fn encode_webp(source: &DynamicImage, quality: f32) -> Result<Vec<u8>> {
+///
+/// It is crate-visible because a video's poster is encoded with the same
+/// encoder and quality as a thumbnail: one WebP path, so the two renditions
+/// cannot drift into different codecs (KNOT-042).
+pub(crate) fn encode_webp(source: &DynamicImage, quality: f32) -> Result<Vec<u8>> {
     let rgba = source.to_rgba8();
     let encoder = webp::Encoder::from_rgba(rgba.as_raw(), rgba.width(), rgba.height());
 

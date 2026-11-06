@@ -127,6 +127,49 @@ export function viewerSnippet(
 export function viewerTimeLabel(seconds: number): string {
   return formatDuration(seconds) || '0:00';
 }
+
+/**
+ * The two layers a photo page is drawn from, and the order they arrive in.
+ *
+ * `still` is the picture that is already on the device or arrives in
+ * milliseconds — the 400px WebP thumbnail the feed card loaded, so the viewer
+ * opens on a picture instead of a white rectangle (KNOT-042). `full` is the
+ * rendition the page actually shows: the WebP display when the server has one
+ * (AVIF is native only on Android 12+ and iOS 16+, and a device below those
+ * draws nothing for it with no error), and `item.url` otherwise.
+ *
+ * `still` is `null` when the item has no thumbnail, when the path is blank, and
+ * when it names the same file as `full` — a second decode of the same bytes is
+ * pure waste, and the caller then draws its loader instead.
+ */
+export type ViewerImageLayers = {
+  readonly still: string | null;
+  readonly full: string;
+};
+
+/** The addresses a photo page loads, smallest first (KNOT-042). */
+export function viewerImageLayers(item: {
+  readonly url: string;
+  readonly thumbnail_url?: string | null;
+  readonly display_webp_url?: string | null;
+}): ViewerImageLayers {
+  const full = trimmed(item.display_webp_url) ?? trimmed(item.url) ?? '';
+  const still = trimmed(item.thumbnail_url);
+
+  return {
+    still: still === null || still === full ? null : still,
+    full,
+  };
+}
+
+/** A non-empty, trimmed string, or null. */
+function trimmed(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const text = value.trim();
+  return text === '' ? null : text;
+}
 /**
  * The page a viewability report points at.
  *

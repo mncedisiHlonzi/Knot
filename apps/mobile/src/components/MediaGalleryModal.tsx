@@ -3,6 +3,7 @@ import {
   Animated,
   Easing,
   FlatList,
+  Image,
   Modal,
   PanResponder,
   Platform,
@@ -43,7 +44,12 @@ import {
   type ViewableItemsInfo,
 } from '../utils/viewability';
 import Avatar from './Avatar';
-import { clampViewerIndex, viewerIndexForId, viewerSnippet } from './mediaViewer';
+import {
+  clampViewerIndex,
+  viewerImageLayers,
+  viewerIndexForId,
+  viewerSnippet,
+} from './mediaViewer';
 import { viewerIndexByUrl } from './storyGallery';
 import VideoPlayer, { VIDEO_CONTROLS_HEIGHT } from './VideoPlayer';
 /** One item the viewer can show. Story media satisfies this shape directly. */
@@ -59,6 +65,14 @@ export type ViewerMedia = {
    * prefers this address and keeps `url` as the fallback (KNOT-038-fix3).
    */
   readonly display_webp_url?: string | null;
+  /**
+   * The still the page draws while the full rendition downloads: an image's
+   * 400px WebP thumbnail, a video's extracted poster. Absent on a row produced
+   * before KNOT-042, or on a video whose frame could not be extracted — the page
+   * then falls back to its loader (KNOT-042).
+   */
+  readonly thumbnail_url?: string | null;
+  readonly poster_url?: string | null;
   readonly width?: number | null;
   readonly height?: number | null;
   readonly duration_ms?: number | null;
@@ -140,17 +154,19 @@ function resolveUri(url: string): string {
 }
 
 /**
- * The address a photo page is drawn from.
+ * The addresses a photo page is drawn from, relative paths resolved.
  *
- * It prefers the WebP display: AVIF is decodable only on Android 12+ and iOS 16+,
- * and a device below those draws nothing for it — no error to react to, just an
- * empty page. `display_webp_url` is the same picture in a codec every supported
- * device reads, and a server that sends null (a row written before KNOT-038-fix3,
- * or an older server) leaves the primary address as the answer (KNOT-038-fix3).
+ * The still is drawn the instant the page mounts — it is the picture the feed
+ * card already had, so it arrives from the device cache or in one small request —
+ * and the full rendition fades in over it. That is what removes the white screen
+ * a viewer used to show for the whole download (KNOT-042).
  */
-function imageUri(item: ViewerMedia): string {
-  const webp = typeof item.display_webp_url === 'string' ? item.display_webp_url.trim() : '';
-  return resolveUri(webp === '' ? item.url : webp);
+function pageLayers(item: ViewerMedia): { still: string | null; full: string } {
+  const layers = viewerImageLayers(item);
+  return {
+    still: layers.still === null ? null : resolveUri(layers.still),
+    full: resolveUri(layers.full),
+  };
 }
 
 /** Keeps a pan inside the zoomed image's own edges. */
@@ -161,6 +177,12 @@ function clampOffset(value: number, pageSize: number, scale: number): number {
 
 type ZoomableImageProps = {
   readonly uri: string;
+  /**
+   * The still drawn UNDER the full rendition until it has loaded: a thumbnail for
+   * an image. `null` when the item has none, and the page then shows its loader
+   * (KNOT-042).
+   */
+  readonly stillUri?: string | null;
   readonly width: number;
   readonly height: number;
 };
@@ -168,6 +190,12 @@ type ZoomableImageProps = {
 /**
  * One image page: pinch to zoom, drag while zoomed, double tap to zoom in on the
  * touched point or to reset.
+ *
+ * Two layers, bottom to top: the still (already decoded, or a few kilobytes) and
+ * the full rendition fading in over it. The still is what a reader sees from the
+ * first frame, so the page is never a white rectangle while the display rendition
+ * downloads — the blank flash a viewer used to open on (KNOT-042). Both layers sit
+ * in one transformed box, so a zoomed page never tears them apart.
  *
  * It uses only React Native's built-in `Animated` and `PanResponder` — the app
  * has no gesture library and this task adds none (KNOT-ADR-037, KNOT-020k). The
@@ -177,7 +205,12 @@ type ZoomableImageProps = {
  * Because it claims those first, a zoomed image never moves the pager under the
  * finger.
  */
-function ZoomableImage({ uri, width, height }: ZoomableImageProps): React.ReactElement {
+function ZoomableImage({
+  uri,
+  stillUri = null,
+  width,
+  height,
+}: ZoomableImageProps): React.ReactElement {
   const styles = useThemedStyles(createStyles);
   const [loading, setLoading] = useState(true);
 
@@ -327,25 +360,39 @@ function ZoomableImage({ uri, width, height }: ZoomableImageProps): React.ReactE
   return (
     <View style={[styles.page, { height, width }]} {...panResponder.panHandlers}>
       <Pressable style={styles.pageFill} onPress={handleTap} accessibilityRole="image">
-        {loading ? <View style={styles.loader} /> : null}
-        <Animated.Image
-          source={{ uri }}
-          style={[
-            styles.pageFill,
-            { opacity, transform: [{ scale }, { translateX }, { translateY }] },
-          ]}
-          resizeMode="contain"
-          accessibilityIgnoresInvertColors
-          onLoadEnd={() => {
-            setLoading(false);
-            Animated.timing(opacity, {
-              toValue: 1,
-              duration: motion.durations.medium,
-              easing: Easing.bezier(...motion.easing.standard),
-              useNativeDriver: true,
-            }).start();
-          }}
-        />
+        {/* The loader is only for a page with no still to draw: with one, the
+            page already shows the picture and a spinner on top of it would be
+            noise (KNOT-042). */}
+        {loading && stillUri === null ? <View style={styles.loader} /> : null}
+        <Animated.View
+          style={[styles.pageLayer, { transform: [{ scale }, { translateX }, { translateY }] }]}
+        >
+          {stillUri === null ? null : (
+            <Image
+              source={{ uri: stillUri }}
+              style={styles.pageLayer}
+              resizeMode="contain"
+              accessibilityIgnoresInvertColors
+              testID="viewer-still"
+            />
+          )}
+          <Animated.Image
+            source={{ uri }}
+            style={[styles.pageLayer, { opacity }]}
+            resizeMode="contain"
+            accessibilityIgnoresInvertColors
+            testID="viewer-full-rendition"
+            onLoadEnd={() => {
+              setLoading(false);
+              Animated.timing(opacity, {
+                toValue: 1,
+                duration: motion.durations.medium,
+                easing: Easing.bezier(...motion.easing.standard),
+                useNativeDriver: true,
+              }).start();
+            }}
+          />
+        </Animated.View>
       </Pressable>
     </View>
   );
@@ -788,21 +835,34 @@ export function ViewerStage({
             viewabilityConfig={viewabilityConfig}
             onViewableItemsChanged={onViewableItemsChanged}
             onMomentumScrollEnd={handleScrollEnd}
-            renderItem={({ item, index: pageIndex }) =>
-              item.media_type === 'video' ? (
-                <VideoPlayer
-                  uri={resolveUri(item.url)}
+            renderItem={({ item, index: pageIndex }) => {
+              if (item.media_type === 'video') {
+                return (
+                  <VideoPlayer
+                    uri={resolveUri(item.url)}
+                    width={width}
+                    height={height}
+                    isActive={pageIndex === safeIndex}
+                    durationMs={item.duration_ms}
+                    chromeVisible={chromeVisible}
+                    onToggleChrome={() => setChromeVisible((shown) => !shown)}
+                  />
+                );
+              }
+
+              // Both layers come from one read, so the pair cannot disagree
+              // (KNOT-042).
+              const layers = pageLayers(item);
+
+              return (
+                <ZoomableImage
+                  uri={layers.full}
+                  stillUri={layers.still}
                   width={width}
                   height={height}
-                  isActive={pageIndex === safeIndex}
-                  durationMs={item.duration_ms}
-                  chromeVisible={chromeVisible}
-                  onToggleChrome={() => setChromeVisible((shown) => !shown)}
                 />
-              ) : (
-                <ZoomableImage uri={imageUri(item)} width={width} height={height} />
-              )
-            }
+              );
+            }}
           />
 
           {/* A floating bar, not a band: the back control sits on the left and
@@ -953,6 +1013,12 @@ const createStyles = (colors: ThemeColors) =>
     pageFill: {
       height: '100%',
       width: '100%',
+    },
+    // One layer of a photo page. The still and the full rendition share this box,
+    // so a pinch or a double tap moves them together and the fade-in never
+    // reveals a mismatched frame underneath (KNOT-042).
+    pageLayer: {
+      ...StyleSheet.absoluteFillObject,
     },
     // The story context: no surface of its own. The picture stays visible to the
     // bottom edge, and the shadowed ink is what keeps the words readable. The

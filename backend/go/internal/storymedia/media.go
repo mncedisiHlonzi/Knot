@@ -293,15 +293,17 @@ type StoryMedia struct {
 	// Since KNOT-038 an image's thumbnail key is written WHEN THE ROW IS INSERTED,
 	// naming the WebP the worker will produce, so the 202 response can carry a
 	// stable `thumbnail_url`; a read that arrives before the file exists answers 202
-	// because the row is still `processing`. It is nil for a video, which autoplays
-	// in the feed, so no cover is generated at all. A row written before
-	// KNOT-037-fix7 keeps whatever it stored here (a JPEG or AVIF thumbnail, or a
-	// video poster's key is in PosterKey), and the extension tells the reader which
-	// codec it is.
+	// because the row is still `processing`. It is nil for a video, which has a
+	// poster instead of a thumbnail. A row written before KNOT-037-fix7 keeps
+	// whatever it stored here (a JPEG or AVIF thumbnail), and the extension tells the
+	// reader which codec it is.
 	//
-	// MediumKey and PosterKey are RETIRED by KNOT-037-fix7 — new rows leave both nil
-	// — but they stay part of the row so media written before the change keeps its
-	// 1200px JPEG and its poster frame.
+	// PosterKey names a video's extracted still (KNOT-042): a WebP frame taken one
+	// second into the clip, written by the worker and served as `poster_url`. It is
+	// nil for an image, which is its own poster, and for a video whose job could not
+	// extract a frame. MediumKey remains retired by KNOT-037-fix7 — new rows leave it
+	// nil — but it stays part of the row so media written before the change keeps its
+	// 1200px JPEG.
 	ThumbnailKey *string
 	MediumKey    *string
 	PosterKey    *string
@@ -703,8 +705,10 @@ const (
 	// VariantMedium is the story-detail rendition of a row written before
 	// KNOT-037-fix7, at most MediumMaxWidth wide. New rows have none.
 	VariantMedium Variant = "medium"
-	// VariantPoster is a video's poster frame on a row written before
-	// KNOT-037-fix7. New videos have none: they autoplay (KNOT-037-fix7).
+	// VariantPoster is a video's extracted still: the WebP frame the media worker
+	// takes one second into the clip (KNOT-042). A row written before KNOT-037-fix7
+	// may hold a legacy JPEG poster frame instead, which the same variant serves;
+	// an image has none, because it is its own poster.
 	VariantPoster Variant = "poster"
 )
 
