@@ -19,8 +19,7 @@ use image::imageops::FilterType;
 use image::{DynamicImage, ExtendedColorType, ImageEncoder, Rgb, RgbImage};
 
 use crate::keys::{
-    AVIF_SPEED, DISPLAY_MAX_WIDTH, DISPLAY_QUALITY, LQIP_MAX_WIDTH, LQIP_QUALITY,
-    THUMBNAIL_MAX_WIDTH, THUMBNAIL_QUALITY,
+    AVIF_SPEED, DISPLAY_MAX_WIDTH, DISPLAY_QUALITY, THUMBNAIL_MAX_WIDTH, THUMBNAIL_QUALITY,
 };
 
 /// The files one image produces.
@@ -32,9 +31,6 @@ pub struct Derivatives {
     pub display_webp: Vec<u8>,
     /// The WebP the feed card loads.
     pub thumbnail: Vec<u8>,
-    /// The ~20px WebP a client draws while it waits for anything sharper
-    /// (KNOT-043).
-    pub lqip: Vec<u8>,
     /// The display rendition's width, which is the source's unless it was capped.
     pub width: u32,
     /// The display rendition's height.
@@ -48,7 +44,6 @@ pub fn image_derivatives(bytes: &[u8]) -> Result<Derivatives> {
 
     let display = scale_to_width(&source, DISPLAY_MAX_WIDTH);
     let thumbnail = scale_to_width(&source, THUMBNAIL_MAX_WIDTH);
-    let lqip = scale_to_width(&source, LQIP_MAX_WIDTH);
 
     let width = display.width();
     let height = display.height();
@@ -59,10 +54,6 @@ pub fn image_derivatives(bytes: &[u8]) -> Result<Derivatives> {
         // codec a client can decode (KNOT-038-fix3).
         display_webp: encode_webp(&display, f32::from(DISPLAY_QUALITY))?,
         thumbnail: encode_webp(&thumbnail, THUMBNAIL_QUALITY)?,
-        // The smallest rendition, from the same decoded picture: never a second
-        // decode, so the placeholder costs one resize and one tiny encode
-        // (KNOT-043).
-        lqip: encode_webp(&lqip, LQIP_QUALITY)?,
         width,
         height,
     })
@@ -198,36 +189,6 @@ mod tests {
                 && !derivatives.thumbnail.is_empty(),
             "every rendition carries bytes"
         );
-    }
-
-    /// The placeholder is the one rendition that is scaled UP to its own width
-    /// rather than down to a cap: a 320px photo becomes a 20px strip whose whole
-    /// purpose is to arrive in about a kilobyte (KNOT-043).
-    #[test]
-    fn produces_a_tiny_webp_placeholder() {
-        let derivatives = image_derivatives(&png(320, 200)).expect("the fixture encodes");
-
-        assert_eq!(&derivatives.lqip[0..4], b"RIFF");
-        assert_eq!(&derivatives.lqip[8..12], b"WEBP");
-
-        let decoded = image::load_from_memory(&derivatives.lqip).expect("the placeholder decodes");
-        assert_eq!(decoded.width(), LQIP_MAX_WIDTH);
-        // 200 * 20 / 320 = 12.5, floored to 12 by the integer arithmetic.
-        assert_eq!(decoded.height(), 12);
-        assert!(
-            derivatives.lqip.len() < 2048,
-            "a placeholder is about a kilobyte, got {} bytes",
-            derivatives.lqip.len()
-        );
-    }
-
-    #[test]
-    fn a_square_source_makes_a_square_placeholder() {
-        let source = DynamicImage::ImageRgb8(RgbImage::new(800, 800));
-        let lqip = scale_to_width(&source, LQIP_MAX_WIDTH);
-
-        assert_eq!(lqip.width(), LQIP_MAX_WIDTH);
-        assert_eq!(lqip.height(), LQIP_MAX_WIDTH);
     }
 
     #[test]

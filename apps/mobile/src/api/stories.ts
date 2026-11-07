@@ -80,12 +80,6 @@ export type StoryMedia = {
   readonly poster_url?: string | null;
   readonly display_webp_url?: string | null;
   /**
-   * The item's ~20px placeholder: a WebP of about a kilobyte, drawn stretched and
-   * blurred while every larger rendition is still in flight (KNOT-043). Null for a
-   * row produced before KNOT-043, and the client then draws its own skeleton.
-   */
-  readonly lqip_url?: string | null;
-  /**
    * Whether the bytes are ready to be rendered.
    *
    * Optional because an older server does not send it: a missing status is treated
@@ -183,12 +177,6 @@ export type Story = {
    */
   readonly first_media_thumbnail_url?: string | null;
   readonly first_media_poster_url?: string | null;
-  /**
-   * The same item's ~20px placeholder: about a kilobyte, drawn stretched and
-   * blurred before either still has arrived. Null for a row produced before
-   * KNOT-043 (or an older server), and the card then draws its own skeleton.
-   */
-  readonly first_media_lqip_url?: string | null;
   /**
    * The first media item's pixel dimensions, or null when the uploader's client
    * did not report them. The feed frames the media at its natural width:height
@@ -324,8 +312,6 @@ export type VersionFeedItem = {
   /** The still this entry draws first: a thumbnail for an image, a poster for a video (KNOT-042). */
   readonly first_media_thumbnail_url?: string | null;
   readonly first_media_poster_url?: string | null;
-  /** The ~20px placeholder drawn before either still (KNOT-043). */
-  readonly first_media_lqip_url?: string | null;
   readonly first_media_width?: number | null;
   readonly first_media_height?: number | null;
   /** The VERSION's own counts: a reader reacts to the adaptation they are reading. */

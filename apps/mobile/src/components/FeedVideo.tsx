@@ -15,7 +15,6 @@ import {
 import type { ThemeColors } from '../theme';
 import { cachedVideoUri } from '../utils/videoCache';
 import { formatProgress } from './feedVideoMeta';
-import MediaPlaceholder from './MediaPlaceholder';
 
 /**
  * The mute control's square tap target, exported so the entry can stack its
@@ -109,16 +108,6 @@ type FeedVideoProps = {
    * keeps the previous behaviour (KNOT-042).
    */
   readonly posterUri?: string | null;
-  /**
-   * The ~20px placeholder the server minted for this item (KNOT-043).
-   *
-   * It is drawn OVER the player, and over the poster too, until one of them has
-   * something on screen: the LQIP arrives in about a kilobyte, so it fills the
-   * one-to-two seconds the poster itself still needs on a poor network. Absent for
-   * a row produced before the placeholder existed, and the player's own skeleton
-   * is drawn instead.
-   */
-  readonly lqipUri?: string | null;
   /** Test identifier. */
   readonly testID?: string;
 };
@@ -160,7 +149,6 @@ export default function FeedVideo({
   durationPosition = 'top-right',
   isNextInLine = false,
   posterUri,
-  lqipUri,
   testID,
 }: FeedVideoProps): React.ReactElement {
   const { colors } = useTheme();
@@ -185,21 +173,12 @@ export default function FeedVideo({
   // (KNOT-042).
   const [posterVisible, setPosterVisible] = useState(true);
 
-  // Whether the poster image itself has painted. Until it has, the placeholder
-  // still owns the frame: the sequence a reader sees is LQIP, then poster, then
-  // video, and each step replaces the one before it (KNOT-043).
-  const [posterLoaded, setPosterLoaded] = useState(false);
-
   const poster = typeof posterUri === 'string' && posterUri.trim() !== '' ? posterUri : null;
   const showPoster = poster !== null && posterVisible;
-  // The placeholder stays until something better is actually on screen: the poster
-  // once it has painted, or the player's first frame (`posterVisible` goes false
-  // on `onReadyForDisplay`/the first progress tick).
-  const showPlaceholder = posterVisible && !posterLoaded;
 
   // The duration and the natural size are both known only once the file's
   // metadata has loaded; before that the duration badge is simply absent and the
-  // frame is still its placeholder shape.
+  // frame is still the size its caller gave it.
   const handleLoad = useCallback(
     (data: OnLoadData): void => {
       setDurationSeconds(typeof data.duration === 'number' ? data.duration : 0);
@@ -280,6 +259,12 @@ export default function FeedVideo({
           muted={playing ? isMuted : true}
           repeat
           resizeMode="cover"
+          // The native surface cannot be covered by a React Native view, so the
+          // player itself is asked for the colour of the gap before the first
+          // frame decodes: the app's canvas, in whichever mode is active
+          // (KNOT-045). White in light mode and pure black in dark mode, which is
+          // exactly the surround the frame sits in.
+          shutterColor={colors.bg.canvas}
           // A deeper buffer for the next entry, so the handover is instant.
           bufferConfig={preloading ? PRELOAD_BUFFER_CONFIG : undefined}
           onLoad={handleLoad}
@@ -304,17 +289,9 @@ export default function FeedVideo({
             style={styles.posterImage}
             resizeMode="cover"
             accessibilityIgnoresInvertColors
-            onLoad={() => setPosterLoaded(true)}
             testID="feed-video-poster"
           />
         </View>
-      ) : null}
-
-      {/* The last resort, above the still: a ~1KB placeholder (or a skeleton) with
-          a spinner, so the gap before the poster arrives is a blurred picture
-          rather than a black frame (KNOT-043). */}
-      {showPlaceholder ? (
-        <MediaPlaceholder lqipUri={lqipUri} testID="feed-video-placeholder" />
       ) : null}
 
       {showTag ? (

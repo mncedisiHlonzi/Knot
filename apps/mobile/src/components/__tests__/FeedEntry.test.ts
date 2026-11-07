@@ -7,7 +7,6 @@ import { ArrowsClockwise } from 'phosphor-react-native';
 import AuthorLine from '../AuthorLine';
 import FeedEntry from '../FeedEntry';
 import FeedVideo from '../FeedVideo';
-import MediaPlaceholder from '../MediaPlaceholder';
 import PillarTag from '../PillarTag';
 import SocialProofHeader from '../SocialProofHeader';
 
@@ -454,43 +453,21 @@ describe('FeedEntry', () => {
   });
 
   /**
-   * The placeholder is what removes the last gap: the poster still needs a round
-   * trip of its own, and a ~1KB LQIP fills it (KNOT-043).
+   * A card whose media is encoded draws the picture directly: there is no
+   * placeholder layer over it any more (KNOT-045).
    */
-  it('hands the video the low-quality placeholder the payload carried', () => {
-    const element = FeedEntry({
-      story: {
-        ...withMedia,
-        first_media_type: 'video',
-        first_media_url: '/stories/x/media/y/content?variant=stream',
-        first_media_lqip_url: '/stories/x/media/y/content?variant=lqip',
-      },
-      onPress: () => undefined,
-    });
-    const video = findElementByType(element, FeedVideo);
-
-    expect(video?.props?.lqipUri).toBe(
-      'http://localhost:8080/stories/x/media/y/content?variant=lqip',
-    );
-  });
-
-  it('draws the placeholder under an image, from the same address', () => {
+  it('draws an image with no placeholder layer over it', () => {
     const element = FeedEntry({
       story: {
         ...story,
         first_media_type: 'image',
         first_media_url: '/stories/x/media/y/content?variant=thumb',
-        first_media_lqip_url: '/stories/x/media/y/content?variant=lqip',
       },
       onPress: () => undefined,
     });
 
-    // The image is drawn over it; the placeholder is unmounted once that image has
-    // painted, which a static call cannot reach (KNOT-043).
-    const drawn = findElementByType(element, MediaPlaceholder);
-    expect(drawn?.props?.lqipUri).toBe(
-      'http://localhost:8080/stories/x/media/y/content?variant=lqip',
-    );
+    expect(elementTypes(element)).toContain('Image');
+    expect(findByTestID(element, 'feed-image-placeholder')).toBeUndefined();
   });
 
   describe('the version variant', () => {
@@ -1236,11 +1213,10 @@ describe('the meta row', () => {
   /**
    * The backend answers an upload before it has encoded the bytes, so a card whose
    * media is still `processing` must say so rather than draw an empty frame
-   * (KNOT-037-fix8). The frame is a pulsing skeleton, so it is never a black box
-   * either (KNOT-043).
+   * (KNOT-037-fix8).
    */
   describe('media still being processed', () => {
-    it('draws a placeholder instead of an empty media frame', () => {
+    it('draws a box with a spinner instead of an empty media frame', () => {
       const element = FeedEntry({
         story: { ...story, first_media_type: 'video' },
         onPress: () => undefined,
@@ -1248,24 +1224,23 @@ describe('the meta row', () => {
       });
       const types = elementTypes(element);
 
-      expect(findByTestID(element, 'media-processing')).toBeDefined();
-      // A skeleton, not a still: nothing exists on the server yet.
-      expect(findElementByType(element, MediaPlaceholder)?.props?.variant).toBe('skeleton');
+      const box = findByTestID(element, 'media-processing');
+      expect(box).toBeDefined();
+      expect(types).toContain('ActivityIndicator');
       // No player and no image: there is nothing to fetch yet.
       expect(types).not.toContain(FeedVideo);
       expect(types).not.toContain('Image');
     });
 
-    it('labels the placeholder so the wait is explained, not implied', () => {
+    it('labels the box so the wait is explained, not implied', () => {
       const element = FeedEntry({
         story: { ...story, first_media_type: 'image' },
         onPress: () => undefined,
         mediaStatus: 'processing',
       });
 
-      expect(findElementByType(element, MediaPlaceholder)?.props?.label).toBe(
-        'Processing media...',
-      );
+      const box = findByTestID(element, 'media-processing');
+      expect(collectText(box)).toContain('Processing media...');
     });
 
     it('draws the real media once the status is ready', () => {

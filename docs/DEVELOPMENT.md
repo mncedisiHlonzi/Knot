@@ -3603,44 +3603,51 @@ written by an older build is never read by a newer one. The detail cache *does*
 store a serialized response, so bumping its version is what retires payloads that
 predate a new field. Bump both whenever a cached shape changes.
 
-## Low-quality placeholders (KNOT-043)
+## Video shutter colour, and the retired placeholder (KNOT-045)
 
-KNOT-042 closed most of the gap between a card appearing and its media arriving,
-but two windows were left: the still itself costs a round trip, and an image slot
-had nothing behind it at all. Both are filled by a **low-quality image placeholder**
-— a ~20px WebP of about a kilobyte, minted for every item.
+The native video surface cannot be reliably covered by a React Native view: on
+Android it is a `SurfaceView`/`TextureView` composited in its own layer, so a view
+drawn over it may or may not appear. The supported lever is the player's own
+`shutterColor`, which is the colour it paints before the first frame decodes.
+`FeedVideo` sets it to `colors.bg.canvas`, so the gap matches the app's background
+in both modes — white in light, pure black in dark. The media viewer's
+`VideoPlayer` is deliberately left alone: its room is `bg.theater` (black in both
+modes) and the video is fitted with `contain`, so its shutter is already the right
+colour.
 
-**The pipeline.** `images::image_derivatives` produces the placeholder from the same
-decoded picture as the display and thumbnail (`LQIP_MAX_WIDTH` 20,
-`LQIP_QUALITY` 40). A video gets one too: `video::extract_stills` returns the poster
-*and* the placeholder, both from the single frame it extracts, so the two can never
-show different moments. Both are written as `<base>_lqip.webp` beside the upload and
-removed with it.
+**The LQIP experiment is retired.** KNOT-043 minted a ~20px WebP per item
+(`<base>_lqip.webp`) and shipped it as `lqip_url` / `first_media_lqip_url`. It
+worked, but it cost a fourth derivative per upload, a derived key, a variant, and a
+whole client component (`MediaPlaceholder`) to cover a window the shutter colour
+covers natively. It is gone end to end:
 
-**No new column.** `StoryMedia.LQIPKey()` derives the key from the row's thumbnail
-(`_thumb.webp`/`_thumb.avif`) or its poster (`_poster.webp`), exactly as the WebP
-siblings already are — `lqipBaseKey` accepts only the suffixes the pipeline mints, so
-a row written before KNOT-043 answers "none" instead of naming a file that was never
-written. `?variant=lqip` serves it, falling back to the row's smallest still when the
-placeholder itself is missing.
+| Removed | Where |
+| --- | --- |
+| The `lqip` rendition, `LQIP_MAX_WIDTH`, `LQIP_QUALITY` | `rust-media-worker` `images.rs`, `keys.rs` |
+| `VideoStills` in favour of `video::extract_poster` | `rust-media-worker` `video.rs` |
+| The `<base>_lqip.webp` upload and `Job::lqip_key()` | `rust-media-worker` `worker.rs`, `job.rs` |
+| `StoryMedia.LQIPKey()`, `lqipSuffix`, `VariantLQIP`, the `?variant=lqip` chain | `internal/storymedia` |
+| `lqip_url`, `first_media_lqip_url` | `internal/httpapi` (media, feed, place page, profile) |
+| `MediaPlaceholder`, `lqip_url`, `LQIP_BLUR_RADIUS` | `apps/mobile` |
 
-**The client ladder.** Media is drawn smallest-first, and each step replaces the one
-before it once it is really on screen:
+No migration was needed in either direction: the placeholder was never a column,
+and the files it named are simply no longer written. A bucket may still hold
+`_lqip.webp` objects from a KNOT-043/044 row; nothing reads them, and deleting such
+a row removes whatever its key list names.
+
+**What covers the gap now.** Layers are drawn in this order, and each step replaces
+the one before it once it is really on screen:
 
 | Layer | Drawn from | Removed when |
 | --- | --- | --- |
-| `MediaPlaceholder` (LQIP + spinner, or a skeleton) | `lqip_url` | the poster paints, or the player reports its first frame |
+| Player shutter | `colors.bg.canvas` | the player reports its first frame |
 | Poster (`FeedVideo`) | `poster_url` | `onReadyForDisplay`, or the first `onProgress` tick |
-| Still / thumbnail (`MediaGalleryModal`) | `thumbnail_url` | covered by the display rendition |
+| Thumbnail underlay (Story Detail) | `thumbnail_url` | covered by the display rendition |
 | Full media | `url` / `display_webp_url` | — |
 
-`MediaPlaceholder` also owns the **skeleton**: the same component with
-`variant="skeleton"` draws a pulsing `bg.raised` wash instead of a picture, which is
-what a card shows while the backend is still encoding an upload (there is nothing to
-photograph yet). It replaced the flat grey box the Feed used to draw.
+A card whose media is still `processing` draws a `bg.sunken` box holding a spinner
+and "Processing media...", because there is nothing to photograph yet.
 
-**A video is mounted, then uncovered.** `react-native-video` has no `preload` prop
-(6.19.3), and readiness is only knowable from a mounted player, so the player is
-created as usual and the placeholder is drawn *over* it until `onReadyForDisplay`.
-That is also why the placeholder sits above the poster rather than under it: the
-player's surface is opaque, so anything behind it would never be seen.
+Both cache generations moved to `v4` (`knot:feed:v4:`, `knot:story:v4:`,
+`knot:version:v4:`) so a payload written with the retired fields is never served
+again; live cleanup scripts must use the new prefixes.

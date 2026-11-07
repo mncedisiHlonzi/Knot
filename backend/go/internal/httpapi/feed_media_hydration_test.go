@@ -84,16 +84,20 @@ func TestFeedPayloadHydratesTheMediaStills(t *testing.T) {
 	}
 
 	// The wire names both fields, so a client can rely on their presence even when
-	// their value is null.
+	// their value is null. The ~20px placeholder was retired, so neither of its
+	// fields is sent any more (KNOT-045).
 	for _, want := range []string{
 		`"first_media_thumbnail_url"`,
 		`"first_media_poster_url"`,
-		`"first_media_lqip_url"`,
 		`"poster_url"`,
-		`"lqip_url"`,
 	} {
 		if !strings.Contains(recorder.Body.String(), want) {
 			t.Errorf("feed body = %s, want it to contain %s", recorder.Body.String(), want)
+		}
+	}
+	for _, gone := range []string{`"first_media_lqip_url"`, `"lqip_url"`} {
+		if strings.Contains(recorder.Body.String(), gone) {
+			t.Errorf("feed body = %s, want it NOT to contain %s", recorder.Body.String(), gone)
 		}
 	}
 
@@ -129,15 +133,6 @@ func TestFeedPayloadHydratesTheMediaStills(t *testing.T) {
 	if videoEntry.Media[0].ThumbnailURL != nil {
 		t.Errorf("media[0].thumbnail_url = %v, want null for a video", *videoEntry.Media[0].ThumbnailURL)
 	}
-	// The placeholder is derived from the poster's base name, so a video carries one
-	// too — it is the first thing its card draws (KNOT-043).
-	if videoEntry.FirstMediaLQIPURL == nil ||
-		!strings.HasSuffix(*videoEntry.FirstMediaLQIPURL, "?variant=lqip") {
-		t.Errorf("first_media_lqip_url = %v, want the placeholder address", videoEntry.FirstMediaLQIPURL)
-	}
-	if videoEntry.Media[0].LQIPURL == nil {
-		t.Error("media[0].lqip_url = null, want the derived placeholder")
-	}
 	// The preview is still the stream: the poster is what a card draws BEFORE it,
 	// not a replacement for the address the viewer opens (KNOT-037).
 	if videoEntry.FirstMediaURL == nil ||
@@ -164,13 +159,6 @@ func TestFeedPayloadHydratesTheMediaStills(t *testing.T) {
 	}
 	if imageEntry.Media[0].ThumbnailURL == nil {
 		t.Error("media[0].thumbnail_url = null, want the image's thumbnail")
-	}
-	if imageEntry.FirstMediaLQIPURL == nil ||
-		!strings.HasSuffix(*imageEntry.FirstMediaLQIPURL, "?variant=lqip") {
-		t.Errorf("first_media_lqip_url = %v, want the placeholder address", imageEntry.FirstMediaLQIPURL)
-	}
-	if imageEntry.Media[0].LQIPURL == nil {
-		t.Error("media[0].lqip_url = null, want the derived placeholder")
 	}
 }
 

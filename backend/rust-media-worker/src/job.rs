@@ -11,7 +11,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::keys::{
-    AVIF_EXTENSION, DISPLAY_SUFFIX, LQIP_SUFFIX, MP4_EXTENSION, ORIGINAL_SUFFIX, POSTER_SUFFIX,
+    AVIF_EXTENSION, DISPLAY_SUFFIX, MP4_EXTENSION, ORIGINAL_SUFFIX, POSTER_SUFFIX,
     STORY_MEDIA_NAMESPACE, STREAM_SUFFIX, THUMBNAIL_SUFFIX, WEBP_EXTENSION,
 };
 
@@ -141,16 +141,6 @@ impl Job {
     pub fn poster_key(&self) -> Result<String> {
         Ok(format!("{}{POSTER_SUFFIX}{WEBP_EXTENSION}", self.base_key()?))
     }
-
-    /// The placeholder's key: the ~20px WebP a client draws before anything
-    /// sharper exists.
-    ///
-    /// Both media types write it, from the same base name, so the API can derive
-    /// it from either the thumbnail or the poster key without storing a fourth
-    /// column (KNOT-043).
-    pub fn lqip_key(&self) -> Result<String> {
-        Ok(format!("{}{LQIP_SUFFIX}{WEBP_EXTENSION}", self.base_key()?))
-    }
 }
 
 #[cfg(test)]
@@ -237,11 +227,6 @@ mod tests {
         assert_eq!(
             job.poster_key().unwrap(),
             format!("story-media/{STORY}/abc_poster.webp")
-        );
-        // And so is the placeholder (KNOT-043).
-        assert_eq!(
-            job.lqip_key().unwrap(),
-            format!("story-media/{STORY}/abc_lqip.webp")
         );
     }
 

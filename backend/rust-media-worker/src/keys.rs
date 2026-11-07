@@ -51,11 +51,6 @@ pub const STREAM_SUFFIX: &str = "_stream";
 /// the first decoded frame, so a feed never opens on black (KNOT-042).
 pub const POSTER_SUFFIX: &str = "_poster";
 
-/// Names the low-quality image placeholder: a ~20px still that arrives in a
-/// kilobyte, for the moment before even the poster or the thumbnail exists
-/// (KNOT-043).
-pub const LQIP_SUFFIX: &str = "_lqip";
-
 /// The bucket prefix every story's media lives under. Every key is namespaced by
 /// the story id, so a key can always be traced back to exactly one story.
 pub const STORY_MEDIA_NAMESPACE: &str = "story-media/";
@@ -117,16 +112,3 @@ pub const POSTER_MAX_WIDTH: u32 = 800;
 /// shown large, so it cannot go lower, and it is shown instantly, so it cannot go
 /// much higher (KNOT-042).
 pub const POSTER_QUALITY: f32 = 80.0;
-
-/// The widest a low-quality placeholder may be.
-///
-/// Twenty pixels is deliberately far below anything that reads as a photograph:
-/// the picture is only ever shown stretched and blurred, and at this width the
-/// whole frame costs about a kilobyte, which is the point — it has to arrive
-/// before the eye notices the gap it fills (KNOT-043).
-pub const LQIP_MAX_WIDTH: u32 = 20;
-
-/// The WebP quality of the placeholder. Forty is enough for a blurred swatch of
-/// colour and keeps the file near a kilobyte; a higher quality at 20px is
-/// indistinguishable and simply costs bytes (KNOT-043).
-pub const LQIP_QUALITY: f32 = 40.0;

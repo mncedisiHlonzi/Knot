@@ -608,8 +608,7 @@ and the pillar it belongs to.
       "thumbnail_url_fallback": null,
       "display_webp_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=display&format=webp",
       "medium_url": null,
-      "poster_url": null,
-      "lqip_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=lqip"
+      "poster_url": null
     }
   ],
   "created_at": "2026-10-07T18:26:37.134182+02:00",
@@ -622,7 +621,6 @@ and the pillar it belongs to.
   "first_media_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb",
   "first_media_thumbnail_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=thumb",
   "first_media_poster_url": null,
-  "first_media_lqip_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=lqip",
   "first_media_width": 1080,
   "first_media_height": 1920,
   "attribution_line": "Original story by Ada Lovelace in English.",
@@ -687,12 +685,9 @@ poster), and both are `null` for a story with no media. For a video these are wh
 the black frame: `first_media_url` is the whole stream, so a player given only that has
 nothing to draw until it has decoded a frame (KNOT-042).
 
-`first_media_lqip_url` is that item's **low-quality placeholder**: a ~20px WebP of about a
-kilobyte, which a client draws stretched and blurred while even the stills are in flight.
-It is `null` for a row produced before KNOT-043 and for a story with no media; a client
-then draws its own skeleton. It is what closes the last gap — the stills themselves cost a
-round trip, and on a poor network that gap was a white frame for an image and a black one
-for a video (KNOT-043).
+`first_media_lqip_url` is retired: the ~20px placeholder it named is no longer
+produced, so neither that field nor `lqip_url` is sent (KNOT-045). A client draws the
+still directly and lets the video player's own shutter colour cover the gap.
 
 `first_media_width` and `first_media_height` are that item's pixel dimensions, or `null`
 when the uploader's client did not report them (a story uploaded before the columns
@@ -1193,8 +1188,7 @@ Returns **200** with the story's media, in display order:
       "thumbnail_url_fallback": null,
       "display_webp_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=display&format=webp",
       "medium_url": null,
-      "poster_url": null,
-      "lqip_url": "/stories/d6b53a2c-.../media/9b2c7d1e-.../content?variant=lqip"
+      "poster_url": null
     }
   ]
 }
@@ -1226,10 +1220,9 @@ own, so a video preview never opens on the black surface an undecoded player sho
 (KNOT-042). A row whose job could not extract a frame also reports `null`, so a client can
 tell "no poster" from "a poster" instead of fetching a 404.
 
-**`lqip_url` is the item's low-quality placeholder** — a ~20px **WebP** of about a
-kilobyte (`?variant=lqip`) — and is the first thing a client draws: stretched and blurred,
-it shows the composition of a picture that has not arrived yet. It is `null` for a row
-produced before KNOT-043, and a client then falls back to its own skeleton (KNOT-043).
+**`lqip_url` is retired.** The ~20px placeholder is no longer produced (KNOT-045), so the
+field is not sent at all. A client draws the item's still — a thumbnail for an image, a
+poster for a video — and lets the player's `shutterColor` cover the moment before it.
 
 **`display_webp_url` is the same display in a codec older devices can read** — the 1200px
 display as **WebP** (`?variant=display&format=webp`). AVIF is native only on Android 12+ and
@@ -1259,10 +1252,12 @@ rendition (KNOT-037, KNOT-037-fix7):
 | `thumb` | The feed thumbnail, max 400px wide | `image/webp` |
 | `medium` | A legacy story-detail rendition, max 1200px wide (older rows only) | `image/jpeg` |
 | `poster` | A video's poster still, max 800px wide (`image/webp`); a legacy row's poster frame is `image/jpeg` | `image/webp` / `image/jpeg` |
-| `lqip` | The ~20px placeholder every row produced since KNOT-043 has (`image/webp`); a row without one answers with its smallest still instead of 404 | `image/webp` |
 
 `display` and `stream` are the row's **primary object**, so they honour `Range` like any
 file. `thumb`, `medium`, and `poster` are small and are sent whole.
+
+`variant=lqip` is **retired** and answers **400 `invalid_request`**, exactly like any other
+unknown variant: the placeholder is no longer generated (KNOT-045).
 
 **A `processing` item answers 202.** While the background worker has not finished, every
 variant answers **202 Accepted** with `Retry-After` and no body — the bytes are coming, so a

@@ -241,10 +241,16 @@ describe('StoryDetailScreen carousel', () => {
 
     // AVIF is undecodable below Android 12 / iOS 16 and fails silently, so the page
     // asks for the WebP display and keeps the AVIF address only as the fallback
-    // (KNOT-038-fix3).
+    // (KNOT-038-fix3). Two layers are drawn: the 400px thumbnail the card already
+    // had, then the display over it, so a slow network shows the frame rather than
+    // the canvas (KNOT-045).
     const imagePage = elementsOfType(draw(0), 'Image');
-    expect(imagePage).toHaveLength(1);
+    expect(imagePage).toHaveLength(2);
+    expect(imagePage[0].props?.testID).toBe('detail-image-still');
     expect(imagePage[0].props?.source).toEqual({
+      uri: API_BASE + '/stories/story-1/media/media-1/content?variant=thumb',
+    });
+    expect(imagePage[1].props?.source).toEqual({
       uri: API_BASE + '/stories/story-1/media/media-1/content?variant=display&format=webp',
     });
 

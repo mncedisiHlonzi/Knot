@@ -68,7 +68,10 @@ const (
 	//
 	// v3: the payload gained `first_media_lqip_url`, the ~20px placeholder drawn
 	// before either still (KNOT-043).
-	FeedPayloadVersion = "v3"
+	//
+	// v4: that placeholder was retired, so the payload no longer carries
+	// `first_media_lqip_url` (KNOT-045).
+	FeedPayloadVersion = "v4"
 
 	feedKeyPrefix               = "knot:feed:" + FeedPayloadVersion + ":"
 	feedVersionsKeyPrefix       = "knot:feed_versions:" + FeedPayloadVersion + ":"

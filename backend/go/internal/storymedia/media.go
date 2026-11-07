@@ -382,10 +382,9 @@ func (m StoryMedia) DerivativeKey(variant Variant) (string, bool) {
 // order. It exists so deleting an item can remove everything the upload created.
 //
 // The primary object is included when it is a derivative (every row written since
-// KNOT-037-fix7), the derived WebP thumbnail is included for a row whose thumbnail
-// is an AVIF with a WebP sibling, and the placeholder is included whenever one was
-// written (KNOT-043). Duplicates are dropped, because the same file must not be
-// deleted twice.
+// KNOT-037-fix7) and the derived WebP thumbnail is included for a row whose
+// thumbnail is an AVIF with a WebP sibling. Duplicates are dropped, because the
+// same file must not be deleted twice.
 func (m StoryMedia) derivativeKeys() []string {
 	keys := make([]string, 0, 4)
 	seen := make(map[string]bool, 4)
@@ -405,9 +404,6 @@ func (m StoryMedia) derivativeKeys() []string {
 	}
 	if webpKey, ok := m.ThumbnailWebPKey(); ok {
 		add(webpKey)
-	}
-	if lqipKey, ok := m.LQIPKey(); ok {
-		add(lqipKey)
 	}
 
 	return keys
@@ -470,55 +466,6 @@ func (m StoryMedia) DisplayWebPKey() (string, bool) {
 	}
 
 	return strings.TrimSuffix(m.StorageKey, avifExtension) + webpExtension, true
-}
-
-// LQIPKey derives the placeholder's object key, and reports whether this row has
-// one.
-//
-// The placeholder is written beside the row's thumbnail (an image) or its poster
-// (a video), from the same `<uuid>` base, so it needs no column of its own: the key
-// is stripped of the still suffix and re-spelled with `_lqip`. Deriving it is what
-// keeps the two files from ever disagreeing about which upload they belong to, the
-// same rule the WebP siblings follow (KNOT-043).
-//
-// Only the suffixes the current pipeline mints are accepted. A row written before
-// KNOT-043 names a JPEG or AVIF thumbnail with no placeholder beside it, so it
-// answers false rather than naming a file that was never written — a client then
-// draws its own skeleton, and `variant=lqip` falls back to the smallest still the
-// row does have.
-func (m StoryMedia) LQIPKey() (string, bool) {
-	for _, key := range []*string{m.ThumbnailKey, m.PosterKey} {
-		if key == nil {
-			continue
-		}
-		base, ok := lqipBaseKey(*key)
-		if !ok {
-			continue
-		}
-		return base + lqipSuffix + webpExtension, true
-	}
-
-	return "", false
-}
-
-// lqipBaseKey strips a still's suffix and extension, leaving the `<uuid>` the
-// placeholder is named from.
-//
-// `_thumb.webp` and `_thumb.avif` (an image's thumbnail, either generation) and
-// `_poster.webp` (a video's still) are the three names the worker mints. Anything
-// else — a legacy `_thumb.jpg`, a bare upload — has no placeholder beside it.
-func lqipBaseKey(key string) (string, bool) {
-	for _, suffix := range []string{
-		thumbnailSuffix + webpExtension,
-		thumbnailSuffix + avifExtension,
-		posterSuffix + webpExtension,
-	} {
-		if strings.HasSuffix(key, suffix) {
-			return strings.TrimSuffix(key, suffix), true
-		}
-	}
-
-	return "", false
 }
 
 // rendition is one stored derivative a content request may be answered from.
@@ -591,23 +538,6 @@ func (m StoryMedia) renditionCandidates(variant Variant, format Format) []rendit
 	case VariantPoster:
 		if key, ok := m.DerivativeKey(VariantPoster); ok {
 			add(rendition{key: key, contentType: contentTypeForKey(key, jpegContentType)})
-		}
-	case VariantLQIP:
-		// The placeholder first, then the smallest still the row still has, so a
-		// client that asks for one never gets nothing. A row written before
-		// KNOT-043 has no placeholder at all, and answers with its thumbnail (an
-		// image) or its poster (a video) (KNOT-043).
-		if key, ok := m.LQIPKey(); ok {
-			add(rendition{key: key, contentType: webpContentType})
-		}
-		if key, ok := m.DerivativeKey(VariantPoster); ok {
-			add(rendition{key: key, contentType: contentTypeForKey(key, jpegContentType)})
-		}
-		available := m.thumbnailRenditions()
-		for _, candidateFormat := range []Format{FormatWebP, FormatAVIF, FormatJPEG} {
-			if candidate, ok := available[candidateFormat]; ok {
-				add(candidate)
-			}
 		}
 	}
 
@@ -780,11 +710,6 @@ const (
 	// may hold a legacy JPEG poster frame instead, which the same variant serves;
 	// an image has none, because it is its own poster.
 	VariantPoster Variant = "poster"
-	// VariantLQIP is the ~20px WebP placeholder every item produced since
-	// KNOT-043 has: a kilobyte a client can draw before anything sharper has
-	// arrived. A row written earlier has none, so a request falls back to its
-	// smallest still.
-	VariantLQIP Variant = "lqip"
 )
 
 // Format names the image encoding a thumbnail is stored and served in
@@ -832,7 +757,7 @@ func ParseFormat(raw string) (Format, bool) {
 func ParseVariant(raw string) (Variant, bool) {
 	trimmed := Variant(strings.TrimSpace(raw))
 	switch trimmed {
-	case "", VariantThumb, VariantDisplay, VariantStream, VariantMedium, VariantPoster, VariantLQIP:
+	case "", VariantThumb, VariantDisplay, VariantStream, VariantMedium, VariantPoster:
 		return trimmed, true
 	default:
 		return "", false

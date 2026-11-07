@@ -24,11 +24,6 @@ const (
 	// beside the stream since KNOT-042. A row written before KNOT-037-fix7 may also
 	// hold a legacy JPEG poster under the same suffix, which is still served.
 	posterSuffix = "_poster"
-	// lqipSuffix names the ~20px placeholder the worker writes for every item,
-	// image or video, from the same base name as its thumbnail or poster. It is
-	// never stored in a column: the API derives it from the key it already has
-	// (KNOT-043).
-	lqipSuffix = "_lqip"
 	// mediumSuffix only ever appears in rows written before KNOT-037-fix7; those
 	// files are still served, but nothing new is written with it.
 	mediumSuffix = "_medium"

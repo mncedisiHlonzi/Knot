@@ -24,7 +24,6 @@ import { versionsApi } from '../../api/versions';
 import AuthorLine from '../../components/AuthorLine';
 import Button from '../../components/Button';
 import FeedVideo from '../../components/FeedVideo';
-import MediaPlaceholder from '../../components/MediaPlaceholder';
 import type { ViewerMedia, ViewerStory } from '../../components/MediaGalleryModal';
 import Header from '../../components/Header';
 import PillarTag from '../../components/PillarTag';
@@ -148,12 +147,11 @@ function CarouselPage({
   // a picture (KNOT-042). Absent on a row whose job produced no poster.
   const posterPath = typeof media.poster_url === 'string' ? media.poster_url.trim() : '';
   const posterUri = posterPath === '' ? undefined : resolveMediaUrl(posterPath);
-  // The ~1KB placeholder under everything: the first thing drawn on this page, so
-  // a slow network shows a blurred frame instead of the canvas (KNOT-043).
-  const lqipPath = typeof media.lqip_url === 'string' ? media.lqip_url.trim() : '';
-  const lqipUri = lqipPath === '' ? undefined : resolveMediaUrl(lqipPath);
-  // An image page keeps its placeholder until the file has painted.
-  const [imageVisible, setImageVisible] = useState(false);
+  // The still that fills the frame while the full rendition downloads: an image's
+  // 400px thumbnail, which is already in memory from the feed card or arrives in a
+  // few kilobytes (KNOT-042, KNOT-045).
+  const thumbnailPath = typeof media.thumbnail_url === 'string' ? media.thumbnail_url.trim() : '';
+  const thumbnailUri = thumbnailPath === '' ? undefined : resolveMediaUrl(thumbnailPath);
 
   // The backend has not encoded this item yet, so there is nothing to draw and
   // nothing to open: a placeholder that holds the page's shape is the honest
@@ -195,7 +193,6 @@ function CarouselPage({
         <FeedVideo
           uri={uri}
           posterUri={posterUri}
-          lqipUri={lqipUri}
           isVisible={isActive}
           isMuted={isMuted}
           onToggleMute={onToggleMute}
@@ -206,17 +203,23 @@ function CarouselPage({
         />
       ) : (
         <>
-          {imageVisible ? null : (
-            <MediaPlaceholder lqipUri={lqipUri} testID="detail-image-placeholder" />
+          {/* The thumbnail is the page's immediate underlay: it is the picture the
+              feed card already had, so a slow network shows the frame instead of
+              the canvas until the display rendition fades in (KNOT-042). */}
+          {thumbnailUri === undefined ? null : (
+            <Image
+              source={{ uri: thumbnailUri }}
+              style={styles.pageMedia}
+              resizeMode="cover"
+              accessibilityIgnoresInvertColors
+              testID="detail-image-still"
+            />
           )}
           <Image
             source={{ uri }}
             style={styles.pageMedia}
             resizeMode="cover"
-            onLoad={(event) => {
-              setImageVisible(true);
-              handleImageLoad(event);
-            }}
+            onLoad={handleImageLoad}
             accessibilityIgnoresInvertColors
           />
         </>

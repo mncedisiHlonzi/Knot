@@ -314,11 +314,6 @@ function imagePageStill(media: readonly ViewerMedia[]): string | null | undefine
   return imagePage(media)?.props?.stillUri as string | null | undefined;
 }
 
-/** The ~20px placeholder the viewer's image page draws UNDER the still. */
-function imagePageLQIP(media: readonly ViewerMedia[]): string | null | undefined {
-  return imagePage(media)?.props?.lqipUri as string | null | undefined;
-}
-
 /** The viewer's image page element, or undefined when the stage drew none. */
 function imagePage(media: readonly ViewerMedia[]): Element | undefined {
   const list = elements(renderStage({ media }).tree).find(
@@ -409,30 +404,16 @@ describe('MediaGalleryModal progressive loading', () => {
 });
 
 /**
- * The lowest layer of a photo page (KNOT-043): a ~1KB placeholder, drawn before the
- * thumbnail and long before the display rendition, so the page opens on a blurred
- * picture rather than on the room's white.
+ * A photo page is two layers, smallest first: the thumbnail the card already had,
+ * then the display rendition fading in over it. There is no placeholder layer any
+ * more (KNOT-045).
  */
-describe('MediaGalleryModal placeholder', () => {
-  const lqip = '/stories/story-1/media/media-1/content?variant=lqip';
+describe('MediaGalleryModal layers', () => {
   const thumb = '/stories/story-1/media/media-1/content?variant=thumb';
   const display = '/stories/story-1/media/media-1/content?variant=display&format=webp';
 
-  it('opens the page on the placeholder', () => {
-    expect(imagePageLQIP([{ ...MEDIA[0], lqip_url: lqip, thumbnail_url: thumb }])).toBe(
-      'http://localhost:8080' + lqip,
-    );
-  });
-
-  it('draws no placeholder when the row was produced without one', () => {
-    expect(imagePageLQIP(MEDIA)).toBeNull();
-    expect(imagePageLQIP([{ ...MEDIA[0], lqip_url: '   ' }])).toBeNull();
-  });
-
   it('stacks every layer smallest first', () => {
-    const page = imagePage([
-      { ...MEDIA[0], lqip_url: lqip, thumbnail_url: thumb, display_webp_url: display },
-    ]);
+    const page = imagePage([{ ...MEDIA[0], thumbnail_url: thumb, display_webp_url: display }]);
     if (page === undefined) {
       throw new Error('the stage drew no image page');
     }
@@ -444,9 +425,22 @@ describe('MediaGalleryModal placeholder', () => {
     });
 
     expect(layers.map((element) => element.props?.testID)).toEqual([
-      'viewer-lqip',
       'viewer-still',
       'viewer-full-rendition',
     ]);
+  });
+
+  it('draws no placeholder layer at all', () => {
+    const page = imagePage([{ ...MEDIA[0], thumbnail_url: thumb }]);
+    if (page === undefined) {
+      throw new Error('the stage drew no image page');
+    }
+
+    const render = page.type as (props: unknown) => unknown;
+    const drawn = elements(render(page.props)).find(
+      (element) => element.props?.testID === 'viewer-lqip',
+    );
+
+    expect(drawn).toBeUndefined();
   });
 });

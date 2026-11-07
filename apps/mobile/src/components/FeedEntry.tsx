@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
+  ActivityIndicator,
   Image,
   Pressable,
   StyleSheet,
@@ -29,7 +30,6 @@ import { useMediaAspectRatio } from '../utils/useMediaAspectRatio';
 import AuthorLine from './AuthorLine';
 import { feedMetaLine, isPreviewTruncated } from './feedEntryMeta';
 import FeedVideo, { VIDEO_MUTE_BUTTON_SIZE } from './FeedVideo';
-import MediaPlaceholder from './MediaPlaceholder';
 import PillarTag from './PillarTag';
 import type { ViewerMedia, ViewerStory } from './MediaGalleryModal';
 import { hasSocialProof } from './socialProof';
@@ -109,12 +109,6 @@ type FeedEntryStory = {
    */
   readonly first_media_thumbnail_url?: string | null;
   readonly first_media_poster_url?: string | null;
-  /**
-   * The first media item's ~20px placeholder: about a kilobyte, drawn blurred over
-   * the frame while the thumbnail, the poster and the video are all still in
-   * flight. Null for a row produced before KNOT-043 (KNOT-043).
-   */
-  readonly first_media_lqip_url?: string | null;
   /**
    * The first media item's pixel dimensions, or null when the uploader's client
    * did not report them. They let the media render at its natural width:height
@@ -354,15 +348,6 @@ export default function FeedEntry({
   const posterPath =
     typeof story.first_media_poster_url === 'string' ? story.first_media_poster_url.trim() : '';
   const posterUrl = posterPath === '' ? undefined : resolveMediaUrl(posterPath);
-  // The placeholder the card draws first, and the one thing that arrives before
-  // the network is asked for anything larger (KNOT-043).
-  const lqipPath =
-    typeof story.first_media_lqip_url === 'string' ? story.first_media_lqip_url.trim() : '';
-  const lqipUrl = lqipPath === '' ? undefined : resolveMediaUrl(lqipPath);
-  // An image page stays covered by its own placeholder until the file has painted:
-  // the placeholder is drawn first and removed on `onLoad`, so the frame is never
-  // the canvas colour (KNOT-043).
-  const [imageVisible, setImageVisible] = useState(false);
   // The bytes are still being encoded, so there is nothing to fetch yet
   // (KNOT-037-fix8).
   const isProcessing = mediaStatus === 'processing';
@@ -634,12 +619,17 @@ export default function FeedEntry({
       </View>
 
       {isProcessing ? (
-        // Nothing exists on the server yet, so there is no still and no stream: a
-        // pulsing skeleton holds the card's shape and says what is happening. It
-        // is deliberately NOT a tap target — there is nothing to open until the
-        // encode finishes (KNOT-037-fix8, KNOT-043).
+        // Nothing exists on the server yet, so there is no still and no stream: the
+        // card holds its shape and says what is happening. It is deliberately NOT a
+        // tap target — there is nothing to open until the encode finishes
+        // (KNOT-037-fix8).
         <View style={[styles.mediaFrame, { aspectRatio: mediaFrame }]} testID="media-processing">
-          <MediaPlaceholder variant="skeleton" label={processingLabel ?? 'Processing media...'} />
+          <View style={styles.processingBox}>
+            <ActivityIndicator color={colors.text.tertiary} />
+            <Text style={[typeScale.caption, styles.processingLabel]}>
+              {processingLabel ?? 'Processing media...'}
+            </Text>
+          </View>
         </View>
       ) : mediaUrl !== '' ? (
         <View style={[styles.mediaFrame, { aspectRatio: mediaFrame }]}>
@@ -662,7 +652,6 @@ export default function FeedEntry({
               <FeedVideo
                 uri={mediaUrl}
                 posterUri={posterUrl}
-                lqipUri={lqipUrl}
                 isVisible={isVisible}
                 isMuted={isMuted}
                 onToggleMute={onToggleMute}
@@ -670,24 +659,13 @@ export default function FeedEntry({
                 isNextInLine={isNextInLine}
               />
             ) : (
-              <>
-                {imageVisible ? null : (
-                  <MediaPlaceholder lqipUri={lqipUrl} testID="feed-image-placeholder" />
-                )}
-                <Image
-                  source={{ uri: mediaUrl }}
-                  style={styles.media}
-                  resizeMode="cover"
-                  onLoad={(event) => {
-                    // The picture is on screen, so the placeholder has done its
-                    // job: unmounting it is invisible because the image covers
-                    // exactly the same frame (KNOT-043).
-                    setImageVisible(true);
-                    handleImageLoad(event);
-                  }}
-                  accessibilityIgnoresInvertColors
-                />
-              </>
+              <Image
+                source={{ uri: mediaUrl }}
+                style={styles.media}
+                resizeMode="cover"
+                onLoad={handleImageLoad}
+                accessibilityIgnoresInvertColors
+              />
             )}
           </Pressable>
 
@@ -831,6 +809,18 @@ const createStyles = (colors: ThemeColors) =>
       marginTop: spacing.md,
       overflow: 'hidden',
       width: '100%',
+    },
+    // The box a card shows while the backend encodes its media: a spinner and a
+    // caption filling the frame the picture will take, so the entry keeps its
+    // height until the bytes arrive (KNOT-037-fix8).
+    processingBox: {
+      alignItems: 'center',
+      flex: 1,
+      gap: spacing.sm,
+      justifyContent: 'center',
+    },
+    processingLabel: {
+      color: colors.text.tertiary,
     },
     // The stats row carries real counts, so it reads in the secondary ink and the
     // bolder label voice rather than as a caption (KNOT-031). Its vertical padding is

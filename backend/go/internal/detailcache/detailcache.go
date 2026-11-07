@@ -47,7 +47,9 @@ const (
 	//
 	// v3: every media item gained `lqip_url`, the ~20px placeholder, and the story
 	// gained `first_media_lqip_url` (KNOT-043).
-	PayloadVersion = "v3"
+	//
+	// v4: both fields were retired (KNOT-045).
+	PayloadVersion = "v4"
 
 	storyKeyPrefix   = "knot:story:" + PayloadVersion + ":"
 	versionKeyPrefix = "knot:version:" + PayloadVersion + ":"
