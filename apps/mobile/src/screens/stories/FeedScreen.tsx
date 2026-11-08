@@ -53,16 +53,16 @@ import {
 } from '../../theme';
 import type { ThemeColors } from '../../theme';
 import {
-  VIEWABILITY_CONFIG,
+  INLINE_VIEWABILITY_CONFIG,
   type ViewableItemsInfo,
-  activeViewableKey,
+  activeViewableIndex,
+  isActiveEntry,
   nextKeyAfter,
 } from '../../utils/viewability';
 import { useStoryPolling } from '../../hooks/useStoryPolling';
 import { hasProcessingMedia, itemsWithStory, mediaStatusOf } from './storyPolling';
 import { mediaUploadLabel } from './mediaUpload';
 import { entryStoryMap, feedEntryStory } from './feedEntryProps';
-import { useMediaPlayerActions } from '../../context/MediaPlayerContext';
 import type { MediaUploadProgress } from './mediaUpload';
 import {
   PROMPT_PILLARS,
@@ -235,9 +235,11 @@ export default function FeedScreen({
   // The ordering the list is showing. A pillar tab is visual-only, so it keeps
   // whatever ordering was last chosen rather than forcing a re-fetch.
   const feedType: FeedType = FEED_TYPE_BY_TAB[activeTab] ?? 'for_you';
-  // The one entry the feed judges to be on screen. Its video plays; every other
-  // entry's pauses (KNOT-020c-fix3).
-  const [activeItemId, setActiveItemId] = useState<string | undefined>(undefined);
+  // The INDEX of the entry the viewport is showing, and therefore the only one that
+  // may hold a video player (KNOT-050). Every card owns its own `<Video>` now, so
+  // the picture scrolls with the card; what this rule bounds is memory, not
+  // geometry — one decoder per list, unmounted the moment another card takes over.
+  const [activeIndex, setActiveIndex] = useState<number | undefined>(undefined);
   // One mute setting for the whole feed, muted to begin with: a video that starts
   // itself must never make a sound.
   const [isMuted, setIsMuted] = useState(true);
@@ -256,22 +258,23 @@ export default function FeedScreen({
   // The Thread spans the list while a pull-to-refresh is in flight (KNOT-020h).
   const { width: pageWidth } = useWindowDimensions();
 
-  // The unified media engine (KNOT-051). The list re-measures the visible video's
-  // surface on every scroll tick so the one player stays glued to its card. The
-  // callback is stable and writes to the engine, not to this screen, so scrolling
-  // still re-renders no row (KNOT-049).
-  const player = useMediaPlayerActions();
-  const syncSurface = useCallback((): void => {
-    player.measureHost();
-  }, [player]);
-
   // The viewability config and the callback must keep their identity for the life
   // of the list — FlatList misbehaves if either is re-created — so they are held in
-  // refs rather than rebuilt on every render.
-  const viewabilityConfig = useRef(VIEWABILITY_CONFIG).current;
+  // refs rather than rebuilt on every render. The feed measures the active card as
+  // a COVERAGE of the viewport, so a card taller than the screen still counts as
+  // the one being read (KNOT-050).
+  const viewabilityConfig = useRef(INLINE_VIEWABILITY_CONFIG).current;
   const onViewableItemsChanged = useRef((info: ViewableItemsInfo): void => {
-    setActiveItemId(activeViewableKey(info));
+    setActiveIndex(activeViewableIndex(info));
   }).current;
+
+  // The one entry holding a player, for the "what plays next" lookup and for the
+  // is-active test each row runs. Derived from the index, so the list only ever
+  // holds one of the two.
+  const activeItemId = useMemo(
+    () => (activeIndex === undefined ? undefined : items[activeIndex]?.id),
+    [activeIndex, items],
+  );
 
   // The entry immediately after the active one. Its video is mounted and paused so
   // the platform buffers the first seconds, and the handover when it is scrolled
@@ -609,11 +612,6 @@ export default function FeedScreen({
         contentContainerStyle={styles.listContent}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
-        // The video surface is a hole the engine's one player draws into, so the
-        // list must tell the engine where that hole is as it scrolls. This writes
-        // to the engine, never to this screen, so no row re-renders (KNOT-051).
-        onScroll={syncSurface}
-        scrollEventThrottle={16}
         // The Thread is the feed's refresh indicator. It is drawn at the top of
         // the list content rather than inside the RefreshControl, because the
         // platform control owns the pull gesture and cannot host a custom
@@ -652,7 +650,7 @@ export default function FeedScreen({
           void loadMore();
         }}
         onEndReachedThreshold={0.5}
-        renderItem={({ item }) => (
+        renderItem={({ item, index }) => (
           // The card: full width, on the canvas, closed by one 4pt band rather than
           // by a thick gutter or a horizontal inset (KNOT-023b, KNOT-020k-fix20).
           <View style={styles.card}>
@@ -667,7 +665,9 @@ export default function FeedScreen({
               // no rule of its own (KNOT-023b, KNOT-020k-fix20).
               showBottomHairline={false}
               isMuted={isMuted}
-              isVisible={item.id === activeItemId}
+              // The card the viewport is showing is the only one that mounts a
+              // player; every other card draws its still alone (KNOT-050).
+              isVisible={isActiveEntry(activeIndex, index)}
               isNextInLine={item.id === nextItemId}
               mediaStatus={item.kind === 'story' ? mediaStatusOf(item.media) : undefined}
               // While this entry's bytes are still going up from this device, the

@@ -259,12 +259,12 @@ function renderScreen(): unknown {
 }
 
 /** The card the list builds for one entry: its real `renderItem`, called directly. */
-function cardFor(tree: unknown, item: FeedItem = ITEM): ElementLike | undefined {
+function cardFor(tree: unknown, item: FeedItem = ITEM, index?: number): ElementLike | undefined {
   const list = findElementByType(tree, 'FlatList');
   const renderItem = list?.props?.renderItem as
-    ((info: { item: FeedItem }) => ElementLike) | undefined;
+    ((info: { item: FeedItem; index?: number }) => ElementLike) | undefined;
 
-  return renderItem?.({ item });
+  return renderItem?.({ item, index });
 }
 
 describe('FeedScreen card structure', () => {
@@ -367,6 +367,56 @@ describe('FeedScreen list tuning', () => {
 
     // A new function here would re-key and re-render every row.
     expect(first?.props?.keyExtractor).toBe(second?.props?.keyExtractor);
+  });
+});
+
+/**
+ * The feed binds a video's surface to its card by only attaching the player to the
+ * one card the list has settled on (KNOT-049). A surface attached while the list
+ * scrolls is measured by JavaScript after the scroll has already happened, so it
+ * trails its card and then jumps to catch up — the floating player the founder saw.
+ */
+describe('FeedScreen video surface binding', () => {
+  const listOf = (tree: unknown): ElementLike | undefined => findElementByType(tree, 'FlatList');
+
+  /** Every value the screen has written to state, in order. */
+  const stateWrites = (): unknown[] =>
+    mockStateSetters.flatMap((setter) => setter.mock.calls as unknown[][]).map(([value]) => value);
+
+  it('gives the player to the card that covers the viewport', () => {
+    const config = listOf(renderScreen())?.props?.viewabilityConfig as
+      Record<string, unknown> | undefined;
+
+    // A share of the VIEWPORT, so a card taller than the screen still counts as the
+    // one being read, and two cards can never both qualify (KNOT-050).
+    expect(config?.viewAreaCoveragePercentThreshold).toBe(50);
+    expect(config?.itemVisiblePercentThreshold).toBeUndefined();
+  });
+
+  it('records the card the list reported, by index', () => {
+    const list = listOf(renderScreen());
+    const changed = list?.props?.onViewableItemsChanged as
+      ((info: { viewableItems: { key: string; index: number }[] }) => void) | undefined;
+
+    changed?.({ viewableItems: [{ key: 'story-1', index: 2 }] });
+
+    expect(stateWrites()).toContain(2);
+  });
+
+  it('detaches nothing on scroll, because the player rides inside the card', () => {
+    const list = listOf(renderScreen());
+
+    // No scroll gate: the picture is part of the card now, so it scrolls with it
+    // (KNOT-050).
+    expect(list?.props?.onScrollBeginDrag).toBeUndefined();
+    expect(list?.props?.onMomentumScrollEnd).toBeUndefined();
+    expect(list?.props?.onScroll).toBeUndefined();
+  });
+
+  it('mounts no player for a row before the list reports an active card', () => {
+    const entry = findElementByType(cardFor(renderScreen(), VIDEO_ITEM, 0), FeedEntry);
+
+    expect(entry?.props?.isVisible).toBe(false);
   });
 });
 

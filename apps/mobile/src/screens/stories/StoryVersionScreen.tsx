@@ -101,9 +101,9 @@ function statusBarStyle(hasMedia: boolean, theme: ThemeName): 'light-content' | 
  * SCREEN owns the pager's height (a horizontal pager is one box, sized by the
  * ACTIVE page), and the shape comes from the payload alone, reserving the design's
  * 4:5 frame when the payload carries no dimensions, so the pager never resizes when
- * a media file finishes loading. A video is handed to `FeedVideo`, so the one player
- * keeps its autoplay and mute behaviour; an image draws through `MediaImage`
- * (KNOT-025, ported by KNOT-026, stabilised by KNOT-048-fix2).
+ * a media file finishes loading. A video is handed to `FeedVideo`, which mounts the
+ * page's own player inside the page; an image draws through `MediaImage`
+ * (KNOT-025, ported by KNOT-026, stabilised by KNOT-048-fix2, inline by KNOT-050).
  */
 function CarouselPage({
   media,

@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import Video, { type OnLoadData, type OnProgressData } from 'react-native-video';
 import { SpeakerHigh, SpeakerSlash } from 'phosphor-react-native';
 
 import { useMediaPlayback, useMediaPlayerActions } from '../context/MediaPlayerContext';
@@ -13,6 +14,7 @@ import {
   useThemedStyles,
 } from '../theme';
 import type { ThemeColors } from '../theme';
+import { cachedVideoUri } from '../utils/videoCache';
 import { formatProgress } from './feedVideoMeta';
 
 /**
@@ -37,9 +39,12 @@ type FeedVideoProps = {
    */
   readonly mediaId?: string;
   /**
-   * True only for the entry the screen has decided is on screen; it is the single
-   * input that starts or stops playback, so at most one video plays at a time.
-   * Defaults to `false`, which draws the video paused.
+   * True only for the card the list has settled on: the entry the screen decided
+   * is at least 90% on screen while the list is at rest. It is the single input
+   * that attaches this surface to the engine, and therefore the single input that
+   * mounts the one `<Video>` — a card that is scrolling, or that is only partly on
+   * screen, shows its poster instead (KNOT-020c-fix3, KNOT-049). Defaults to
+   * `false`, which draws the card with no player at all.
    */
   readonly isVisible?: boolean;
   /**
@@ -88,21 +93,29 @@ type FeedVideoProps = {
 };
 
 /**
- * A video *surface*: the chrome of a card's player, and the hole the unified
- * engine's one player is drawn into (KNOT-051).
+ * A video surface that lives **inside the card** (KNOT-050).
  *
- * This component no longer owns a `<Video>`. It registers itself with
- * `MediaPlayerContext` when the card is on screen, tells the engine which media to
- * play, and hands over the `View` the picture should cover. The player itself is
- * mounted once by `MediaHost` at the root, so scrolling a card out of view,
- * opening the story, or opening the full-screen viewer never tears down and
- * rebuilds a native player — and a clip keeps its position across all of them.
+ * The card owns a real `<Video>`: it is mounted in the card's own layout, sized to
+ * the media frame, and it scrolls with the card at the platform's frame rate. That
+ * is the whole fix for the floating, stuttering picture — there is nothing to
+ * measure and nothing to reposition while the list moves, because the player *is*
+ * part of what moves.
+ *
+ * Only one card in a list draws it: the screen decides which entry is active (the
+ * one the viewport is showing) and every other card renders its still alone, so at
+ * most one decoder exists per list. The player is unmounted, not just paused, when
+ * its card stops being the active one — that is the memory bound the inline
+ * placement has to keep.
+ *
+ * The component still talks to `MediaPlayerContext`, because the *shared* facts are
+ * worth keeping: the card publishes where its clip has reached (`reportProgress`),
+ * so opening the full-screen viewer on the same video carries on at that second
+ * instead of restarting at 0:00 (KNOT-051).
  *
  * The chrome stays here — the "Video" tag, the running time and the mute control —
- * because it belongs to the card, not to the player. Every screen that draws a
- * story's video uses this component (the Feed, Place Stories, the profile wall and
- * the Story Detail carousel), so they all share the same engine and the same mute
- * rule.
+ * because it belongs to the card. Every screen that draws a story's video uses this
+ * component (the Feed, Place Stories, the profile wall, the Story Detail and Story
+ * Version carousels).
  *
  * The caller owns the frame's shape: `FeedEntry` and the profile card set it from
  * the payload's reported dimensions, reserving the design's 4:5 frame when the
@@ -127,102 +140,90 @@ export default function FeedVideo({
   const playback = useMediaPlayback();
 
   const id = typeof mediaId === 'string' && mediaId.trim() !== '' ? mediaId.trim() : uri;
-  const active = playback.activeMediaId === id;
   const fullscreen = playback.mode === 'fullscreen';
-  // The cleanup below pauses only the media this card owns; a different card's
-  // clip (or the viewer's) must never be stopped by this card going away.
-  const activeRef = useRef(active);
-  activeRef.current = active;
+  // One rule decides whether this card draws a player at all: it must be the entry
+  // the screen chose AND the viewer must not be holding the theatre. A card that is
+  // scrolled away, that is not the settled one, or that sits behind the full-screen
+  // viewer draws its still and nothing else (KNOT-050).
+  const mounted = isVisible && !fullscreen;
 
-  const anchorRef = useRef<React.ComponentRef<typeof View>>(null);
+  // The local cache proxy is applied to the source, so a second pass over the same
+  // clip re-reads it from the device instead of downloading it again
+  // (KNOT-037-fix10).
+  const sourceUri = useMemo(() => cachedVideoUri(uri), [uri]);
 
-  // The poster covers the player until the player has something to show. It is
-  // what removes the black frame: the native video surface is opaque but empty
-  // until the first frame decodes, so a still drawn UNDER it would never be seen
-  // (KNOT-042).
-  const [posterVisible, setPosterVisible] = useState(true);
+  const videoRef = useRef<React.ComponentRef<typeof Video>>(null);
+
+  // The still covers the player until the player has something to show: the native
+  // surface is opaque but empty until the first frame decodes, so a still drawn
+  // UNDER it would never be seen (KNOT-042). A progress tick is the only proof a
+  // frame was drawn — on Android `onReadyForDisplay` fires when the player is
+  // prepared, before the decoder has produced a picture (KNOT-048-fix).
+  const [frameDrawn, setFrameDrawn] = useState(false);
+  const [currentSeconds, setCurrentSeconds] = useState(0);
+  const [loadedSeconds, setLoadedSeconds] = useState(0);
 
   const poster = typeof posterUri === 'string' && posterUri.trim() !== '' ? posterUri : null;
-  const showPoster = poster !== null && posterVisible;
+  const showPoster = poster !== null && !(mounted && frameDrawn);
 
-  // Attachment: the visible card claims the engine's surface and hands it back
-  // when it leaves the screen or the viewer takes over. The media id is the whole
-  // point — mounting this card again while the engine is already playing the same
-  // clip resumes it instead of reloading it (KNOT-051).
+  // Where to pick the picture up when this card's player mounts. Closing the
+  // viewer must not restart the clip, and the engine is the only thing that knows
+  // where the viewer left it (KNOT-051, KNOT-050).
+  const resumeAt = useRef(0);
+
+  // Mounting claims the clip in the engine — which is what lets the viewer open on
+  // the same second — and remembers the position to resume from.
   useEffect(() => {
-    if (!isVisible) {
-      player.releaseHost(id);
-      if (activeRef.current) {
-        player.pauseMedia(id);
-      }
+    if (!mounted) {
+      setFrameDrawn(false);
+      setCurrentSeconds(0);
       return;
     }
 
-    if (fullscreen) {
-      // The viewer holds the surface now. Give up the hole, but do NOT pause: this
-      // card may be the very clip the viewer is showing, and pausing here would
-      // stop the picture the reader just opened (KNOT-051).
-      player.releaseHost(id);
-      return;
-    }
-
-    player.registerHost(id, anchorRef.current);
+    const position = player.getCurrentTime();
+    resumeAt.current = position > 0 ? position : 0;
+    setCurrentSeconds(resumeAt.current);
     player.playMedia({ id, uri, mode: 'inline' });
+  }, [id, mounted, player, uri]);
 
-    return () => {
-      player.releaseHost(id);
-    };
-  }, [fullscreen, id, isVisible, player, uri]);
-
-  /**
-   * The surface leaving the tree is different from it re-registering.
-   *
-   * A card that unmounts — the Feed replaced by the Story Detail, a pager page
-   * scrolled out — must hand the engine back completely. `releaseHost` only
-   * forgets the node, and the engine's rectangle lives on, so the one player would
-   * keep painting the clip **at the rectangle this card used to occupy**: a video
-   * stuck to the middle of the next screen, over content that has nothing to do
-   * with it, with its audio still playing. That is the "media in the wrong place,
-   * giant gap above it" the founder saw when opening a story from the Feed
-   * (KNOT-048-fix2).
-   */
+  // One mute setting governs the card's own player. A card that draws no player
+  // never publishes it, or an off-screen entry could mute the viewer.
   useEffect(() => {
-    return () => {
-      player.releaseHost(id);
-      player.clearSurface(id);
-      player.pauseMedia(id);
-    };
-  }, [id, player]);
-
-  // The first measurement has to wait for the play to commit: the engine only
-  // measures the host it considers active, so registering before its state has
-  // updated would measure nothing. This effect runs on that commit, and again
-  // whenever this card becomes the active one (for example after the viewer
-  // hands the surface back).
-  useEffect(() => {
-    if (!active || fullscreen || !isVisible) {
-      return;
-    }
-    player.registerHost(id, anchorRef.current);
-    player.measureHost();
-  }, [active, fullscreen, id, isVisible, player]);
-
-  // One mute setting governs every video, so the active surface publishes it to
-  // the one player. A card that is not playing never touches it, or an off-screen
-  // entry could mute the viewer.
-  useEffect(() => {
-    if (active && !fullscreen) {
+    if (mounted) {
       player.setMuted(isMuted);
     }
-  }, [active, fullscreen, isMuted, player]);
+  }, [isMuted, mounted, player]);
 
-  // The still is retired once the picture is really on screen, and comes back for
-  // a fresh load of the same clip. A progress tick is the only proof that a frame
-  // was drawn: on Android `onReadyForDisplay` fires when the player is prepared,
-  // before the decoder has produced a picture (KNOT-048-fix).
-  useEffect(() => {
-    setPosterVisible(!(active && playback.frameVisible));
-  }, [active, playback.frameVisible]);
+  const handleLoad = useCallback(
+    (data: OnLoadData): void => {
+      const seconds = data.duration > 0 ? data.duration : 0;
+      if (seconds > 0) {
+        setLoadedSeconds(seconds);
+      }
+      // The engine keeps the clip's length too, so the viewer's transport knows it
+      // before its own player has loaded anything.
+      player.reportLoaded(id, seconds);
+
+      // A re-seat: the same clip continues where it was left.
+      const target = resumeAt.current;
+      resumeAt.current = 0;
+      if (target > 0) {
+        videoRef.current?.seek(target);
+        setCurrentSeconds(target);
+      }
+    },
+    [id, player],
+  );
+
+  const handleProgress = useCallback(
+    (data: OnProgressData): void => {
+      setFrameDrawn(true);
+      setCurrentSeconds(data.currentTime);
+      // Publishes the playhead the full-screen viewer opens on (KNOT-051).
+      player.reportProgress(id, data.currentTime);
+    },
+    [id, player],
+  );
 
   // A video's payload rarely carries dimensions; the frame therefore reserves the
   // design's 4:5 shape rather than chasing the clip's natural size, which would
@@ -232,13 +233,8 @@ export default function FeedVideo({
     typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs > 0
       ? durationMs / 1000
       : 0;
-  const durationSeconds = active && playback.duration > 0 ? playback.duration : seedSeconds;
-  const currentSeconds = active ? playback.currentTime : 0;
+  const durationSeconds = loadedSeconds > 0 ? loadedSeconds : seedSeconds;
   const progressLabel = formatProgress(currentSeconds, durationSeconds);
-
-  const handleLayout = useCallback((): void => {
-    player.measureHost();
-  }, [player]);
 
   return (
     <View style={styles.container} testID={testID}>
@@ -246,18 +242,38 @@ export default function FeedVideo({
           if the video can never play. */}
       <View style={styles.fallback} />
 
-      {/* The hole the engine's single player is drawn into. It is measured in the
-          engine's coordinate space, and the containing list re-measures it on a
-          scroll tick — so the picture follows the card without re-rendering a
-          single row, and without a native player per entry (KNOT-051). The anchor
-          is intentionally intangible. */}
-      <View
-        ref={anchorRef}
-        style={styles.videoAnchor}
-        onLayout={handleLayout}
-        pointerEvents="none"
-        testID="feed-video-host"
-      />
+      {/* The card's own player (KNOT-050). It is a child of this card, so the
+          platform scrolls the picture with the card: nothing is measured and
+          nothing is repositioned while the list moves, which is the whole reason
+          there is no floating player any more. It is mounted only while this card
+          is the active one; every other card draws its still alone. The wrapper is
+          intangible because the native surface would otherwise swallow the card's
+          own taps (KNOT-020k-fix5). */}
+      {mounted ? (
+        <View style={styles.videoAnchor} pointerEvents="none" testID="feed-video-surface">
+          <Video
+            ref={videoRef}
+            source={{ uri: sourceUri }}
+            style={styles.video}
+            // The active card plays; a card that is not active has no player at all.
+            paused={false}
+            muted={isMuted}
+            repeat
+            resizeMode="cover"
+            // A `TextureView` is an ordinary view: it stays inside this card's frame
+            // and stacks with the chrome instead of punching through it
+            // (KNOT-025-fix6, KNOT-048-fix2).
+            useTextureView
+            progressUpdateInterval={250}
+            // The native surface is opaque and empty until the first frame decodes,
+            // so the player is asked for the surround it sits in (KNOT-045).
+            shutterColor={colors.bg.canvas}
+            onLoad={handleLoad}
+            onProgress={handleProgress}
+            testID="feed-video-player"
+          />
+        </View>
+      ) : null}
 
       {/* The still, over the player and under the chrome. Removed the moment the
           player renders a frame, so a video that is playing is never hidden by
@@ -368,8 +384,11 @@ const createStyles = (colors: ThemeColors) =>
       height: '100%',
       width: '100%',
     },
+    // The card's own player fills the media frame exactly, so the picture is the
+    // size of the still it replaces (KNOT-050).
     video: {
-      ...StyleSheet.absoluteFillObject,
+      height: '100%',
+      width: '100%',
     },
     videoAnchor: {
       ...StyleSheet.absoluteFillObject,

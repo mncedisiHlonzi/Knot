@@ -237,15 +237,21 @@ describe('mediaPlayerReducer surface', () => {
   });
 
   it('hides the surface without stopping playback', () => {
-    const playing = mediaPlayerReducer(played(FIRST), {
-      type: 'frame',
-      id: 'media-1',
-      frame: { x: 0, y: 0, width: 390, height: 844 },
-    });
+    const playing = mediaPlayerReducer(
+      mediaPlayerReducer(played(FIRST), {
+        type: 'frame',
+        id: 'media-1',
+        frame: { x: 0, y: 0, width: 390, height: 844 },
+      }),
+      { type: 'progress', id: 'media-1', currentTime: 4 },
+    );
     const hidden = mediaPlayerReducer(playing, { type: 'clearSurface', id: 'media-1' });
 
     expect(hidden.frame).toBeNull();
     expect(hidden.playing).toBe(true);
+    // Nothing is drawn, so nothing is visible either: the card's still has to cover
+    // the hole again the moment the player is unmounted (KNOT-049).
+    expect(hidden.frameVisible).toBe(false);
   });
 
   it('releases the theatre: stops the clip and hands the surface back inline', () => {

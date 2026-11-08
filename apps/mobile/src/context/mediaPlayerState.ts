@@ -306,10 +306,18 @@ export function mediaPlayerReducer(
       return { ...state, muted: action.muted };
 
     case 'clearSurface': {
-      if (!targetsActive(state, action.id) || state.frame === null) {
+      if (!targetsActive(state, action.id)) {
         return state;
       }
-      return { ...state, frame: null };
+      if (state.frame === null && !state.frameVisible) {
+        return state;
+      }
+      // Nothing is drawn once the surface is hidden, so nothing is visible either.
+      // A card reads this to decide whether its poster still covers the picture:
+      // the player is unmounted whenever a card scrolls or another card takes the
+      // surface, and the still has to be back in place by then, or the row would
+      // paint an empty hole where its video was (KNOT-049).
+      return { ...state, frame: null, frameVisible: false };
     }
 
     case 'release': {

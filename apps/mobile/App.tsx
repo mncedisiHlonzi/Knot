@@ -33,8 +33,7 @@ import TabBar from './src/components/TabBar';
 import type { TabName } from './src/components/TabBar';
 import MediaGalleryModal from './src/components/MediaGalleryModal';
 import type { ViewerMedia, ViewerStory } from './src/components/MediaGalleryModal';
-import MediaHost from './src/components/MediaHost';
-import { MediaPlayerProvider, useMediaPlayerActions } from './src/context/MediaPlayerContext';
+import { MediaPlayerProvider } from './src/context/MediaPlayerContext';
 import { toViewerMedia } from './src/components/storyGallery';
 import { withHydratedGallery, type ViewerState } from './src/components/mediaViewer';
 import {
@@ -226,18 +225,15 @@ export default function App(): React.ReactElement {
 
   return (
     <ThemeProvider systemTheme={systemTheme}>
-      {/* The unified media engine: one player, shared by the Feed, the Story Detail
-          carousel and the full-screen viewer (KNOT-051). */}
+      {/* The shared media state: which clip is on screen, where it has reached and
+          whether it is muted. Every surface owns its own player again (KNOT-050),
+          so there is no player at the app root any more — only the viewer's, which
+          lives inside its modal (KNOT-051). */}
       <MediaPlayerProvider>
         {/* Every Phosphor glyph under this scope is bold unless it asks for another
             weight, so the whole app reads with one icon weight (KNOT-020k-fix). */}
         <IconScope>
           <ThemedApp />
-          {/* The one media player. It draws over the screens at the frame the
-              active surface reported, and never unmounts while a clip plays, so a
-              card, a carousel page and the viewer all share the same position
-              (KNOT-051). */}
-          <MediaHost />
           {/* Painted last so it covers every screen, and only while a mode change
               is settling (KNOT-020k). */}
           <ThemeCrossfade />
@@ -258,9 +254,6 @@ function ThemedApp(): React.ReactElement {
   const { colors, theme } = useTheme();
   const styles = useThemedStyles(createStyles);
   const STATUS_BAR = statusBarProps(colors, theme);
-  // The one media player's rectangle is measured in window space, so the shell
-  // re-measures it whenever a screen transition settles (KNOT-048-fix2).
-  const player = useMediaPlayerActions();
   const [session, setSession] = useState<Session | null>(null);
   const [authMode, setAuthMode] = useState<AuthMode>('login');
   // The legal document open over the auth screens, if any. It is separate from
@@ -518,27 +511,14 @@ function ThemedApp(): React.ReactElement {
         duration: motion.durations.screen,
         easing: EASING_ENTER,
         useNativeDriver: true,
-      }).start(({ finished }) => {
-        // The media engine measures a surface in WINDOW space, so a screen that is
-        // still sliding in reports the rectangle it occupies OFF to the side. Once
-        // it has settled, the surface the new screen registered is measured again —
-        // without this the picture stays where the transition left it, which is
-        // exactly the empty media area the founder saw on an opened story
-        // (KNOT-048-fix2).
-        if (finished) {
-          player.measureHost();
-        }
-      });
+      }).start();
     } else if (depth < overlayDepth.current) {
       screenOffset.stopAnimation();
       screenOffset.setValue(0);
-      // A pop lands instantly, so the surface the revealed screen registered is
-      // already at rest; measure it now rather than waiting for a scroll.
-      player.measureHost();
     }
 
     overlayDepth.current = depth;
-  }, [overlays.length, screenOffset, windowWidth, player]);
+  }, [overlays.length, screenOffset, windowWidth]);
 
   // Android hardware back pops the overlay stack and falls through to the OS
   // (background the app) only when there is nothing to pop. BackHandler exists on

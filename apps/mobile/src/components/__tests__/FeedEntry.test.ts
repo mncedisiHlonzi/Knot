@@ -1273,6 +1273,67 @@ describe('the meta row', () => {
 });
 
 /**
+ * The card owns its still (KNOT-049).
+ *
+ * The picture itself is drawn by the engine's one player at a rectangle measured
+ * outside the card, so the still a video card shows while that player is not
+ * attached has to live in the card's own tree — otherwise scrolling past a video
+ * would take its poster with it and leave an empty frame.
+ */
+describe('video poster base layer', () => {
+  const POSTER = 'http://localhost:8080/stories/x/media/y/content?variant=poster';
+  const posterStory = {
+    ...story,
+    first_media_type: 'video' as const,
+    first_media_url: '/stories/x/media/y/content',
+    first_media_poster_url: '/stories/x/media/y/content?variant=poster',
+  };
+  /** The base still, with its element type, which `findByTestID` does not expose. */
+  const baseStill = (element: unknown, testID: string) =>
+    findByTestID(element, testID) as
+      { type?: unknown; props?: Record<string, unknown> } | undefined;
+
+  it('draws the extracted still in the card, whether or not a player is attached', () => {
+    for (const isVisible of [true, false]) {
+      const element = FeedEntry({ story: posterStory, isVisible, onPress: () => undefined });
+      const base = baseStill(element, 'feed-video-poster-base');
+
+      expect(base).toBeDefined();
+      expect(base?.type).toBe('Image');
+      expect(base?.props?.source).toEqual({ uri: POSTER });
+      // `cover`, like every list media frame: the frame is always filled.
+      expect(base?.props?.resizeMode).toBe('cover');
+    }
+  });
+
+  it('keeps the frame filled when the worker could not poster the clip', () => {
+    const element = FeedEntry({
+      story: { ...story, first_media_type: 'video', first_media_url: '/stories/x/media/y/content' },
+      onPress: () => undefined,
+    });
+
+    expect(baseStill(element, 'feed-video-poster-base')).toBeUndefined();
+    expect(baseStill(element, 'feed-video-poster-fallback')).toBeDefined();
+  });
+
+  it('adds no still to an image card, which is its own picture', () => {
+    const element = FeedEntry({
+      story: {
+        ...story,
+        first_media_type: 'image',
+        first_media_url: '/stories/x/media/y/content',
+        first_media_thumbnail_url: '/stories/x/media/y/content?variant=thumb',
+        first_media_poster_url: '/stories/x/media/y/content?variant=poster',
+      },
+      onPress: () => undefined,
+    });
+
+    expect(baseStill(element, 'feed-video-poster-base')).toBeUndefined();
+    expect(baseStill(element, 'feed-video-poster-fallback')).toBeUndefined();
+  });
+});
+
+/**
  * The feed re-renders every mounted row whenever its own state changes, and its
  * state changes on each viewability report while a person scrolls. The entry
  * therefore has to be able to answer "nothing about me changed" without drawing

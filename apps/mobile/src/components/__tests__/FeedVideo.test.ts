@@ -1,17 +1,17 @@
 import FeedVideo from '../FeedVideo';
 
 /**
- * The video *surface* suite (KNOT-051).
+ * The inline player suite (KNOT-050).
  *
- * `FeedVideo` no longer owns a player: it registers a hole with the media engine,
- * asks the engine to play its media, and draws the card's chrome. So the engine is
- * stubbed (its calls are the contract under test) and React's primitives are
- * stubbed too, because this project has no renderer and calls components
- * directly.
+ * `FeedVideo` owns a real `<Video>` again, mounted inside the card so the platform
+ * scrolls the picture with it. This suite holds the three rules the placement
+ * depends on: the player exists only for the active card, the still is the base
+ * layer whenever there is no picture, and the card still publishes its playhead so
+ * the full-screen viewer continues instead of restarting.
  *
- * Effects are captured and run by the harness. State slots are kept between
- * renders, which is how a test observes what an effect wrote — the same pattern
- * the previous suite used.
+ * Effects are captured and run by the harness, and state slots are kept between
+ * renders, which is how a test observes what an effect or an event wrote — this
+ * project has no renderer and calls components directly.
  */
 const URI = 'http://10.0.2.2:8080/stories/1/media/2/content';
 
@@ -26,9 +26,8 @@ const mockActions = {
   releaseMedia: jest.fn(),
   getCurrentTime: jest.fn(() => 0),
   getActiveMediaId: jest.fn(() => null),
-  registerHost: jest.fn(),
-  releaseHost: jest.fn(),
-  measureHost: jest.fn(),
+  reportProgress: jest.fn(),
+  reportLoaded: jest.fn(),
 };
 
 let mockPlayback = {
@@ -67,6 +66,9 @@ jest.mock('react', () => ({
   ...jest.requireActual('react'),
   useContext: () => jest.requireActual('../../theme/ThemeContext').lightTheme,
   useCallback: (callback: unknown) => callback,
+  // The card memoises its cached source; a direct call has no render to memoise
+  // across, so the factory is simply applied.
+  useMemo: (factory: () => unknown) => factory(),
   useRef: (initial: unknown) => ({ current: initial }),
   useState: (initial: unknown) => {
     const index = mockStateCursor;
@@ -98,6 +100,10 @@ jest.mock('phosphor-react-native', () => ({
   SpeakerHigh: () => null,
   SpeakerSlash: () => null,
 }));
+
+// The card owns a real player again (KNOT-050), so the native module is stubbed to
+// a host component the direct-call harness can build and drive.
+jest.mock('react-native-video', () => ({ __esModule: true, default: 'Video' }));
 
 type Element = { type?: unknown; props?: Record<string, unknown> };
 
@@ -164,6 +170,36 @@ function poster(tree: unknown): Element | undefined {
   return elements(tree).find((element) => element.props?.testID === 'feed-video-poster');
 }
 
+/** The card's own player, or undefined when this card draws none. */
+function playerOf(tree: unknown): Element | undefined {
+  return elements(tree).find((element) => element.type === 'Video');
+}
+
+/** Reports a load on the player this card drew. */
+function fireLoad(tree: unknown, duration: number): void {
+  (playerOf(tree)?.props?.onLoad as ((data: { duration: number }) => void) | undefined)?.({
+    duration,
+  });
+}
+
+/** Reports a progress tick on the player this card drew. */
+function fireProgress(tree: unknown, currentTime: number): void {
+  (playerOf(tree)?.props?.onProgress as ((data: { currentTime: number }) => void) | undefined)?.({
+    currentTime,
+  });
+}
+
+/**
+ * The mutable box the card handed its player as a `ref`.
+ *
+ * A host element keeps its ref beside its props, not inside them, so the harness
+ * reads `element.ref` — the box where a real mount would put the native player, and
+ * standing one in is how a re-seat is observed.
+ */
+function refBoxOf(tree: unknown): { current: unknown } {
+  return (playerOf(tree) as unknown as { ref: { current: unknown } }).ref;
+}
+
 /** A clip the engine is already playing. */
 function playing(overrides: Partial<typeof mockPlayback> = {}): void {
   mockPlayback = {
@@ -178,6 +214,9 @@ function playing(overrides: Partial<typeof mockPlayback> = {}): void {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // `clearAllMocks` keeps implementations, so the playhead a re-seat test set has to
+  // be put back explicitly.
+  mockActions.getCurrentTime.mockReturnValue(0);
   mockPlayback = {
     activeMediaId: null,
     uri: null,
@@ -198,20 +237,46 @@ beforeEach(() => {
   mockCleanups = [];
 });
 
-describe('FeedVideo surface', () => {
+describe('FeedVideo inline mounting', () => {
   /**
-   * The whole task in one assertion: a card draws a hole, not a player. The one
-   * `<Video>` belongs to `MediaHost`, which is what removes the per-card decoder.
+   * The whole task in one assertion: the card that is on screen owns a real player,
+   * in its own layout, so the platform scrolls the picture with the card.
    */
-  it('draws a measured hole and no player of its own', () => {
+  it('mounts its own player inside the card when the card is the active one', () => {
     const tree = render({ uri: URI, isVisible: true });
-    const host = elements(tree).find((element) => element.props?.testID === 'feed-video-host');
+    const player = playerOf(tree);
+    const surface = elements(tree).find(
+      (element) => element.props?.testID === 'feed-video-surface',
+    );
 
-    expect(host).toBeDefined();
-    expect(host?.type).toBe('View');
-    expect(host?.props?.pointerEvents).toBe('none');
-    expect(typeof host?.props?.onLayout).toBe('function');
-    expect(elements(tree).some((element) => element.type === 'Video')).toBe(false);
+    expect(player).toBeDefined();
+    expect(player?.props?.source).toEqual({ uri: URI });
+    expect(player?.props?.paused).toBe(false);
+    expect(player?.props?.muted).toBe(true);
+    expect(player?.props?.resizeMode).toBe('cover');
+    // A `TextureView` is an ordinary view: it stays inside the card's frame and
+    // stacks with the chrome instead of punching through it (KNOT-048-fix2).
+    expect(player?.props?.useTextureView).toBe(true);
+    // The player is part of the card, and its tap target is the card itself.
+    expect(surface?.props?.pointerEvents).toBe('none');
+  });
+
+  it('unmounts the player when the card is not the active one', () => {
+    const tree = render({ uri: URI, isVisible: false });
+
+    // No player, and no hole for one: the still is the media.
+    expect(playerOf(tree)).toBeUndefined();
+    expect(
+      elements(tree).find((element) => element.props?.testID === 'feed-video-surface'),
+    ).toBeUndefined();
+  });
+
+  it('leaves the theatre to the viewer, so two players never share a window', () => {
+    playing({ mode: 'fullscreen' });
+    const tree = render({ uri: URI, isVisible: true });
+
+    expect(playerOf(tree)).toBeUndefined();
+    expect(mockActions.playMedia).not.toHaveBeenCalled();
   });
 
   it('leaves the mute control tappable above the picture', () => {
@@ -223,11 +288,14 @@ describe('FeedVideo surface', () => {
   });
 });
 
-describe('FeedVideo engine attachment', () => {
-  it('registers its hole and asks the engine to play when it is on screen', () => {
+/**
+ * The player is inline, but the *shared* facts are still worth publishing: the
+ * engine is what lets the full-screen viewer open on the second the card reached.
+ */
+describe('FeedVideo engine publication', () => {
+  it('claims the clip in the engine when it mounts', () => {
     render({ uri: URI, isVisible: true });
 
-    expect(mockActions.registerHost).toHaveBeenCalledWith(URI, null);
     expect(mockActions.playMedia).toHaveBeenCalledWith(
       expect.objectContaining({ id: URI, uri: URI, mode: 'inline' }),
     );
@@ -239,65 +307,57 @@ describe('FeedVideo engine attachment', () => {
     expect(mockActions.playMedia).toHaveBeenCalledWith(expect.objectContaining({ id: 'media-42' }));
   });
 
-  it('releases the surface and pauses its own clip when it leaves the screen', () => {
-    playing();
+  it('never claims a clip for a card that draws no player', () => {
     render({ uri: URI, isVisible: false });
 
-    expect(mockActions.releaseHost).toHaveBeenCalledWith(URI);
-    expect(mockActions.pauseMedia).toHaveBeenCalledWith(URI);
     expect(mockActions.playMedia).not.toHaveBeenCalled();
   });
 
-  it('stays out of the engine while the viewer holds the surface full-screen', () => {
-    playing({ mode: 'fullscreen' });
-    render({ uri: URI, isVisible: true });
+  it('publishes its playhead, so the viewer opens on the same second', () => {
+    const tree = render({ uri: URI, isVisible: true });
+    fireProgress(tree, 12.5);
 
-    expect(mockActions.releaseHost).toHaveBeenCalledWith(URI);
-    expect(mockActions.playMedia).not.toHaveBeenCalled();
+    expect(mockActions.reportProgress).toHaveBeenCalledWith(URI, 12.5);
   });
 
-  it('publishes the feed-wide mute setting to the one player', () => {
-    playing();
+  it('publishes the clip length it read, so the transport is seeded', () => {
+    const tree = render({ uri: URI, isVisible: true });
+    fireLoad(tree, 45);
+
+    expect(mockActions.reportLoaded).toHaveBeenCalledWith(URI, 45);
+  });
+
+  it('publishes the card mute setting to the engine as well', () => {
     render({ uri: URI, isVisible: true, isMuted: false });
 
     expect(mockActions.setMuted).toHaveBeenCalledWith(false);
   });
 
-  it('leaves the mute alone when this card is not the one playing', () => {
-    render({ uri: URI, isVisible: true, isMuted: false });
+  it('leaves the mute alone when the card draws no player', () => {
+    render({ uri: URI, isVisible: false, isMuted: false });
 
     expect(mockActions.setMuted).not.toHaveBeenCalled();
-  });
-
-  it('re-measures its hole when it is laid out', () => {
-    const tree = render({ uri: URI, isVisible: true });
-    const host = elements(tree).find((element) => element.props?.testID === 'feed-video-host');
-    const onLayout = host?.props?.onLayout as (() => void) | undefined;
-
-    onLayout?.();
-
-    expect(mockActions.measureHost).toHaveBeenCalled();
   });
 });
 
 describe('FeedVideo timestamp', () => {
-  it('counts the engine position against the engine duration', () => {
-    playing({ currentTime: 15.4, duration: 76 });
-    const tree = render({ uri: URI, isVisible: true, durationMs: 2_000 });
+  it('counts the player position against the player duration', () => {
+    const props = { uri: URI, isVisible: true, durationMs: 2_000 };
+    const tree = render(props);
+    fireLoad(tree, 76);
+    fireProgress(tree, 15.4);
 
-    // The engine's metadata wins over the payload's seed once it is known.
-    expect(badgeText(tree)).toBe('0:15 / 1:16');
+    // The player's own metadata wins over the payload's seed once it is known.
+    expect(badgeText(render(props))).toBe('0:15 / 1:16');
   });
 
   it('seeds the badge from the payload before the clip has loaded', () => {
-    playing({ duration: 0 });
     const tree = render({ uri: URI, isVisible: true, durationMs: 76_000 });
 
     expect(badgeText(tree)).toBe('0:00 / 1:16');
   });
 
   it('draws no badge before any duration is known', () => {
-    playing({ duration: 0 });
     const tree = render({ uri: URI, isVisible: true });
 
     expect(badgeText(tree)).toBe('');
@@ -307,8 +367,7 @@ describe('FeedVideo timestamp', () => {
 describe('FeedVideo poster', () => {
   const POSTER = `${URI}?variant=poster`;
 
-  it('draws the extracted still until the engine reports a frame', () => {
-    playing({ frameVisible: false });
+  it('draws the extracted still as the base layer until the player has a frame', () => {
     const still = poster(render({ uri: URI, posterUri: POSTER, isVisible: true }));
 
     expect(still).toBeDefined();
@@ -317,41 +376,63 @@ describe('FeedVideo poster', () => {
     expect(still?.props?.resizeMode).toBe('cover');
   });
 
-  it('retires the still once a frame has been drawn', () => {
-    playing({ frameVisible: true });
+  it('draws the still on a card that draws no player at all', () => {
+    // This is the memory bound the inline placement rests on: an off-screen card is
+    // a picture and nothing else.
+    const tree = render({ uri: URI, posterUri: POSTER, isVisible: false });
 
-    expect(poster(renderSettled({ uri: URI, posterUri: POSTER, isVisible: true }))).toBeUndefined();
+    expect(playerOf(tree)).toBeUndefined();
+    expect(poster(tree)).toBeDefined();
+  });
+
+  it('retires the still once the player has drawn a frame', () => {
+    const props = { uri: URI, posterUri: POSTER, isVisible: true };
+    const tree = render(props);
+    fireProgress(tree, 1);
+
+    expect(poster(renderSettled(props))).toBeUndefined();
+  });
+
+  it('brings the still back when the card stops being the active one', () => {
+    const playingProps = { uri: URI, posterUri: POSTER, isVisible: true };
+    fireProgress(render(playingProps), 1);
+    renderSettled(playingProps);
+
+    // The player is gone, so the picture has to be back.
+    expect(poster(render({ uri: URI, posterUri: POSTER, isVisible: false }))).toBeDefined();
   });
 
   it('draws no still when the server sent none', () => {
-    playing();
-
     expect(poster(render({ uri: URI, isVisible: true }))).toBeUndefined();
     expect(poster(render({ uri: URI, posterUri: '   ', isVisible: true }))).toBeUndefined();
     expect(poster(render({ uri: URI, posterUri: null, isVisible: true }))).toBeUndefined();
   });
 });
 
-describe('FeedVideo surface release', () => {
-  /** Runs the cleanups the last render registered, as unmounting the card would. */
-  function unmount(): void {
-    for (const cleanup of mockCleanups) {
-      cleanup();
-    }
-  }
+/**
+ * The one thing an inline player must not lose is continuity: a card that mounts
+ * again — the viewer was closed over it, or it was scrolled away long enough to be
+ * unmounted — picks the clip up where it was, instead of restarting at 0:00.
+ */
+describe('FeedVideo re-seat', () => {
+  it('seeks to the position the engine holds when its player mounts', () => {
+    const seek = jest.fn();
+    mockActions.getCurrentTime.mockReturnValue(19);
+    const tree = render({ uri: URI, isVisible: true });
+    refBoxOf(tree).current = { seek };
 
-  it('hands the engine back when its card goes away, so the picture cannot outlive it', () => {
-    // A released host only forgets the node; the engine's rectangle and clip live
-    // on, so the one player would keep painting this card's video at the rectangle
-    // it used to occupy — over the next screen, with its audio still running
-    // (KNOT-048-fix2).
-    playing();
-    render({ uri: URI, isVisible: true });
+    fireLoad(tree, 45);
 
-    unmount();
+    expect(seek).toHaveBeenCalledWith(19);
+  });
 
-    expect(mockActions.releaseHost).toHaveBeenCalledWith(URI);
-    expect(mockActions.clearSurface).toHaveBeenCalledWith(URI);
-    expect(mockActions.pauseMedia).toHaveBeenCalledWith(URI);
+  it('seeks nowhere for a clip that starts at zero', () => {
+    const seek = jest.fn();
+    const tree = render({ uri: URI, isVisible: true });
+    refBoxOf(tree).current = { seek };
+
+    fireLoad(tree, 45);
+
+    expect(seek).not.toHaveBeenCalled();
   });
 });

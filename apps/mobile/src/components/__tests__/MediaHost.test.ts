@@ -2,12 +2,13 @@ import MediaHost from '../MediaHost';
 import type { MediaSurfaceHandle } from '../../context/MediaPlayerContext';
 
 /**
- * The one host (KNOT-051).
+ * The viewer's player (KNOT-050).
  *
- * `MediaHost` is the only component that renders a `<Video>`. This suite holds it
- * to that contract: nothing is drawn without a frame, only one placement draws at
- * a time, the player is intangible and positioned from the engine's rectangle, and
- * a host re-seated mid-clip resumes at the engine's playhead instead of 0:00.
+ * Inline surfaces own their `<Video>` again, so the only host left is the one inside
+ * the full-screen viewer's modal — the window a view from the app cannot paint over.
+ * This suite holds it to that narrower contract: it draws only in the theatre, it
+ * draws nothing without a rectangle, the picture is intangible, and a re-seat
+ * mid-clip resumes at the engine's playhead instead of 0:00.
  */
 const mockPlayer = {
   getCurrentTime: jest.fn(() => 0),
@@ -75,8 +76,8 @@ function surface(overrides: Partial<MediaSurfaceHandle> = {}): MediaSurfaceHandl
 }
 
 /** Calls the host and expands the surface view it returns. */
-function draw(placement: 'root' | 'viewer' = 'viewer'): Element | null {
-  const host = MediaHost({ placement }) as Element | null;
+function draw(): Element | null {
+  const host = MediaHost({}) as Element | null;
   if (host === null) {
     return null;
   }
@@ -94,20 +95,21 @@ describe('MediaHost placement', () => {
   it('draws nothing until a surface has a rectangle', () => {
     mockSurface = surface({ frame: null });
 
-    expect(draw('root')).toBeNull();
+    expect(draw()).toBeNull();
   });
 
   it('draws nothing until a clip is playing', () => {
     mockSurface = surface({ uri: null });
 
-    expect(draw('root')).toBeNull();
+    expect(draw()).toBeNull();
   });
 
-  it('lets only the matching placement draw', () => {
+  it('draws only the theatre — never an inline surface', () => {
     mockSurface = surface({ mode: 'inline' });
 
-    expect(draw('viewer')).toBeNull();
-    expect(draw('root')).not.toBeNull();
+    // An inline card owns its own player now, so this host stays out of it
+    // (KNOT-050).
+    expect(draw()).toBeNull();
   });
 });
 
@@ -115,10 +117,10 @@ describe('MediaHost player', () => {
   it('positions one intangible player at the reported rectangle', () => {
     mockSurface = surface({
       frame: { x: 16, y: 240, width: 358, height: 201 },
-      mode: 'inline',
+      mode: 'fullscreen',
     });
-    const tree = draw('root');
-    const box = elements(tree).find((element) => element.props?.testID === 'media-host-root');
+    const tree = draw();
+    const box = elements(tree).find((element) => element.props?.testID === 'media-host-viewer');
     const video = elements(tree).find((element) => element.type === 'Video');
 
     expect(box?.props?.pointerEvents).toBe('none');
@@ -131,23 +133,17 @@ describe('MediaHost player', () => {
     expect(video?.props?.repeat).toBe(true);
   });
 
-  it('fills an inline frame and letterboxes the theatre', () => {
-    mockSurface = surface({ mode: 'inline' });
-    expect(
-      elements(draw('root')).find((element) => element.type === 'Video')?.props?.resizeMode,
-    ).toBe('cover');
+  it('letterboxes the theatre', () => {
+    const video = elements(draw()).find((element) => element.type === 'Video');
 
-    mockSurface = surface({ mode: 'fullscreen' });
-    expect(
-      elements(draw('viewer')).find((element) => element.type === 'Video')?.props?.resizeMode,
-    ).toBe('contain');
+    expect(video?.props?.resizeMode).toBe('contain');
   });
 
   it('resumes at the engine playhead when it is mounted mid-clip', () => {
     const seek = jest.fn();
     mockPlayer.getCurrentTime.mockReturnValue(19);
     mockSurface = surface({ videoRef: { current: { seek } as never } });
-    const tree = draw('viewer');
+    const tree = draw();
     const video = elements(tree).find((element) => element.type === 'Video');
     const onLoad = video?.props?.onLoad as (data: unknown) => void;
 
@@ -168,7 +164,7 @@ describe('MediaHost player', () => {
   it('issues no seek for a clip that starts at zero', () => {
     const seek = jest.fn();
     mockSurface = surface({ videoRef: { current: { seek } as never } });
-    const video = elements(draw('viewer')).find((element) => element.type === 'Video');
+    const video = elements(draw()).find((element) => element.type === 'Video');
     const onLoad = video?.props?.onLoad as (data: unknown) => void;
 
     onLoad({ duration: 45 });

@@ -24,7 +24,6 @@ import AuthorLine from '../../components/AuthorLine';
 import Button from '../../components/Button';
 import FeedVideo from '../../components/FeedVideo';
 import MediaImage from '../../components/MediaImage';
-import { useMediaPlayerActions } from '../../context/MediaPlayerContext';
 import type { ViewerMedia, ViewerStory } from '../../components/MediaGalleryModal';
 import Header from '../../components/Header';
 import PillarTag from '../../components/PillarTag';
@@ -111,8 +110,9 @@ function statusBarStyle(hasMedia: boolean, theme: ThemeName): 'light-content' | 
  * page. A page renders at the size it is given, and the shape comes from the
  * payload alone, reserving the design's 4:5 frame when the payload carries no
  * dimensions — so the pager never resizes when a media file finishes loading
- * (KNOT-025, KNOT-048-fix2). A video is handed to `FeedVideo`, so the one player
- * keeps its autoplay and mute behaviour; an image draws through `MediaImage`.
+ * (KNOT-025, KNOT-048-fix2). A video is handed to `FeedVideo`, which mounts the
+ * page's own player inside the page, so it scrolls with the pager; an image draws
+ * through `MediaImage` (KNOT-050).
  */
 function CarouselPage({
   media,
@@ -296,9 +296,9 @@ export default function StoryDetailScreen({
   const carouselBottom = useRef(0);
   const stripRef = useRef<ScrollView>(null);
 
-  // The unified media engine (KNOT-051): the carousel's video is a hole the one
-  // player draws into, so the pager's geometry is re-measured as the screen moves.
-  const player = useMediaPlayerActions();
+  // The carousel's player now lives inside the page it belongs to (KNOT-050), so
+  // the screen keeps no reference to the media engine at all: the page that is
+  // showing draws its own picture and nothing is measured as the screen scrolls.
 
   const media = story?.media ?? [];
   // The viewer's overlay: this story's own content and author, and the gallery it
@@ -384,29 +384,21 @@ export default function StoryDetailScreen({
   }, [activeIndex, media.length, pageWidth]);
 
   /**
-   * Remembers where the carousel ends, so vertical scrolling can pause its video —
-   * and re-measures the engine's surface, because the pager's height is set inline
-   * and a layout that does not go through `onScroll` would otherwise leave the
-   * picture at its previous rectangle (KNOT-051, KNOT-048-fix2).
+   * Remembers where the carousel ends, so vertical scrolling can pause its video.
    */
   const handleCarouselLayout = (event: LayoutChangeEvent): void => {
     carouselBottom.current = event.nativeEvent.layout.y + event.nativeEvent.layout.height;
-    player.measureHost();
   };
 
   /** Settles the counter on the page a paging swipe landed on. */
   const handleCarouselEnd = (event: NativeSyntheticEvent<NativeScrollEvent>): void => {
     setActiveIndex(carouselIndex(event.nativeEvent.contentOffset.x, pageWidth, media.length));
-    // The page has moved, so the surface has moved with it (KNOT-051).
-    player.measureHost();
   };
 
   /** Pauses the main carousel's video when the reader scrolls past it. */
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>): void => {
     const visible = event.nativeEvent.contentOffset.y < carouselBottom.current;
     setCarouselVisible((previous) => (previous === visible ? previous : visible));
-    // The carousel rides the page, so the player follows the scroll (KNOT-051).
-    player.measureHost();
   };
 
   const toggleMute = useCallback((): void => {

@@ -831,7 +831,7 @@ export function ViewerStage({
               separate window on both platforms, so the app's host cannot paint
               over it; the engine's position is what carries the clip across, and
               the viewer opens at the second the feed had reached (KNOT-051). */}
-          <MediaHost placement="viewer" />
+          <MediaHost />
 
           <FlatList
             ref={listRef}

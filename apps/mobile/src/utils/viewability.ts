@@ -20,6 +20,25 @@
 export const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 60 };
 
 /**
+ * The rule a list that plays a clip **inside its own rows** uses (KNOT-050).
+ *
+ * It is measured as a share of the VIEWPORT (`viewAreaCoveragePercentThreshold`)
+ * rather than as a share of the item, because a feed card is about as tall as the
+ * viewport and often taller: "90% of the card is visible" is unreachable for any
+ * card above about 1.11× the viewport, so that card's video would never play.
+ *
+ * The number is a **majority**, not "almost all". Two cards share a feed screen
+ * nearly all the time — a card is taller than the viewport, so the next one is
+ * always partly on screen — and a strict 90% would mean no card ever qualifies and
+ * no video ever plays. At 50 the card that owns most of the screen is the one that
+ * plays, the player switches exactly at the halfway point, and two cards can only
+ * both qualify on an exact split (where the first, upper card wins). Everything
+ * below the threshold is a still, which is the memory bound the inline placement
+ * rests on.
+ */
+export const INLINE_VIEWABILITY_CONFIG = { viewAreaCoveragePercentThreshold: 50 };
+
+/**
  * The slice of a viewability callback's payload a screen reads.
  *
  * It is structural on purpose: the callback receives React Native's `ViewToken`
@@ -28,7 +47,11 @@ export const VIEWABILITY_CONFIG = { itemVisiblePercentThreshold: 60 };
  * payload from a plain object (the `useRef`-held callback must be typed).
  */
 export type ViewableItemsInfo = {
-  readonly viewableItems: ReadonlyArray<{ readonly key: string | number }>;
+  readonly viewableItems: ReadonlyArray<{
+    readonly key: string | number;
+    /** The item's position in the list, which the Feed tracks (KNOT-049). */
+    readonly index?: number | null;
+  }>;
 };
 
 /**
@@ -42,6 +65,34 @@ export type ViewableItemsInfo = {
 export function activeViewableKey(info: ViewableItemsInfo): string | undefined {
   const first = info.viewableItems[0];
   return first === undefined ? undefined : String(first.key);
+}
+
+/**
+ * The INDEX of the item a list should treat as active, or `undefined` when none
+ * is sufficiently visible.
+ *
+ * The Feed tracks a position rather than a key, because the position is what it
+ * compares against each row as the list builds it — one number instead of a
+ * lookup per card, and nothing to go stale when an entry is hidden (KNOT-049).
+ * An item reported without a usable index answers `undefined`, which reads as
+ * "no card is settled", never as "card zero" — a wrong zero would mount a player
+ * on the first row.
+ */
+export function activeViewableIndex(info: ViewableItemsInfo): number | undefined {
+  const index = info.viewableItems[0]?.index;
+  return typeof index === 'number' && Number.isInteger(index) && index >= 0 ? index : undefined;
+}
+
+/**
+ * Whether one row may hold a video player right now.
+ *
+ * The row must be the active one, and a row that is not active must never be
+ * treated as active because the index is also missing (`undefined === undefined` is
+ * true, which would mount a player on every row). The list's own scrolling no
+ * longer matters: the player is part of the card, so it scrolls with it (KNOT-050).
+ */
+export function isActiveEntry(activeIndex: number | undefined, index: number): boolean {
+  return activeIndex !== undefined && index === activeIndex;
 }
 
 /**

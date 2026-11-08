@@ -1,5 +1,5 @@
 import React from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { ArrowsClockwise, DotsThree, Images, X } from 'phosphor-react-native';
 
 import type { MediaStatus, RecentInteraction } from '../api/stories';
@@ -650,16 +650,38 @@ export function FeedEntry({
             }
           >
             {isVideo ? (
-              <FeedVideo
-                uri={mediaUrl}
-                mediaId={firstMediaPath}
-                posterUri={posterUrl}
-                durationMs={story.duration_ms}
-                isVisible={isVisible}
-                isMuted={isMuted}
-                onToggleMute={onToggleMute}
-                isNextInLine={isNextInLine}
-              />
+              <>
+                {/* The stable base layer (KNOT-049). The extracted poster is drawn
+                    in the card's OWN tree, so it is part of the card the platform
+                    scrolls: it moves with the card at the frame rate of the list,
+                    and the native video surface never has to. The player is only
+                    attached while this card is the one the list settled on; at
+                    every other moment the still IS the media. A clip the worker
+                    could not poster keeps the frame's sunken fill, which is what
+                    a not-yet-playing video looked like before. */}
+                {posterUrl === undefined ? (
+                  <View style={styles.videoPosterFallback} testID="feed-video-poster-fallback" />
+                ) : (
+                  <Image
+                    source={{ uri: posterUrl }}
+                    style={styles.media}
+                    resizeMode="cover"
+                    accessibilityIgnoresInvertColors
+                    testID="feed-video-poster-base"
+                  />
+                )}
+
+                <FeedVideo
+                  uri={mediaUrl}
+                  mediaId={firstMediaPath}
+                  posterUri={posterUrl}
+                  durationMs={story.duration_ms}
+                  isVisible={isVisible}
+                  isMuted={isMuted}
+                  onToggleMute={onToggleMute}
+                  isNextInLine={isNextInLine}
+                />
+              </>
             ) : (
               <MediaImage
                 uri={mediaUrl}
@@ -934,5 +956,18 @@ const createStyles = (colors: ThemeColors) =>
     title: {
       color: colors.text.primary,
       marginTop: spacing.sm,
+    },
+    // The frame's own fill for a video the worker could not poster. It sits under
+    // the player, exactly where the picture will be drawn, so the swap from still
+    // to video changes nothing about the frame's colour (KNOT-049). It is spelled
+    // out rather than spreading `StyleSheet.absoluteFillObject`, because the
+    // component tests stub `StyleSheet` with `create` only (KNOT-020g-fix7).
+    videoPosterFallback: {
+      backgroundColor: colors.bg.sunken,
+      bottom: 0,
+      left: 0,
+      position: 'absolute',
+      right: 0,
+      top: 0,
     },
   });
