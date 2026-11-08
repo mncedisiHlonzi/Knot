@@ -1,5 +1,6 @@
 import MediaGalleryModal, { ViewerStage } from '../MediaGalleryModal';
 import type { ViewerMedia, ViewerStory } from '../MediaGalleryModal';
+import MediaImage from '../MediaImage';
 import { spacing } from '../../theme';
 import { lightTheme } from '../../theme/ThemeContext';
 import { setNavigationBarColor, setStatusBarIcons } from '../../native/systemBars';
@@ -75,6 +76,31 @@ jest.mock('phosphor-react-native', () => ({
 }));
 
 jest.mock('../Avatar', () => ({ __esModule: true, default: 'Avatar' }));
+
+// The one player is the engine's: the viewer re-seats it inside its modal window,
+// and the host is stubbed so this suite only tests the viewer's own chrome.
+jest.mock('../MediaHost', () => ({ __esModule: true, default: 'MediaHost' }));
+jest.mock('react-native-video', () => ({ __esModule: true, default: 'Video' }));
+
+const mockActions = {
+  playMedia: jest.fn(),
+  pauseMedia: jest.fn(),
+  resumeMedia: jest.fn(),
+  togglePlayback: jest.fn(),
+  seekTo: jest.fn(),
+  setMuted: jest.fn(),
+  clearSurface: jest.fn(),
+  releaseMedia: jest.fn(),
+  getCurrentTime: jest.fn(() => 0),
+  getActiveMediaId: jest.fn(() => null),
+  registerHost: jest.fn(),
+  releaseHost: jest.fn(),
+  measureHost: jest.fn(),
+};
+
+jest.mock('../../context/MediaPlayerContext', () => ({
+  useMediaPlayerActions: () => mockActions,
+}));
 
 jest.mock('../VideoPlayer', () => ({
   __esModule: true,
@@ -237,6 +263,31 @@ describe('MediaGalleryModal system chrome', () => {
 });
 
 describe('MediaGalleryModal header navigation', () => {
+  /**
+   * The engine's half of closing the theatre: the one player is released so the
+   * feed can reclaim its surface and resume at the position the viewer reached
+   * (KNOT-051).
+   */
+  it('releases the one player when the viewer closes', () => {
+    const onClose = jest.fn();
+    const tree = MediaGalleryModal({
+      visible: true,
+      media: MEDIA,
+      initialIndex: 0,
+      story: STORY,
+      onClose,
+    });
+    const stage = elements(tree).find(
+      (element) => element.props?.media === MEDIA && typeof element.props?.onClose === 'function',
+    );
+
+    expect(stage).toBeDefined();
+    (stage?.props?.onClose as () => void)();
+
+    expect(mockActions.releaseMedia).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('draws the close control on the left with a back arrow', () => {
     const { tree } = renderStage();
 
@@ -381,25 +432,23 @@ describe('MediaGalleryModal progressive loading', () => {
     ).toBeNull();
   });
 
-  it('stacks both layers in one transformed box so a pinch cannot split them', () => {
+  it('hands both layers to the one renderer, inside the transformed box', () => {
     const page = imagePage([{ ...MEDIA[0], thumbnail_url: thumb, display_webp_url: display }]);
     if (page === undefined) {
       throw new Error('the stage drew no image page');
     }
 
-    // The page is a file-local component, so it is expanded by calling it: the
-    // two image layers only exist once it has rendered.
+    // The page is a file-local component, so it is expanded by calling it. Every
+    // surface now uses `MediaImage`, which draws the still first and fades the
+    // full rendition in over it (KNOT-042, KNOT-051).
     const render = page.type as (props: unknown) => unknown;
-    const images = elements(render(page.props)).filter(
-      (element) => element.props?.testID !== undefined,
-    );
+    const image = elements(render(page.props)).find((element) => element.type === MediaImage);
 
-    // The still is drawn first, then the full rendition over it: the fade only
-    // ever happens upwards (KNOT-042).
-    expect(images.map((element) => element.props?.testID)).toEqual([
-      'viewer-still',
-      'viewer-full-rendition',
-    ]);
+    expect(image).toBeDefined();
+    expect(image?.props?.stillUri).toBe('http://localhost:8080' + thumb);
+    expect(image?.props?.uri).toBe('http://localhost:8080' + display);
+    expect(image?.props?.stillTestID).toBe('viewer-still');
+    expect(image?.props?.fullTestID).toBe('viewer-full-rendition');
   });
 });
 
@@ -412,22 +461,17 @@ describe('MediaGalleryModal layers', () => {
   const thumb = '/stories/story-1/media/media-1/content?variant=thumb';
   const display = '/stories/story-1/media/media-1/content?variant=display&format=webp';
 
-  it('stacks every layer smallest first', () => {
+  it('hands the renderer both layers, smallest first', () => {
     const page = imagePage([{ ...MEDIA[0], thumbnail_url: thumb, display_webp_url: display }]);
     if (page === undefined) {
       throw new Error('the stage drew no image page');
     }
 
     const render = page.type as (props: unknown) => unknown;
-    const layers = elements(render(page.props)).filter((element) => {
-      const testID = element.props?.testID;
-      return typeof testID === 'string' && testID.startsWith('viewer-');
-    });
+    const image = elements(render(page.props)).find((element) => element.type === MediaImage);
 
-    expect(layers.map((element) => element.props?.testID)).toEqual([
-      'viewer-still',
-      'viewer-full-rendition',
-    ]);
+    expect(image?.props?.stillUri).toBe('http://localhost:8080' + thumb);
+    expect(image?.props?.uri).toBe('http://localhost:8080' + display);
   });
 
   it('draws no placeholder layer at all', () => {

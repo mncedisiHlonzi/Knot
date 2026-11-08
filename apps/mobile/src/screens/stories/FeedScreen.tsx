@@ -62,6 +62,7 @@ import { useStoryPolling } from '../../hooks/useStoryPolling';
 import { hasProcessingMedia, itemsWithStory, mediaStatusOf } from './storyPolling';
 import { mediaUploadLabel } from './mediaUpload';
 import { entryStoryMap, feedEntryStory } from './feedEntryProps';
+import { useMediaPlayerActions } from '../../context/MediaPlayerContext';
 import type { MediaUploadProgress } from './mediaUpload';
 import {
   PROMPT_PILLARS,
@@ -254,6 +255,15 @@ export default function FeedScreen({
   const [promptIndex, setPromptIndex] = useState(0);
   // The Thread spans the list while a pull-to-refresh is in flight (KNOT-020h).
   const { width: pageWidth } = useWindowDimensions();
+
+  // The unified media engine (KNOT-051). The list re-measures the visible video's
+  // surface on every scroll tick so the one player stays glued to its card. The
+  // callback is stable and writes to the engine, not to this screen, so scrolling
+  // still re-renders no row (KNOT-049).
+  const player = useMediaPlayerActions();
+  const syncSurface = useCallback((): void => {
+    player.measureHost();
+  }, [player]);
 
   // The viewability config and the callback must keep their identity for the life
   // of the list — FlatList misbehaves if either is re-created — so they are held in
@@ -599,6 +609,11 @@ export default function FeedScreen({
         contentContainerStyle={styles.listContent}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
+        // The video surface is a hole the engine's one player draws into, so the
+        // list must tell the engine where that hole is as it scrolls. This writes
+        // to the engine, never to this screen, so no row re-renders (KNOT-051).
+        onScroll={syncSurface}
+        scrollEventThrottle={16}
         // The Thread is the feed's refresh indicator. It is drawn at the top of
         // the list content rather than inside the RefreshControl, because the
         // platform control owns the pull gesture and cannot host a custom

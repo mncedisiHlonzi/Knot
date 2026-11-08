@@ -3,7 +3,6 @@ import {
   Animated,
   Easing,
   FlatList,
-  Image,
   Modal,
   PanResponder,
   Platform,
@@ -20,6 +19,7 @@ import {
 import { ArrowLeft } from 'phosphor-react-native';
 
 import { API_BASE_URL } from '../config/api';
+import { useMediaPlayerActions } from '../context/MediaPlayerContext';
 import {
   clearStatusBarIcons,
   setNavigationBarColor,
@@ -44,6 +44,8 @@ import {
   type ViewableItemsInfo,
 } from '../utils/viewability';
 import Avatar from './Avatar';
+import MediaHost from './MediaHost';
+import MediaImage from './MediaImage';
 import {
   clampViewerIndex,
   viewerImageLayers,
@@ -220,7 +222,6 @@ function ZoomableImage({
   const scale = useRef(new Animated.Value(1)).current;
   const translateX = useRef(new Animated.Value(0)).current;
   const translateY = useRef(new Animated.Value(0)).current;
-  const opacity = useRef(new Animated.Value(0)).current;
 
   // The responders read refs, never the render's values.
   const scaleValue = useRef(1);
@@ -370,30 +371,18 @@ function ZoomableImage({
         <Animated.View
           style={[styles.pageLayer, { transform: [{ scale }, { translateX }, { translateY }] }]}
         >
-          {stillUri === null ? null : (
-            <Image
-              source={{ uri: stillUri }}
-              style={styles.pageLayer}
-              resizeMode="contain"
-              accessibilityIgnoresInvertColors
-              testID="viewer-still"
-            />
-          )}
-          <Animated.Image
-            source={{ uri }}
-            style={[styles.pageLayer, { opacity }]}
+          {/* The same two layers every other surface draws, in the one transformed
+              box a pinch moves: the still first, the full rendition fading in over
+              it (KNOT-042, KNOT-051). */}
+          <MediaImage
+            uri={uri}
+            stillUri={stillUri}
+            style={styles.pageLayer}
             resizeMode="contain"
-            accessibilityIgnoresInvertColors
-            testID="viewer-full-rendition"
-            onLoadEnd={() => {
-              setLoading(false);
-              Animated.timing(opacity, {
-                toValue: 1,
-                duration: motion.durations.medium,
-                easing: Easing.bezier(...motion.easing.standard),
-                useNativeDriver: true,
-              }).start();
-            }}
+            onFullLoadEnd={() => setLoading(false)}
+            testID="viewer-image"
+            stillTestID="viewer-still"
+            fullTestID="viewer-full-rendition"
           />
         </Animated.View>
       </Pressable>
@@ -487,6 +476,26 @@ export default function MediaGalleryModal({
   onOpenStory,
 }: MediaGalleryModalProps): React.ReactElement {
   const { colors, theme } = useTheme();
+  const player = useMediaPlayerActions();
+
+  /**
+   * Leaves the theatre: the one player is stopped and handed back to the screens,
+   * so the feed re-attaches its own surface and resumes at the position the viewer
+   * reached (KNOT-051).
+   */
+  const handleClose = useCallback((): void => {
+    player.releaseMedia();
+    onClose();
+  }, [onClose, player]);
+
+  // A close that came from the parent (a navigation, not the viewer's own chrome)
+  // must release the surface too, or the engine would keep presenting full screen
+  // after the modal is gone.
+  useEffect(() => {
+    if (!visible) {
+      player.releaseMedia();
+    }
+  }, [player, visible]);
 
   // A theatre's system chrome is dark: the **system** navigation bar goes black
   // while the viewer is open and returns to the theme's canvas when it closes, and
@@ -554,7 +563,7 @@ export default function MediaGalleryModal({
           media={media}
           initialIndex={initialIndex}
           story={story}
-          onClose={onClose}
+          onClose={handleClose}
           onOpenStory={onOpenStory}
         />
       ) : null}
@@ -818,6 +827,12 @@ export function ViewerStage({
         {/* Only the media owns the dismiss gesture: a downward drag here leaves
             the theatre. */}
         <View style={styles.media} {...dismissResponder.panHandlers}>
+          {/* The one player, re-seated inside this modal window. A modal is a
+              separate window on both platforms, so the app's host cannot paint
+              over it; the engine's position is what carries the clip across, and
+              the viewer opens at the second the feed had reached (KNOT-051). */}
+          <MediaHost placement="viewer" />
+
           <FlatList
             ref={listRef}
             data={media}
@@ -843,6 +858,7 @@ export function ViewerStage({
                 return (
                   <VideoPlayer
                     uri={resolveUri(item.url)}
+                    mediaId={item.url}
                     width={width}
                     height={height}
                     isActive={pageIndex === safeIndex}

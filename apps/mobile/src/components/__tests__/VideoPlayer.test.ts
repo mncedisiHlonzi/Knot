@@ -1,25 +1,54 @@
 import VideoPlayer from '../VideoPlayer';
 
 /**
- * `VideoPlayer` holds playback state and a ref to the native player, so it needs
- * the hook primitives stubbed before it can be CALLED directly — this project has
- * no renderer and must not add one.
- *
- * The stubs are slot-based rather than throwaway: a ref keeps the same object
- * between renders (so a test can attach a fake native player to the `<Video>`'s
- * `ref` and still find it from the next render), and effects are captured instead
- * of run, so a test can drive the release that happens "when `isActive` becomes
- * false" without a commit. Every binding is a module-scope `mock*` name because
- * babel-jest refuses any other out-of-scope reference, and each is read lazily
- * inside the hook so there is no TDZ hazard.
+ * `VideoPlayer` is now chrome over the app's one media engine: it draws the
+ * transport and tells the engine to present its clip full-screen. It therefore
+ * needs two stubs — the React primitives (this project has no renderer) and the
+ * engine itself, so the calls it makes are observable (KNOT-051).
  */
 const URI = 'http://localhost:8080/stories/1/media/2/content';
+
+const mockActions = {
+  playMedia: jest.fn(),
+  pauseMedia: jest.fn(),
+  resumeMedia: jest.fn(),
+  togglePlayback: jest.fn(),
+  seekTo: jest.fn(),
+  setMuted: jest.fn(),
+  clearSurface: jest.fn(),
+  releaseMedia: jest.fn(),
+  getCurrentTime: jest.fn(() => 0),
+  getActiveMediaId: jest.fn(() => null),
+  registerHost: jest.fn(),
+  releaseHost: jest.fn(),
+  measureHost: jest.fn(),
+};
+
+let mockPlayback = {
+  activeMediaId: URI as string | null,
+  playing: true,
+  currentTime: 0,
+  duration: 0,
+  ready: true,
+  muted: false,
+};
+
+jest.mock('../../context/MediaPlayerContext', () => ({
+  useMediaPlayerActions: () => mockActions,
+  useMediaPlayback: () => mockPlayback,
+}));
 
 let mockRefSlots: { current: unknown }[] = [];
 let mockRefCursor = 0;
 let mockStateSlots: unknown[] = [];
 let mockStateCursor = 0;
 let mockEffects: { run: () => void; deps?: unknown[] }[] = [];
+
+/** Applies a functional state update, as React would. */
+function mockResolveState(current: unknown, next: unknown): unknown {
+  const update = next as (value: unknown) => unknown;
+  return typeof next === 'function' ? update(current) : next;
+}
 
 jest.mock('react', () => ({
   ...jest.requireActual('react'),
@@ -42,7 +71,7 @@ jest.mock('react', () => ({
         typeof initial === 'function' ? (initial as () => unknown)() : initial;
     }
     const setValue = (next: unknown): void => {
-      mockStateSlots[index] = next;
+      mockStateSlots[index] = mockResolveState(mockStateSlots[index], next);
     };
     return [mockStateSlots[index], setValue];
   },
@@ -131,29 +160,31 @@ function render(overrides: Partial<Parameters<typeof VideoPlayer>[0]> = {}): Ele
   }) as Element;
 }
 
-/** The effect that owns the native release: its dependencies are `[isActive, uri]`. */
-function releaseEffect(): (() => void) | undefined {
-  return mockEffects.find((candidate) => candidate.deps?.[1] === URI)?.run;
-}
-
-/** A stand-in for the native player the `<Video>` ref would hold. */
-function fakePlayer(): { pause: jest.Mock; setSource: jest.Mock } {
-  return { pause: jest.fn(), setSource: jest.fn() };
-}
-
-/** Attaches `player` to the ref the component gives its `<Video>`. */
-function attachPlayer(tree: Element, player: { pause: jest.Mock; setSource: jest.Mock }): void {
-  // React lifts `ref` off the props onto the element itself, so it is read there.
-  const video = elements(tree).find((element) => element.type === 'Video');
-  const ref = video?.ref as { current: unknown } | undefined;
-
-  expect(ref).toBeDefined();
-  if (ref !== undefined) {
-    ref.current = player;
+/** Runs the effects the last render captured, in order. */
+function runEffects(): void {
+  for (const effect of mockEffects) {
+    effect.run();
   }
 }
 
+/** The visible text nodes, for the transport's time label. */
+function texts(tree: unknown): string[] {
+  return elements(tree)
+    .filter((element) => element.type === 'Text')
+    .map((element) => element.props?.children)
+    .filter((child): child is string => typeof child === 'string');
+}
+
 beforeEach(() => {
+  jest.clearAllMocks();
+  mockPlayback = {
+    activeMediaId: URI,
+    playing: true,
+    currentTime: 0,
+    duration: 0,
+    ready: true,
+    muted: false,
+  };
   mockRefSlots = [];
   mockRefCursor = 0;
   mockStateSlots = [];
@@ -161,54 +192,89 @@ beforeEach(() => {
   mockEffects = [];
 });
 
-describe('VideoPlayer release', () => {
+describe('VideoPlayer engine handshake', () => {
+  it('presents its clip full-screen through the one engine', () => {
+    render({ isActive: true });
+    runEffects();
+
+    expect(mockActions.playMedia).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: URI,
+        uri: URI,
+        mode: 'fullscreen',
+        frame: { x: 0, y: 0, width: 390, height: 844 },
+      }),
+    );
+  });
+
   /**
-   * The crash this guards (KNOT-020k-fix17): a gallery keeps its neighbouring
-   * pages mounted, so every visited clip held a live native player — surface,
-   * decoders and buffers — until the whole viewer closed, and a long session ran
-   * the process out of memory. `react-native-video` has no `release()`; clearing
-   * the source reaches the native `clearSrc()`, which stops the player and drops
-   * its media items.
+   * The point of the engine: a page no longer owns a player, so the viewer and the
+   * feed cannot hold two decoders for the same clip (KNOT-051).
    */
-  it('drops the native source when the page stops being active', () => {
-    const first = render({ isActive: true });
-    const player = fakePlayer();
-    attachPlayer(first, player);
+  it('draws no player of its own', () => {
+    const tree = render({ isActive: true });
 
-    render({ isActive: false });
-    const release = releaseEffect();
-
-    expect(typeof release).toBe('function');
-    release?.();
-
-    expect(player.pause).toHaveBeenCalledTimes(1);
-    // No argument is the point: an empty source is what frees the native player.
-    expect(player.setSource).toHaveBeenCalledWith();
+    expect(elements(tree).some((element) => element.type === 'Video')).toBe(false);
   });
 
-  it('leaves an active player playing', () => {
-    const first = render({ isActive: true });
-    const player = fakePlayer();
-    attachPlayer(first, player);
+  it('hides the surface and pauses the clip when the page stops being active', () => {
+    render({ isActive: false });
+    runEffects();
 
-    render({ isActive: true });
-    releaseEffect()?.();
-
-    expect(player.pause).not.toHaveBeenCalled();
-    expect(player.setSource).not.toHaveBeenCalled();
+    expect(mockActions.clearSurface).toHaveBeenCalledTimes(1);
+    expect(mockActions.pauseMedia).toHaveBeenCalledWith(URI);
   });
 
-  it('loads the clip again when the reader swipes back to the page', () => {
-    const first = render({ isActive: true });
-    const player = fakePlayer();
-    attachPlayer(first, player);
-
-    render({ isActive: false });
-    releaseEffect()?.();
-
+  it('publishes the viewer mute choice to the one player', () => {
     render({ isActive: true });
-    releaseEffect()?.();
+    runEffects();
 
-    expect(player.setSource).toHaveBeenLastCalledWith({ uri: URI });
+    // The viewer opens with sound (KNOT-020k-fix4).
+    expect(mockActions.setMuted).toHaveBeenCalledWith(false);
+  });
+});
+
+describe('VideoPlayer transport', () => {
+  it('reads the playhead and the duration from the engine', () => {
+    mockPlayback = { ...mockPlayback, currentTime: 12, duration: 45 };
+    const tree = render({ isActive: true });
+
+    expect(texts(tree)).toContain('0:12 / 0:45');
+  });
+
+  it('falls back to the payload duration before the clip has loaded', () => {
+    mockPlayback = { ...mockPlayback, duration: 0, ready: false };
+    const tree = render({ isActive: true, durationMs: 76_000 });
+
+    expect(texts(tree)).toContain('0:00 / 1:16');
+  });
+
+  it('toggles playback through the engine when the picture is tapped', () => {
+    const tree = render({ isActive: true });
+    const picture = elements(tree).find(
+      (element) => element.props?.accessibilityLabel === 'Hide video controls',
+    );
+    const onPress = picture?.props?.onPress as (() => void) | undefined;
+
+    expect(typeof onPress).toBe('function');
+    onPress?.();
+
+    expect(mockActions.togglePlayback).toHaveBeenCalledWith(URI);
+  });
+
+  it('publishes a mute toggle to the engine', () => {
+    const first = render({ isActive: true });
+    const mute = elements(first).find(
+      (element) => element.props?.accessibilityLabel === 'Mute video',
+    );
+    const onPress = mute?.props?.onPress as (() => void) | undefined;
+    onPress?.();
+
+    // The state the tap wrote survives into the next render (the state slots are
+    // kept), and that render's effect publishes it.
+    render({ isActive: true });
+    runEffects();
+
+    expect(mockActions.setMuted).toHaveBeenLastCalledWith(true);
   });
 });

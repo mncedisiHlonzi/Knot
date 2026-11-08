@@ -10,8 +10,8 @@ import {
   View,
 } from 'react-native';
 import { SpeakerHigh, SpeakerSlash } from 'phosphor-react-native';
-import Video, { type OnLoadData } from 'react-native-video';
 
+import { useMediaPlayback, useMediaPlayerActions } from '../context/MediaPlayerContext';
 import {
   motion,
   radius,
@@ -67,6 +67,12 @@ export const VIDEO_CONTROLS_HEIGHT =
 type VideoPlayerProps = {
   /** The resolved, absolute URL of the video. */
   readonly uri: string;
+  /**
+   * The media's identity for the engine. Defaults to the URL, which is the identity
+   * the feed card and the viewer share — that is what makes opening the viewer
+   * continue the clip instead of restarting it (KNOT-051).
+   */
+  readonly mediaId?: string;
   /**
    * The page's width, in points.
    *
@@ -136,6 +142,7 @@ type VideoPlayerProps = {
  */
 export default function VideoPlayer({
   uri,
+  mediaId,
   width,
   height,
   isActive,
@@ -145,17 +152,24 @@ export default function VideoPlayer({
 }: VideoPlayerProps): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
-  const videoRef = useRef<React.ComponentRef<typeof Video>>(null);
+  const player = useMediaPlayerActions();
+  const playback = useMediaPlayback();
 
-  const [userPaused, setUserPaused] = useState(false);
+  const id = typeof mediaId === 'string' && mediaId.trim() !== '' ? mediaId.trim() : uri;
+  const active = playback.activeMediaId === id;
+
   const [muted, setMuted] = useState(START_MUTED);
-  const [loaded, setLoaded] = useState(false);
-  const [duration, setDuration] = useState(() =>
+
+  // The transport reads the one engine rather than a player of its own: the
+  // duration and the playhead belong to the shared player, so the numbers here
+  // are the same numbers the feed card was showing a moment ago (KNOT-051).
+  const seedDuration =
     typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs > 0
       ? durationMs / 1000
-      : 0,
-  );
-  const [current, setCurrent] = useState(0);
+      : 0;
+  const duration = active && playback.duration > 0 ? playback.duration : seedDuration;
+  const current = active ? playback.currentTime : 0;
+  const loaded = active && playback.ready;
 
   // Whether a finger is on the scrub band: the line thickens and grows a handle
   // while it is, so the bar answers the touch before the seek lands
@@ -173,10 +187,6 @@ export default function VideoPlayer({
   const seeking = useRef(false);
   const previewRef = useRef<number | null>(null);
   const [preview, setPreview] = useState<number | null>(null);
-  // True once this page's source has been dropped because the reader left it, so
-  // the effect below only re-seats a source it actually released
-  // (KNOT-020k-fix17).
-  const released = useRef(false);
 
   useEffect(() => {
     durationRef.current = duration;
@@ -192,61 +202,56 @@ export default function VideoPlayer({
   }, [chromeOpacity, chromeVisible]);
 
   /**
-   * Releases the native player when this page stops being the one on screen, and
-   * loads it again when the reader comes back.
+   * Claims the one player for this page, and gives it back when the reader swipes
+   * away.
    *
-   * `react-native-video` has no `release()`; what it does have is
-   * `setSource(source?)`. With no argument that reaches the native side as an
-   * empty source, and `ReactExoplayerView.setSrc` answers an empty source with
-   * `clearSrc()` — it stops the player and drops its media items, which is what
-   * frees the decoders, buffers and audio track a playing clip holds. The view
-   * itself is released when the page unmounts (the viewer's stage is mounted per
-   * open), so this covers the case that survives: a pager keeps its neighbouring
-   * pages mounted, and without this every one of them held a live player. A long
-   * session of opening, swiping and closing clips is what produced the
-   * `OutOfMemoryError` in `ExoPlayer:Playback` (KNOT-020k-fix17).
+   * The page draws no player of its own: it tells the engine to present this clip
+   * full-screen, and the engine's `MediaHost` — mounted once inside the viewer's
+   * modal — draws it. Claiming a clip the engine is already playing changes only
+   * the presentation, so opening the viewer on the feed's playing video continues
+   * it at the same second instead of restarting it (KNOT-051).
    *
-   * The reader's own pause is deliberately not reset here: a page they paused
-   * comes back paused, and only the position restarts, because the media is gone.
+   * Swiping away hides the surface but leaves the engine's position intact, so
+   * coming back resumes rather than restarting — the old implementation dropped
+   * the native source here and lost the playhead entirely.
    */
   useEffect(() => {
-    const player = videoRef.current;
-    if (player === null) {
-      return;
-    }
-
     if (!isActive) {
-      player.pause();
-      player.setSource();
-      released.current = true;
-      // The clip has to load again on the next visit, so the transport must not
-      // claim the old position or pretend it is loaded.
-      setCurrent(0);
-      setLoaded(false);
+      // Both calls name this page's media: a page that was left while a
+      // neighbouring one took the player must not hide or pause the new clip.
+      player.clearSurface(id);
+      player.pauseMedia(id);
       return;
     }
 
-    if (released.current) {
-      released.current = false;
-      player.setSource({ uri });
-    }
-  }, [isActive, uri]);
+    player.playMedia({
+      id,
+      uri,
+      mode: 'fullscreen',
+      // The theatre's picture is the whole window; the host is inside the modal,
+      // so this rectangle is relative to it.
+      frame: { x: 0, y: 0, width, height },
+    });
+  }, [height, id, isActive, player, uri, width]);
 
-  const seek = useCallback((seconds: number): void => {
-    videoRef.current?.seek(seconds);
-    setCurrent(seconds);
-  }, []);
+  // The viewer has its own mute control, so it publishes its choice to the one
+  // player whenever this page is the one holding it.
+  useEffect(() => {
+    if (isActive) {
+      player.setMuted(muted);
+    }
+  }, [isActive, muted, player]);
+
+  const seek = useCallback(
+    (seconds: number): void => {
+      player.seekTo(seconds);
+    },
+    [player],
+  );
 
   const togglePlayback = useCallback((): void => {
-    setUserPaused((paused) => !paused);
-  }, []);
-
-  const handleLoad = useCallback((data: OnLoadData): void => {
-    setLoaded(true);
-    if (typeof data.duration === 'number' && Number.isFinite(data.duration) && data.duration > 0) {
-      setDuration(data.duration);
-    }
-  }, []);
+    player.togglePlayback(id);
+  }, [id, player]);
 
   /** Previews the time under a touch on the scrub band, without seeking yet. */
   const previewAt = useCallback((x: number): void => {
@@ -297,29 +302,13 @@ export default function VideoPlayer({
 
   const shownTime = preview ?? current;
   const progress = viewerProgress(shownTime, duration);
-  // A gallery video loops on its own, so there is no ended state to recover from:
-  // the only things that stop it are leaving the page or the person pausing it
-  // (KNOT-020k-fix5).
-  const playing = isActive && !userPaused;
 
   return (
     <View style={[styles.container, { height, width }]}>
-      <Video
-        ref={videoRef}
-        source={{ uri }}
-        style={styles.video}
-        paused={!playing}
-        muted={muted}
-        repeat={true}
-        resizeMode="contain"
-        progressUpdateInterval={250}
-        onLoad={handleLoad}
-        onProgress={(data) => {
-          if (!seeking.current) {
-            setCurrent(data.currentTime);
-          }
-        }}
-      />
+      {/* No player here: the engine's single `<Video>` is drawn by the viewer's
+          `MediaHost`, which sits behind this page. The page is deliberately
+          transparent so the picture shows through, and it keeps the width and
+          height the pager needs to page a video (KNOT-051). */}
 
       {loaded ? null : <ActivityIndicator style={styles.loader} color={colors.text.onMedia} />}
 
@@ -397,7 +386,9 @@ const createStyles = (colors: ThemeColors) =>
       marginTop: CONTROLS_GAP,
     },
     container: {
-      backgroundColor: colors.bg.theater,
+      // The picture is drawn by the engine's host behind this page, so the page
+      // itself paints nothing: the theatre's black comes from the room (KNOT-051).
+      backgroundColor: 'transparent',
     },
     // The transport's content, inset to the story text's column width. It paints
     // nothing itself: the frame (and the room's black where the video letterboxes)

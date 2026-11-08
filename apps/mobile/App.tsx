@@ -33,6 +33,8 @@ import TabBar from './src/components/TabBar';
 import type { TabName } from './src/components/TabBar';
 import MediaGalleryModal from './src/components/MediaGalleryModal';
 import type { ViewerMedia, ViewerStory } from './src/components/MediaGalleryModal';
+import MediaHost from './src/components/MediaHost';
+import { MediaPlayerProvider } from './src/context/MediaPlayerContext';
 import { toViewerMedia } from './src/components/storyGallery';
 import { withHydratedGallery, type ViewerState } from './src/components/mediaViewer';
 import {
@@ -224,14 +226,23 @@ export default function App(): React.ReactElement {
 
   return (
     <ThemeProvider systemTheme={systemTheme}>
-      {/* Every Phosphor glyph under this scope is bold unless it asks for another
-          weight, so the whole app reads with one icon weight (KNOT-020k-fix). */}
-      <IconScope>
-        <ThemedApp />
-        {/* Painted last so it covers every screen, and only while a mode change
-            is settling (KNOT-020k). */}
-        <ThemeCrossfade />
-      </IconScope>
+      {/* The unified media engine: one player, shared by the Feed, the Story Detail
+          carousel and the full-screen viewer (KNOT-051). */}
+      <MediaPlayerProvider>
+        {/* Every Phosphor glyph under this scope is bold unless it asks for another
+            weight, so the whole app reads with one icon weight (KNOT-020k-fix). */}
+        <IconScope>
+          <ThemedApp />
+          {/* The one media player. It draws over the screens at the frame the
+              active surface reported, and never unmounts while a clip plays, so a
+              card, a carousel page and the viewer all share the same position
+              (KNOT-051). */}
+          <MediaHost />
+          {/* Painted last so it covers every screen, and only while a mode change
+              is settling (KNOT-020k). */}
+          <ThemeCrossfade />
+        </IconScope>
+      </MediaPlayerProvider>
     </ThemeProvider>
   );
 }

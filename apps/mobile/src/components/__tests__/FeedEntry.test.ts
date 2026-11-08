@@ -1,5 +1,3 @@
-import type { ImageLoadEventData, NativeSyntheticEvent } from 'react-native';
-
 import { MAX_PORTRAIT_ASPECT_RATIO } from '../../utils/mediaFrame';
 import { colors, fontWeights, spacing, typeScale } from '../../theme';
 import { ArrowsClockwise } from 'phosphor-react-native';
@@ -7,6 +5,7 @@ import { ArrowsClockwise } from 'phosphor-react-native';
 import AuthorLine from '../AuthorLine';
 import FeedEntryDefault, { FeedEntry, feedEntryPropsEqual } from '../FeedEntry';
 import FeedVideo from '../FeedVideo';
+import MediaImage from '../MediaImage';
 import PillarTag from '../PillarTag';
 import SocialProofHeader from '../SocialProofHeader';
 
@@ -247,7 +246,7 @@ describe('FeedEntry', () => {
       },
       onPress: () => undefined,
     });
-    expect(elementTypes(image)).toContain('Image');
+    expect(elementTypes(image)).toContain(MediaImage);
     expect(elementTypes(image)).not.toContain(FeedVideo);
 
     const video = FeedEntry({
@@ -263,7 +262,7 @@ describe('FeedEntry', () => {
       onPress: () => undefined,
     });
     expect(elementTypes(video)).toContain(FeedVideo);
-    expect(elementTypes(video)).not.toContain('Image');
+    expect(elementTypes(video)).not.toContain(MediaImage);
   });
 
   it('renders with no author fields, no media, and every count zero', () => {
@@ -393,15 +392,14 @@ describe('FeedEntry', () => {
 
   it('asks the image for its natural size, so a payload with no dimensions can settle', () => {
     const element = FeedEntry({ story: withMedia, onPress: () => undefined });
-    const image = findElementByType(element, 'Image');
-    const onLoad = image?.props?.onLoad as
-      ((event: NativeSyntheticEvent<ImageLoadEventData>) => void) | undefined;
+    const image = findElementByType(element, MediaImage);
+    const onLoadSize = image?.props?.onLoadSize as
+      ((width: number, height: number) => void) | undefined;
 
-    expect(typeof onLoad).toBe('function');
+    expect(typeof onLoadSize).toBe('function');
 
     // It reads the decoded media's own size, which is what the frame re-shapes to.
-    const event = { nativeEvent: { source: { width: 300, height: 700, uri: 'u' } } };
-    expect(() => onLoad?.(event as NativeSyntheticEvent<ImageLoadEventData>)).not.toThrow();
+    expect(() => onLoadSize?.(300, 700)).not.toThrow();
   });
 
   it('hands the video the same size pass-through as the image', () => {
@@ -466,7 +464,7 @@ describe('FeedEntry', () => {
       onPress: () => undefined,
     });
 
-    expect(elementTypes(element)).toContain('Image');
+    expect(elementTypes(element)).toContain(MediaImage);
     expect(findByTestID(element, 'feed-image-placeholder')).toBeUndefined();
   });
 
@@ -1229,7 +1227,7 @@ describe('the meta row', () => {
       expect(types).toContain('ActivityIndicator');
       // No player and no image: there is nothing to fetch yet.
       expect(types).not.toContain(FeedVideo);
-      expect(types).not.toContain('Image');
+      expect(types).not.toContain(MediaImage);
     });
 
     it('labels the box so the wait is explained, not implied', () => {
@@ -1262,7 +1260,7 @@ describe('the meta row', () => {
       });
 
       expect(findByTestID(element, 'media-processing')).toBeUndefined();
-      expect(elementTypes(element)).toContain('Image');
+      expect(elementTypes(element)).toContain(MediaImage);
     });
   });
 });

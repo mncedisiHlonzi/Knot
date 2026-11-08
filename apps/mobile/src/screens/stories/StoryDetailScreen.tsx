@@ -10,7 +10,6 @@ import {
   Text,
   View,
   useWindowDimensions,
-  type ImageLoadEventData,
   type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -24,6 +23,8 @@ import { versionsApi } from '../../api/versions';
 import AuthorLine from '../../components/AuthorLine';
 import Button from '../../components/Button';
 import FeedVideo from '../../components/FeedVideo';
+import MediaImage from '../../components/MediaImage';
+import { useMediaPlayerActions } from '../../context/MediaPlayerContext';
 import type { ViewerMedia, ViewerStory } from '../../components/MediaGalleryModal';
 import Header from '../../components/Header';
 import PillarTag from '../../components/PillarTag';
@@ -175,11 +176,6 @@ function CarouselPage({
     onAspectRatio(media.id, aspectRatio);
   }, [aspectRatio, media.id, onAspectRatio]);
 
-  const handleImageLoad = (event: NativeSyntheticEvent<ImageLoadEventData>): void => {
-    const { width: loadedWidth, height: loadedHeight } = event.nativeEvent.source;
-    onLoadSize(loadedWidth, loadedHeight);
-  };
-
   return (
     // The page is a tap target for the full-screen viewer (KNOT-020k); the
     // carousel's horizontal swipe still owns every drag.
@@ -192,6 +188,7 @@ function CarouselPage({
       {media.media_type === 'video' ? (
         <FeedVideo
           uri={uri}
+          mediaId={media.url}
           posterUri={posterUri}
           isVisible={isActive}
           isMuted={isMuted}
@@ -202,27 +199,17 @@ function CarouselPage({
           durationPosition="bottom-left"
         />
       ) : (
-        <>
-          {/* The thumbnail is the page's immediate underlay: it is the picture the
-              feed card already had, so a slow network shows the frame instead of
-              the canvas until the display rendition fades in (KNOT-042). */}
-          {thumbnailUri === undefined ? null : (
-            <Image
-              source={{ uri: thumbnailUri }}
-              style={styles.pageMedia}
-              resizeMode="cover"
-              accessibilityIgnoresInvertColors
-              testID="detail-image-still"
-            />
-          )}
-          <Image
-            source={{ uri }}
-            style={styles.pageMedia}
-            resizeMode="cover"
-            onLoad={handleImageLoad}
-            accessibilityIgnoresInvertColors
-          />
-        </>
+        // The same two layers every surface now draws: the 400px still first, the
+        // display rendition fading in over it (KNOT-042, KNOT-051).
+        <MediaImage
+          uri={uri}
+          stillUri={thumbnailUri}
+          style={styles.pageMedia}
+          resizeMode="cover"
+          onLoadSize={onLoadSize}
+          testID="detail-image"
+          stillTestID="detail-image-still"
+        />
       )}
     </Pressable>
   );
@@ -315,6 +302,10 @@ export default function StoryDetailScreen({
   const [carouselVisible, setCarouselVisible] = useState(true);
   const carouselBottom = useRef(0);
   const stripRef = useRef<ScrollView>(null);
+
+  // The unified media engine (KNOT-051): the carousel's video is a hole the one
+  // player draws into, so the pager's geometry is re-measured as the screen moves.
+  const player = useMediaPlayerActions();
 
   const media = story?.media ?? [];
   // The viewer's overlay: this story's own content and author, and the gallery it
@@ -421,12 +412,16 @@ export default function StoryDetailScreen({
   /** Settles the counter on the page a paging swipe landed on. */
   const handleCarouselEnd = (event: NativeSyntheticEvent<NativeScrollEvent>): void => {
     setActiveIndex(carouselIndex(event.nativeEvent.contentOffset.x, pageWidth, media.length));
+    // The page has moved, so the surface has moved with it (KNOT-051).
+    player.measureHost();
   };
 
   /** Pauses the main carousel's video when the reader scrolls past it. */
   const handleScroll = (event: NativeSyntheticEvent<NativeScrollEvent>): void => {
     const visible = event.nativeEvent.contentOffset.y < carouselBottom.current;
     setCarouselVisible((previous) => (previous === visible ? previous : visible));
+    // The carousel rides the page, so the player follows the scroll (KNOT-051).
+    player.measureHost();
   };
 
   const toggleMute = useCallback((): void => {

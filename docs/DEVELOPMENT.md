@@ -3651,3 +3651,58 @@ and "Processing media...", because there is nothing to photograph yet.
 Both cache generations moved to `v4` (`knot:feed:v4:`, `knot:story:v4:`,
 `knot:version:v4:`) so a payload written with the retired fields is never served
 again; live cleanup scripts must use the new prefixes.
+
+## KNOT-051 — the unified media engine
+
+Before this task there were **three** players: one inside `FeedVideo` (the Feed,
+Place Stories, the profile wall and the Story Detail carousel) and a second inside
+`VideoPlayer` for the full-screen viewer. Opening the viewer therefore stopped one
+native player and started another, which restarted the clip at 0:00; the feed also
+kept a paused *second* player for the next entry to preload.
+
+Now there is **one engine**, in `apps/mobile/src/context/`:
+
+| File | Role |
+| --- | --- |
+| `mediaPlayerState.ts` | the pure state machine: one media, one position, one mode |
+| `MediaPlayerContext.tsx` | the provider, the one native ref, and the three contexts |
+| `components/MediaHost.tsx` | the only component that renders a `<Video>` |
+| `components/MediaImage.tsx` | the one progressive image renderer |
+
+**Surfaces are hosts.** `FeedVideo`, the carousel page and the viewer's video page
+call `playMedia({ id, uri, mode, frame })` and hand the engine a `View` to draw
+over. The engine owns the picture, so scrolling a card out of view, opening the
+story, or opening the viewer never builds a second native player.
+
+**Continue Playing** is a rule in the reducer: a `play` for the media that is
+already active keeps `currentTime` and changes only the presentation. That is why
+opening the viewer on a clip playing at 19s shows it at 19s. A `play` for a
+different media resets every fact about the previous one.
+
+**Two host placements, one player.** A React Native `Modal` is its own window (an
+Android `Dialog`, an iOS presented controller), and a view in the app's window can
+never paint over it. So the app's player is re-seated inside the viewer's modal
+while it is open: `MediaHost placement="root"` draws inline, `placement="viewer"`
+draws the theatre, and the engine guarantees only one of them renders a `<Video>`.
+The native player is remounted there, and resumes at the engine's playhead, so the
+reader sees the clip carry on at the same second.
+
+**Scrolling.** The engine's surface is positioned from a rectangle measured with
+`measureLayout` against the provider's container (not `measureInWindow`, which
+would be offset by the Android status bar). The Feed and the Story Detail call
+`measureHost()` on their scroll events; that writes to the engine, never to the
+screen, so no row re-renders (KNOT-049 stays intact).
+
+**Trade-off, disclosed.** The next-entry preload (`isNextInLine`) no longer mounts
+a paused second player — that is exactly the cost this task removes. The prop is
+still accepted so callers do not change; it now has no effect. Only the active
+clip is mounted to the hardware decoder.
+
+**Verification.** The engine's transitions, the host's contract, the context API
+and the image renderer have their own suites
+(`src/context/__tests__/mediaPlayerState.test.ts`,
+`MediaPlayerContext.test.ts`, `components/__tests__/MediaHost.test.ts`,
+`MediaImage.test.ts`), and `FeedVideo`/`VideoPlayer`/`MediaGalleryModal` assert
+that they drive the context rather than a player of their own. The visual result
+must still be checked on a device.
+

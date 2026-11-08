@@ -1,34 +1,71 @@
 import FeedVideo from '../FeedVideo';
 
 /**
- * The light theme's canvas, which is what `useContext` serves this suite (the same
- * stub `jest.setup.js` installs for every other suite).
+ * The video *surface* suite (KNOT-051).
+ *
+ * `FeedVideo` no longer owns a player: it registers a hole with the media engine,
+ * asks the engine to play its media, and draws the card's chrome. So the engine is
+ * stubbed (its calls are the contract under test) and React's primitives are
+ * stubbed too, because this project has no renderer and calls components
+ * directly.
+ *
+ * Effects are captured and run by the harness. State slots are kept between
+ * renders, which is how a test observes what an effect wrote — the same pattern
+ * the previous suite used.
  */
-const CANVAS = jest.requireActual('../../theme/ThemeContext').lightTheme.colors.bg.canvas;
+const URI = 'http://10.0.2.2:8080/stories/1/media/2/content';
 
-/**
- * The state each hook slot holds, in call order, plus the cursor that maps a
- * render onto those slots. They are module-scope `mock*` bindings so the factory
- * below may reference them (babel-jest rejects any other out-of-scope name) and
- * so a test can re-render the component and observe the state a callback wrote —
- * which is how the progress badge is asserted. Everything is read lazily inside
- * the hook, never while the factory runs, so there is no TDZ hazard.
- */
+const mockActions = {
+  playMedia: jest.fn(),
+  pauseMedia: jest.fn(),
+  resumeMedia: jest.fn(),
+  togglePlayback: jest.fn(),
+  seekTo: jest.fn(),
+  setMuted: jest.fn(),
+  clearSurface: jest.fn(),
+  releaseMedia: jest.fn(),
+  getCurrentTime: jest.fn(() => 0),
+  getActiveMediaId: jest.fn(() => null),
+  registerHost: jest.fn(),
+  releaseHost: jest.fn(),
+  measureHost: jest.fn(),
+};
+
+let mockPlayback = {
+  activeMediaId: null as string | null,
+  uri: null as string | null,
+  mode: 'inline' as 'inline' | 'fullscreen',
+  playing: false,
+  muted: true,
+  loop: true,
+  currentTime: 0,
+  duration: 0,
+  frame: null,
+  ready: false,
+  frameVisible: false,
+  naturalSize: null as { readonly width: number; readonly height: number } | null,
+};
+
+jest.mock('../../context/MediaPlayerContext', () => ({
+  useMediaPlayerActions: () => mockActions,
+  useMediaPlayback: () => mockPlayback,
+}));
+
 let mockStateValues: unknown[] = [];
 let mockStateCursor = 0;
+let mockEffects: (() => void)[] = [];
 
-/**
- * `FeedVideo` holds the duration it learns on load and the position its player
- * reports, so it needs the hook primitives stubbed before it can be CALLED
- * directly — this project has no renderer and must not add one. Everything else
- * comes from the real `react`, with `useContext` serving the light theme, exactly
- * as `jest.setup.js` does for every other suite.
- */
+/** Applies a functional state update, as React would. */
+function mockResolveState(current: unknown, next: unknown): unknown {
+  const update = next as (value: unknown) => unknown;
+  return typeof next === 'function' ? update(current) : next;
+}
+
 jest.mock('react', () => ({
   ...jest.requireActual('react'),
   useContext: () => jest.requireActual('../../theme/ThemeContext').lightTheme,
   useCallback: (callback: unknown) => callback,
-  useMemo: (factory: () => unknown) => factory(),
+  useRef: (initial: unknown) => ({ current: initial }),
   useState: (initial: unknown) => {
     const index = mockStateCursor;
     mockStateCursor += 1;
@@ -37,9 +74,12 @@ jest.mock('react', () => ({
         typeof initial === 'function' ? (initial as () => unknown)() : initial;
     }
     const setValue = (next: unknown): void => {
-      mockStateValues[index] = next;
+      mockStateValues[index] = mockResolveState(mockStateValues[index], next);
     };
     return [mockStateValues[index], setValue];
+  },
+  useEffect: (effect: () => void) => {
+    mockEffects.push(effect);
   },
 }));
 
@@ -54,18 +94,6 @@ jest.mock('react-native', () => ({
 jest.mock('phosphor-react-native', () => ({
   SpeakerHigh: () => null,
   SpeakerSlash: () => null,
-}));
-
-// react-native-video is a native module: stub it to a host component so the
-// element tree can be built and inspected.
-jest.mock('react-native-video', () => ({ __esModule: true, default: 'Video' }));
-
-// The stream cache is a native proxy. It is stubbed to a visible prefix so the
-// test can prove the player loads the CACHED address rather than the bare stream
-// (KNOT-037-fix10).
-jest.mock('react-native-video-cache', () => ({
-  __esModule: true,
-  default: (url: string) => `cached:${url}`,
 }));
 
 type Element = { type?: unknown; props?: Record<string, unknown> };
@@ -92,32 +120,25 @@ function elements(node: unknown, found: Element[] = []): Element[] {
   return found;
 }
 
-/** The first element of the given host type. */
-function firstOfType(tree: unknown, type: string): Element | undefined {
-  return elements(tree).find((element) => element.type === type);
-}
-
 /**
- * The video's URL, in the shape every test in this suite uses. It is the address
- * the emulator reaches the API on, not loopback: `cachedVideoUri` leaves a
- * loopback address alone (it may already BE the cache proxy), so a `localhost`
- * URL would not exercise the cache at all (KNOT-037-fix10).
- */
-const URI = 'http://10.0.2.2:8080/stories/1/media/2/content';
-
-/**
- * Renders the component with the hook cursor back at slot zero, keeping whatever
- * the previous render's callbacks wrote — the closest thing to a re-render this
- * renderer-less suite has.
+ * Renders the surface with the hook cursors back at slot zero, keeping whatever
+ * the previous render's effects wrote. Effects run after the tree is built, so a
+ * test that observes state they wrote renders twice.
  */
 function render(props: Parameters<typeof FeedVideo>[0]): Element {
   mockStateCursor = 0;
-  return FeedVideo(props) as Element;
+  mockEffects = [];
+  const tree = FeedVideo(props) as Element;
+  for (const effect of mockEffects) {
+    effect();
+  }
+  return tree;
 }
 
-/** The visible video's tree. */
-function visibleTree(): Element {
-  return render({ uri: URI, isVisible: true });
+/** Renders twice, so a state an effect wrote is visible. */
+function renderSettled(props: Parameters<typeof FeedVideo>[0]): Element {
+  render(props);
+  return render(props);
 }
 
 /** The progress badge's text, or the empty string when no badge is drawn. */
@@ -131,31 +152,62 @@ function badgeText(tree: unknown): string {
   return '';
 }
 
+/** The extracted still, or undefined when none is drawn. */
+function poster(tree: unknown): Element | undefined {
+  return elements(tree).find((element) => element.props?.testID === 'feed-video-poster');
+}
+
+/** A clip the engine is already playing. */
+function playing(overrides: Partial<typeof mockPlayback> = {}): void {
+  mockPlayback = {
+    ...mockPlayback,
+    activeMediaId: URI,
+    uri: URI,
+    mode: 'inline',
+    playing: true,
+    ...overrides,
+  };
+}
+
 beforeEach(() => {
+  jest.clearAllMocks();
+  mockPlayback = {
+    activeMediaId: null,
+    uri: null,
+    mode: 'inline',
+    playing: false,
+    muted: true,
+    loop: true,
+    currentTime: 0,
+    duration: 0,
+    frame: null,
+    ready: false,
+    frameVisible: false,
+    naturalSize: null,
+  };
   mockStateValues = [];
   mockStateCursor = 0;
+  mockEffects = [];
 });
 
-describe('FeedVideo touch handling', () => {
+describe('FeedVideo surface', () => {
   /**
-   * The regression this guards (KNOT-020k-fix5): on Android the native video
-   * surface sits above the React view it is drawn in, and it consumed the press
-   * before it could reach the Pressable every caller wraps this component in. The
-   * card's video then did nothing at all while an image in the same card opened
-   * the viewer.
+   * The whole task in one assertion: a card draws a hole, not a player. The one
+   * `<Video>` belongs to `MediaHost`, which is what removes the per-card decoder.
    */
-  it('keeps the player out of the touch system so the caller receives the tap', () => {
-    const anchor = elements(visibleTree()).find(
-      (element) => element.props?.pointerEvents === 'none',
-    );
+  it('draws a measured hole and no player of its own', () => {
+    const tree = render({ uri: URI, isVisible: true });
+    const host = elements(tree).find((element) => element.props?.testID === 'feed-video-host');
 
-    expect(anchor).toBeDefined();
-    expect(anchor?.type).toBe('View');
-    expect(firstOfType(anchor?.props?.children, 'Video')).toBeDefined();
+    expect(host).toBeDefined();
+    expect(host?.type).toBe('View');
+    expect(host?.props?.pointerEvents).toBe('none');
+    expect(typeof host?.props?.onLayout).toBe('function');
+    expect(elements(tree).some((element) => element.type === 'Video')).toBe(false);
   });
 
-  it('leaves the mute control tappable above the player', () => {
-    const mute = elements(visibleTree()).find(
+  it('leaves the mute control tappable above the picture', () => {
+    const mute = elements(render({ uri: URI, isVisible: true })).find(
       (element) => element.type === 'Pressable' && element.props?.accessibilityLabel !== undefined,
     );
 
@@ -163,130 +215,93 @@ describe('FeedVideo touch handling', () => {
   });
 });
 
-describe('FeedVideo playback', () => {
-  it('plays the visible video and loops it', () => {
-    const video = firstOfType(visibleTree(), 'Video');
-    const paused = video?.props?.paused;
+describe('FeedVideo engine attachment', () => {
+  it('registers its hole and asks the engine to play when it is on screen', () => {
+    render({ uri: URI, isVisible: true });
 
-    expect(paused).toBe(false);
-    expect(video?.props?.repeat).toBe(true);
+    expect(mockActions.registerHost).toHaveBeenCalledWith(URI, null);
+    expect(mockActions.playMedia).toHaveBeenCalledWith(
+      expect.objectContaining({ id: URI, uri: URI, mode: 'inline' }),
+    );
   });
 
-  it('plays the stream through the local cache', () => {
-    // The player is handed the proxy address, not the bare stream URL, so a second
-    // scroll past this video re-reads it from the device (KNOT-037-fix10).
-    const video = firstOfType(visibleTree(), 'Video');
+  it('uses the media id it was given, so the viewer can find the same clip', () => {
+    render({ uri: URI, mediaId: 'media-42', isVisible: true });
 
-    expect(video?.props?.source).toEqual({ uri: `cached:${URI}` });
+    expect(mockActions.playMedia).toHaveBeenCalledWith(expect.objectContaining({ id: 'media-42' }));
   });
 
-  it('pauses the video that is off screen', () => {
-    const tree = render({ uri: URI, isVisible: false });
-    const video = firstOfType(tree, 'Video');
+  it('releases the surface and pauses its own clip when it leaves the screen', () => {
+    playing();
+    render({ uri: URI, isVisible: false });
 
-    expect(video?.props?.paused).toBe(true);
-  });
-});
-
-describe('FeedVideo preloading', () => {
-  /**
-   * The next-in-line entry keeps its player mounted and paused: mounting is what
-   * makes the platform prepare the file, and the deeper buffer is what makes the
-   * handover instant when it becomes the active entry (KNOT-037-fix7).
-   */
-  it('mounts the next-in-line player, paused, with a deeper buffer', () => {
-    const video = firstOfType(render({ uri: URI, isNextInLine: true }), 'Video');
-
-    expect(video).toBeDefined();
-    expect(video?.props?.source).toEqual({ uri: `cached:${URI}` });
-    expect(video?.props?.paused).toBe(true);
-    expect(video?.props?.bufferConfig).toBeDefined();
+    expect(mockActions.releaseHost).toHaveBeenCalledWith(URI);
+    expect(mockActions.pauseMedia).toHaveBeenCalledWith(URI);
+    expect(mockActions.playMedia).not.toHaveBeenCalled();
   });
 
-  it('leaves every other player on the platform default buffer', () => {
-    const idle = firstOfType(render({ uri: URI }), 'Video');
-    expect(idle?.props?.bufferConfig).toBeUndefined();
+  it('stays out of the engine while the viewer holds the surface full-screen', () => {
+    playing({ mode: 'fullscreen' });
+    render({ uri: URI, isVisible: true });
+
+    expect(mockActions.releaseHost).toHaveBeenCalledWith(URI);
+    expect(mockActions.playMedia).not.toHaveBeenCalled();
   });
 
-  it('still plays only the visible entry when that entry is also next in line', () => {
-    const video = firstOfType(render({ uri: URI, isVisible: true, isNextInLine: true }), 'Video');
+  it('publishes the feed-wide mute setting to the one player', () => {
+    playing();
+    render({ uri: URI, isVisible: true, isMuted: false });
 
-    expect(video?.props?.paused).toBe(false);
-    // A playing entry keeps the platform default: the preload buffer is for the
-    // paused one ahead of it.
-    expect(video?.props?.bufferConfig).toBeUndefined();
+    expect(mockActions.setMuted).toHaveBeenCalledWith(false);
   });
 
-  it('keeps a preloading player silent whatever the feed-wide mute says', () => {
-    const video = firstOfType(render({ uri: URI, isMuted: false, isNextInLine: true }), 'Video');
+  it('leaves the mute alone when this card is not the one playing', () => {
+    render({ uri: URI, isVisible: true, isMuted: false });
 
-    expect(video?.props?.muted).toBe(true);
+    expect(mockActions.setMuted).not.toHaveBeenCalled();
   });
 
-  it('follows the feed-wide mute once the entry is playing', () => {
-    const video = firstOfType(render({ uri: URI, isVisible: true, isMuted: false }), 'Video');
+  it('re-measures its hole when it is laid out', () => {
+    const tree = render({ uri: URI, isVisible: true });
+    const host = elements(tree).find((element) => element.props?.testID === 'feed-video-host');
+    const onLayout = host?.props?.onLayout as (() => void) | undefined;
 
-    expect(video?.props?.muted).toBe(false);
+    onLayout?.();
+
+    expect(mockActions.measureHost).toHaveBeenCalled();
   });
 });
 
 describe('FeedVideo timestamp', () => {
-  it('counts against the clip once the duration is known', () => {
+  it('counts the engine position against the engine duration', () => {
+    playing({ currentTime: 15.4, duration: 76 });
+    const tree = render({ uri: URI, isVisible: true, durationMs: 2_000 });
+
+    // The engine's metadata wins over the payload's seed once it is known.
+    expect(badgeText(tree)).toBe('0:15 / 1:16');
+  });
+
+  it('seeds the badge from the payload before the clip has loaded', () => {
+    playing({ duration: 0 });
     const tree = render({ uri: URI, isVisible: true, durationMs: 76_000 });
 
     expect(badgeText(tree)).toBe('0:00 / 1:16');
   });
 
-  it('advances with the progress the player reports', () => {
-    const before = render({ uri: URI, isVisible: true, durationMs: 76_000 });
-    const progress = firstOfType(before, 'Video')?.props?.onProgress;
-
-    expect(typeof progress).toBe('function');
-    (progress as (data: { currentTime: number }) => void)({ currentTime: 15.4 });
-
-    const after = render({ uri: URI, isVisible: true, durationMs: 76_000 });
-    expect(badgeText(after)).toBe('0:15 / 1:16');
-  });
-
-  it('ignores a position that is not a real number', () => {
-    render({ uri: URI, isVisible: true, durationMs: 76_000 });
-    const progress = firstOfType(visibleTree(), 'Video')?.props?.onProgress;
-
-    (progress as (data: { currentTime: number }) => void)({ currentTime: Number.NaN });
-
-    const after = render({ uri: URI, isVisible: true, durationMs: 76_000 });
-    expect(badgeText(after)).toBe('0:00 / 1:16');
-  });
-
-  it('does not subscribe to progress while the video is off screen', () => {
-    const tree = render({ uri: URI, isVisible: false, durationMs: 76_000 });
-
-    expect(firstOfType(tree, 'Video')?.props?.onProgress).toBeUndefined();
-  });
-
-  it('draws no badge before a duration is known', () => {
+  it('draws no badge before any duration is known', () => {
+    playing({ duration: 0 });
     const tree = render({ uri: URI, isVisible: true });
 
     expect(badgeText(tree)).toBe('');
   });
 });
 
-/** The extracted still, or undefined when none is drawn. */
-function poster(tree: unknown): Element | undefined {
-  return elements(tree).find((element) => element.props?.testID === 'feed-video-poster');
-}
-
 describe('FeedVideo poster', () => {
-  /** The address the media worker's extracted frame is served from. */
   const POSTER = `${URI}?variant=poster`;
 
-  /**
-   * The black screen this task removes: the native video surface is opaque but
-   * empty until the first frame decodes, so a still drawn UNDER it would never be
-   * seen. The poster is a layer over the player and under the chrome (KNOT-042).
-   */
-  it('draws the extracted still over the player so the frame is never black', () => {
-    const still = poster(render({ uri: URI, posterUri: POSTER, isVisible: false }));
+  it('draws the extracted still until the engine reports a frame', () => {
+    playing({ frameVisible: false });
+    const still = poster(render({ uri: URI, posterUri: POSTER, isVisible: true }));
 
     expect(still).toBeDefined();
     expect(still?.type).toBe('Image');
@@ -294,76 +309,37 @@ describe('FeedVideo poster', () => {
     expect(still?.props?.resizeMode).toBe('cover');
   });
 
+  it('retires the still once a frame has been drawn', () => {
+    playing({ frameVisible: true });
+
+    expect(poster(renderSettled({ uri: URI, posterUri: POSTER, isVisible: true }))).toBeUndefined();
+  });
+
   it('draws no still when the server sent none', () => {
-    expect(poster(visibleTree())).toBeUndefined();
-    expect(poster(render({ uri: URI, posterUri: '   ' }))).toBeUndefined();
-    expect(poster(render({ uri: URI, posterUri: null }))).toBeUndefined();
-  });
+    playing();
 
-  // A prepared player is not a drawn frame. On Android `onReadyForDisplay` fires
-  // as soon as the surface exists — before the decoder has produced anything — so
-  // retiring the still on it left the card blank for the whole download
-  // (KNOT-048-fix).
-  it('keeps the still while the player is only ready, and never wires that callback', () => {
-    const first = render({ uri: URI, posterUri: POSTER, isVisible: true });
-
-    expect(poster(first)).toBeDefined();
-    // No readiness callback at all: playback is the only thing that retires it.
-    expect(firstOfType(first, 'Video')?.props?.onReadyForDisplay).toBeUndefined();
-    // A later render that has still played nothing keeps the picture up.
-    expect(poster(render({ uri: URI, posterUri: POSTER, isVisible: true }))).toBeDefined();
-  });
-
-  it('removes the still on the first progress tick', () => {
-    // Progress only ticks while the picture is playing, so a tick proves a frame
-    // is up. It is the one and only retirement signal (KNOT-048-fix).
-    const first = render({ uri: URI, posterUri: POSTER, isVisible: true });
-    const progress = firstOfType(first, 'Video')?.props?.onProgress;
-    expect(typeof progress).toBe('function');
-    (progress as (data: { currentTime: number }) => void)({ currentTime: 0.2 });
-
-    expect(poster(render({ uri: URI, posterUri: POSTER, isVisible: true }))).toBeUndefined();
-  });
-
-  it('leaves the mute control tappable above the still', () => {
-    const tree = render({ uri: URI, posterUri: POSTER, isVisible: true });
-    const all = elements(tree);
-    const still = all.findIndex((element) => element.props?.testID === 'feed-video-poster');
-    const mute = all.findIndex(
-      (element) => element.type === 'Pressable' && element.props?.accessibilityLabel !== undefined,
-    );
-
-    expect(still).toBeGreaterThanOrEqual(0);
-    // Drawn after the still, so the still can never swallow the control's tap.
-    expect(mute).toBeGreaterThan(still);
+    expect(poster(render({ uri: URI, isVisible: true }))).toBeUndefined();
+    expect(poster(render({ uri: URI, posterUri: '   ', isVisible: true }))).toBeUndefined();
+    expect(poster(render({ uri: URI, posterUri: null, isVisible: true }))).toBeUndefined();
   });
 });
 
-/**
- * The native video surface is opaque and cannot be covered by a React Native view,
- * so the player is asked for the colour of the gap before its first frame: the
- * app's canvas, in whichever mode is active (KNOT-045).
- */
-describe('FeedVideo shutter', () => {
-  it('paints the surface with the active theme canvas', () => {
-    const video = firstOfType(visibleTree(), 'Video');
+describe('FeedVideo natural size', () => {
+  it("reports the engine's metadata to the caller, so the frame can be shaped", () => {
+    const onLoadSize = jest.fn();
+    playing({ naturalSize: { width: 300, height: 700 } });
 
-    expect(video?.props?.shutterColor).toBe(CANVAS);
+    render({ uri: URI, isVisible: true, onLoadSize });
+
+    expect(onLoadSize).toHaveBeenCalledWith(300, 700);
   });
 
-  it('paints the same colour on a paused preview and on a preloading player', () => {
-    for (const props of [{ isVisible: false }, { isVisible: false, isNextInLine: true }]) {
-      const video = firstOfType(render({ uri: URI, ...props }), 'Video');
+  it('reports nothing until the clip has loaded', () => {
+    const onLoadSize = jest.fn();
+    playing({ naturalSize: null });
 
-      expect(video?.props?.shutterColor).toBe(CANVAS);
-    }
-  });
+    render({ uri: URI, isVisible: true, onLoadSize });
 
-  it('draws no placeholder layer over the player', () => {
-    const placeholder = elements(render({ uri: URI, posterUri: `${URI}?variant=poster` })).find(
-      (element) => element.props?.testID === 'feed-video-placeholder',
-    );
-
-    expect(placeholder).toBeUndefined();
+    expect(onLoadSize).not.toHaveBeenCalled();
   });
 });

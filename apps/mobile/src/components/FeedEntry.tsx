@@ -1,14 +1,5 @@
 import React from 'react';
-import {
-  ActivityIndicator,
-  Image,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-  type ImageLoadEventData,
-  type NativeSyntheticEvent,
-} from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { ArrowsClockwise, DotsThree, Images, X } from 'phosphor-react-native';
 
 import type { MediaStatus, RecentInteraction } from '../api/stories';
@@ -30,6 +21,7 @@ import { useMediaAspectRatio } from '../utils/useMediaAspectRatio';
 import AuthorLine from './AuthorLine';
 import { feedMetaLine, isPreviewTruncated } from './feedEntryMeta';
 import FeedVideo, { VIDEO_MUTE_BUTTON_SIZE } from './FeedVideo';
+import MediaImage from './MediaImage';
 import PillarTag from './PillarTag';
 import type { ViewerMedia, ViewerStory } from './MediaGalleryModal';
 import { hasSocialProof } from './socialProof';
@@ -357,6 +349,13 @@ export function FeedEntry({
   const posterPath =
     typeof story.first_media_poster_url === 'string' ? story.first_media_poster_url.trim() : '';
   const posterUrl = posterPath === '' ? undefined : resolveMediaUrl(posterPath);
+  // The still an image draws until its full rendition decodes: the 400px WebP the
+  // card already had, so the frame is never blank (KNOT-042, KNOT-051).
+  const thumbnailPath =
+    typeof story.first_media_thumbnail_url === 'string'
+      ? story.first_media_thumbnail_url.trim()
+      : '';
+  const thumbnailUrl = thumbnailPath === '' ? undefined : resolveMediaUrl(thumbnailPath);
   // The bytes are still being encoded, so there is nothing to fetch yet
   // (KNOT-037-fix8).
   const isProcessing = mediaStatus === 'processing';
@@ -395,12 +394,6 @@ export function FeedEntry({
   // ellipsis decides. A feed entry renders the whole body under a three-line
   // clamp, so the clamp draws the "…" the link follows (KNOT-020g-fix12).
   const previewTruncated = story.preview_truncated ?? isPreviewTruncated(story.preview);
-
-  /** Takes the shape off a decoded image, for media the payload could not size. */
-  const handleImageLoad = (event: NativeSyntheticEvent<ImageLoadEventData>): void => {
-    const { width, height } = event.nativeEvent.source;
-    onLoadSize(width, height);
-  };
 
   const metaLine = feedMetaLine({
     commentCount: story.comment_count,
@@ -660,6 +653,7 @@ export function FeedEntry({
             {isVideo ? (
               <FeedVideo
                 uri={mediaUrl}
+                mediaId={firstMediaPath}
                 posterUri={posterUrl}
                 durationMs={story.duration_ms}
                 isVisible={isVisible}
@@ -669,12 +663,13 @@ export function FeedEntry({
                 isNextInLine={isNextInLine}
               />
             ) : (
-              <Image
-                source={{ uri: mediaUrl }}
+              <MediaImage
+                uri={mediaUrl}
+                stillUri={thumbnailUrl}
                 style={styles.media}
                 resizeMode="cover"
-                onLoad={handleImageLoad}
-                accessibilityIgnoresInvertColors
+                onLoadSize={onLoadSize}
+                testID="feed-media-image"
               />
             )}
           </Pressable>

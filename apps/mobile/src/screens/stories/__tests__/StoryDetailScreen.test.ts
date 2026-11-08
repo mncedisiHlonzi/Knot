@@ -1,5 +1,6 @@
 import type { Story, StoryMedia } from '../../../api/stories';
 import FeedVideo from '../../../components/FeedVideo';
+import MediaImage from '../../../components/MediaImage';
 import VideoThumbnail from '../../../components/VideoThumbnail';
 import StoryDetailScreen from '../StoryDetailScreen';
 
@@ -241,18 +242,17 @@ describe('StoryDetailScreen carousel', () => {
 
     // AVIF is undecodable below Android 12 / iOS 16 and fails silently, so the page
     // asks for the WebP display and keeps the AVIF address only as the fallback
-    // (KNOT-038-fix3). Two layers are drawn: the 400px thumbnail the card already
-    // had, then the display over it, so a slow network shows the frame rather than
-    // the canvas (KNOT-045).
-    const imagePage = elementsOfType(draw(0), 'Image');
-    expect(imagePage).toHaveLength(2);
-    expect(imagePage[0].props?.testID).toBe('detail-image-still');
-    expect(imagePage[0].props?.source).toEqual({
-      uri: API_BASE + '/stories/story-1/media/media-1/content?variant=thumb',
-    });
-    expect(imagePage[1].props?.source).toEqual({
-      uri: API_BASE + '/stories/story-1/media/media-1/content?variant=display&format=webp',
-    });
+    // (KNOT-038-fix3). Two layers are handed to the one image renderer: the 400px
+    // thumbnail the card already had, then the display over it (KNOT-045,
+    // KNOT-051).
+    const imagePage = elementsOfType(draw(0), MediaImage);
+    expect(imagePage).toHaveLength(1);
+    expect(imagePage[0].props?.stillUri).toBe(
+      API_BASE + '/stories/story-1/media/media-1/content?variant=thumb',
+    );
+    expect(imagePage[0].props?.uri).toBe(
+      API_BASE + '/stories/story-1/media/media-1/content?variant=display&format=webp',
+    );
 
     const videoPage = elementsOfType(draw(1), FeedVideo);
     expect(videoPage).toHaveLength(1);
@@ -270,10 +270,10 @@ describe('StoryDetailScreen carousel', () => {
     const page = pages[0];
     const imagePage = elementsOfType(
       (page.type as (props: unknown) => unknown)(page.props),
-      'Image',
+      MediaImage,
     );
 
     expect(imagePage).toHaveLength(1);
-    expect(imagePage[0].props?.source).toEqual({ uri: API_BASE + legacyImage.url });
+    expect(imagePage[0].props?.uri).toBe(API_BASE + legacyImage.url);
   });
 });

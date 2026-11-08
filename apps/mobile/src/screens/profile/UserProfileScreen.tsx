@@ -208,6 +208,7 @@ function CardMedia({
       {card.mediaType === 'video' ? (
         <FeedVideo
           uri={uri}
+          mediaId={card.mediaUrl}
           isVisible={isVisible}
           isMuted={isMuted}
           onToggleMute={onToggleMute}

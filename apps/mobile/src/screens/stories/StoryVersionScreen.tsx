@@ -160,6 +160,7 @@ function CarouselPage({
       {media.media_type === 'video' ? (
         <FeedVideo
           uri={uri}
+          mediaId={media.url}
           isVisible={isActive}
           isMuted={isMuted}
           onToggleMute={onToggleMute}
