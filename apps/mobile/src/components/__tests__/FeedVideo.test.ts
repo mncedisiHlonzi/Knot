@@ -300,20 +300,23 @@ describe('FeedVideo poster', () => {
     expect(poster(render({ uri: URI, posterUri: null }))).toBeUndefined();
   });
 
-  it('removes the still once the player has rendered a frame', () => {
+  // A prepared player is not a drawn frame. On Android `onReadyForDisplay` fires
+  // as soon as the surface exists — before the decoder has produced anything — so
+  // retiring the still on it left the card blank for the whole download
+  // (KNOT-048-fix).
+  it('keeps the still while the player is only ready, and never wires that callback', () => {
     const first = render({ uri: URI, posterUri: POSTER, isVisible: true });
+
     expect(poster(first)).toBeDefined();
-
-    const ready = firstOfType(first, 'Video')?.props?.onReadyForDisplay;
-    expect(typeof ready).toBe('function');
-    (ready as () => void)();
-
-    expect(poster(render({ uri: URI, posterUri: POSTER, isVisible: true }))).toBeUndefined();
+    // No readiness callback at all: playback is the only thing that retires it.
+    expect(firstOfType(first, 'Video')?.props?.onReadyForDisplay).toBeUndefined();
+    // A later render that has still played nothing keeps the picture up.
+    expect(poster(render({ uri: URI, posterUri: POSTER, isVisible: true }))).toBeDefined();
   });
 
-  it('also removes the still on the first progress tick', () => {
-    // The fallback for a platform that never reports `onReadyForDisplay`: progress
-    // only ticks while the picture is playing, so a tick proves a frame is up.
+  it('removes the still on the first progress tick', () => {
+    // Progress only ticks while the picture is playing, so a tick proves a frame
+    // is up. It is the one and only retirement signal (KNOT-048-fix).
     const first = render({ uri: URI, posterUri: POSTER, isVisible: true });
     const progress = firstOfType(first, 'Video')?.props?.onProgress;
     expect(typeof progress).toBe('function');

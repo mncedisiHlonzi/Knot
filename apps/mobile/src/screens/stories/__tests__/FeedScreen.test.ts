@@ -185,6 +185,58 @@ function findByTestID(node: unknown, testID: string): ElementLike | undefined {
   updated_at: '2026-10-09T12:00:00.000Z',
 };
 
+/**
+ * The same story carrying a video, so the card has a poster and a duration to
+ * hand the player.
+ *
+ * Both live on the payload already: the poster as `first_media_poster_url` on
+ * every entry kind, the duration inside a STORY entry's own `media` array
+ * (KNOT-048-fix).
+ */
+const VIDEO_ITEM: FeedItem = {
+  ...ITEM,
+  first_media_type: 'video',
+  first_media_url: '/stories/story-1/media/m1/content?variant=stream',
+  first_media_poster_url: '/stories/story-1/media/m1/content?variant=poster',
+  media: [
+    {
+      id: 'm1',
+      media_type: 'video',
+      source: 'gallery',
+      mime_type: 'video/mp4',
+      width: 1080,
+      height: 1920,
+      duration_ms: 33000,
+      size_bytes: 1,
+      display_order: 0,
+      created_at: '2026-10-09T12:00:00.000Z',
+      url: '/stories/story-1/media/m1/content?variant=stream',
+    },
+  ],
+};
+
+/** An adaptation entry: it has no media array of its own on the wire. */
+const VERSION_ITEM: FeedItem = {
+  kind: 'version',
+  id: 'version-2',
+  story_id: 'story-1',
+  parent_version_id: 'version-1',
+  author_id: 'user-2',
+  author_display_name: 'Bongani Ncube',
+  language: 'zul',
+  title: 'How my grandmother counted the days',
+  body: 'She kept a string of knots.',
+  pillar: 'heritage',
+  approximate_location: 'Oaxaca, Mexico',
+  media_urls: [],
+  created_at: '2026-10-10T12:00:00.000Z',
+  first_media_type: 'video',
+  first_media_url: '/stories/story-1/media/m1/content?variant=stream',
+  first_media_poster_url: '/stories/story-1/media/m1/content?variant=poster',
+  version_number: 2,
+  attribution_line: "Adapted from Nomsa Khan's original story in Zapotec.",
+};
+
 const SCREEN_PROPS = {
   token: 'token',
   viewer: { display_name: 'Nomsa Khan', avatar_url: '' },
@@ -204,12 +256,12 @@ function renderScreen(): unknown {
 }
 
 /** The card the list builds for one entry: its real `renderItem`, called directly. */
-function cardFor(tree: unknown): ElementLike | undefined {
+function cardFor(tree: unknown, item: FeedItem = ITEM): ElementLike | undefined {
   const list = findElementByType(tree, 'FlatList');
   const renderItem = list?.props?.renderItem as
     ((info: { item: FeedItem }) => ElementLike) | undefined;
 
-  return renderItem?.({ item: ITEM });
+  return renderItem?.({ item });
 }
 
 describe('FeedScreen card structure', () => {
@@ -259,6 +311,36 @@ describe('FeedScreen card structure', () => {
     expect(divider).toBeDefined();
     expect(style?.backgroundColor).toBe(colors.bg.separator);
     expect(style?.height).toBe(4);
+  });
+});
+
+// A video card must open on a picture and a duration, not on the player's blank
+// surface: both values already ride the feed payload, and the entry can only
+// draw what the screen hands it (KNOT-048-fix).
+describe('FeedScreen video card payload', () => {
+  /** The `story` object the card was handed for one entry. */
+  const storyOf = (item: FeedItem): Record<string, unknown> | undefined => {
+    const entry = findElementByType(cardFor(renderScreen(), item), FeedEntry);
+    return entry?.props?.story as Record<string, unknown> | undefined;
+  };
+
+  it('hands the entry the first media poster, so a video opens on a still', () => {
+    expect(storyOf(VIDEO_ITEM)?.first_media_poster_url).toBe(
+      '/stories/story-1/media/m1/content?variant=poster',
+    );
+  });
+
+  it('hands the entry the media duration, so the badge is right before onLoad', () => {
+    expect(storyOf(VIDEO_ITEM)?.duration_ms).toBe(33000);
+  });
+
+  // A version entry carries the story's poster but no media array, so there is no
+  // duration on the wire; the badge then waits for the player's own report.
+  it('leaves the duration null for an entry with no media array', () => {
+    expect(storyOf(VERSION_ITEM)?.first_media_poster_url).toBe(
+      '/stories/story-1/media/m1/content?variant=poster',
+    );
+    expect(storyOf(VERSION_ITEM)?.duration_ms).toBeNull();
   });
 });
 

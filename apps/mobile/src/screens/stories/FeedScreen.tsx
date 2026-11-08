@@ -621,8 +621,17 @@ export default function FeedScreen({
                 created_at: item.created_at,
                 first_media_type: item.first_media_type ?? null,
                 first_media_url: item.first_media_url ?? null,
+                // The still a video opens on. Without it the card has nothing to
+                // draw over the player until the first frame decodes, which on a
+                // slow connection is the entire download (KNOT-048-fix).
+                first_media_poster_url: item.first_media_poster_url ?? null,
                 first_media_width: item.first_media_width ?? null,
                 first_media_height: item.first_media_height ?? null,
+                // The duration the payload already knows, so a video's badge is
+                // right before the player has read the file. Only a story entry
+                // carries its own media array; a version entry has no duration on
+                // the wire, so it stays null and the badge waits for `onLoad`.
+                duration_ms: item.kind === 'story' ? (item.media?.[0]?.duration_ms ?? null) : null,
                 id: item.id,
                 // The story a version entry adapts, so the viewer's "View Story"
                 // has a story to open; a story entry's own id is the story

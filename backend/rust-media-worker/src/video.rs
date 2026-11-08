@@ -5,8 +5,10 @@
 //! box to the start of the file, so a player can begin on the first bytes it
 //! receives instead of downloading the file to find out where the frames are.
 //! Everything else is the ladder the Go pipeline used — 1080 wide at most, CRF
-//! 23, `yuv420p` for hardware decoders — because the worker replaces the encoder,
-//! not the format (KNOT-038).
+//! 28, `yuv420p` for hardware decoders — because the worker replaces the encoder,
+//! not the format (KNOT-038). The rate factor was 23 until KNOT-048-fix: at 23 a
+//! half-minute phone clip streamed as several megabytes, which a mobile
+//! connection could not deliver before the viewer gave up.
 //!
 //! The poster exists because a player spends its first moments with nothing on
 //! screen: the surface is black until a frame decodes. A still taken one second
@@ -213,6 +215,17 @@ impl Drop for Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The rate factor `transcode_to_stream` hands to `-crf`.
+    ///
+    /// It is the one number that decides the rendition's size, so it is pinned:
+    /// 23 produced multi-megabyte streams that a mobile connection could not
+    /// deliver on time, and drifting back would silently restore that
+    /// (KNOT-048-fix).
+    #[test]
+    fn streams_at_rate_factor_28() {
+        assert_eq!(STREAM_CRF, 28);
+    }
 
     /// Builds one second of synthetic video, so the test needs no fixture file.
     fn fixture() -> Vec<u8> {

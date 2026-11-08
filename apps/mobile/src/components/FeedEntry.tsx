@@ -110,6 +110,15 @@ type FeedEntryStory = {
   readonly first_media_thumbnail_url?: string | null;
   readonly first_media_poster_url?: string | null;
   /**
+   * How long the first media item runs, in milliseconds, or null when it has no
+   * duration (an image) or the entry does not carry one.
+   *
+   * It seeds the video's duration badge, so a card shows `0:00 / 0:33` from the
+   * moment it mounts instead of waiting for the player to read the file — which
+   * on a slow connection is the whole blank period (KNOT-048-fix).
+   */
+  readonly duration_ms?: number | null;
+  /**
    * The first media item's pixel dimensions, or null when the uploader's client
    * did not report them. They let the media render at its natural width:height
    * ratio, so a portrait photo is shown whole rather than cropped into a fixed
@@ -652,6 +661,7 @@ export default function FeedEntry({
               <FeedVideo
                 uri={mediaUrl}
                 posterUri={posterUrl}
+                durationMs={story.duration_ms}
                 isVisible={isVisible}
                 isMuted={isMuted}
                 onToggleMute={onToggleMute}

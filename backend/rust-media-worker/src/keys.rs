@@ -81,9 +81,12 @@ pub const THUMBNAIL_QUALITY: f32 = 80.0;
 /// the low seconds on one core.
 pub const AVIF_SPEED: u8 = 8;
 
-/// x264's constant rate factor: 23 is its default and the point at which a
-/// transcode is visually transparent for phone footage.
-pub const STREAM_CRF: u8 = 23;
+/// x264's constant rate factor. 28 is x264's own default for the `medium`
+/// preset: it trades detail on the busiest frames for a much smaller file, which
+/// is the trade the feed needs — the first frame has to arrive in seconds on a
+/// mobile connection, not minutes (KNOT-048-fix). Measured on two real feed
+/// clips, 28 cut the rendition by 27% and 40%.
+pub const STREAM_CRF: u8 = 28;
 
 /// x264's speed/compression balance.
 pub const STREAM_PRESET: &str = "medium";

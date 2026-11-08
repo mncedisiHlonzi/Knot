@@ -204,9 +204,15 @@ export default function FeedVideo({
   // that is not a real position (missing, `NaN`, negative) is ignored rather than
   // written into the badge, so a broken report can never print "NaN:NaN".
   const handleProgress = useCallback((data: OnProgressData): void => {
-    // Progress only ticks while the picture is playing, which means a frame is
-    // definitely on screen: the poster has done its job. This is the fallback for
-    // a platform that never reports `onReadyForDisplay` (KNOT-042).
+    // Progress only ticks while the picture is playing, so a tick is the one
+    // signal that proves a frame is really on screen. It is the ONLY thing that
+    // retires the still (KNOT-048-fix).
+    //
+    // `onReadyForDisplay` used to do it too, and on Android it fires as soon as
+    // the player is prepared — before the decoder has produced a frame — so the
+    // still was withdrawn onto an empty surface and the card showed the shutter
+    // colour for the whole download. Measured on a SM-A135F: the callback arrived
+    // with the still still visible, and the screen stayed blank.
     setPosterVisible(false);
 
     const position = data.currentTime;
@@ -216,13 +222,9 @@ export default function FeedVideo({
     setCurrentSeconds(position);
   }, []);
 
-  // The first frame has been rendered, so the still is no longer needed. It fires
-  // for a paused player too: from then on the player draws the frame the poster
-  // was standing in for (KNOT-042).
-  const handleReadyForDisplay = useCallback((): void => {
-    setPosterVisible(false);
-  }, []);
-
+  // There is deliberately NO `onReadyForDisplay` handler: on Android the callback
+  // fires when the player is prepared, not when a frame is drawn, so using it to
+  // retire the still is what left the card blank (KNOT-048-fix).
   const playing = isVisible;
   // A next-in-line player is mounted and paused on purpose: that is what lets the
   // platform prepare and buffer it before it is scrolled into view (KNOT-037-fix7).
@@ -268,7 +270,6 @@ export default function FeedVideo({
           // A deeper buffer for the next entry, so the handover is instant.
           bufferConfig={preloading ? PRELOAD_BUFFER_CONFIG : undefined}
           onLoad={handleLoad}
-          onReadyForDisplay={handleReadyForDisplay}
           // Progress is only subscribed while this video is the visible entry:
           // the timer that drives it is wasted work on a paused preview, and a
           // late event could otherwise move a badge on a card that is off screen
