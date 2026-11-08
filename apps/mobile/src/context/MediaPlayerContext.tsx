@@ -36,7 +36,15 @@
  *   keep the picture glued to its card without re-rendering a single row: only
  *   `MediaHost` reads it.
  */
-import React, { createContext, useCallback, useContext, useMemo, useReducer, useRef } from 'react';
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+} from 'react';
 import { StyleSheet, View } from 'react-native';
 import Video, { type OnLoadData, type OnProgressData } from 'react-native-video';
 
@@ -58,6 +66,14 @@ export type MediaVideoRef = React.ComponentRef<typeof Video>;
 
 /** A host component's node, as React Native measures it. */
 type HostNode = React.ComponentRef<typeof View>;
+
+/**
+ * How long a registration waits before measuring itself a second time.
+ *
+ * Long enough for the engine's own play dispatch and the native layout of a
+ * freshly mounted card to land, short enough to be invisible (KNOT-048-fix2).
+ */
+const MEASURE_RETRY_MS = 120;
 
 /**
  * What a surface can ask the engine to do.
@@ -147,12 +163,21 @@ export function MediaPlayerProvider({
   /** The host the engine currently draws over, and the media it belongs to. */
   const hostRef = useRef<HostNode | null>(null);
   const hostMediaId = useRef<string | null>(null);
+  /** The deferred re-measure a registration scheduled, if any. */
+  const measureRetry = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   /**
    * Re-measures the registered host in the container's coordinate space.
    *
-   * `measureLayout` (rather than `measureInWindow`) is what keeps the picture
-   * aligned on Android, where the app's root view starts below the status bar.
+   * Both rectangles are read with `measureInWindow` and subtracted, rather than
+   * asking the node to measure itself against the container. `measureLayout` walks
+   * the parent chain, and on Android it does not resolve a node nested inside a
+   * horizontal `ScrollView` — the Story Detail's pager — returning a placeholder
+   * rectangle a couple of pixels across. The picture then has nowhere to draw, which
+   * is the empty media area with a running clock the founder saw on an opened story
+   * (KNOT-048-fix2). A difference of two window rectangles is independent of anywhere
+   * the node is nested, and it still accounts for the status bar, because the
+   * container's own origin is measured the same way.
    */
   const measureHost = useCallback((): void => {
     const node = hostRef.current;
@@ -168,27 +193,34 @@ export function MediaPlayerProvider({
     }
 
     const measurable = node as unknown as {
-      measureLayout?: (
-        relativeTo: HostNode,
+      measureInWindow?: (
         onSuccess: (x: number, y: number, width: number, height: number) => void,
-        onFail?: () => void,
       ) => void;
     };
-    if (typeof measurable.measureLayout !== 'function') {
+    const rootMeasurable = container as unknown as {
+      measureInWindow?: (
+        onSuccess: (x: number, y: number, width: number, height: number) => void,
+      ) => void;
+    };
+    const nodeMeasure = measurable.measureInWindow;
+    const rootMeasure = rootMeasurable.measureInWindow;
+    if (typeof nodeMeasure !== 'function' || typeof rootMeasure !== 'function') {
       return;
     }
 
     try {
-      measurable.measureLayout(
-        container,
-        (x, y, width, height) => {
-          if (!(width > 0) || !(height > 0)) {
-            return;
-          }
-          dispatch({ type: 'frame', id, frame: { x, y, width, height } });
-        },
-        () => undefined,
-      );
+      nodeMeasure.call(node, (x, y, width, height) => {
+        if (!(width > 0) || !(height > 0)) {
+          return;
+        }
+        rootMeasure.call(container, (rootX, rootY) => {
+          dispatch({
+            type: 'frame',
+            id,
+            frame: { x: x - rootX, y: y - rootY, width, height },
+          });
+        });
+      });
     } catch {
       // No native layout yet (the view is not attached). The next `onLayout` or
       // scroll tick measures again.
@@ -207,6 +239,20 @@ export function MediaPlayerProvider({
       hostRef.current = node;
       hostMediaId.current = id;
       measureHost();
+
+      // A registration can land before the engine has committed the play that makes
+      // this the active surface — and a screen that comes back to the clip it was
+      // already playing (returning from Settings, say) changes NO engine state, so
+      // nothing would ever retry the measurement. The picture would then stay
+      // undrawn, which reads as an empty media frame. One deferred measure covers
+      // both cases; it is cleared when another host registers first (KNOT-048-fix2).
+      if (measureRetry.current !== null) {
+        clearTimeout(measureRetry.current);
+      }
+      measureRetry.current = setTimeout(() => {
+        measureRetry.current = null;
+        measureHost();
+      }, MEASURE_RETRY_MS);
     },
     [measureHost],
   );
@@ -218,6 +264,21 @@ export function MediaPlayerProvider({
     hostRef.current = null;
     hostMediaId.current = null;
   }, []);
+
+  /**
+   * Geometry follows the engine's own transitions.
+   *
+   * A surface measures itself when it registers, but a registration can land while
+   * the engine is not ready to measure — the viewer still owns the surface, or the
+   * screen is mid-transition — and then nothing would retry it. The picture would
+   * simply not be drawn (its rectangle was cleared with the old surface), which is
+   * what an empty media frame with a running clock looks like on device
+   * (KNOT-048-fix2). Re-measuring after the engine commits a new mode, media or
+   * play state is the retry, and it costs one `measureLayout` per transition.
+   */
+  useEffect(() => {
+    measureHost();
+  }, [measureHost, state.activeMediaId, state.mode, state.playing]);
 
   const playMedia = useCallback((request: PlayMediaRequest): void => {
     const target = seekTargetFor(stateRef.current, request);

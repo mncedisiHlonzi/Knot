@@ -14,9 +14,10 @@ import StoryDetailScreen from '../StoryDetailScreen';
  * `useCallback` returns the callback unchanged, and `useState` is fed a positional
  * sequence.
  *
- * The sequence is: story, version count, loading, error. The remaining five
- * (report visibility, active page, media shapes, mute, carousel visibility) keep
- * their initial values.
+ * The sequence is: story, version count, loading, error. The remaining four
+ * (report visibility, active page, mute, carousel visibility) keep their initial
+ * values. The pager's height is not state at all any more: it is derived from the
+ * payload, which is what keeps the carousel from resizing (KNOT-048-fix2).
  *
  * `CarouselPage` is a child component, so it is never invoked here: the only
  * `Image` in the evaluated tree is the strip's, which makes the source assertion
@@ -275,5 +276,55 @@ describe('StoryDetailScreen carousel', () => {
 
     expect(imagePage).toHaveLength(1);
     expect(imagePage[0].props?.uri).toBe(API_BASE + legacyImage.url);
+  });
+});
+
+describe('StoryDetailScreen media frame', () => {
+  /** The pager's own style height, which is what the carousel actually occupies. */
+  function pagerHeight(tree: unknown): number | undefined {
+    const pager = elementsOfType(tree, 'ScrollView').find(
+      (element) => element.props?.pagingEnabled === true,
+    );
+    const style = pager?.props?.style as { height?: number } | undefined;
+    return style?.height;
+  }
+
+  it('reserves a positive height for a clip the payload cannot size, so there is no white gap', () => {
+    // No dimensions on the wire: the old rule drew a square placeholder and then
+    // collapsed once the player reported the clip's real shape, which is what left
+    // the reader with a shrunken picture and the text pushed around (KNOT-048-fix2).
+    const tree = renderLoaded([{ ...videoMedia, width: null, height: null }]);
+    const height = pagerHeight(tree);
+
+    expect(height).toBeDefined();
+    expect(height).toBeGreaterThan(0);
+    // The design's canonical 4:5 frame: 390 / 0.8 = 487.5.
+    expect(height).toBeCloseTo(390 / (4 / 5), 6);
+  });
+
+  it('uses the payload ratio when the media reports its dimensions', () => {
+    const tree = renderLoaded([imageMedia]);
+
+    // 1200x800 is 3:2 landscape, so the frame is short rather than tall.
+    expect(pagerHeight(tree)).toBeCloseTo(390 / (1200 / 800), 6);
+  });
+
+  it('caps a tall portrait at 4:5 instead of running off the page', () => {
+    const tree = renderLoaded([videoMedia]);
+
+    expect(videoMedia.height).toBeGreaterThan(videoMedia.width ?? 0);
+    expect(pagerHeight(tree)).toBeCloseTo(390 / (4 / 5), 6);
+  });
+
+  it('gives every page the same height, so the pager is one box rather than a row of unequal cells', () => {
+    const tree = renderLoaded([imageMedia, { ...videoMedia, width: null, height: null }]);
+    const pages = elementsByFunctionName(tree, 'CarouselPage');
+
+    expect(pages).toHaveLength(2);
+    const heights = pages.map((page) => page.props?.height as number);
+
+    expect(new Set(heights).size).toBe(1);
+    expect(heights[0]).toBe(pagerHeight(tree));
+    expect(heights[0]).toBeGreaterThan(0);
   });
 });

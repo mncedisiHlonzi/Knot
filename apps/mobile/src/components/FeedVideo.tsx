@@ -50,15 +50,6 @@ type FeedVideoProps = {
   /** Called when the mute control is tapped. Defaults to a no-op. */
   readonly onToggleMute?: () => void;
   /**
-   * Reports the video's natural pixel size once the player has read it.
-   *
-   * It is how a frame learns the shape of a video the payload could not describe:
-   * the upload pipeline has no dimensions for most video assets, because the
-   * picker reports only their duration, so the frame would otherwise never know
-   * what shape to be (KNOT-020g-fix7).
-   */
-  readonly onLoadSize?: (width: number, height: number) => void;
-  /**
    * The duration the payload already knows, in milliseconds. It seeds the duration
    * badge so the Story Detail carousel can show `0:48` before the player has
    * loaded; the player's own report replaces it once metadata arrives. Optional,
@@ -114,9 +105,9 @@ type FeedVideoProps = {
  * rule.
  *
  * The caller owns the frame's shape: `FeedEntry` and the profile card set it from
- * the media's reported dimensions, falling back to the natural size the engine
- * reports through `onLoadSize` when the payload has none (KNOT-020g-fix6,
- * KNOT-020g-fix7).
+ * the payload's reported dimensions, reserving the design's 4:5 frame when the
+ * payload has none, so the frame never changes height once it has been painted
+ * (KNOT-020g-fix6, KNOT-048-fix2).
  */
 export default function FeedVideo({
   uri,
@@ -124,7 +115,6 @@ export default function FeedVideo({
   isVisible = false,
   isMuted = true,
   onToggleMute = NOOP,
-  onLoadSize,
   durationMs,
   showTag = true,
   durationPosition = 'top-right',
@@ -184,6 +174,26 @@ export default function FeedVideo({
     };
   }, [fullscreen, id, isVisible, player, uri]);
 
+  /**
+   * The surface leaving the tree is different from it re-registering.
+   *
+   * A card that unmounts — the Feed replaced by the Story Detail, a pager page
+   * scrolled out — must hand the engine back completely. `releaseHost` only
+   * forgets the node, and the engine's rectangle lives on, so the one player would
+   * keep painting the clip **at the rectangle this card used to occupy**: a video
+   * stuck to the middle of the next screen, over content that has nothing to do
+   * with it, with its audio still playing. That is the "media in the wrong place,
+   * giant gap above it" the founder saw when opening a story from the Feed
+   * (KNOT-048-fix2).
+   */
+  useEffect(() => {
+    return () => {
+      player.releaseHost(id);
+      player.clearSurface(id);
+      player.pauseMedia(id);
+    };
+  }, [id, player]);
+
   // The first measurement has to wait for the play to commit: the engine only
   // measures the host it considers active, so registering before its state has
   // updated would measure nothing. This effect runs on that commit, and again
@@ -214,14 +224,9 @@ export default function FeedVideo({
     setPosterVisible(!(active && playback.frameVisible));
   }, [active, playback.frameVisible]);
 
-  // A video's payload rarely carries dimensions; the engine's metadata is the
-  // only source of its natural shape (KNOT-020g-fix7).
-  useEffect(() => {
-    const size = playback.naturalSize;
-    if (active && size !== null && onLoadSize !== undefined) {
-      onLoadSize(size.width, size.height);
-    }
-  }, [active, onLoadSize, playback.naturalSize]);
+  // A video's payload rarely carries dimensions; the frame therefore reserves the
+  // design's 4:5 shape rather than chasing the clip's natural size, which would
+  // resize the card the moment the player read the file (KNOT-048-fix2).
 
   const seedSeconds =
     typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs > 0

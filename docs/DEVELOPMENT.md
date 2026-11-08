@@ -3706,3 +3706,53 @@ and the image renderer have their own suites
 that they drive the context rather than a player of their own. The visual result
 must still be checked on a device.
 
+
+## Media frames: the reserved shape (KNOT-048-fix2)
+
+**The bug.** A list frame used to learn its shape twice: the payload's dimensions if the server
+had them, and otherwise the natural size the media reported *after* it loaded
+(`resolveMediaAspectRatio`, fed by `useMediaAspectRatio`). Both the Feed card and the Story Detail
+carousel therefore opened at the square placeholder and changed height the moment a clip's metadata
+arrived — which is most videos, because `react-native-image-picker` reports only their duration.
+On the Feed that resized every card below the one that had loaded, so the list jumped under the
+reader's thumb; on the Story Detail it moved the whole reading column, opening a gap under a
+shrunken picture.
+
+**The rule now.** `reservedMediaAspectRatio(payloadWidth, payloadHeight)` in
+`src/utils/mediaFrame.ts` is the only shape a surface draws with. It returns the payload's own
+ratio (capped at 4:5) when the server described the media, and `RESERVED_MEDIA_ASPECT_RATIO` —
+**4:5**, the shape every item in `docs/design-reference/story-detail-v2/media-model.json` uses
+(1080 x 1350) — when it did not. It takes **no loaded size**: there is deliberately no third
+argument, so a measurement that arrives later cannot reach the frame. That is the property the
+tests pin.
+
+Applied to every surface that frames media: `FeedEntry` (the Feed and Place Stories), the Story
+Detail carousel, the Version Detail carousel and the profile wall's `CardMedia`. The media fills
+its frame with `cover`, so an unknown-shape clip is cropped rather than the page moving; the
+alternative — a frame that resizes — is what broke the layout.
+
+`useMediaAspectRatio.ts` and its suite are **gone**, along with the `onLoadSize` pass-through on
+`FeedVideo` and `MediaImage`: their only purpose was to re-shape a frame after load.
+`resolveMediaAspectRatio` is kept as a pure answer to "what shape IS this file", which a
+non-list caller (the full-screen viewer) may want, but it must not size a frame in a scrolling list.
+
+**Story Detail.** The carousel's height is `pageWidth / reservedMediaAspectRatio(activeMedia)` —
+derived during render, with no `ratios` state and no report-up callback, so there is nothing left to
+settle. That also removed a latent crash: `CarouselPage` called `useEffect` *after* its
+`media.status === 'processing'` early return, so a page flipping from `processing` to `ready`
+(polled by `useStoryPolling`) would have rendered more hooks than the previous render. The
+carousel's `onLayout` now also calls `player.measureHost()`, because the pager's height is an
+inline style and a resize that arrives without a scroll event would otherwise leave the engine's
+picture at its previous rectangle.
+
+**Android surface.** `MediaHost` passes `useTextureView` to its `<Video>`. The library defaults to a
+`SurfaceView`, which is a separate window layer: it punches through the React Native hierarchy and
+ignores its parent's clipping and stacking, so it could paint over the card's own chrome or a
+modal. A `TextureView` is an ordinary view and stays inside the rectangle the engine reported.
+
+**Known limit, disclosed.** The one player is drawn by `MediaHost`, a sibling of the app tree at
+the root, so the picture stacks *above* the chrome inside a media frame (the "Video" tag, the
+duration badge, the mute control) and above the Story Detail's floating header. `pointerEvents`
+keeps every tap target working, but the paint order is wrong. Fixing it means rendering that
+chrome from the host as well (the engine would need a chrome slot), which is an engine change and
+was out of scope here; it is the next task if the founder sees the missing controls on device.

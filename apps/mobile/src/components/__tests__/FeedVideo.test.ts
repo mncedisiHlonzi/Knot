@@ -54,6 +54,8 @@ jest.mock('../../context/MediaPlayerContext', () => ({
 let mockStateValues: unknown[] = [];
 let mockStateCursor = 0;
 let mockEffects: (() => void)[] = [];
+/** The cleanups the last render's effects registered, as unmounting would run them. */
+let mockCleanups: (() => void)[] = [];
 
 /** Applies a functional state update, as React would. */
 function mockResolveState(current: unknown, next: unknown): unknown {
@@ -80,6 +82,7 @@ jest.mock('react', () => ({
   },
   useEffect: (effect: () => void) => {
     mockEffects.push(effect);
+    return undefined;
   },
 }));
 
@@ -128,9 +131,13 @@ function elements(node: unknown, found: Element[] = []): Element[] {
 function render(props: Parameters<typeof FeedVideo>[0]): Element {
   mockStateCursor = 0;
   mockEffects = [];
+  mockCleanups = [];
   const tree = FeedVideo(props) as Element;
   for (const effect of mockEffects) {
-    effect();
+    const cleanup = effect() as unknown;
+    if (typeof cleanup === 'function') {
+      mockCleanups.push(cleanup as () => void);
+    }
   }
   return tree;
 }
@@ -188,6 +195,7 @@ beforeEach(() => {
   mockStateValues = [];
   mockStateCursor = 0;
   mockEffects = [];
+  mockCleanups = [];
 });
 
 describe('FeedVideo surface', () => {
@@ -324,22 +332,26 @@ describe('FeedVideo poster', () => {
   });
 });
 
-describe('FeedVideo natural size', () => {
-  it("reports the engine's metadata to the caller, so the frame can be shaped", () => {
-    const onLoadSize = jest.fn();
-    playing({ naturalSize: { width: 300, height: 700 } });
+describe('FeedVideo surface release', () => {
+  /** Runs the cleanups the last render registered, as unmounting the card would. */
+  function unmount(): void {
+    for (const cleanup of mockCleanups) {
+      cleanup();
+    }
+  }
 
-    render({ uri: URI, isVisible: true, onLoadSize });
+  it('hands the engine back when its card goes away, so the picture cannot outlive it', () => {
+    // A released host only forgets the node; the engine's rectangle and clip live
+    // on, so the one player would keep painting this card's video at the rectangle
+    // it used to occupy — over the next screen, with its audio still running
+    // (KNOT-048-fix2).
+    playing();
+    render({ uri: URI, isVisible: true });
 
-    expect(onLoadSize).toHaveBeenCalledWith(300, 700);
-  });
+    unmount();
 
-  it('reports nothing until the clip has loaded', () => {
-    const onLoadSize = jest.fn();
-    playing({ naturalSize: null });
-
-    render({ uri: URI, isVisible: true, onLoadSize });
-
-    expect(onLoadSize).not.toHaveBeenCalled();
+    expect(mockActions.releaseHost).toHaveBeenCalledWith(URI);
+    expect(mockActions.clearSurface).toHaveBeenCalledWith(URI);
+    expect(mockActions.pauseMedia).toHaveBeenCalledWith(URI);
   });
 });

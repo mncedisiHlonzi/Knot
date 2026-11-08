@@ -2,8 +2,10 @@ import {
   FALLBACK_MEDIA_ASPECT_RATIO,
   MAX_PORTRAIT_ASPECT_RATIO,
   PLACEHOLDER_MEDIA_ASPECT_RATIO,
+  RESERVED_MEDIA_ASPECT_RATIO,
   hasMediaDimensions,
   mediaAspectRatio,
+  reservedMediaAspectRatio,
   resolveMediaAspectRatio,
 } from '../mediaFrame';
 
@@ -133,5 +135,64 @@ describe('resolveMediaAspectRatio', () => {
 describe('PLACEHOLDER_MEDIA_ASPECT_RATIO', () => {
   it('is a square, so the pre-load frame promises no shape', () => {
     expect(PLACEHOLDER_MEDIA_ASPECT_RATIO).toBe(1);
+  });
+});
+
+describe('RESERVED_MEDIA_ASPECT_RATIO', () => {
+  it('is 4:5, the design\u2019s canonical media shape', () => {
+    // Every item in `docs/design-reference/story-detail-v2/media-model.json` is
+    // 1080x1350, so the reserved frame is the shape the reference draws (KNOT-048-fix2).
+    expect(RESERVED_MEDIA_ASPECT_RATIO).toBeCloseTo(1080 / 1350, 6);
+    expect(RESERVED_MEDIA_ASPECT_RATIO).toBeCloseTo(4 / 5, 6);
+    expect(RESERVED_MEDIA_ASPECT_RATIO).toBe(MAX_PORTRAIT_ASPECT_RATIO);
+  });
+});
+
+describe('reservedMediaAspectRatio', () => {
+  it('uses the payload ratio, so a card is the right shape on its first paint', () => {
+    expect(reservedMediaAspectRatio(1920, 1080)).toBeCloseTo(16 / 9, 4);
+    expect(reservedMediaAspectRatio(1000, 1250)).toBeCloseTo(0.8, 6);
+    expect(reservedMediaAspectRatio(1000, 1000)).toBe(1);
+  });
+
+  it('applies the 4:5 cap to the payload, so a tall clip cannot run off the page', () => {
+    expect(reservedMediaAspectRatio(1080, 1920)).toBe(MAX_PORTRAIT_ASPECT_RATIO);
+    expect(reservedMediaAspectRatio(300, 700)).toBe(MAX_PORTRAIT_ASPECT_RATIO);
+  });
+
+  it('reserves 4:5 when the payload cannot describe the media', () => {
+    expect(reservedMediaAspectRatio()).toBe(RESERVED_MEDIA_ASPECT_RATIO);
+    expect(reservedMediaAspectRatio(null, null)).toBe(RESERVED_MEDIA_ASPECT_RATIO);
+    expect(reservedMediaAspectRatio(undefined, undefined)).toBe(RESERVED_MEDIA_ASPECT_RATIO);
+  });
+
+  it('reserves 4:5 for a half pair or a zero dimension, since neither is a shape', () => {
+    expect(reservedMediaAspectRatio(1080, null)).toBe(RESERVED_MEDIA_ASPECT_RATIO);
+    expect(reservedMediaAspectRatio(null, 1920)).toBe(RESERVED_MEDIA_ASPECT_RATIO);
+    expect(reservedMediaAspectRatio(0, 0)).toBe(RESERVED_MEDIA_ASPECT_RATIO);
+    expect(reservedMediaAspectRatio(-1080, 1920)).toBe(RESERVED_MEDIA_ASPECT_RATIO);
+  });
+
+  it('never returns null, so a caller always has a frame to draw', () => {
+    const ratios = [
+      reservedMediaAspectRatio(),
+      reservedMediaAspectRatio(1080, 1920),
+      reservedMediaAspectRatio(1920, 1080),
+    ];
+
+    for (const ratio of ratios) {
+      expect(typeof ratio).toBe('number');
+      expect(Number.isFinite(ratio)).toBe(true);
+      expect(ratio).toBeGreaterThan(0);
+    }
+  });
+
+  it('is decided from the payload alone, with no parameter for a loaded size', () => {
+    // There is deliberately no third argument: a frame cannot be re-shaped by a
+    // measurement that arrives after the media loads, which is exactly the late
+    // resize that made the Feed jump while scrolling (KNOT-048-fix2).
+    expect(reservedMediaAspectRatio.length).toBe(2);
+    expect(reservedMediaAspectRatio(1080, 1350)).toBeCloseTo(1080 / 1350, 6);
+    expect(reservedMediaAspectRatio(undefined, undefined)).toBe(RESERVED_MEDIA_ASPECT_RATIO);
   });
 });

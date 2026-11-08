@@ -3,32 +3,37 @@
  *
  * The server reports a media item's pixel dimensions alongside its kind and URL
  * (`first_media_width` / `first_media_height`, KNOT-020g-fix5). When it does, the
- * frame takes the media's own width:height ratio, so a portrait photo renders
- * tall and a landscape one renders wide, and the media is shown whole rather than
+ * frame takes the media's own width:height ratio, so a portrait photo renders tall
+ * and a landscape one renders wide, and the media is shown whole rather than
  * cropped into a fixed window. The frame is **capped at 4:5**, so a very tall
  * portrait is cropped to a sane list height instead of running off the page
  * (`MAX_PORTRAIT_ASPECT_RATIO`, KNOT-020g-fix12).
  *
- * The server does not always know the shape. Its dimensions are client-reported
- * and the upload pipeline cannot measure everything — a video asset is the common
- * case, because the picker reports only its duration. So a frame can learn the
- * shape two ways: from the payload before the bytes are fetched, or from the
- * media's own natural size once it has loaded. `resolveMediaAspectRatio` settles
- * which of the two to use, and `useMediaAspectRatio` (its React counterpart, in
- * `useMediaAspectRatio.ts`) holds the on-load result across renders.
+ * The rule a surface draws with is `reservedMediaAspectRatio`: the shape is settled
+ * from the payload **before** the media is fetched and is never revised, so a card
+ * or carousel page is exactly as tall on its first paint as on its last. That is
+ * what stops the Feed jumping and the Story Detail pushing its text around while a
+ * clip loads (KNOT-048-fix2). Media the payload cannot describe — a video, whose
+ * picker usually reports only its duration — takes `RESERVED_MEDIA_ASPECT_RATIO`,
+ * the design's canonical 4:5 frame, and keeps it.
+ *
+ * `resolveMediaAspectRatio` is the older "settle from the media's own load" rule.
+ * It is kept because it answers a different question — what shape IS this file —
+ * which a caller that is not laying out a list (the full-screen viewer) may want;
+ * it must **not** be used to size a frame in a scrolling list.
  *
  * It is deliberately free of any import: a pure rule about four numbers, testable
- * on its own and usable by a component and a screen alike. The hook lives
- * elsewhere so this module can stay that way.
+ * on its own and usable by a component and a screen alike.
  */
 
 /**
  * The ratio a frame takes before the media has reported its shape.
  *
- * A square, chosen because it is the one frame that is neither wide nor tall: the
- * media fills it (`cover`), so it is a neutral placeholder rather than a promise
- * about the shape that the load may not keep. It is replaced the moment the media
- * reports its natural size (KNOT-020g-fix7).
+ * A square, chosen because it is the one frame that is neither wide nor tall. It
+ * is what `resolveMediaAspectRatio`'s callers drew while they waited for a load;
+ * `reservedMediaAspectRatio` deliberately does not use it, because a frame that is
+ * replaced by a different shape later is a frame that moves the page
+ * (KNOT-020g-fix7, KNOT-048-fix2).
  */
 export const PLACEHOLDER_MEDIA_ASPECT_RATIO = 1;
 
@@ -50,6 +55,23 @@ export const FALLBACK_MEDIA_ASPECT_RATIO = 16 / 9;
  * (KNOT-020g-fix12).
  */
 export const MAX_PORTRAIT_ASPECT_RATIO = 4 / 5;
+
+/**
+ * The shape a frame reserves when the payload cannot describe the media.
+ *
+ * The design's canonical media shape: every item in
+ * `docs/design-reference/story-detail-v2/media-model.json` is 1080 x 1350, which
+ * is exactly 4:5 -- the same ratio `MAX_PORTRAIT_ASPECT_RATIO` already caps every
+ * frame at. Reserving it means a card's height is decided **before** a byte of
+ * media is fetched and does not depend on what the file turns out to be.
+ *
+ * That is the whole point. A frame that waits for the media and then resizes drags
+ * the whole list with it: the card above changes height, everything below moves,
+ * and a person scrolling sees the Feed jump under their thumb. The reserved ratio
+ * trades a possible crop (the media fills its frame with `cover`) for a layout that
+ * never moves (KNOT-048-fix2).
+ */
+export const RESERVED_MEDIA_ASPECT_RATIO = MAX_PORTRAIT_ASPECT_RATIO;
 
 /**
  * The aspect ratio (width / height) to frame media with.
@@ -117,4 +139,31 @@ export function resolveMediaAspectRatio(
   }
 
   return null;
+}
+
+/**
+ * The shape a list or carousel frame takes, decided from the payload ALONE.
+ *
+ * Two differences from `resolveMediaAspectRatio`, both deliberate:
+ *
+ * 1. it never returns `null`, so a caller always has a frame to draw and never
+ *    needs a second "placeholder" constant;
+ * 2. it never consults what the media reports once it loads, so the frame a card
+ *    paints first is the frame it keeps. That is the fix for the Feed jumping while
+ *    scrolling and the Story Detail pushing its text around under the media: both
+ *    were the same late resize, the card opening as a square placeholder and
+ *    collapsing to the clip's real shape once the player had read the file
+ *    (KNOT-048-fix2).
+ *
+ * The server reports dimensions for media it could measure, which is the common
+ * case for a photo; a video's picker usually reports only its duration, so a clip
+ * takes `RESERVED_MEDIA_ASPECT_RATIO` and stays there.
+ */
+export function reservedMediaAspectRatio(
+  payloadWidth?: number | null,
+  payloadHeight?: number | null,
+): number {
+  return hasMediaDimensions(payloadWidth, payloadHeight)
+    ? mediaAspectRatio(payloadWidth, payloadHeight)
+    : RESERVED_MEDIA_ASPECT_RATIO;
 }

@@ -22,9 +22,7 @@ import {
   Easing,
   Image,
   View,
-  type ImageLoadEventData,
   type ImageStyle,
-  type NativeSyntheticEvent,
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
@@ -45,8 +43,6 @@ type MediaImageProps = {
   readonly layerStyle?: StyleProp<ImageStyle>;
   /** Defaults to `cover`, the list behaviour. The viewer asks for `contain`. */
   readonly resizeMode?: 'cover' | 'contain';
-  /** Reports the decoded size, so a frame the payload could not size can settle. */
-  readonly onLoadSize?: (width: number, height: number) => void;
   /** Called once the full rendition has loaded, so a caller can retire a loader. */
   readonly onFullLoadEnd?: () => void;
   /** Test identifier for the box. */
@@ -79,7 +75,6 @@ export default function MediaImage({
   style,
   layerStyle,
   resizeMode = 'cover',
-  onLoadSize,
   onFullLoadEnd,
   testID,
   stillTestID = 'media-image-still',
@@ -90,26 +85,18 @@ export default function MediaImage({
 
   const opacity = useRef(new Animated.Value(still === null ? 1 : 0)).current;
 
-  const handleLoad = useCallback(
-    (event: NativeSyntheticEvent<ImageLoadEventData>): void => {
-      const { width, height } = event.nativeEvent.source;
-      if (onLoadSize !== undefined && width > 0 && height > 0) {
-        onLoadSize(width, height);
-      }
+  const handleLoad = useCallback((): void => {
+    Animated.timing(opacity, {
+      toValue: 1,
+      duration: MEDIA_IMAGE_FADE_MS,
+      easing: Easing.bezier(...motion.easing.standard),
+      useNativeDriver: true,
+    }).start();
 
-      Animated.timing(opacity, {
-        toValue: 1,
-        duration: MEDIA_IMAGE_FADE_MS,
-        easing: Easing.bezier(...motion.easing.standard),
-        useNativeDriver: true,
-      }).start();
-
-      if (onFullLoadEnd !== undefined) {
-        onFullLoadEnd();
-      }
-    },
-    [onFullLoadEnd, onLoadSize, opacity],
-  );
+    if (onFullLoadEnd !== undefined) {
+      onFullLoadEnd();
+    }
+  }, [onFullLoadEnd, opacity]);
 
   if (full === '') {
     return null;

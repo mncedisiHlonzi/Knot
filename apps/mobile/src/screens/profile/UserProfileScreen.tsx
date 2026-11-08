@@ -12,8 +12,6 @@ import {
   StyleSheet,
   Text,
   View,
-  type ImageLoadEventData,
-  type NativeSyntheticEvent,
 } from 'react-native';
 import { ArrowLeft, DotsThree, Gear } from 'phosphor-react-native';
 
@@ -48,8 +46,7 @@ import {
 } from '../../theme';
 import type { ThemeColors } from '../../theme';
 import { useFade } from '../../motion/useFade';
-import { PLACEHOLDER_MEDIA_ASPECT_RATIO } from '../../utils/mediaFrame';
-import { useMediaAspectRatio } from '../../utils/useMediaAspectRatio';
+import { reservedMediaAspectRatio } from '../../utils/mediaFrame';
 import { formatRelativeTime } from '../../utils/time';
 import {
   VIEWABILITY_CONFIG,
@@ -169,16 +166,19 @@ function CardMedia({
   ) => void;
 }): React.ReactElement | null {
   const styles = useThemedStyles(createStyles);
-  // The hook is called before the early return, so the component always calls it
-  // however the card changes between renders.
-  const { aspectRatio, onLoadSize } = useMediaAspectRatio(card.mediaWidth, card.mediaHeight);
 
   if (card.mediaUrl === undefined || card.mediaType === undefined) {
     return null;
   }
 
   const uri = `${API_BASE_URL}${card.mediaUrl}`;
-  const frame = [styles.cardMedia, { aspectRatio: aspectRatio ?? PLACEHOLDER_MEDIA_ASPECT_RATIO }];
+  // The same payload-only rule as the Feed: the card's height is decided before the
+  // media is fetched and never changes afterwards, so a wall never reflows under a
+  // person's thumb when a picture or a clip finishes loading (KNOT-048-fix2).
+  const frame = [
+    styles.cardMedia,
+    { aspectRatio: reservedMediaAspectRatio(card.mediaWidth, card.mediaHeight) },
+  ];
 
   // A wall card carries one media item; `0` dimensions mean "unknown", which the
   // viewer treats as unconstrained (KNOT-020k).
@@ -193,10 +193,6 @@ function CardMedia({
   ];
 
   /** Takes the shape off a decoded image, for media the payload could not size. */
-  const handleImageLoad = (event: NativeSyntheticEvent<ImageLoadEventData>): void => {
-    const { width, height } = event.nativeEvent.source;
-    onLoadSize(width, height);
-  };
 
   return (
     <Pressable
@@ -212,14 +208,12 @@ function CardMedia({
           isVisible={isVisible}
           isMuted={isMuted}
           onToggleMute={onToggleMute}
-          onLoadSize={onLoadSize}
         />
       ) : (
         <Image
           source={{ uri }}
           style={styles.cardMediaFill}
           resizeMode="cover"
-          onLoad={handleImageLoad}
           accessibilityIgnoresInvertColors
         />
       )}

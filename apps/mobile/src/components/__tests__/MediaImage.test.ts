@@ -109,27 +109,14 @@ describe('MediaImage layers', () => {
 });
 
 describe('MediaImage load', () => {
-  it('reports the decoded size and then retires a loader', () => {
-    const onLoadSize = jest.fn();
+  it('retires a loader once the rendition has decoded', () => {
     const onFullLoadEnd = jest.fn();
-    const tree = MediaImage({ uri: FULL, onLoadSize, onFullLoadEnd }) as Element;
+    const tree = MediaImage({ uri: FULL, onFullLoadEnd }) as Element;
     const full = elements(tree).find((element) => element.type === 'Animated.Image');
     const onLoad = full?.props?.onLoad as (event: unknown) => void;
 
     onLoad({ nativeEvent: { source: { width: 300, height: 700 } } });
 
-    expect(onLoadSize).toHaveBeenCalledWith(300, 700);
     expect(onFullLoadEnd).toHaveBeenCalledTimes(1);
-  });
-
-  it('ignores a decoded size that is not a shape', () => {
-    const onLoadSize = jest.fn();
-    const tree = MediaImage({ uri: FULL, onLoadSize }) as Element;
-    const full = elements(tree).find((element) => element.type === 'Animated.Image');
-    const onLoad = full?.props?.onLoad as (event: unknown) => void;
-
-    onLoad({ nativeEvent: { source: { width: 0, height: 700 } } });
-
-    expect(onLoadSize).not.toHaveBeenCalled();
   });
 });

@@ -10,7 +10,6 @@ import {
   Text,
   View,
   useWindowDimensions,
-  type ImageLoadEventData,
   type LayoutChangeEvent,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
@@ -43,8 +42,7 @@ import {
   useThemedStyles,
 } from '../../theme';
 import type { ThemeColors, ThemeName } from '../../theme';
-import { PLACEHOLDER_MEDIA_ASPECT_RATIO, resolveMediaAspectRatio } from '../../utils/mediaFrame';
-import { useMediaAspectRatio } from '../../utils/useMediaAspectRatio';
+import { reservedMediaAspectRatio } from '../../utils/mediaFrame';
 import { carouselCounter, carouselIndex, carouselPositionLabel } from './detailCarousel';
 import { stripImagePath } from './mediaStripSource';
 
@@ -97,14 +95,15 @@ function statusBarStyle(hasMedia: boolean, theme: ThemeName): 'light-content' | 
 
 /**
  * One page of the Version Detail carousel: a full-width media frame at the shape
- * the media itself reports.
+ * the payload reports for the item.
  *
  * A version has no media of its own, so these are the parent story's pages. The
- * page owns the media's natural-ratio resolution (payload dimensions first, then
- * the media's own load, capped at 4:5 by `resolveMediaAspectRatio`) and reports
- * the result up, because the pager's height follows the ACTIVE page. A video is
- * handed to `FeedVideo`, so the one player keeps its autoplay and mute
- * behaviour; an image draws directly (KNOT-025, ported by KNOT-026).
+ * SCREEN owns the pager's height (a horizontal pager is one box, sized by the
+ * ACTIVE page), and the shape comes from the payload alone, reserving the design's
+ * 4:5 frame when the payload carries no dimensions, so the pager never resizes when
+ * a media file finishes loading. A video is handed to `FeedVideo`, so the one player
+ * keeps its autoplay and mute behaviour; an image draws through `MediaImage`
+ * (KNOT-025, ported by KNOT-026, stabilised by KNOT-048-fix2).
  */
 function CarouselPage({
   media,
@@ -113,7 +112,6 @@ function CarouselPage({
   isActive,
   isMuted,
   onToggleMute,
-  onAspectRatio,
   onPress,
 }: {
   readonly media: StoryMedia;
@@ -122,12 +120,10 @@ function CarouselPage({
   readonly isActive: boolean;
   readonly isMuted: boolean;
   readonly onToggleMute: () => void;
-  readonly onAspectRatio: (mediaId: string, ratio: number | null) => void;
   /** Called when the media is tapped, to open the full-screen viewer. */
   readonly onPress: () => void;
 }): React.ReactElement {
   const styles = useThemedStyles(createStyles);
-  const { aspectRatio, onLoadSize } = useMediaAspectRatio(media.width, media.height);
   // The same rule as Story Detail's carousel, because these are the parent story's
   // pages: a photo is drawn from its WebP display when the server has one, since
   // AVIF is undecodable below Android 12 / iOS 16 and fails silently
@@ -135,18 +131,6 @@ function CarouselPage({
   const uri = resolveMediaUrl(
     media.media_type === 'image' && media.display_webp_url ? media.display_webp_url : media.url,
   );
-
-  // The carousel's frame takes the active page's shape, so a page reports the
-  // ratio it resolved. `null` means the media has not reported one yet, which the
-  // screen ignores rather than overwriting a known ratio.
-  useEffect(() => {
-    onAspectRatio(media.id, aspectRatio);
-  }, [aspectRatio, media.id, onAspectRatio]);
-
-  const handleImageLoad = (event: NativeSyntheticEvent<ImageLoadEventData>): void => {
-    const { width: loadedWidth, height: loadedHeight } = event.nativeEvent.source;
-    onLoadSize(loadedWidth, loadedHeight);
-  };
 
   return (
     // The page opens the full-screen viewer; the pager keeps the horizontal
@@ -164,7 +148,6 @@ function CarouselPage({
           isVisible={isActive}
           isMuted={isMuted}
           onToggleMute={onToggleMute}
-          onLoadSize={onLoadSize}
           durationMs={media.duration_ms}
           showTag={false}
           durationPosition="bottom-left"
@@ -174,7 +157,6 @@ function CarouselPage({
           source={{ uri }}
           style={styles.pageMedia}
           resizeMode="cover"
-          onLoad={handleImageLoad}
           accessibilityIgnoresInvertColors
         />
       )}
@@ -268,11 +250,10 @@ export default function StoryVersionScreen({
   const [reportVisible, setReportVisible] = useState(false);
 
   // The carousel's own state, mirroring the Story Detail: which page is showing,
-  // the shape each page has reported, the one mute control, and whether the
-  // carousel is still on screen (which pauses its video).
+  // the one mute control, and whether the carousel is still on screen (which pauses
+  // its video).
   const { width: pageWidth } = useWindowDimensions();
   const [activeIndex, setActiveIndex] = useState(0);
-  const [ratios, setRatios] = useState<Readonly<Record<string, number>>>({});
   const [isMuted, setIsMuted] = useState(true);
   const [carouselVisible, setCarouselVisible] = useState(true);
   const carouselBottom = useRef(0);
@@ -302,15 +283,11 @@ export default function StoryVersionScreen({
 
   const safeIndex = media.length === 0 ? 0 : Math.min(activeIndex, media.length - 1);
   const activeMedia = media[safeIndex];
-  // The frame takes the active media's shape: the shape the page reported, else
-  // the payload's own dimensions, else the neutral square placeholder. The 4:5
-  // cap is applied inside `resolveMediaAspectRatio` (KNOT-020g-fix7).
-  const activeRatio =
-    (activeMedia === undefined ? undefined : ratios[activeMedia.id]) ??
-    (activeMedia === undefined
-      ? undefined
-      : resolveMediaAspectRatio(activeMedia.width, activeMedia.height)) ??
-    PLACEHOLDER_MEDIA_ASPECT_RATIO;
+  // The pager's height is the ACTIVE page's reserved shape, settled from the
+  // payload without waiting for any media, so the carousel is the same height on
+  // its first paint and its last and the reading column below never moves
+  // (KNOT-020g-fix7, KNOT-048-fix2).
+  const activeRatio = reservedMediaAspectRatio(activeMedia?.width, activeMedia?.height);
   const carouselHeight = pageWidth / activeRatio;
   // TODO: Re-enable viewer in a future task. With no viewer, the carousel only
   // pauses when the reader scrolls past it or opens the report sheet
@@ -346,11 +323,10 @@ export default function StoryVersionScreen({
   }, [load]);
 
   // A different version starts at its first page: the overlay reuses this component
-  // instance when one version replaces another, so the previous page index, shapes,
-  // and parent story must not leak into the new version.
+  // instance when one version replaces another, so the previous page index and the
+  // parent story must not leak into the new version.
   useEffect(() => {
     setActiveIndex(0);
-    setRatios({});
     setStory(undefined);
   }, [versionId]);
 
@@ -365,16 +341,6 @@ export default function StoryVersionScreen({
       layout.screenPaddingFeed + activeIndex * stride + THUMBNAIL_SIZE / 2 - pageWidth / 2;
     stripRef.current?.scrollTo({ x: Math.max(0, offset), animated: true });
   }, [activeIndex, media.length, pageWidth]);
-
-  /** Records a page's resolved shape, ignoring the "not known yet" answer. */
-  const handlePageRatio = useCallback((mediaId: string, ratio: number | null): void => {
-    if (ratio === null) {
-      return;
-    }
-    setRatios((previous) =>
-      previous[mediaId] === ratio ? previous : { ...previous, [mediaId]: ratio },
-    );
-  }, []);
 
   /** Remembers where the carousel ends, so vertical scrolling can pause its video. */
   const handleCarouselLayout = (event: LayoutChangeEvent): void => {
@@ -450,7 +416,6 @@ export default function StoryVersionScreen({
                       isActive={index === safeIndex && videoActive}
                       isMuted={isMuted}
                       onToggleMute={toggleMute}
-                      onAspectRatio={handlePageRatio}
                       onPress={() => onOpenMedia(media, index, viewerStory)}
                     />
                   ))}

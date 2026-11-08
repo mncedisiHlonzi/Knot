@@ -1,4 +1,4 @@
-import { MAX_PORTRAIT_ASPECT_RATIO } from '../../utils/mediaFrame';
+import { MAX_PORTRAIT_ASPECT_RATIO, RESERVED_MEDIA_ASPECT_RATIO } from '../../utils/mediaFrame';
 import { colors, fontWeights, spacing, typeScale } from '../../theme';
 import { ArrowsClockwise } from 'phosphor-react-native';
 
@@ -10,17 +10,14 @@ import PillarTag from '../PillarTag';
 import SocialProofHeader from '../SocialProofHeader';
 
 /**
- * FeedEntry resolves its media frame from the payload or from the media's own
- * on-load size, so it holds state and can no longer be covered by the hookless
- * direct-call suite it used to live in. This project has no renderer and must not
- * add one, so React's hook primitives are stubbed instead: `useState` returns its
- * initial value (the pre-load state, which is what a static call can honestly
- * assert) and `useCallback` returns the callback unchanged. The component is then
- * called as a plain function exactly as before.
+ * FeedEntry reads the theme through context, so the hook primitives are stubbed:
+ * `useState` returns its initial value and `useCallback` returns the callback
+ * unchanged, and the component is called as a plain function as before.
  *
- * The decision the hook makes — payload, then loaded size, then unknown — is
- * exhaustively covered as a pure rule in `utils/__tests__/mediaFrame.test.ts`,
- * which is the part that can be tested without a renderer (KNOT-020g-fix7).
+ * The frame rule itself is a pure function (`reservedMediaAspectRatio`), covered
+ * exhaustively in `utils/__tests__/mediaFrame.test.ts`; the tests here assert the
+ * one property a card must have — that its frame's shape comes from the payload and
+ * cannot change after the media loads (KNOT-020g-fix7, KNOT-048-fix2).
  */
 jest.mock('react', () => ({
   ...jest.requireActual('react'),
@@ -384,25 +381,31 @@ describe('FeedEntry', () => {
     expect(frameAspectRatio(element)).toBeCloseTo(1920 / 1080, 6);
   });
 
-  it('falls back to the square placeholder, never a fixed landscape frame', () => {
+  it('reserves the design\u2019s 4:5 frame when the payload has no dimensions', () => {
     const element = FeedEntry({ story: withMedia, onPress: () => undefined });
 
-    expect(frameAspectRatio(element)).toBe(1);
+    expect(frameAspectRatio(element)).toBe(RESERVED_MEDIA_ASPECT_RATIO);
+    expect(RESERVED_MEDIA_ASPECT_RATIO).toBeCloseTo(4 / 5, 6);
   });
 
-  it('asks the image for its natural size, so a payload with no dimensions can settle', () => {
+  it('gives the same story the same frame on every render, so the card cannot resize', () => {
+    // A frame that settles from the media's own load is a frame that moves the
+    // whole Feed the moment a clip's metadata arrives (KNOT-048-fix2).
+    const first = FeedEntry({ story: withMedia, onPress: () => undefined });
+    const second = FeedEntry({ story: withMedia, onPress: () => undefined });
+
+    expect(frameAspectRatio(first)).toBe(frameAspectRatio(second));
+  });
+
+  it('wires no size callback into the image, so a decoded picture cannot re-shape the frame', () => {
     const element = FeedEntry({ story: withMedia, onPress: () => undefined });
     const image = findElementByType(element, MediaImage);
-    const onLoadSize = image?.props?.onLoadSize as
-      ((width: number, height: number) => void) | undefined;
 
-    expect(typeof onLoadSize).toBe('function');
-
-    // It reads the decoded media's own size, which is what the frame re-shapes to.
-    expect(() => onLoadSize?.(300, 700)).not.toThrow();
+    expect(image).toBeDefined();
+    expect(image?.props?.onLoadSize).toBeUndefined();
   });
 
-  it('hands the video the same size pass-through as the image', () => {
+  it('reserves the 4:5 frame for a video the payload could not size, and keeps it', () => {
     const element = FeedEntry({
       story: { ...withMedia, first_media_type: 'video' },
       onPress: () => undefined,
@@ -410,7 +413,11 @@ describe('FeedEntry', () => {
     const video = findElementByType(element, FeedVideo);
 
     expect(video).toBeDefined();
-    expect(typeof video?.props?.onLoadSize).toBe('function');
+    // The frame is the design's canonical 4:5, reserved from the payload alone, so
+    // the card is already the right height before the stream is fetched.
+    expect(frameAspectRatio(element)).toBe(RESERVED_MEDIA_ASPECT_RATIO);
+    // ...and the player has no way to report a different one afterwards.
+    expect(video?.props?.onLoadSize).toBeUndefined();
   });
 
   /**

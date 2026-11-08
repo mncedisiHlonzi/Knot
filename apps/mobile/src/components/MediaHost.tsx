@@ -138,6 +138,13 @@ function MediaSurfaceView({
         // Inline surfaces fill their frame; the theatre letterboxes, because a
         // viewer has paid for the whole picture and cropping it would lose it.
         resizeMode={placement === 'viewer' ? 'contain' : 'cover'}
+        // A `SurfaceView` (the library's Android default) is a separate window
+        // layer: it punches through the React Native hierarchy, so it ignores its
+        // parent's clipping and paints over whatever sits above it -- the card's own
+        // chrome, the floating header, a modal. A `TextureView` is an ordinary view,
+        // so the picture stays inside the rectangle the engine reported and stacks
+        // like every other element (KNOT-025-fix6, KNOT-048-fix2).
+        useTextureView
         progressUpdateInterval={250}
         // The native surface is opaque and empty until the first frame decodes, so
         // the player is asked for the surround it will sit in: the app's canvas on

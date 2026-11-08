@@ -19,6 +19,9 @@ jest.mock('react', () => ({
   useRef: (initial: unknown) => ({ current: initial }),
   useCallback: (callback: unknown) => callback,
   useMemo: (factory: () => unknown) => factory(),
+  // The provider re-measures its host after every committed transition; there is
+  // no renderer in this suite, so the effect is simply not run.
+  useEffect: () => undefined,
 }));
 
 jest.mock('../../theme', () => ({

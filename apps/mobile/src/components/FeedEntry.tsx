@@ -16,8 +16,7 @@ import {
   useThemedStyles,
 } from '../theme';
 import type { ThemeColors } from '../theme';
-import { PLACEHOLDER_MEDIA_ASPECT_RATIO } from '../utils/mediaFrame';
-import { useMediaAspectRatio } from '../utils/useMediaAspectRatio';
+import { reservedMediaAspectRatio } from '../utils/mediaFrame';
 import AuthorLine from './AuthorLine';
 import { feedMetaLine, isPreviewTruncated } from './feedEntryMeta';
 import FeedVideo, { VIDEO_MUTE_BUTTON_SIZE } from './FeedVideo';
@@ -306,13 +305,14 @@ function lineageAvatarLabel(name: string): string {
  * entry is the visible one. The count badge stacks above the video's mute control
  * so the two never collide.
  *
- * The media's frame is the **media's own shape**: full width, and a height that
- * follows the media's natural width:height ratio, so a landscape photo is short
- * and a portrait one is tall. The ratio comes from the payload when the server
- * reported the item's dimensions; otherwise it comes from the media itself, which
- * reports its natural size on load (KNOT-020g-fix7). Until one of them answers,
- * the frame is a full-width square of `bg.sunken` — the media fills whatever frame
- * it is given (`cover`), so a placeholder is never a bar.
+ * The media's frame is **fixed from the payload**: full width, and a height that
+ * follows the item's reported width:height ratio, so a landscape photo is short and
+ * a portrait one is tall. When the payload cannot describe the item — which is the
+ * normal case for a video, whose picker reports only its duration — the frame
+ * reserves the design's 4:5 shape. Either way the height is decided before the
+ * media is fetched and **never changes afterwards**, because a frame that resizes
+ * when its media loads moves every card below it (KNOT-048-fix2). The media fills
+ * whatever frame it is given (`cover`), so a placeholder is never a bar.
  *
  * This component used to stay **hookless** so the tests could call it as a plain
  * function. It no longer is: resolving a frame from the loaded media needs state,
@@ -360,13 +360,12 @@ export function FeedEntry({
   // (KNOT-037-fix8).
   const isProcessing = mediaStatus === 'processing';
   const mediaCount = story.media_count ?? 0;
-  const { aspectRatio, onLoadSize } = useMediaAspectRatio(
-    story.first_media_width,
-    story.first_media_height,
-  );
-  // The media's own shape when either source knows it; a neutral square until one
-  // does. Never a fixed landscape frame — that is the crop this rule removes.
-  const mediaFrame = aspectRatio ?? PLACEHOLDER_MEDIA_ASPECT_RATIO;
+  // The frame's shape comes from the payload alone, so the card is the same height
+  // on its first paint and on its last. It used to settle from a square to the
+  // media's real shape once the item had loaded, and that late resize is what made
+  // the Feed jump as a person scrolled (KNOT-048-fix2). A clip whose dimensions the
+  // payload does not carry reserves the design's 4:5 frame and keeps it.
+  const mediaFrame = reservedMediaAspectRatio(story.first_media_width, story.first_media_height);
 
   // The full-screen viewer takes the same item shape as `StoryMedia`; a feed
   // entry carries only its first item, so its viewer is a single page
@@ -659,7 +658,6 @@ export function FeedEntry({
                 isVisible={isVisible}
                 isMuted={isMuted}
                 onToggleMute={onToggleMute}
-                onLoadSize={onLoadSize}
                 isNextInLine={isNextInLine}
               />
             ) : (
@@ -668,7 +666,6 @@ export function FeedEntry({
                 stillUri={thumbnailUrl}
                 style={styles.media}
                 resizeMode="cover"
-                onLoadSize={onLoadSize}
                 testID="feed-media-image"
               />
             )}

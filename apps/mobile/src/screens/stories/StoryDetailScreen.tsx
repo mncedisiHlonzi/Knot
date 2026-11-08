@@ -45,8 +45,7 @@ import {
   useThemedStyles,
 } from '../../theme';
 import type { ThemeColors, ThemeName } from '../../theme';
-import { PLACEHOLDER_MEDIA_ASPECT_RATIO, resolveMediaAspectRatio } from '../../utils/mediaFrame';
-import { useMediaAspectRatio } from '../../utils/useMediaAspectRatio';
+import { reservedMediaAspectRatio } from '../../utils/mediaFrame';
 import { carouselCounter, carouselIndex, carouselPositionLabel } from './detailCarousel';
 import { stripImagePath } from './mediaStripSource';
 
@@ -104,14 +103,16 @@ function statusBarStyle(hasMedia: boolean, theme: ThemeName): 'light-content' | 
 }
 
 /**
- * One page of the Story Detail carousel: a full-width media frame at the shape
- * the media itself reports.
+ * One page of the Story Detail carousel: a full-width media frame at the shape the
+ * payload reports for the item.
  *
- * The page owns the media's natural-ratio resolution (payload dimensions first,
- * then the media's own load, capped at 4:5 by `resolveMediaAspectRatio`) and
- * reports the result up, because the pager's height follows the ACTIVE page
- * (KNOT-025). A video is handed to `FeedVideo`, so the one player keeps its
- * autoplay and mute behaviour; an image draws directly.
+ * The SCREEN owns the pager's height, because a horizontal pager is a single box
+ * whose height follows the ACTIVE page, and one page's shape therefore sizes every
+ * page. A page renders at the size it is given, and the shape comes from the
+ * payload alone, reserving the design's 4:5 frame when the payload carries no
+ * dimensions — so the pager never resizes when a media file finishes loading
+ * (KNOT-025, KNOT-048-fix2). A video is handed to `FeedVideo`, so the one player
+ * keeps its autoplay and mute behaviour; an image draws through `MediaImage`.
  */
 function CarouselPage({
   media,
@@ -120,7 +121,6 @@ function CarouselPage({
   isActive,
   isMuted,
   onToggleMute,
-  onAspectRatio,
   onPress,
 }: {
   readonly media: StoryMedia;
@@ -129,13 +129,11 @@ function CarouselPage({
   readonly isActive: boolean;
   readonly isMuted: boolean;
   readonly onToggleMute: () => void;
-  readonly onAspectRatio: (mediaId: string, ratio: number | null) => void;
   /** Called when the media is tapped, to open the full-screen viewer. */
   readonly onPress: () => void;
 }): React.ReactElement {
   const styles = useThemedStyles(createStyles);
   const { colors } = useTheme();
-  const { aspectRatio, onLoadSize } = useMediaAspectRatio(media.width, media.height);
   // A photo is drawn from its WebP display when the server has one: AVIF is
   // decodable only on Android 12+ and iOS 16+, and a device below those draws a
   // blank page for it with no error to react to. A video keeps its stream address,
@@ -169,12 +167,10 @@ function CarouselPage({
     );
   }
 
-  // The carousel's frame takes the active page's shape, so a page reports the
-  // ratio it resolved. `null` means the media has not reported one yet, which the
-  // screen ignores rather than overwriting a known ratio.
-  useEffect(() => {
-    onAspectRatio(media.id, aspectRatio);
-  }, [aspectRatio, media.id, onAspectRatio]);
+  // The carousel's frame takes the active page's shape, which the screen decides
+  // from the payload. Nothing here waits for a load, and there is deliberately no
+  // hook after the early return above: whether a page is processing or ready must
+  // not change the number of hooks this component calls (KNOT-048-fix2).
 
   return (
     // The page is a tap target for the full-screen viewer (KNOT-020k); the
@@ -193,7 +189,6 @@ function CarouselPage({
           isVisible={isActive}
           isMuted={isMuted}
           onToggleMute={onToggleMute}
-          onLoadSize={onLoadSize}
           durationMs={media.duration_ms}
           showTag={false}
           durationPosition="bottom-left"
@@ -206,7 +201,6 @@ function CarouselPage({
           stillUri={thumbnailUri}
           style={styles.pageMedia}
           resizeMode="cover"
-          onLoadSize={onLoadSize}
           testID="detail-image"
           stillTestID="detail-image-still"
         />
@@ -297,7 +291,6 @@ export default function StoryDetailScreen({
   // (which pauses its video once the reader scrolls past it).
   const { width: pageWidth } = useWindowDimensions();
   const [activeIndex, setActiveIndex] = useState(0);
-  const [ratios, setRatios] = useState<Readonly<Record<string, number>>>({});
   const [isMuted, setIsMuted] = useState(true);
   const [carouselVisible, setCarouselVisible] = useState(true);
   const carouselBottom = useRef(0);
@@ -325,15 +318,12 @@ export default function StoryDetailScreen({
         };
   const safeIndex = media.length === 0 ? 0 : Math.min(activeIndex, media.length - 1);
   const activeMedia = media[safeIndex];
-  // The frame takes the active media's shape: the shape the page reported, else
-  // the payload's own dimensions, else the neutral square placeholder. The 4:5
-  // cap is applied inside `resolveMediaAspectRatio` (KNOT-020g-fix7).
-  const activeRatio =
-    (activeMedia === undefined ? undefined : ratios[activeMedia.id]) ??
-    (activeMedia === undefined
-      ? undefined
-      : resolveMediaAspectRatio(activeMedia.width, activeMedia.height)) ??
-    PLACEHOLDER_MEDIA_ASPECT_RATIO;
+  // The pager's height is the ACTIVE page's reserved shape: the item's own ratio
+  // when the payload reports its dimensions, otherwise the design's 4:5 frame. It
+  // is settled without waiting for the media, so the carousel is exactly as tall on
+  // the first paint as on the last and the reading column below never moves
+  // (KNOT-020g-fix7, KNOT-048-fix2).
+  const activeRatio = reservedMediaAspectRatio(activeMedia?.width, activeMedia?.height);
   const carouselHeight = pageWidth / activeRatio;
   // TODO: Re-enable viewer in a future task. With no viewer, the carousel only
   // pauses when the reader scrolls past it or opens the report sheet
@@ -374,11 +364,10 @@ export default function StoryDetailScreen({
   useStoryPolling(story, handleStoryUpdate, token);
 
   // A different story starts at its first page: the overlay reuses this component
-  // instance when one detail replaces another, so the previous page index and
-  // shapes must not leak into the new story.
+  // instance when one detail replaces another, so the previous page index must not
+  // leak into the new story.
   useEffect(() => {
     setActiveIndex(0);
-    setRatios({});
   }, [id]);
 
   // Keep the active thumbnail in view: the strip scrolls itself to centre the
@@ -394,19 +383,15 @@ export default function StoryDetailScreen({
     stripRef.current?.scrollTo({ x: Math.max(0, offset), animated: true });
   }, [activeIndex, media.length, pageWidth]);
 
-  /** Records a page's resolved shape, ignoring the "not known yet" answer. */
-  const handlePageRatio = useCallback((mediaId: string, ratio: number | null): void => {
-    if (ratio === null) {
-      return;
-    }
-    setRatios((previous) =>
-      previous[mediaId] === ratio ? previous : { ...previous, [mediaId]: ratio },
-    );
-  }, []);
-
-  /** Remembers where the carousel ends, so vertical scrolling can pause its video. */
+  /**
+   * Remembers where the carousel ends, so vertical scrolling can pause its video —
+   * and re-measures the engine's surface, because the pager's height is set inline
+   * and a layout that does not go through `onScroll` would otherwise leave the
+   * picture at its previous rectangle (KNOT-051, KNOT-048-fix2).
+   */
   const handleCarouselLayout = (event: LayoutChangeEvent): void => {
     carouselBottom.current = event.nativeEvent.layout.y + event.nativeEvent.layout.height;
+    player.measureHost();
   };
 
   /** Settles the counter on the page a paging swipe landed on. */
@@ -485,7 +470,6 @@ export default function StoryDetailScreen({
                       isActive={index === safeIndex && videoActive}
                       isMuted={isMuted}
                       onToggleMute={toggleMute}
-                      onAspectRatio={handlePageRatio}
                       onPress={() => onOpenMedia(media, index, viewerStory)}
                     />
                   ))}
