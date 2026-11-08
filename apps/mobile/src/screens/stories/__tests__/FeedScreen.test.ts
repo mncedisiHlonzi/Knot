@@ -26,6 +26,9 @@ jest.mock('react', () => ({
   useContext: () => jest.requireActual('../../../theme/ThemeContext').lightTheme,
   useCallback: (callback: unknown) => callback,
   useEffect: () => undefined,
+  // `useMemo` is computed on the spot: a direct call has no render to memoise
+  // across, and the screen's memos are pure functions of its state (KNOT-049).
+  useMemo: (factory: () => unknown) => factory(),
   useRef: (value: unknown) => ({ current: value }),
   useState: (initial: unknown) => {
     const setter = jest.fn();
@@ -341,6 +344,29 @@ describe('FeedScreen video card payload', () => {
       '/stories/story-1/media/m1/content?variant=poster',
     );
     expect(storyOf(VERSION_ITEM)?.duration_ms).toBeNull();
+  });
+});
+
+// Every row can hold an image or a video player, so the list keeps a deliberately
+// small mounted window rather than rendering a screenful at once (KNOT-049).
+describe('FeedScreen list tuning', () => {
+  it('renders a few rows at a time instead of a screenful', () => {
+    const list = findElementByType(renderScreen(), 'FlatList');
+
+    expect(list?.props?.initialNumToRender).toBe(3);
+    expect(list?.props?.maxToRenderPerBatch).toBe(5);
+    expect(list?.props?.windowSize).toBe(5);
+    // Rows well outside the window are detached, so their images and players are
+    // not kept alive while scrolling.
+    expect(list?.props?.removeClippedSubviews).toBe(true);
+  });
+
+  it('keys rows with one extractor that never changes identity', () => {
+    const first = findElementByType(renderScreen(), 'FlatList');
+    const second = findElementByType(renderScreen(), 'FlatList');
+
+    // A new function here would re-key and re-render every row.
+    expect(first?.props?.keyExtractor).toBe(second?.props?.keyExtractor);
   });
 });
 

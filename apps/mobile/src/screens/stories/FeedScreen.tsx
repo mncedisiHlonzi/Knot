@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -61,6 +61,7 @@ import {
 import { useStoryPolling } from '../../hooks/useStoryPolling';
 import { hasProcessingMedia, itemsWithStory, mediaStatusOf } from './storyPolling';
 import { mediaUploadLabel } from './mediaUpload';
+import { entryStoryMap, feedEntryStory } from './feedEntryProps';
 import type { MediaUploadProgress } from './mediaUpload';
 import {
   PROMPT_PILLARS,
@@ -200,6 +201,13 @@ function pendingItem(story: Story | undefined): StoryFeedItem | undefined {
   return story === undefined ? undefined : { ...story, kind: 'story' };
 }
 
+/**
+ * The key for one entry, at module scope so its identity never changes between
+ * renders — a new extractor function is enough to make the list re-key and
+ * re-render every row (KNOT-049).
+ */
+const keyExtractor = (item: FeedItem): string => item.id;
+
 export default function FeedScreen({
   token,
   viewer,
@@ -257,11 +265,21 @@ export default function FeedScreen({
 
   // The entry immediately after the active one. Its video is mounted and paused so
   // the platform buffers the first seconds, and the handover when it is scrolled
-  // into view is instant rather than a spinner (KNOT-037-fix7).
-  const nextItemId = nextKeyAfter(
-    items.map((item) => item.id),
-    activeItemId,
+  // into view is instant rather than a spinner (KNOT-037-fix7). Memoised on the
+  // list, so scrolling does not rebuild it on every viewability report (KNOT-049).
+  const nextItemId = useMemo(
+    () =>
+      nextKeyAfter(
+        items.map((item) => item.id),
+        activeItemId,
+      ),
+    [activeItemId, items],
   );
+
+  // Each entry's prepared story object, built once per list rather than once per
+  // render. The same reference for an unchanged item is what lets the memoised
+  // entry skip the re-render a scroll would otherwise trigger (KNOT-049).
+  const entryStories = useMemo(() => entryStoryMap(items), [items]);
 
   // The story the composer handed over, kept in a ref so a page load that finishes
   // after it arrived can put it back at the top without re-running the loader
@@ -566,7 +584,18 @@ export default function FeedScreen({
 
       <FlatList
         data={items}
-        keyExtractor={(item) => item.id}
+        keyExtractor={keyExtractor}
+        // The feed is the app's heaviest list: every row can hold an image or a
+        // video player, a social-proof header and its own tap targets. These four
+        // numbers keep the mounted window small so a swipe renders a few rows at
+        // a time instead of a screenful at once (KNOT-049).
+        initialNumToRender={3}
+        maxToRenderPerBatch={5}
+        windowSize={5}
+        // Detaches rows that are well outside the window. On Android this can
+        // blank a video that is scrolled back into view; measured on a SM-A135F
+        // after this change, players redraw on return (KNOT-049).
+        removeClippedSubviews
         contentContainerStyle={styles.listContent}
         viewabilityConfig={viewabilityConfig}
         onViewableItemsChanged={onViewableItemsChanged}
@@ -613,57 +642,9 @@ export default function FeedScreen({
           // by a thick gutter or a horizontal inset (KNOT-023b, KNOT-020k-fix20).
           <View style={styles.card}>
             <FeedEntry
-              story={{
-                author_avatar_url: item.author_avatar_url,
-                author_display_name: item.author_display_name,
-                author_rooted: item.author_rooted ?? null,
-                comment_count: item.comment_count,
-                created_at: item.created_at,
-                first_media_type: item.first_media_type ?? null,
-                first_media_url: item.first_media_url ?? null,
-                // The still a video opens on. Without it the card has nothing to
-                // draw over the player until the first frame decodes, which on a
-                // slow connection is the entire download (KNOT-048-fix).
-                first_media_poster_url: item.first_media_poster_url ?? null,
-                first_media_width: item.first_media_width ?? null,
-                first_media_height: item.first_media_height ?? null,
-                // The duration the payload already knows, so a video's badge is
-                // right before the player has read the file. Only a story entry
-                // carries its own media array; a version entry has no duration on
-                // the wire, so it stays null and the badge waits for `onLoad`.
-                duration_ms: item.kind === 'story' ? (item.media?.[0]?.duration_ms ?? null) : null,
-                id: item.id,
-                // The story a version entry adapts, so the viewer's "View Story"
-                // has a story to open; a story entry's own id is the story
-                // (KNOT-020k-fix2).
-                storyId: item.kind === 'version' ? item.story_id : item.id,
-                language: item.language,
-                language_count: item.language_count,
-                media_count: item.media_count,
-                pillar: item.pillar,
-                place: item.approximate_location,
-                preview: item.body,
-                preview_truncated: item.preview_truncated,
-                reactions: item.reactions,
-                recent_interactions: item.recent_interactions,
-                // The original author's identity, only on an adaptation; the card
-                // heads a version with it. A story entry has no such fields, so
-                // the conditional narrows the union (KNOT-023a).
-                root_author_avatar_url:
-                  item.kind === 'version' ? item.root_author_avatar_url : undefined,
-                root_author_display_name:
-                  item.kind === 'version' ? item.root_author_display_name : undefined,
-                root_author_id: item.kind === 'version' ? item.root_author_id : undefined,
-                // The direct parent's author: the lineage actor the attribution
-                // stack credits before the original (KNOT-022-fix2).
-                parent_author_avatar_url:
-                  item.kind === 'version' ? item.parent_author_avatar_url : undefined,
-                parent_author_display_name:
-                  item.kind === 'version' ? item.parent_author_display_name : undefined,
-                parent_author_id: item.kind === 'version' ? item.parent_author_id : undefined,
-                title: item.title,
-                version_count: item.version_count,
-              }}
+              // Prepared once per list, so an unchanged entry keeps the same
+              // object and the memoised card skips this render (KNOT-049).
+              story={entryStories.get(item.id) ?? feedEntryStory(item)}
               variant={item.kind === 'version' ? 'version' : 'story'}
               versionNumber={item.kind === 'version' ? item.version_number : undefined}
               attributionLine={item.kind === 'version' ? item.attribution_line : undefined}

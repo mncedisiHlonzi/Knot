@@ -5,7 +5,7 @@ import { colors, fontWeights, spacing, typeScale } from '../../theme';
 import { ArrowsClockwise } from 'phosphor-react-native';
 
 import AuthorLine from '../AuthorLine';
-import FeedEntry from '../FeedEntry';
+import FeedEntryDefault, { FeedEntry, feedEntryPropsEqual } from '../FeedEntry';
 import FeedVideo from '../FeedVideo';
 import PillarTag from '../PillarTag';
 import SocialProofHeader from '../SocialProofHeader';
@@ -1264,5 +1264,55 @@ describe('the meta row', () => {
       expect(findByTestID(element, 'media-processing')).toBeUndefined();
       expect(elementTypes(element)).toContain('Image');
     });
+  });
+});
+
+/**
+ * The feed re-renders every mounted row whenever its own state changes, and its
+ * state changes on each viewability report while a person scrolls. The entry
+ * therefore has to be able to answer "nothing about me changed" without drawing
+ * anything — that answer is what keeps the video players and the whole card
+ * subtree out of the scroll's way (KNOT-049).
+ */
+describe('FeedEntry memoisation', () => {
+  /** One render's props: a fresh story object, the way the feed builds them. */
+  const props = () => ({ story: { ...story }, onPress: (): void => undefined });
+
+  it('is exported memoised', () => {
+    const memo = FeedEntryDefault as unknown as { $$typeof?: symbol };
+
+    expect(memo.$$typeof).toBe(Symbol.for('react.memo'));
+  });
+
+  it('treats a new story object with identical data as no change', () => {
+    const first = props();
+    const second = props();
+
+    // A fresh object each time: identity alone would have forced a re-render.
+    expect(second.story).not.toBe(first.story);
+    expect(feedEntryPropsEqual(first, second)).toBe(true);
+  });
+
+  it('ignores callbacks that were merely rebuilt', () => {
+    const first = { ...props(), onToggleMute: (): void => undefined };
+    const second = { ...props(), onToggleMute: (): void => undefined };
+
+    expect(first.onToggleMute).not.toBe(second.onToggleMute);
+    expect(feedEntryPropsEqual(first, second)).toBe(true);
+  });
+
+  it('notices a changed field on the story', () => {
+    const first = props();
+    const second = props();
+    second.story.comment_count = 15;
+
+    expect(feedEntryPropsEqual(first, second)).toBe(false);
+  });
+
+  it('notices the entry becoming the one on screen', () => {
+    const idle = { ...props(), isVisible: false };
+    const playing = { ...props(), isVisible: true };
+
+    expect(feedEntryPropsEqual(idle, playing)).toBe(false);
   });
 });

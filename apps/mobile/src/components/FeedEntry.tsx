@@ -43,7 +43,7 @@ import SocialProofHeader, { type SocialProofAvatar } from './SocialProofHeader';
  * sends on both kinds of entry. What makes an entry an adaptation is not a field in
  * this object but the `variant` prop, which says how to label it.
  */
-type FeedEntryStory = {
+export type FeedEntryStory = {
   readonly id: string;
   /**
    * The STORY this entry belongs to, when it differs from `id`. A version entry's
@@ -328,7 +328,7 @@ function lineageAvatarLabel(name: string): string {
  * playback logic still lives in `FeedVideo`, which remains the only component that
  * owns a player.
  */
-export default function FeedEntry({
+export function FeedEntry({
   story,
   variant = 'story',
   versionNumber,
@@ -707,6 +707,64 @@ export default function FeedEntry({
     </Pressable>
   );
 }
+
+/**
+ * Whether two prepared stories describe the same card, field by field.
+ *
+ * The comparison is shallow on purpose: the payload holds primitives, and the
+ * two aggregates it can hold (the reaction counts and the recent interactions)
+ * arrive as the same instances while an entry is unchanged — the screen prepares
+ * each story once and keeps it (KNOT-049).
+ */
+export function sameFeedEntryStory(previous: FeedEntryStory, next: FeedEntryStory): boolean {
+  if (previous === next) {
+    return true;
+  }
+
+  const keys = Object.keys(previous) as (keyof FeedEntryStory)[];
+  if (keys.length !== Object.keys(next).length) {
+    return false;
+  }
+
+  return keys.every((key) => previous[key] === next[key]);
+}
+
+/**
+ * Whether two renders of one entry would draw exactly the same thing.
+ *
+ * Every value the card draws is compared; the callbacks are deliberately not.
+ * They are rebuilt on each list render (each closes over its own item) but they
+ * behave identically for a given entry, and treating them as changes is what
+ * made every mounted card re-render on every scroll event — five or six extra
+ * renders per entry per swipe, players included (KNOT-049).
+ */
+export function feedEntryPropsEqual(previous: FeedEntryProps, next: FeedEntryProps): boolean {
+  return (
+    (previous.story === next.story || sameFeedEntryStory(previous.story, next.story)) &&
+    previous.variant === next.variant &&
+    previous.versionNumber === next.versionNumber &&
+    previous.attributionLine === next.attributionLine &&
+    previous.showBottomHairline === next.showBottomHairline &&
+    previous.isVisible === next.isVisible &&
+    previous.isMuted === next.isMuted &&
+    previous.mediaStatus === next.mediaStatus &&
+    previous.processingLabel === next.processingLabel &&
+    previous.isNextInLine === next.isNextInLine &&
+    previous.testID === next.testID
+  );
+}
+
+/**
+ * The feed's entry, memoised on its data.
+ *
+ * The list re-renders every mounted cell whenever the screen's state changes,
+ * and the screen's state changes on every viewability report while scrolling.
+ * Without this wrapper each of those renders rebuilt the whole card — the social
+ * proof header, the author line, the preview and, underneath it, a video player.
+ * Measured on a SM-A135F: 28% janky frames before, and about six renders per
+ * entry per scroll (KNOT-049).
+ */
+export default React.memo(FeedEntry, feedEntryPropsEqual);
 
 const createStyles = (colors: ThemeColors) =>
   StyleSheet.create({
