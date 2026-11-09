@@ -2,6 +2,7 @@ import {
   CONTINUE_TOLERANCE_SECONDS,
   initialMediaPlayerState,
   mediaPlayerReducer,
+  savedPositionFor,
   seekTargetFor,
   type MediaPlayerState,
   type PlayMediaRequest,
@@ -181,12 +182,21 @@ describe('mediaPlayerReducer playback state', () => {
     }
   });
 
-  it('ignores a late report from a clip that has been replaced', () => {
+  it('never lets a late report move the clip that replaced it', () => {
     const playing = played(FIRST);
+    const late = mediaPlayerReducer(playing, {
+      type: 'progress',
+      id: 'media-2',
+      currentTime: 3,
+    });
 
-    expect(mediaPlayerReducer(playing, { type: 'progress', id: 'media-2', currentTime: 3 })).toBe(
-      playing,
-    );
+    // The picture on screen is untouched...
+    expect(late.activeMediaId).toBe('media-1');
+    expect(late.currentTime).toBe(0);
+    expect(late.frameVisible).toBe(false);
+    // ...but the report is still a fact about the media it named, and a card being
+    // scrolled away must not lose the second it had reached (KNOT-051).
+    expect(savedPositionFor(late, 'media-2')).toBe(3);
   });
 
   it('records the duration once the metadata loads', () => {
@@ -280,6 +290,62 @@ describe('mediaPlayerReducer surface', () => {
 
   it('holds one mute setting for the whole app', () => {
     expect(mediaPlayerReducer(played(FIRST), { type: 'muted', muted: false }).muted).toBe(false);
+  });
+});
+
+/**
+ * A playhead belongs to a media, not to the engine (KNOT-051).
+ *
+ * The bug this covers: the engine held one `currentTime`, so scrolling away from a
+ * clip at 0:05 seated the next card at 0:05. Every position is now keyed by the
+ * media it describes — a clip change keeps the map while resetting the picture.
+ */
+describe('per-media saved positions', () => {
+  it('does not share a playhead between two videos', () => {
+    const first = mediaPlayerReducer(played(FIRST), {
+      type: 'progress',
+      id: 'media-1',
+      currentTime: 5,
+    });
+    const second = mediaPlayerReducer(first, { type: 'play', request: SECOND });
+
+    // The second card starts from zero, however far the first one had reached...
+    expect(second.currentTime).toBe(0);
+    expect(savedPositionFor(second, SECOND.id)).toBe(0);
+    // ...and the first card keeps its own second for when it comes back.
+    expect(savedPositionFor(second, FIRST.id)).toBe(5);
+  });
+
+  it('resumes a video at the position saved for that media', () => {
+    const watched = mediaPlayerReducer(played(FIRST), {
+      type: 'progress',
+      id: 'media-1',
+      currentTime: 19,
+    });
+    // Scroll away to another clip, then back to the first one.
+    const elsewhere = mediaPlayerReducer(watched, { type: 'play', request: SECOND });
+    const returned = mediaPlayerReducer(elsewhere, { type: 'play', request: FIRST });
+
+    // The card asks this answer before its player mounts, so it opens at 0:19.
+    expect(savedPositionFor(returned, FIRST.id)).toBe(19);
+    // The picture itself still starts clean: the surface seeks, it never inherits.
+    expect(returned.currentTime).toBe(0);
+  });
+
+  it('answers zero for a media nobody has played', () => {
+    expect(savedPositionFor(initialMediaPlayerState, FIRST.id)).toBe(0);
+    expect(savedPositionFor(played(FIRST), 'media-999')).toBe(0);
+    expect(savedPositionFor(played(FIRST), '   ')).toBe(0);
+  });
+
+  it('keeps a scrub as a position for that media', () => {
+    const scrubbed = mediaPlayerReducer(played(FIRST), {
+      type: 'seek',
+      id: 'media-1',
+      currentTime: 30,
+    });
+
+    expect(savedPositionFor(scrubbed, FIRST.id)).toBe(30);
   });
 });
 

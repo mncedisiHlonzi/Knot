@@ -74,6 +74,7 @@ type Actions = {
   releaseMedia: () => void;
   getCurrentTime: () => number;
   getActiveMediaId: () => string | null;
+  getSavedPosition: (mediaId: string) => number;
 };
 
 /** The actions object the provider publishes. */
@@ -101,6 +102,7 @@ beforeEach(() => {
     loop: true,
     currentTime: 19,
     duration: 45,
+    savedPositions: { 'media-1': 19 },
     frame: { x: 0, y: 100, width: 390, height: 220 },
     ready: true,
     frameVisible: true,
@@ -164,6 +166,16 @@ describe('MediaPlayerContext API', () => {
 
     expect(player.getCurrentTime()).toBe(19);
     expect(player.getActiveMediaId()).toBe('media-1');
+  });
+
+  it('answers a position per media, never one global playhead', () => {
+    const player = actions();
+
+    // The engine is holding 19 seconds of `media-1`. Asking about another media
+    // must not borrow it — that is the bleed this API removes (KNOT-051).
+    expect(player.getSavedPosition('media-1')).toBe(19);
+    expect(player.getSavedPosition('media-2')).toBe(0);
+    expect(player.getSavedPosition('   ')).toBe(0);
   });
 
   it('refuses a seek that is not a real position', () => {

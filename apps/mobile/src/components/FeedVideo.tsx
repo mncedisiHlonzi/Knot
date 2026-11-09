@@ -110,7 +110,10 @@ type FeedVideoProps = {
  * The component still talks to `MediaPlayerContext`, because the *shared* facts are
  * worth keeping: the card publishes where its clip has reached (`reportProgress`),
  * so opening the full-screen viewer on the same video carries on at that second
- * instead of restarting at 0:00 (KNOT-051).
+ * instead of restarting at 0:00 (KNOT-051). What it asks back is **its own**
+ * media's position (`getSavedPosition`), never the engine's single playhead: a
+ * card that has never played starts at 0:00, and a card scrolled away keeps the
+ * exact second it had reached (KNOT-051).
  *
  * The chrome stays here — the "Video" tag, the running time and the mute control —
  * because it belongs to the card. Every screen that draws a story's video uses this
@@ -166,9 +169,11 @@ export default function FeedVideo({
   const poster = typeof posterUri === 'string' && posterUri.trim() !== '' ? posterUri : null;
   const showPoster = poster !== null && !(mounted && frameDrawn);
 
-  // Where to pick the picture up when this card's player mounts. Closing the
-  // viewer must not restart the clip, and the engine is the only thing that knows
-  // where the viewer left it (KNOT-051, KNOT-050).
+  // Where to pick THIS clip up when its player mounts. The question is asked of
+  // the engine per media, never of "the playhead": the engine's `currentTime`
+  // describes whatever clip is on screen, so reading it here is what made a new
+  // card inherit the previous card's second. A media nobody has watched answers
+  // 0, and the clip starts at 0:00 (KNOT-051).
   const resumeAt = useRef(0);
 
   // Mounting claims the clip in the engine — which is what lets the viewer open on
@@ -180,9 +185,10 @@ export default function FeedVideo({
       return;
     }
 
-    const position = player.getCurrentTime();
-    resumeAt.current = position > 0 ? position : 0;
-    setCurrentSeconds(resumeAt.current);
+    const saved = player.getSavedPosition(id);
+    const position = saved > 0 ? saved : 0;
+    resumeAt.current = position;
+    setCurrentSeconds(position);
     player.playMedia({ id, uri, mode: 'inline' });
   }, [id, mounted, player, uri]);
 

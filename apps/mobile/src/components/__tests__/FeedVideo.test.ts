@@ -26,6 +26,7 @@ const mockActions = {
   releaseMedia: jest.fn(),
   getCurrentTime: jest.fn(() => 0),
   getActiveMediaId: jest.fn(() => null),
+  getSavedPosition: jest.fn(() => 0),
   reportProgress: jest.fn(),
   reportLoaded: jest.fn(),
 };
@@ -217,6 +218,7 @@ beforeEach(() => {
   // `clearAllMocks` keeps implementations, so the playhead a re-seat test set has to
   // be put back explicitly.
   mockActions.getCurrentTime.mockReturnValue(0);
+  mockActions.getSavedPosition.mockReturnValue(0);
   mockPlayback = {
     activeMediaId: null,
     uri: null,
@@ -415,15 +417,35 @@ describe('FeedVideo poster', () => {
  * unmounted — picks the clip up where it was, instead of restarting at 0:00.
  */
 describe('FeedVideo re-seat', () => {
-  it('seeks to the position the engine holds when its player mounts', () => {
+  it('seeks to the position saved for this media when its player mounts', () => {
     const seek = jest.fn();
-    mockActions.getCurrentTime.mockReturnValue(19);
+    // The engine's own playhead is a different clip's second (0), so a card that
+    // read it would start at the wrong place; the saved position is this media's.
+    mockActions.getSavedPosition.mockReturnValue(19);
     const tree = render({ uri: URI, isVisible: true });
     refBoxOf(tree).current = { seek };
 
     fireLoad(tree, 45);
 
     expect(seek).toHaveBeenCalledWith(19);
+  });
+
+  /**
+   * The bug, pinned: the engine's single playhead was at 0:05 because the previous
+   * card had reached it. This card has never played, so it must open at 0:00 — the
+   * previous clip's second may not leak into it (KNOT-051).
+   */
+  it('does not inherit the playhead of the card before it', () => {
+    const seek = jest.fn();
+    mockActions.getCurrentTime.mockReturnValue(5);
+    mockActions.getSavedPosition.mockReturnValue(0);
+    const tree = render({ uri: URI, isVisible: true });
+    refBoxOf(tree).current = { seek };
+
+    fireLoad(tree, 45);
+
+    expect(mockActions.getSavedPosition).toHaveBeenCalledWith(URI);
+    expect(seek).not.toHaveBeenCalled();
   });
 
   it('seeks nowhere for a clip that starts at zero', () => {

@@ -37,6 +37,7 @@ import { cachedVideoUri } from '../utils/videoCache';
 import {
   initialMediaPlayerState,
   mediaPlayerReducer,
+  savedPositionFor,
   seekTargetFor,
   type MediaFrame,
   type MediaPlaybackMode,
@@ -79,6 +80,16 @@ export type MediaPlayerActions = {
   readonly getCurrentTime: () => number;
   /** The media on screen, read live. */
   readonly getActiveMediaId: () => string | null;
+  /**
+   * Where THIS media was last left, in seconds — or 0 when it has never played.
+   *
+   * This is what a surface resumes from. It is deliberately not `getCurrentTime`:
+   * that answers "where is the clip on screen", which is a single global number,
+   * and using it to seat a new card is what made one video start at another
+   * video's playhead. The answer here is keyed by the media, so a card can only
+   * ever resume its own second (KNOT-051).
+   */
+  readonly getSavedPosition: (mediaId: string) => number;
   /**
    * Records where an inline card's OWN player has reached, so the viewer can open
    * the same clip at that second.
@@ -196,6 +207,10 @@ export function MediaPlayerProvider({
 
   const getCurrentTime = useCallback((): number => stateRef.current.currentTime, []);
   const getActiveMediaId = useCallback((): string | null => stateRef.current.activeMediaId, []);
+  const getSavedPosition = useCallback(
+    (mediaId: string): number => savedPositionFor(stateRef.current, mediaId),
+    [],
+  );
 
   const onLoad = useCallback((data: OnLoadData): void => {
     const id = stateRef.current.activeMediaId ?? undefined;
@@ -264,6 +279,7 @@ export function MediaPlayerProvider({
       releaseMedia,
       getCurrentTime,
       getActiveMediaId,
+      getSavedPosition,
       reportProgress,
       reportLoaded,
     }),
@@ -271,6 +287,7 @@ export function MediaPlayerProvider({
       clearSurface,
       getActiveMediaId,
       getCurrentTime,
+      getSavedPosition,
       pauseMedia,
       playMedia,
       releaseMedia,

@@ -54,6 +54,18 @@ export type MediaPlayerState = {
   readonly currentTime: number;
   /** The clip's length in seconds, once its metadata has loaded. */
   readonly duration: number;
+  /**
+   * Where each media was last left, in seconds, keyed by that media's identity.
+   *
+   * This is the ONE piece of playback that survives a clip change. `currentTime`
+   * above describes the clip on screen right now, and a new clip resets it to
+   * zero — which is correct for the picture, but wrong for the *media*: scrolling
+   * from a clip at 0:05 to another clip must not make the second one open at
+   * 0:05, and scrolling back must not forget the first. The positions are kept
+   * per media so each surface can ask for its own (`savedPositionFor`) and the
+   * answer can never leak between cards (KNOT-051).
+   */
+  readonly savedPositions: Readonly<Record<string, number>>;
   /** The rectangle the surface occupies, or null while no surface is showing. */
   readonly frame: MediaFrame | null;
   /** True once the player has read the clip's metadata. */
@@ -118,6 +130,7 @@ export const initialMediaPlayerState: MediaPlayerState = {
   loop: true,
   currentTime: 0,
   duration: 0,
+  savedPositions: {},
   frame: null,
   ready: false,
   frameVisible: false,
@@ -147,6 +160,46 @@ function positive(value: unknown): number | null {
 /** Whether an action targeting `id` belongs to the active media. */
 function targetsActive(state: MediaPlayerState, id?: string): boolean {
   return id === undefined || id === state.activeMediaId;
+}
+
+/** A media identity as it is keyed, or '' when it cannot name anything. */
+function mediaKey(mediaId: unknown): string {
+  return typeof mediaId === 'string' ? mediaId.trim() : '';
+}
+
+/**
+ * Records `position` as where `id` was left.
+ *
+ * Returns the map it was given when nothing changes, so a repeated report costs
+ * no new object and a progress tick that lands on the same second cannot churn a
+ * subscription. A missing identity (no `id` and no active media) records nothing:
+ * a position with no media to belong to is exactly the global playhead this
+ * task removes (KNOT-051).
+ */
+function withSavedPosition(
+  positions: Readonly<Record<string, number>>,
+  id: string | null,
+  position: number | null,
+): Readonly<Record<string, number>> {
+  if (id === null || position === null || positions[id] === position) {
+    return positions;
+  }
+  return { ...positions, [id]: position };
+}
+
+/**
+ * Where `mediaId` was last left, in seconds — or 0 when it has never played.
+ *
+ * A surface asks this about ITS OWN media, never about "the playhead": that is
+ * what keeps the position of one card from bleeding into the next (KNOT-051).
+ */
+export function savedPositionFor(state: MediaPlayerState, mediaId: string): number {
+  const key = mediaKey(mediaId);
+  if (key === '') {
+    return 0;
+  }
+  const saved = state.savedPositions[key];
+  return finitePosition(saved) ?? 0;
 }
 
 /**
@@ -208,12 +261,17 @@ export function mediaPlayerReducer(
           muted: action.request.muted ?? state.muted,
           loop: action.request.loop ?? state.loop,
           currentTime,
+          savedPositions: withSavedPosition(state.savedPositions, id, currentTime),
           frame: action.request.frame === undefined ? state.frame : action.request.frame,
         };
       }
 
+      const start = finitePosition(action.request.startTime);
+
       // A different clip: a new payload, a new position, and nothing carried over
-      // that could describe the previous one.
+      // that could describe the previous one. Where each MEDIA was left is the one
+      // exception: it is keyed by the media itself, so it survives the change and
+      // the clip that follows cannot inherit the previous clip's second (KNOT-051).
       return {
         ...state,
         activeMediaId: id,
@@ -222,8 +280,9 @@ export function mediaPlayerReducer(
         playing: true,
         muted: action.request.muted ?? state.muted,
         loop: action.request.loop ?? true,
-        currentTime: finitePosition(action.request.startTime) ?? 0,
+        currentTime: start ?? 0,
         duration: 0,
+        savedPositions: withSavedPosition(state.savedPositions, id, start),
         frame: action.request.frame ?? null,
         ready: false,
         frameVisible: false,
@@ -257,10 +316,26 @@ export function mediaPlayerReducer(
 
     case 'progress': {
       const position = finitePosition(action.currentTime);
-      if (!targetsActive(state, action.id) || position === null) {
+      if (position === null) {
         return state;
       }
-      return { ...state, currentTime: position, frameVisible: true };
+
+      // Where a clip has reached is a fact about THAT media, so it is recorded even
+      // when the report arrives after another clip has taken the surface: a card
+      // being scrolled away must not lose the second it had reached (KNOT-051).
+      const saved = withSavedPosition(
+        state.savedPositions,
+        action.id ?? state.activeMediaId,
+        position,
+      );
+
+      if (!targetsActive(state, action.id)) {
+        // A late report is allowed to record its own media's position, but never to
+        // move the clip that replaced it.
+        return saved === state.savedPositions ? state : { ...state, savedPositions: saved };
+      }
+
+      return { ...state, currentTime: position, frameVisible: true, savedPositions: saved };
     }
 
     case 'loaded': {
@@ -285,7 +360,17 @@ export function mediaPlayerReducer(
       if (!targetsActive(state, action.id) || position === null) {
         return state;
       }
-      return { ...state, currentTime: position };
+      // A scrub is a playhead too: it belongs to this media, so a viewer left on a
+      // scrubbed second hands that second back to the card (KNOT-051).
+      return {
+        ...state,
+        currentTime: position,
+        savedPositions: withSavedPosition(
+          state.savedPositions,
+          action.id ?? state.activeMediaId,
+          position,
+        ),
+      };
     }
 
     case 'frame': {
