@@ -9,7 +9,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { FilmStrip, Flag, Globe, ImageSquare, MapPin, Plus, X } from 'phosphor-react-native';
+import Video from 'react-native-video';
+import { Flag, Globe, ImageSquare, MapPin, Plus, X } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import {
@@ -30,9 +31,12 @@ import LocationPicker, { PickedPlace } from '../../components/LocationPicker';
 import MediaPickerSheet, { PickedMedia } from '../../components/MediaPickerSheet';
 import { isLanguageCode, languageName } from '../../data/languages';
 import {
-  MAX_MEDIA_PER_STORY,
   MEDIA_LIMIT_MESSAGE,
+  VIDEO_LIMIT_MESSAGE,
+  admitMedia,
   canAddMedia,
+  countVideos,
+  mediaStripLabel,
   remainingMediaSlots,
 } from '../../utils/mediaLimit';
 import { layout, radius, spacing, typeScale, useTheme, useThemedStyles } from '../../theme';
@@ -96,6 +100,9 @@ const PUBLISHED_TITLE = 'Story published';
 
 /** The headline shown when a published story's media could not be uploaded. */
 const UPLOAD_FAILED_TITLE = 'Media upload failed';
+
+/** The headline shown when a pick is refused by the video cap (KNOT-052). */
+const VIDEO_LIMIT_TITLE = 'Video limit';
 
 /**
  * What publishing tells the reader.
@@ -234,6 +241,9 @@ export default function CreateStoryScreen({
   /** The story is full: another item would exceed the server's cap (KNOT-ADR-054). */
   const atMediaCap = !canAddMedia(media.length);
 
+  /** How many of the chosen items are clips, for the label and the video cap. */
+  const videoCount = countVideos(media);
+
   /** Shows the picker a chip names, or closes it when it is the one already open. */
   function togglePicker(which: 'language' | 'place'): () => void {
     return () => {
@@ -250,24 +260,27 @@ export default function CreateStoryScreen({
    * Adds every picked item that still fits, and tells the reader when a pick was
    * cut down.
    *
-   * The cap is re-checked here because the picker's selection limit is only a
-   * hint: a library that ignores it can still return more than the free slots, so
-   * the client truncates and the server remains the final authority (KNOT-ADR-054).
+   * Both caps are re-checked here because the picker's selection limit is only a
+   * hint: a library that ignores it can still return more than the free slots, and
+   * one mixed pick can carry more clips than the story may hold. The client
+   * truncates, the video rule is explained as it is hit, and the server remains
+   * the final authority on the total (KNOT-ADR-054, KNOT-052).
    */
   function addMedia(picked: readonly PickedMedia[]): void {
     if (picked.length === 0) {
       return;
     }
 
-    const free = remainingMediaSlots(media.length);
-    if (picked.length > free) {
-      setMedia([...media, ...picked.slice(0, free)]);
-      setMediaNotice(MEDIA_LIMIT_MESSAGE);
-      return;
+    const { accepted, videoLimitReached, mediaLimitReached } = admitMedia(media, picked);
+    if (accepted.length > 0) {
+      setMedia([...media, ...accepted]);
     }
-
-    setMedia([...media, ...picked]);
-    setMediaNotice(undefined);
+    // The total cap keeps its quiet line under the strip; the video cap is a rule
+    // the reader cannot see coming, so it is said out loud (KNOT-052).
+    setMediaNotice(mediaLimitReached ? MEDIA_LIMIT_MESSAGE : undefined);
+    if (videoLimitReached) {
+      Alert.alert(VIDEO_LIMIT_TITLE, VIDEO_LIMIT_MESSAGE);
+    }
   }
 
   function removeMedia(index: number): void {
@@ -464,9 +477,11 @@ export default function CreateStoryScreen({
         />
 
         {/* The media strip: the count first, then the tiles, then the dashed slot
-            that adds the next one (KNOT-020k-fix14). */}
+            that adds the next one. The count names the videos too, so the cap is
+            visible rather than discovered at the fourth pick (KNOT-020k-fix14,
+            KNOT-052). */}
         <Text style={[typeScale.overline, styles.mediaLabel]} testID="create-media-label">
-          {`Media · ${media.length} of ${MAX_MEDIA_PER_STORY}`}
+          {mediaStripLabel(media.length, videoCount)}
         </Text>
         <ScrollView
           horizontal
@@ -479,8 +494,25 @@ export default function CreateStoryScreen({
               {item.type === 'image' ? (
                 <Image style={styles.thumbnailImage} source={{ uri: item.uri }} />
               ) : (
-                <View style={[styles.thumbnailImage, styles.videoPlaceholder]}>
-                  <FilmStrip color={colors.text.tertiary} size={24} />
+                // A clip's own first frame IS its thumbnail: the paused player in a
+                // clipped square shows the picture that was picked instead of a
+                // generic film glyph (KNOT-052). It never plays, and the box is
+                // intangible so the remove control above it keeps the taps.
+                <View
+                  style={styles.thumbnailVideo}
+                  pointerEvents="none"
+                  testID="create-video-thumbnail"
+                >
+                  <Video
+                    source={{ uri: item.uri }}
+                    style={styles.thumbnailVideoPlayer}
+                    paused
+                    muted
+                    repeat={false}
+                    resizeMode="cover"
+                    useTextureView
+                    testID="create-video-player"
+                  />
                 </View>
               )}
               {item.source === 'camera' ? <CameraCaptureBadge style={styles.badge} /> : null}
@@ -697,6 +729,19 @@ const createStyles = (colors: ThemeColors) =>
       height: THUMBNAIL_SIZE,
       width: THUMBNAIL_SIZE,
     },
+    // A clip's still: the same square as a photo's, clipped so the native surface
+    // can never draw outside its tile (KNOT-025-fix8's rule, reused here).
+    thumbnailVideo: {
+      backgroundColor: colors.bg.sunken,
+      borderRadius: radius.md,
+      height: THUMBNAIL_SIZE,
+      overflow: 'hidden',
+      width: THUMBNAIL_SIZE,
+    },
+    thumbnailVideoPlayer: {
+      height: THUMBNAIL_SIZE,
+      width: THUMBNAIL_SIZE,
+    },
     thumbnails: {
       marginTop: spacing.sm,
     },
@@ -709,9 +754,5 @@ const createStyles = (colors: ThemeColors) =>
       color: colors.text.primary,
       marginTop: spacing.xl,
       paddingVertical: 0,
-    },
-    videoPlaceholder: {
-      alignItems: 'center',
-      justifyContent: 'center',
     },
   });

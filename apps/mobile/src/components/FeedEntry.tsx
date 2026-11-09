@@ -1,13 +1,12 @@
 import React from 'react';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import { ArrowsClockwise, DotsThree, Images, X } from 'phosphor-react-native';
+import { ArrowsClockwise, DotsThree, X } from 'phosphor-react-native';
 
 import type { MediaStatus, RecentInteraction } from '../api/stories';
 import { API_BASE_URL } from '../config/api';
 import {
   fontWeights,
   layout,
-  mediaOverlayText,
   radius,
   spacing,
   tabularNums,
@@ -19,7 +18,7 @@ import type { ThemeColors } from '../theme';
 import { reservedMediaAspectRatio } from '../utils/mediaFrame';
 import AuthorLine from './AuthorLine';
 import { feedMetaLine, isPreviewTruncated } from './feedEntryMeta';
-import FeedVideo, { VIDEO_MUTE_BUTTON_SIZE } from './FeedVideo';
+import FeedVideo from './FeedVideo';
 import MediaImage from './MediaImage';
 import PillarTag from './PillarTag';
 import type { ViewerMedia, ViewerStory } from './MediaGalleryModal';
@@ -233,9 +232,6 @@ type FeedEntryProps = {
 
 /** The preview's line limit. */
 const PREVIEW_LINES = 3;
-
-/** The media-count badge's glyph size. */
-const COUNT_ICON_SIZE = 14;
 
 /** The adaptation badge's glyph size: a small mark preceding a caption label. */
 const ADAPT_ICON_SIZE = 14;
@@ -693,14 +689,19 @@ export function FeedEntry({
             )}
           </Pressable>
 
+          {/* The media count, top-left: a bullet and the number in the quiet
+              caption voice. It replaced the "Video" tag, so the picture's top-left
+              still says what it is without a word; the duration sits top-right and
+              the mute control bottom-right, so the three never meet (KNOT-052). */}
           {mediaCount > 1 ? (
             <View
-              style={[styles.countBadge, isVideo ? styles.countBadgeOverVideo : null]}
+              style={styles.countBadge}
+              pointerEvents="none"
               accessibilityLabel={`${mediaCount} media items`}
+              testID="feed-media-count"
             >
-              <Images color={colors.text.onMedia} size={COUNT_ICON_SIZE} weight="bold" />
-              <Text style={[typeScale.label, tabularNums, mediaOverlayText(colors)]}>
-                {mediaCount}
+              <Text style={[typeScale.caption, tabularNums, styles.countText]}>
+                {`• ${mediaCount}`}
               </Text>
             </View>
           ) : null}
@@ -804,22 +805,22 @@ const createStyles = (colors: ThemeColors) =>
       justifyContent: 'center',
       width: 44,
     },
+    // The media count, top-left over the picture: a bullet and the number on the
+    // same translucent chip every other media overlay uses, in the caption voice so
+    // it reads as information rather than as a control (KNOT-052).
     countBadge: {
-      alignItems: 'center',
       backgroundColor: colors.scrim.overlay,
-      borderRadius: radius.sm,
-      bottom: spacing.sm,
-      flexDirection: 'row',
-      gap: spacing.xs,
+      borderRadius: radius.pill,
+      left: spacing.sm,
       paddingHorizontal: spacing.sm,
       paddingVertical: 2,
       position: 'absolute',
-      right: spacing.sm,
+      top: spacing.sm,
     },
-    // A video owns the bottom-right corner with its mute control, so the count
-    // badge sits directly above it instead of underneath it.
-    countBadgeOverVideo: {
-      bottom: spacing.sm + VIDEO_MUTE_BUTTON_SIZE + spacing.xs,
+    // The chip's ink: white in both modes, because the chip under it is the black
+    // scrim in both modes (KNOT-020j).
+    countText: {
+      color: colors.text.onMedia,
     },
     entry: {
       paddingTop: spacing.lg,

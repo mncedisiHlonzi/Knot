@@ -4,7 +4,11 @@ import Button from '../../../components/Button';
 import Header from '../../../components/Header';
 import LanguagePicker from '../../../components/LanguagePicker';
 import LocationPicker from '../../../components/LocationPicker';
-import { MAX_MEDIA_PER_STORY } from '../../../utils/mediaLimit';
+import {
+  MAX_MEDIA_PER_STORY,
+  MEDIA_LIMIT_MESSAGE,
+  VIDEO_LIMIT_MESSAGE,
+} from '../../../utils/mediaLimit';
 import { colors, typeScale } from '../../../theme';
 import { storiesApi, uploadStoryMedia } from '../../../api/stories';
 import CreateStoryScreen from '../CreateStoryScreen';
@@ -60,7 +64,6 @@ jest.mock('react-native', () => ({
 }));
 
 jest.mock('phosphor-react-native', () => ({
-  FilmStrip: () => null,
   Flag: () => null,
   Globe: () => null,
   ImageSquare: () => null,
@@ -68,6 +71,10 @@ jest.mock('phosphor-react-native', () => ({
   Plus: () => null,
   X: () => null,
 }));
+
+// A picked clip's still is its own first frame: the tile mounts a paused player
+// (KNOT-052), so the native module is stubbed to a host component.
+jest.mock('react-native-video', () => ({ __esModule: true, default: 'Video' }));
 
 jest.mock('../../../components/LanguagePicker', () => ({
   __esModule: true,
@@ -199,6 +206,31 @@ function pickedImage(uri: string): {
   return { uri, type: 'image', mimeType: 'image/jpeg', size: 1024, source: 'library' };
 }
 
+/** One picked clip, for the strip and the video cap. */
+function pickedVideo(uri: string): {
+  uri: string;
+  type: 'video';
+  mimeType: string;
+  size: number;
+  duration: number;
+  source: 'library';
+} {
+  return {
+    uri,
+    type: 'video',
+    mimeType: 'video/mp4',
+    size: 4096,
+    duration: 12.4,
+    source: 'library',
+  };
+}
+
+/** The media sheet's `onPicked`, so a pick can be reported without a renderer. */
+function pickInto(tree: unknown): (media: readonly unknown[]) => void {
+  const sheet = findElementByType(tree, 'MediaPickerSheet');
+  return sheet?.props?.onPicked as (media: readonly unknown[]) => void;
+}
+
 const PROPS = {
   token: 'token',
   onCreated: () => undefined,
@@ -323,6 +355,38 @@ describe('CreateStoryScreen media strip', () => {
     );
   });
 
+  it('names the videos beside the total, so the clip cap is visible', () => {
+    scriptState({
+      8: [pickedImage('file:///a.jpg'), pickedVideo('file:///b.mp4'), pickedVideo('file:///c.mp4')],
+    });
+    const tree = CreateStoryScreen(PROPS);
+
+    expect(findByTestID(tree, 'create-media-label')?.props?.children).toBe(
+      `Media · 3 of ${MAX_MEDIA_PER_STORY} · 2 videos`,
+    );
+  });
+
+  it('shows a clip as its own first frame, not a film glyph', () => {
+    scriptState({ 8: [pickedVideo('file:///a.mp4')] });
+    const tile = findByTestID(CreateStoryScreen(PROPS), 'create-video-thumbnail');
+
+    expect(tile).toBeDefined();
+    const player = findElementByType(tile, 'Video');
+
+    expect(player?.props?.source).toEqual({ uri: 'file:///a.mp4' });
+    // A still, not a second decoder playing inside the composer.
+    expect(player?.props?.paused).toBe(true);
+    expect(player?.props?.muted).toBe(true);
+    expect(player?.props?.resizeMode).toBe('cover');
+  });
+
+  it('keeps the remove control on a clip tile', () => {
+    scriptState({ 8: [pickedVideo('file:///a.mp4')] });
+    const tree = CreateStoryScreen(PROPS);
+
+    expect(findElement(tree, (props) => props.accessibilityLabel === 'Remove media')).toBeDefined();
+  });
+
   it('offers a working add slot while there is room, and closes it at the cap', () => {
     const open = findByTestID(CreateStoryScreen(PROPS), 'create-add-media');
     expect(open?.props?.disabled).toBe(false);
@@ -336,6 +400,70 @@ describe('CreateStoryScreen media strip', () => {
 
     expect(full?.props?.disabled).toBe(true);
     expect((full?.props?.style as readonly unknown[])[1]).toMatchObject({ opacity: 0.5 });
+  });
+});
+
+/**
+ * The video cap (KNOT-052).
+ *
+ * Three clips is the product rule; a fourth pick is refused while anything else
+ * in the same selection still lands, and the reader is told why. The total cap is
+ * unchanged and stays the quiet line under the strip.
+ */
+describe('CreateStoryScreen video cap', () => {
+  const threeVideos = [
+    pickedVideo('file:///a.mp4'),
+    pickedVideo('file:///b.mp4'),
+    pickedVideo('file:///c.mp4'),
+  ];
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('takes three clips without complaint', () => {
+    const tree = CreateStoryScreen(PROPS);
+
+    pickInto(tree)(threeVideos);
+
+    expect(mockStateSetters[8]).toHaveBeenCalledWith(threeVideos);
+    expect(Alert.alert).not.toHaveBeenCalled();
+  });
+
+  it('refuses a fourth clip and explains the rule', () => {
+    scriptState({ 8: threeVideos });
+    const tree = CreateStoryScreen(PROPS);
+
+    pickInto(tree)([pickedVideo('file:///d.mp4')]);
+
+    expect(Alert.alert).toHaveBeenCalledWith('Video limit', VIDEO_LIMIT_MESSAGE);
+    // Nothing was added: the strip's state was never written.
+    expect(mockStateSetters[8]).not.toHaveBeenCalled();
+  });
+
+  it('still takes the photographs beside a refused clip', () => {
+    scriptState({ 8: threeVideos });
+    const tree = CreateStoryScreen(PROPS);
+    const photo = pickedImage('file:///e.jpg');
+
+    pickInto(tree)([pickedVideo('file:///d.mp4'), photo]);
+
+    expect(mockStateSetters[8]).toHaveBeenCalledWith([...threeVideos, photo]);
+    expect(Alert.alert).toHaveBeenCalledWith('Video limit', VIDEO_LIMIT_MESSAGE);
+  });
+
+  it('keeps the total cap quiet but enforced', () => {
+    const tenImages = Array.from({ length: MAX_MEDIA_PER_STORY }, (_, index) =>
+      pickedImage(`file:///${index}.jpg`),
+    );
+    scriptState({ 8: tenImages });
+    const tree = CreateStoryScreen(PROPS);
+
+    pickInto(tree)([pickedImage('file:///eleventh.jpg')]);
+
+    expect(mockStateSetters[8]).not.toHaveBeenCalled();
+    expect(mockStateSetters[11]).toHaveBeenCalledWith(MEDIA_LIMIT_MESSAGE);
+    expect(Alert.alert).not.toHaveBeenCalled();
   });
 });
 

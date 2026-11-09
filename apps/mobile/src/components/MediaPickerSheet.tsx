@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { Animated, Modal, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { ImagePickerResponse, launchCamera, launchImageLibrary } from 'react-native-image-picker';
-import { Camera, FilmStrip, Images, VideoCamera, type Icon } from 'phosphor-react-native';
+import { Camera, Images, type Icon } from 'phosphor-react-native';
 
 import type { MediaSource } from '../api/stories';
 import { useFade } from '../motion/useFade';
@@ -62,13 +62,40 @@ type MediaPickerSheetProps = {
 /** How far the sheet must be dragged down before it dismisses. */
 const SHEET_CLOSE_DISTANCE = 96;
 
+/** The option tile's glyph size. */
+const OPTION_ICON_SIZE = 28;
+
 /**
- * A bottom sheet offering to capture or choose an image or a video.
+ * Whether an asset the picker returned is a video.
  *
- * All four paths go through `react-native-image-picker`; the only difference is
- * whether the camera or the library is launched, and whether an image or a video
- * is requested. The resulting `source` is what drives the capture badge later.
- * The sheet uses theme tokens throughout — no hardcoded colours.
+ * A mixed pick no longer tells the sheet what it asked for — one library pass can
+ * return photographs and clips together — so each asset is classified from what
+ * it reports: its MIME type first, then the duration only a video carries
+ * (KNOT-052).
+ */
+function assetKind(asset: { readonly type?: string; readonly duration?: number }): PickedMediaType {
+  const mime = typeof asset.type === 'string' ? asset.type.toLowerCase() : '';
+  if (mime.startsWith('video/')) {
+    return 'video';
+  }
+  if (typeof asset.duration === 'number' && asset.duration > 0) {
+    return 'video';
+  }
+  return 'image';
+}
+
+/**
+ * A bottom sheet offering the two ways to add media: the camera, or the library.
+ *
+ * It used to draw four rows — take a photo, record a video, choose a photo,
+ * choose a video — which asked the reader to make the same decision twice: where
+ * the file comes from, and what kind of file it is. Both native pickers can
+ * answer the second question themselves, so one pass now returns photographs and
+ * clips together and each asset is classified as it arrives (KNOT-052).
+ *
+ * Every path goes through `react-native-image-picker`; the resulting `source` is
+ * what drives the capture badge later. The sheet uses theme tokens throughout —
+ * no hardcoded colours.
  */
 export default function MediaPickerSheet({
   visible,
@@ -82,12 +109,12 @@ export default function MediaPickerSheet({
   /**
    * Turns a picker response into the picked media, or reports why it could not.
    *
-   * A gallery pick can return several assets; every one that has a uri is
-   * reported in a single call, so the caller applies its cap to the whole
+   * A gallery pick can return several assets of mixed kinds; every one that has a
+   * uri is reported in a single call, so the caller applies its caps to the whole
    * selection at once rather than item by item.
    */
   const handleResponse = useCallback(
-    (response: ImagePickerResponse, kind: PickedMediaType, source: MediaSource): void => {
+    (response: ImagePickerResponse, source: MediaSource): void => {
       if (response.didCancel) {
         return;
       }
@@ -101,6 +128,7 @@ export default function MediaPickerSheet({
         if (asset.uri === undefined) {
           continue;
         }
+        const kind = assetKind(asset);
         picked.push({
           uri: asset.uri,
           type: kind,
@@ -127,49 +155,49 @@ export default function MediaPickerSheet({
     [onError],
   );
 
-  /** Launches the device camera for a photo or a video. */
-  const runCamera = useCallback(
-    (kind: PickedMediaType, source: MediaSource): void => {
-      void launchCamera({
-        mediaType: kind === 'video' ? 'video' : 'photo',
-        quality: 0.8,
-        videoQuality: 'high',
-        saveToPhotos: false,
-      })
-        .then((response) => handleResponse(response, kind, source))
-        .catch(reportFailure)
-        .finally(onClose);
-    },
-    [handleResponse, onClose, reportFailure],
-  );
+  /**
+   * Launches the device camera.
+   *
+   * `mixed` asks the native camera for both photographs and clips, so the camera's
+   * own mode control decides the kind. An avatar is an image only, so that flow
+   * asks for `photo`.
+   */
+  const runCamera = useCallback((): void => {
+    void launchCamera({
+      mediaType: allowVideo ? 'mixed' : 'photo',
+      quality: 0.8,
+      videoQuality: 'high',
+      saveToPhotos: false,
+    })
+      .then((response) => handleResponse(response, 'camera'))
+      .catch(reportFailure)
+      .finally(onClose);
+  }, [allowVideo, handleResponse, onClose, reportFailure]);
 
   /**
-   * Launches the photo library for one or more photos or videos.
+   * Launches the photo library for photographs, clips, or both.
    *
    * `selectionLimit` caps how many the library may return. The library treats 0
    * as "unlimited", so a caller with no free slots is refused rather than allowed
    * to pick without bound (KNOT-ADR-054).
    */
-  const runLibrary = useCallback(
-    (kind: PickedMediaType, source: MediaSource): void => {
-      if (maxSelection < 1) {
-        onError?.(MEDIA_LIMIT_MESSAGE);
-        onClose();
-        return;
-      }
+  const runLibrary = useCallback((): void => {
+    if (maxSelection < 1) {
+      onError?.(MEDIA_LIMIT_MESSAGE);
+      onClose();
+      return;
+    }
 
-      void launchImageLibrary({
-        mediaType: kind === 'video' ? 'video' : 'photo',
-        quality: 0.8,
-        videoQuality: 'high',
-        selectionLimit: maxSelection,
-      })
-        .then((response) => handleResponse(response, kind, source))
-        .catch(reportFailure)
-        .finally(onClose);
-    },
-    [handleResponse, maxSelection, onClose, onError, reportFailure],
-  );
+    void launchImageLibrary({
+      mediaType: allowVideo ? 'mixed' : 'photo',
+      quality: 0.8,
+      videoQuality: 'high',
+      selectionLimit: maxSelection,
+    })
+      .then((response) => handleResponse(response, 'gallery'))
+      .catch(reportFailure)
+      .finally(onClose);
+  }, [allowVideo, handleResponse, maxSelection, onClose, onError, reportFailure]);
 
   // The sheet drags down to dismiss from its handle, matching the profile's
   // options sheet (KNOT-020g-fix2).
@@ -227,30 +255,24 @@ export default function MediaPickerSheet({
           </View>
 
           <Pressable style={styles.body} onPress={() => undefined}>
-            <SheetRow
-              icon={Camera}
-              label="Take Photo"
-              onPress={() => runCamera('image', 'camera')}
-            />
-            {allowVideo ? (
-              <SheetRow
-                icon={VideoCamera}
-                label="Record Video"
-                onPress={() => runCamera('video', 'camera')}
+            {/* Two answers, side by side: where the media comes from. What KIND it
+                is is the native picker's decision, not a second row's (KNOT-052). */}
+            <View style={styles.options}>
+              <OptionTile
+                icon={Camera}
+                label="Camera"
+                hint={allowVideo ? 'Photo or video' : 'A photo'}
+                onPress={runCamera}
+                testID="media-picker-camera"
               />
-            ) : null}
-            <SheetRow
-              icon={Images}
-              label="Choose Photo from Gallery"
-              onPress={() => runLibrary('image', 'gallery')}
-            />
-            {allowVideo ? (
-              <SheetRow
-                icon={FilmStrip}
-                label="Choose Video from Gallery"
-                onPress={() => runLibrary('video', 'gallery')}
+              <OptionTile
+                icon={Images}
+                label="Gallery"
+                hint={allowVideo ? 'Photos and videos' : 'A photo'}
+                onPress={runLibrary}
+                testID="media-picker-gallery"
               />
-            ) : null}
+            </View>
 
             <Pressable
               style={styles.cancel}
@@ -267,30 +289,39 @@ export default function MediaPickerSheet({
   );
 }
 
-/** One row in the sheet: a leading icon and a bold label. */
-function SheetRow({
+/**
+ * One of the sheet's two choices: a large tile with a clean glyph and its name.
+ *
+ * The tile is a single touch target (the whole box, not just the glyph) so the
+ * sheet reads as two doors rather than a menu.
+ */
+function OptionTile({
   icon,
   label,
+  hint,
   onPress,
+  testID,
 }: {
   readonly icon: Icon;
   readonly label: string;
+  readonly hint: string;
   readonly onPress: () => void;
+  readonly testID: string;
 }): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
   const IconComponent = icon;
   return (
     <Pressable
-      style={styles.row}
+      style={styles.option}
       onPress={onPress}
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={`${label}, ${hint.toLowerCase()}`}
+      testID={testID}
     >
-      <IconComponent color={colors.text.tertiary} size={20} weight="bold" />
-      <Text style={[typeScale.body, styles.rowLabel]} numberOfLines={1}>
-        {label}
-      </Text>
+      <IconComponent color={colors.text.primary} size={OPTION_ICON_SIZE} weight="bold" />
+      <Text style={[typeScale.button, styles.optionLabel]}>{label}</Text>
+      <Text style={[typeScale.caption, styles.optionHint]}>{hint}</Text>
     </Pressable>
   );
 }
@@ -328,19 +359,31 @@ const createStyles = (colors: ThemeColors) =>
       paddingBottom: spacing.sm,
       paddingTop: spacing.sm,
     },
-    // One choice: a leading icon and its label, separated from its neighbour by
-    // spacing alone (the same row the profile's options sheet draws).
-    row: {
+    // One of the two choices: a tall tile that is entirely a touch target, so the
+    // sheet reads as two doors rather than a list of rows (KNOT-052).
+    option: {
       alignItems: 'center',
+      backgroundColor: colors.bg.sunken,
+      borderRadius: radius.lg,
+      flex: 1,
+      gap: spacing.xs,
+      justifyContent: 'center',
+      minHeight: 116,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.lg,
+    },
+    optionHint: {
+      color: colors.text.tertiary,
+      textAlign: 'center',
+    },
+    optionLabel: {
+      color: colors.text.primary,
+      marginTop: spacing.xs,
+    },
+    // The pair sits side by side, sharing the row evenly.
+    options: {
       flexDirection: 'row',
       gap: spacing.md,
-      minHeight: 44,
-      paddingVertical: spacing.md,
-    },
-    rowLabel: {
-      color: colors.text.primary,
-      flex: 1,
-      fontWeight: fontWeights.bold,
     },
     // The sheet: rounded top corners, the canvas fill, and the floating-bar shadow
     // (elevation 3, whose offset points up).

@@ -190,7 +190,6 @@ function CarouselPage({
           isMuted={isMuted}
           onToggleMute={onToggleMute}
           durationMs={media.duration_ms}
-          showTag={false}
           durationPosition="bottom-left"
         />
       ) : (

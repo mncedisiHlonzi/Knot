@@ -18,10 +18,13 @@ import { cachedVideoUri } from '../utils/videoCache';
 import { formatProgress } from './feedVideoMeta';
 
 /**
- * The mute control's square tap target, exported so the entry can stack its
- * media-count badge clear of it.
+ * The mute control's square tap target.
+ *
+ * The media count lives on the entry's own overlay now — top-left, clear of this
+ * control's bottom-right corner (KNOT-052) — so nothing else in the card needs to
+ * know this size.
  */
-export const VIDEO_MUTE_BUTTON_SIZE = 44;
+const VIDEO_MUTE_BUTTON_SIZE = 44;
 
 /** The speaker glyph inside the mute control. */
 const MUTE_ICON_SIZE = 22;
@@ -61,12 +64,6 @@ type FeedVideoProps = {
    * and ignored when it is not a positive number (KNOT-025).
    */
   readonly durationMs?: number | null;
-  /**
-   * Whether the small "Video" tag is drawn in the top-left. Defaults to `true`,
-   * the Feed's presentation; the Story Detail carousel passes `false` because its
-   * counter pill and caption already identify the media (KNOT-025).
-   */
-  readonly showTag?: boolean;
   /**
    * Where the duration badge sits. Defaults to `top-right`, the Feed's place. The
    * Story Detail carousel asks for `bottom-left`, leaving the top-right corner for
@@ -115,10 +112,11 @@ type FeedVideoProps = {
  * card that has never played starts at 0:00, and a card scrolled away keeps the
  * exact second it had reached (KNOT-051).
  *
- * The chrome stays here — the "Video" tag, the running time and the mute control —
- * because it belongs to the card. Every screen that draws a story's video uses this
- * component (the Feed, Place Stories, the profile wall, the Story Detail and Story
- * Version carousels).
+ * The chrome stays here — the running time and the mute control — because it
+ * belongs to the card. The word "Video" is gone (KNOT-052): the picture already
+ * says so, and the top-left corner it held now carries the entry's media count.
+ * Every screen that draws a story's video uses this component (the Feed, Place
+ * Stories, the profile wall, the Story Detail and Story Version carousels).
  *
  * The caller owns the frame's shape: `FeedEntry` and the profile card set it from
  * the payload's reported dimensions, reserving the design's 4:5 frame when the
@@ -132,7 +130,6 @@ export default function FeedVideo({
   isMuted = true,
   onToggleMute = NOOP,
   durationMs,
-  showTag = true,
   durationPosition = 'top-right',
   posterUri,
   testID,
@@ -298,12 +295,6 @@ export default function FeedVideo({
         </View>
       ) : null}
 
-      {showTag ? (
-        <View style={styles.mediaTag} pointerEvents="none">
-          <Text style={[typeScale.label, mediaOverlayText(colors)]}>Video</Text>
-        </View>
-      ) : null}
-
       {progressLabel !== '' ? (
         <View
           style={[
@@ -360,15 +351,6 @@ const createStyles = (colors: ThemeColors) =>
     fallback: {
       ...StyleSheet.absoluteFillObject,
       backgroundColor: colors.bg.sunken,
-    },
-    mediaTag: {
-      backgroundColor: colors.scrim.overlay,
-      borderRadius: radius.sm,
-      left: spacing.sm,
-      paddingHorizontal: spacing.sm,
-      paddingVertical: 2,
-      position: 'absolute',
-      top: spacing.sm,
     },
     muteButton: {
       alignItems: 'center',

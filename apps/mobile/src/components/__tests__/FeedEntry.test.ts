@@ -1382,3 +1382,77 @@ describe('FeedEntry memoisation', () => {
     expect(feedEntryPropsEqual(idle, playing)).toBe(false);
   });
 });
+
+/**
+ * The picture's own chrome (KNOT-052).
+ *
+ * The "Video" tag is gone — the picture already says what it is — and the top-left
+ * corner it held now carries the media count in the quietest voice the design
+ * offers. The duration sits top-right and the mute control bottom-right, both on
+ * the player, so the three never meet.
+ */
+describe('media count indicator', () => {
+  /** A card whose first media is of the given kind and which holds `mediaCount` items. */
+  function withMedia(
+    mediaCount: number,
+    type: 'image' | 'video' = 'image',
+  ): Parameters<typeof FeedEntry>[0] {
+    return {
+      story: {
+        ...story,
+        first_media_type: type,
+        first_media_url: '/stories/x/media/y/content',
+        media_count: mediaCount,
+      },
+      onPress: () => undefined,
+    };
+  }
+
+  it('draws a bullet and the count over the picture', () => {
+    const badge = findByTestID(FeedEntry(withMedia(3)), 'feed-media-count');
+
+    expect(badge).toBeDefined();
+    expect(collectText(badge)).toContain('• 3');
+    expect(badge?.props?.accessibilityLabel).toBe('3 media items');
+  });
+
+  it('sits in the top-left corner, clear of the duration and the mute control', () => {
+    const badge = findByTestID(FeedEntry(withMedia(4)), 'feed-media-count');
+    const style = badge?.props?.style as Record<string, unknown> | undefined;
+
+    expect(style?.position).toBe('absolute');
+    expect(style?.left).toBe(spacing.sm);
+    expect(style?.top).toBe(spacing.sm);
+    // Nothing anchors it to the right or the bottom, which the player owns.
+    expect(style?.right).toBeUndefined();
+    expect(style?.bottom).toBeUndefined();
+  });
+
+  it('speaks in the caption voice on the media scrim', () => {
+    const badge = findByTestID(FeedEntry(withMedia(2)), 'feed-media-count');
+    const text = badge?.props?.children as { props?: Record<string, unknown> } | undefined;
+    const textStyle = text?.props?.style as readonly unknown[];
+
+    expect(textStyle?.[0]).toBe(typeScale.caption);
+    expect(textStyle?.[2]).toMatchObject({ color: colors.text.onMedia });
+    expect((badge?.props?.style as Record<string, unknown> | undefined)?.backgroundColor).toBe(
+      colors.scrim.overlay,
+    );
+  });
+
+  it('is not a tap target, so it never steals the media press', () => {
+    const badge = findByTestID(FeedEntry(withMedia(3)), 'feed-media-count');
+
+    expect(badge?.props?.pointerEvents).toBe('none');
+  });
+
+  it('draws nothing for a single item, where a count is noise', () => {
+    expect(findByTestID(FeedEntry(withMedia(1)), 'feed-media-count')).toBeUndefined();
+    expect(findByTestID(FeedEntry(withMedia(0)), 'feed-media-count')).toBeUndefined();
+  });
+
+  it('never draws the word "Video" over the picture', () => {
+    // The tag this replaced said only what the picture already shows (KNOT-052).
+    expect(collectText(FeedEntry(withMedia(3, 'video')))).not.toContain('Video');
+  });
+});

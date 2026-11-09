@@ -1,4 +1,5 @@
 import FeedVideo from '../FeedVideo';
+import { spacing } from '../../theme';
 
 /**
  * The inline player suite (KNOT-050).
@@ -364,6 +365,21 @@ describe('FeedVideo timestamp', () => {
 
     expect(badgeText(tree)).toBe('');
   });
+
+  /**
+   * The "Video" tag is gone (KNOT-052): the picture already says what it is, and
+   * the corner it held belongs to the entry's media count. The running time and the
+   * mute control stay.
+   */
+  it('writes no word over the picture, only its time', () => {
+    const tree = render({ uri: URI, isVisible: true, durationMs: 76_000 });
+    const text = elements(tree)
+      .map((element) => element.props?.children)
+      .filter((children): children is string => typeof children === 'string');
+
+    expect(text).not.toContain('Video');
+    expect(badgeText(tree)).toBe('0:00 / 1:16');
+  });
 });
 
 describe('FeedVideo poster', () => {
@@ -456,5 +472,36 @@ describe('FeedVideo re-seat', () => {
     fireLoad(tree, 45);
 
     expect(seek).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The picture's chrome is the running time and the mute control, and nothing else
+ * (KNOT-052): the word "Video" said only what the picture already shows, and the
+ * top-left corner it held now carries the entry's media count.
+ */
+describe('FeedVideo chrome', () => {
+  it('draws no "Video" tag', () => {
+    const tree = render({ uri: URI, isVisible: true, durationMs: 76_000 });
+    const texts = elements(tree)
+      .filter((element) => element.type === 'Text')
+      .map((element) => element.props?.children);
+
+    expect(texts).not.toContain('Video');
+    // The chrome was not removed wholesale: the timestamp is still drawn.
+    expect(badgeText(tree)).toBe('0:00 / 1:16');
+  });
+
+  it('keeps the timestamp top-right and the mute control bottom-right', () => {
+    const tree = render({ uri: URI, isVisible: true, durationMs: 45_000 });
+    const badge = elements(tree).find(
+      (element) => element.props?.testID === 'video-progress-badge',
+    );
+    const badgeStyle = badge?.props?.style as readonly Record<string, unknown>[];
+    const mute = elements(tree).find((element) => element.type === 'Pressable');
+    const muteStyle = mute?.props?.style as Record<string, unknown> | undefined;
+
+    expect(badgeStyle?.[1]).toMatchObject({ right: spacing.sm, top: spacing.sm });
+    expect(muteStyle).toMatchObject({ bottom: spacing.sm, right: spacing.sm });
   });
 });
