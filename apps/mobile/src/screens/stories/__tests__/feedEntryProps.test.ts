@@ -1,5 +1,10 @@
 import type { FeedItem } from '../../../api/stories';
-import { entryStoryMap, feedEntryStory } from '../feedEntryProps';
+import {
+  entryStoryMap,
+  feedEntryStory,
+  insertFeedEntryAt,
+  removeFeedEntry,
+} from '../feedEntryProps';
 
 /**
  * The screen used to fold each entry onto the card's own story shape inside
@@ -112,5 +117,44 @@ describe('entryStoryMap', () => {
     // that changed nothing re-renders nothing.
     expect(second).not.toBe(first);
     expect(second).toEqual(first);
+  });
+});
+
+/**
+ * The optimistic delete's list arithmetic (KNOT-053).
+ *
+ * The screen removes the card before the server answers, and puts it back — at
+ * the index it held — when the answer is a refusal. Both halves are pure list
+ * operations, so they are pinned here rather than through a renderer.
+ */
+const OTHER: FeedItem = { ...STORY, id: 'story-2' };
+
+describe('removeFeedEntry', () => {
+  it('drops the entry with that id and keeps the order of the rest', () => {
+    expect(removeFeedEntry([STORY, OTHER], STORY.id)).toEqual([OTHER]);
+  });
+
+  it('leaves the list unchanged when nothing matches', () => {
+    const items = [STORY, OTHER];
+
+    expect(removeFeedEntry(items, 'story-9')).toEqual(items);
+  });
+});
+
+describe('insertFeedEntryAt', () => {
+  it('puts the entry back where it was', () => {
+    expect(insertFeedEntryAt([OTHER], STORY, 0)).toEqual([STORY, OTHER]);
+    expect(insertFeedEntryAt([OTHER], STORY, 1)).toEqual([OTHER, STORY]);
+  });
+
+  it('clamps an index from a list that shrank while the request was in flight', () => {
+    expect(insertFeedEntryAt([], STORY, 7)).toEqual([STORY]);
+    expect(insertFeedEntryAt([OTHER], STORY, -3)).toEqual([STORY, OTHER]);
+  });
+
+  it('never duplicates an entry that came back some other way', () => {
+    const items = [STORY, OTHER];
+
+    expect(insertFeedEntryAt(items, STORY, 0)).toBe(items);
   });
 });

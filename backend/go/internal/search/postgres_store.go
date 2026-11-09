@@ -81,6 +81,7 @@ const storyUnion = `
 		FROM stories s
 		JOIN story_versions sv ON sv.id = s.root_version_id
 		WHERE s.author_id <> ALL($2::uuid[])
+			AND s.deleted_at IS NULL
 			AND ($1 = '' OR sv.search_vector @@ to_tsquery('simple', $8))
 			AND ($3 = '' OR s.pillar = $3)
 			AND ($4 = '' OR sv.language = $4)
@@ -109,6 +110,7 @@ const versionUnion = `
 		FROM story_versions sv
 		JOIN stories s ON s.id = sv.story_id
 		WHERE sv.parent_version_id IS NOT NULL
+			AND s.deleted_at IS NULL
 			AND sv.author_id <> ALL($2::uuid[])
 			AND ($1 = '' OR sv.search_vector @@ to_tsquery('simple', $8))
 			AND ($3 = '' OR s.pillar = $3)

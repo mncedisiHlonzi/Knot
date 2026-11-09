@@ -52,6 +52,14 @@ type SortedSet interface {
 	// A missing key is an empty feed, not an error: a reader who has never been
 	// fanned out to is the ordinary cold-start case.
 	Recent(ctx context.Context, key string, limit int) ([]SortedSetEntry, error)
+
+	// Delete removes a whole key from the same store.
+	//
+	// A feed is invalidated as a unit — a story's deletion changes which entries a
+	// reader should see, and the page can be rebuilt from SQL on the next read — so
+	// the operation is DEL rather than a member removal. Deleting a key that does
+	// not exist is not an error (KNOT-053).
+	Delete(ctx context.Context, key string) error
 }
 
 // Compile-time proof that the Redis implementation satisfies the contract.

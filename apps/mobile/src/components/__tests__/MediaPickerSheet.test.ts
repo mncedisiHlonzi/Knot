@@ -1,3 +1,4 @@
+import { Alert, Platform } from 'react-native';
 import { launchCamera, launchImageLibrary } from 'react-native-image-picker';
 
 import MediaPickerSheet from '../MediaPickerSheet';
@@ -23,6 +24,7 @@ jest.mock('react', () => ({
 }));
 
 jest.mock('react-native', () => ({
+  Alert: { alert: jest.fn() },
   Animated: {
     View: 'Animated.View',
     Value: class {
@@ -32,6 +34,7 @@ jest.mock('react-native', () => ({
   },
   Modal: 'Modal',
   PanResponder: { create: () => ({ panHandlers: {} }) },
+  Platform: { OS: 'ios' },
   Pressable: 'Pressable',
   StyleSheet: { create: (styles: unknown) => styles },
   Text: 'Text',
@@ -91,6 +94,9 @@ function option(tree: unknown, testID: string): Element | undefined {
   return elements(tree).find((element) => element.props?.testID === testID);
 }
 
+/** The mocked platform, so a test can choose what the sheet thinks it is on. */
+const platform = Platform as unknown as { OS: string };
+
 const PROPS = {
   visible: true,
   onClose: jest.fn(),
@@ -100,6 +106,8 @@ const PROPS = {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  // iOS by default: the camera's own mode control decides the kind there.
+  platform.OS = 'ios';
   (launchCamera as jest.Mock).mockResolvedValue({ didCancel: true });
   (launchImageLibrary as jest.Mock).mockResolvedValue({ didCancel: true });
 });
@@ -133,19 +141,51 @@ describe('the sheet offers two doors', () => {
 });
 
 describe('the camera door', () => {
-  it('asks the native camera for photographs and clips alike', () => {
+  it('asks the native camera for photographs and clips alike on iOS', () => {
     const tree = MediaPickerSheet(PROPS);
 
     (option(tree, 'media-picker-camera')?.props?.onPress as () => void)();
 
     expect(launchCamera).toHaveBeenCalledWith(expect.objectContaining({ mediaType: 'mixed' }));
+    expect(Alert.alert).not.toHaveBeenCalled();
   });
 
-  it('asks for a photo only when the caller allows no video', () => {
+  /**
+   * Android's picker cannot offer both kinds in one camera, so the sheet asks
+   * before the intent is built rather than silently taking a photograph
+   * (KNOT-053).
+   */
+  it('asks which kind it is on Android, and launches nothing until the answer', () => {
+    platform.OS = 'android';
+    const tree = MediaPickerSheet(PROPS);
+
+    (option(tree, 'media-picker-camera')?.props?.onPress as () => void)();
+
+    expect(launchCamera).not.toHaveBeenCalled();
+    expect(Alert.alert).toHaveBeenCalledTimes(1);
+
+    const [, , buttons] = (Alert.alert as jest.Mock).mock.calls[0] as [
+      string,
+      string,
+      { text: string; onPress?: () => void }[],
+    ];
+    expect(buttons.map((button) => button.text)).toEqual(['Take Photo', 'Record Video', 'Cancel']);
+
+    buttons[0].onPress?.();
+    expect(launchCamera).toHaveBeenLastCalledWith(expect.objectContaining({ mediaType: 'photo' }));
+
+    buttons[1].onPress?.();
+    expect(launchCamera).toHaveBeenLastCalledWith(expect.objectContaining({ mediaType: 'video' }));
+  });
+
+  it('asks the still camera directly when the caller allows no video', () => {
+    platform.OS = 'android';
     const tree = MediaPickerSheet({ ...PROPS, allowVideo: false });
 
     (option(tree, 'media-picker-camera')?.props?.onPress as () => void)();
 
+    // An avatar is an image: there is nothing to ask.
+    expect(Alert.alert).not.toHaveBeenCalled();
     expect(launchCamera).toHaveBeenCalledWith(expect.objectContaining({ mediaType: 'photo' }));
   });
 

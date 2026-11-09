@@ -14,27 +14,36 @@ const authorID = "11111111-1111-4111-8111-111111111111"
 // fakeStore records the calls it received and returns canned results, so the
 // business rules can be tested without a database.
 type fakeStore struct {
-	createResult Story
-	createErr    error
-	getResult    Story
-	getErr       error
-	listResult   []FeedItem
-	listNext     *Cursor
-	listErr      error
-	byIDsResult  []FeedItem
-	byIDsErr     error
+	createResult  Story
+	createErr     error
+	getResult     Story
+	getErr        error
+	listResult    []FeedItem
+	listNext      *Cursor
+	listErr       error
+	byIDsResult   []FeedItem
+	byIDsErr      error
+	deleteErr     error
+	restoreResult Story
+	restoreErr    error
 
-	gotCreate     Story
-	gotGetID      string
-	gotCursor     *Cursor
-	gotLimit      int
-	gotStoryIDs   []string
-	gotVersionIDs []string
+	gotCreate        Story
+	gotGetID         string
+	gotCursor        *Cursor
+	gotLimit         int
+	gotStoryIDs      []string
+	gotVersionIDs    []string
+	gotDeleteID      string
+	gotDeleteAuthor  string
+	gotRestoreID     string
+	gotRestoreAuthor string
 
-	createCalls int
-	getCalls    int
-	listCalls   int
-	byIDsCalls  int
+	createCalls  int
+	getCalls     int
+	listCalls    int
+	byIDsCalls   int
+	deleteCalls  int
+	restoreCalls int
 }
 
 func (f *fakeStore) CreateStory(_ context.Context, story Story) (Story, error) {
@@ -74,6 +83,20 @@ func (f *fakeStore) FeedItemsByIDs(_ context.Context, storyIDs, versionIDs []str
 	f.gotStoryIDs = storyIDs
 	f.gotVersionIDs = versionIDs
 	return f.byIDsResult, f.byIDsErr
+}
+
+func (f *fakeStore) DeleteStory(_ context.Context, id, authorID string) error {
+	f.deleteCalls++
+	f.gotDeleteID = id
+	f.gotDeleteAuthor = authorID
+	return f.deleteErr
+}
+
+func (f *fakeStore) RestoreStory(_ context.Context, id, authorID string) (Story, error) {
+	f.restoreCalls++
+	f.gotRestoreID = id
+	f.gotRestoreAuthor = authorID
+	return f.restoreResult, f.restoreErr
 }
 
 // storyEntry wraps a story as a story entry of the merged feed, so a test about
@@ -688,5 +711,108 @@ func TestFeedItemsByIDsWithNoValidRefsDoesNotQuery(t *testing.T) {
 	}
 	if store.byIDsCalls != 0 {
 		t.Errorf("store calls = %d, want 0", store.byIDsCalls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Soft deletion (KNOT-053)
+// ---------------------------------------------------------------------------
+
+// storyID is canonical UUID text used as the story being deleted or restored.
+const storyID = "33333333-3333-4333-8333-333333333333"
+
+func TestDeleteStoryPassesTheAuthorToTheStore(t *testing.T) {
+	service, store := newTestService(t)
+
+	if err := service.DeleteStory(context.Background(), storyID, authorID); err != nil {
+		t.Fatalf("DeleteStory() error = %v, want nil", err)
+	}
+	if store.deleteCalls != 1 {
+		t.Errorf("store delete calls = %d, want 1", store.deleteCalls)
+	}
+	if store.gotDeleteID != storyID {
+		t.Errorf("store id = %q, want %q", store.gotDeleteID, storyID)
+	}
+	// Ownership is part of the write, so the service must hand the caller through
+	// rather than looking the author up first.
+	if store.gotDeleteAuthor != authorID {
+		t.Errorf("store author = %q, want %q", store.gotDeleteAuthor, authorID)
+	}
+}
+
+func TestDeleteStoryRejectsAMalformedIDWithoutTouchingTheStore(t *testing.T) {
+	service, store := newTestService(t)
+
+	err := service.DeleteStory(context.Background(), "not-a-uuid", authorID)
+
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("error = %v, want ErrNotFound", err)
+	}
+	if store.deleteCalls != 0 {
+		t.Errorf("store calls = %d, want 0", store.deleteCalls)
+	}
+}
+
+func TestDeleteStoryPassesThroughAnOwnershipRefusal(t *testing.T) {
+	service, store := newTestService(t)
+	store.deleteErr = ErrNotAuthor
+
+	err := service.DeleteStory(context.Background(), storyID, authorID)
+
+	if !errors.Is(err, ErrNotAuthor) {
+		t.Errorf("error = %v, want ErrNotAuthor", err)
+	}
+}
+
+func TestDeleteStoryWrapsAStoreFailure(t *testing.T) {
+	service, store := newTestService(t)
+	store.deleteErr = errors.New("connection reset")
+
+	err := service.DeleteStory(context.Background(), storyID, authorID)
+
+	if err == nil || !strings.Contains(err.Error(), "delete story") {
+		t.Errorf("error = %v, want a wrapped delete failure", err)
+	}
+}
+
+func TestRestoreStoryReturnsTheStoredStory(t *testing.T) {
+	service, store := newTestService(t)
+	store.restoreResult = Story{ID: storyID, AuthorID: authorID, Title: "Back again"}
+
+	story, err := service.RestoreStory(context.Background(), storyID, authorID)
+
+	if err != nil {
+		t.Fatalf("RestoreStory() error = %v, want nil", err)
+	}
+	if story.ID != storyID {
+		t.Errorf("id = %q, want %q", story.ID, storyID)
+	}
+	if store.restoreCalls != 1 || store.gotRestoreID != storyID || store.gotRestoreAuthor != authorID {
+		t.Errorf("store call = (%d, %q, %q), want (1, %q, %q)",
+			store.restoreCalls, store.gotRestoreID, store.gotRestoreAuthor, storyID, authorID)
+	}
+}
+
+func TestRestoreStoryRejectsAMalformedIDWithoutTouchingTheStore(t *testing.T) {
+	service, store := newTestService(t)
+
+	_, err := service.RestoreStory(context.Background(), "", authorID)
+
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("error = %v, want ErrNotFound", err)
+	}
+	if store.restoreCalls != 0 {
+		t.Errorf("store calls = %d, want 0", store.restoreCalls)
+	}
+}
+
+func TestRestoreStoryPassesThroughAnOwnershipRefusal(t *testing.T) {
+	service, store := newTestService(t)
+	store.restoreErr = ErrNotAuthor
+
+	_, err := service.RestoreStory(context.Background(), storyID, authorID)
+
+	if !errors.Is(err, ErrNotAuthor) {
+		t.Errorf("error = %v, want ErrNotAuthor", err)
 	}
 }

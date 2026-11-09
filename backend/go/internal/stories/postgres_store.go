@@ -138,12 +138,15 @@ func (s *PostgresStore) CreateStory(ctx context.Context, story Story) (Story, er
 //
 // A malformed id is treated as not-found rather than as a database error, which
 // keeps the id column's index usable instead of casting it to text in SQL.
+//
+// A soft-deleted story is not found either: it is hidden for the recovery window
+// and reappears only when its author restores it (KNOT-053).
 func (s *PostgresStore) GetStory(ctx context.Context, id string) (Story, error) {
 	if !isUUID(id) {
 		return Story{}, ErrNotFound
 	}
 
-	const query = `SELECT ` + storyColumns + storyFrom + ` WHERE s.id = $1`
+	const query = `SELECT ` + storyColumns + storyFrom + ` WHERE s.id = $1 AND s.deleted_at IS NULL`
 
 	story, err := scanStory(s.pool.QueryRow(ctx, query, id))
 	if err != nil {
@@ -151,6 +154,86 @@ func (s *PostgresStore) GetStory(ctx context.Context, id string) (Story, error) 
 			return Story{}, ErrNotFound
 		}
 		return Story{}, fmt.Errorf("stories: get story: %w", err)
+	}
+
+	return story, nil
+}
+
+// DeleteStory marks a story deleted without removing anything.
+//
+// The row, its versions, its comments and its media objects all stay exactly
+// where they are: only `deleted_at` changes, and every read filters on it. That
+// is what makes the 30-day recovery window possible, and it is why the deletion
+// does not touch `updated_at` — the story's content did not change, only its
+// visibility (KNOT-053).
+//
+// Ownership is part of the statement rather than a separate check, so a caller
+// cannot delete somebody else's story by racing a read. A row that exists but
+// belongs to another author is reported as ErrNotAuthor, and one that does not
+// exist at all as ErrNotFound; both are answered without the caller learning
+// anything about a story they do not own beyond what they already knew.
+func (s *PostgresStore) DeleteStory(ctx context.Context, id, authorID string) error {
+	if !isUUID(id) || !isUUID(authorID) {
+		return ErrNotFound
+	}
+
+	// COALESCE keeps the FIRST deletion timestamp, so a repeated delete cannot
+	// extend the recovery window.
+	const query = `UPDATE stories SET deleted_at = COALESCE(deleted_at, now()) WHERE id = $1 AND author_id = $2`
+
+	tag, err := s.pool.Exec(ctx, query, id, authorID)
+	if err != nil {
+		return fmt.Errorf("stories: delete story: %w", err)
+	}
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+
+	// Nothing was updated: either the story is missing or it belongs to somebody
+	// else. The two are told apart so the handler can answer 404 and 403.
+	var exists bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM stories WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return fmt.Errorf("stories: delete story: %w", err)
+	}
+	if !exists {
+		return ErrNotFound
+	}
+
+	return ErrNotAuthor
+}
+
+// RestoreStory clears a story's deletion mark and returns it.
+//
+// Ownership is checked first, over the row whether or not it is deleted, so a
+// restore a caller is not entitled to is refused before anything is written. A
+// live story is returned unchanged rather than reported as an error: restoring is
+// idempotent, so a double tap after a retry cannot fail the second time.
+func (s *PostgresStore) RestoreStory(ctx context.Context, id, authorID string) (Story, error) {
+	if !isUUID(id) || !isUUID(authorID) {
+		return Story{}, ErrNotFound
+	}
+
+	var owner string
+	err := s.pool.QueryRow(ctx, `SELECT author_id::text FROM stories WHERE id = $1`, id).Scan(&owner)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Story{}, ErrNotFound
+	}
+	if err != nil {
+		return Story{}, fmt.Errorf("stories: restore story: %w", err)
+	}
+	if owner != authorID {
+		return Story{}, ErrNotAuthor
+	}
+
+	if _, err := s.pool.Exec(ctx, `UPDATE stories SET deleted_at = NULL WHERE id = $1 AND deleted_at IS NOT NULL`, id); err != nil {
+		return Story{}, fmt.Errorf("stories: restore story: %w", err)
+	}
+
+	// Read it back through the ordinary detail query, so a restored story is the
+	// same value every other read serves.
+	story, err := s.GetStory(ctx, id)
+	if err != nil {
+		return Story{}, fmt.Errorf("stories: restore story: %w", err)
 	}
 
 	return story, nil
@@ -226,8 +309,8 @@ const feedVersionBranch = `
 // One extra row is fetched to decide whether more remain; that row is not
 // returned, and the cursor is derived from the last row that is.
 func (s *PostgresStore) ListFeed(ctx context.Context, cursor *Cursor, limit int) ([]FeedItem, *Cursor, error) {
-	storyConditions := make([]string, 0, 2)
-	versionConditions := []string{"v.parent_version_id IS NOT NULL"}
+	storyConditions := []string{"s.deleted_at IS NULL"}
+	versionConditions := []string{"v.parent_version_id IS NOT NULL", "s.deleted_at IS NULL"}
 	args := make([]any, 0, 4)
 
 	// Hide content authored by anyone on either side of a block with the viewer,
@@ -311,8 +394,8 @@ func (s *PostgresStore) FeedItemsByIDs(ctx context.Context, storyIDs, versionIDs
 		return []FeedItem{}, nil
 	}
 
-	query := feedStoryBranch + ` WHERE s.id = ANY($1::uuid[])` +
-		` UNION ALL ` + feedVersionBranch + ` WHERE v.id = ANY($2::uuid[])`
+	query := feedStoryBranch + ` WHERE s.id = ANY($1::uuid[]) AND s.deleted_at IS NULL` +
+		` UNION ALL ` + feedVersionBranch + ` WHERE v.id = ANY($2::uuid[]) AND s.deleted_at IS NULL`
 
 	rows, err := s.pool.Query(ctx, query, storyIDs, versionIDs)
 	if err != nil {

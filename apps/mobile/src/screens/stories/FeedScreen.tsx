@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Modal,
   Pressable,
@@ -17,6 +18,7 @@ import {
   MagnifyingGlass,
   PencilSimple,
   Plus,
+  Trash,
   type Icon,
 } from 'phosphor-react-native';
 
@@ -62,7 +64,12 @@ import {
 import { useStoryPolling } from '../../hooks/useStoryPolling';
 import { hasProcessingMedia, itemsWithStory, mediaStatusOf } from './storyPolling';
 import { mediaUploadLabel } from './mediaUpload';
-import { entryStoryMap, feedEntryStory } from './feedEntryProps';
+import {
+  entryStoryMap,
+  feedEntryStory,
+  insertFeedEntryAt,
+  removeFeedEntry,
+} from './feedEntryProps';
 import type { MediaUploadProgress } from './mediaUpload';
 import {
   PROMPT_PILLARS,
@@ -112,6 +119,8 @@ type FeedScreenProps = {
    * record (KNOT-020j).
    */
   readonly viewer: {
+    /** The signed-in person's id, so the feed knows which stories are theirs. */
+    readonly id: string;
     readonly display_name: string;
     /** The API-relative avatar path, or an empty string when there is none. */
     readonly avatar_url: string;
@@ -494,6 +503,71 @@ export default function FeedScreen({
     setReportItem(undefined);
   }, []);
 
+  /**
+   * Removes a story the person just deleted, before the server has answered.
+   *
+   * Deleting is the one feed action whose outcome is certain — the author asked
+   * for it and the server enforces the same rule — so the card leaves at once and
+   * the request follows. A failure puts the entry back at the index it held and
+   * says why, because a card that vanishes on a failed request would be the app
+   * claiming something that did not happen (KNOT-053).
+   *
+   * The index is taken from the list as it stands now rather than from inside the
+   * state updater: the updater must stay pure, and this handler already has the
+   * list it is removing from.
+   */
+  const deleteEntry = useCallback(
+    async (item: FeedItem): Promise<void> => {
+      const index = items.findIndex((entry) => entry.id === item.id);
+      setItems((existing) => removeFeedEntry(existing, item.id));
+
+      try {
+        await storiesApi.deleteStory(item.id, token);
+      } catch (caught) {
+        setItems((existing) =>
+          insertFeedEntryAt(existing, item, index < 0 ? existing.length : index),
+        );
+        Alert.alert('Story not deleted', describeError(caught));
+      }
+    },
+    [items, token],
+  );
+
+  /**
+   * Asks before deleting, then applies the answer.
+   *
+   * The confirmation is a native alert rather than the sheet's own pattern,
+   * because this is the one destructive action on the card and it must be able to
+   * name the recovery window in one sentence (KNOT-053).
+   */
+  const requestDelete = useCallback(
+    (item: FeedItem | undefined): void => {
+      // The options sheet closes as the question opens: two stacked dialogs would
+      // hide the question behind the choices (the same rule the hide flow follows).
+      setMenuItem(undefined);
+
+      if (item === undefined) {
+        return;
+      }
+
+      Alert.alert(
+        'Delete this story?',
+        'Are you sure you want to delete this story? You have 30 days to recover it.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: () => {
+              void deleteEntry(item);
+            },
+          },
+        ],
+      );
+    },
+    [deleteEntry],
+  );
+
   return (
     <View style={styles.container}>
       {/* The fixed top region: the header and the tab row never scroll and never
@@ -718,6 +792,13 @@ export default function FeedScreen({
         // confirmation, one shared removal (KNOT-032-fix1).
         onHide={() => requestHide(menuItem?.id)}
         onReport={reportPost}
+        // Deleting is only offered on a story the viewer wrote. An adaptation is
+        // somebody else's version of it, and deleting one is a different feature.
+        onDelete={
+          menuItem !== undefined && menuItem.kind === 'story' && menuItem.author_id === viewer.id
+            ? () => requestDelete(menuItem)
+            : undefined
+        }
         onClose={closePostOptions}
       />
 
@@ -872,11 +953,14 @@ function PostOptionsSheet({
   item,
   onHide,
   onReport,
+  onDelete,
   onClose,
 }: {
   readonly item: FeedItem | undefined;
   readonly onHide: () => void;
   readonly onReport: () => void;
+  /** Absent unless the entry is a story the viewer wrote (KNOT-053). */
+  readonly onDelete?: () => void;
   readonly onClose: () => void;
 }): React.ReactElement {
   const styles = useThemedStyles(createStyles);
@@ -898,6 +982,17 @@ function PostOptionsSheet({
           <View style={styles.sheetBody}>
             <PostOptionRow icon={EyeSlash} label="Hide this post" onPress={onHide} />
             <PostOptionRow icon={Flag} label="Report post" danger onPress={onReport} />
+            {/* Destructive, and last: Delete is the action nobody should reach by
+                accident, so it sits furthest from the thumb's resting place. */}
+            {onDelete === undefined ? null : (
+              <PostOptionRow
+                icon={Trash}
+                label="Delete Story"
+                danger
+                onPress={onDelete}
+                testID="post-delete"
+              />
+            )}
           </View>
 
           <Pressable
@@ -923,11 +1018,13 @@ function PostOptionRow({
   label,
   danger = false,
   onPress,
+  testID,
 }: {
   readonly icon: Icon;
   readonly label: string;
   readonly danger?: boolean;
   readonly onPress: () => void;
+  readonly testID?: string;
 }): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -938,6 +1035,7 @@ function PostOptionRow({
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={label}
+      testID={testID}
     >
       <IconComponent
         color={danger ? colors.state.danger : colors.text.tertiary}

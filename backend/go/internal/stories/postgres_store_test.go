@@ -1013,3 +1013,92 @@ func TestPostgresStoreBackfillEntityFeaturesPopulatesEveryEntity(t *testing.T) {
 		t.Errorf("entity_features rows = %d, want 3 (one per story and version)", rows)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Soft deletion (KNOT-053)
+// ---------------------------------------------------------------------------
+
+// The deletion mark is a column on the row, and every read filters it: the row is
+// kept (with its media, which lives in another service) while the feed, the detail
+// and the cached-id hydration all stop serving it.
+func TestIntegrationDeleteStoryHidesItButKeepsTheRow(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	created, err := env.store.CreateStory(ctx, newIntegrationStory(env.author, "delete"))
+	if err != nil {
+		t.Fatalf("CreateStory() error = %v, want nil", err)
+	}
+
+	if err := env.store.DeleteStory(ctx, created.ID, env.author); err != nil {
+		t.Fatalf("DeleteStory() error = %v, want nil", err)
+	}
+
+	// The column carries the deletion, and the row itself is still there.
+	var deletedAt *time.Time
+	if err := env.pool.QueryRow(ctx, `SELECT deleted_at FROM stories WHERE id = $1`, created.ID).Scan(&deletedAt); err != nil {
+		t.Fatalf("could not read deleted_at: %v", err)
+	}
+	if deletedAt == nil {
+		t.Error("deleted_at is still NULL after a delete")
+	}
+
+	// Every read path hides it.
+	if _, err := env.store.GetStory(ctx, created.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetStory() error = %v, want ErrNotFound", err)
+	}
+
+	page, _, err := env.store.ListFeed(ctx, nil, MaxListLimit)
+	if err != nil {
+		t.Fatalf("ListFeed() error = %v, want nil", err)
+	}
+	for _, item := range page {
+		if item.Kind == FeedKindStory && item.ID == created.ID {
+			t.Error("the deleted story is still in the feed")
+		}
+	}
+
+	// The cached-feed hydration applies the same predicate, so a remembered id
+	// cannot resurrect it.
+	byIDs, err := env.store.FeedItemsByIDs(ctx, []string{created.ID}, nil)
+	if err != nil {
+		t.Fatalf("FeedItemsByIDs() error = %v, want nil", err)
+	}
+	if len(byIDs) != 0 {
+		t.Errorf("FeedItemsByIDs() = %d entries, want 0 for a deleted story", len(byIDs))
+	}
+
+	// Restoring clears the mark, and the story is served again.
+	restored, err := env.store.RestoreStory(ctx, created.ID, env.author)
+	if err != nil {
+		t.Fatalf("RestoreStory() error = %v, want nil", err)
+	}
+	if restored.ID != created.ID {
+		t.Errorf("restored id = %q, want %q", restored.ID, created.ID)
+	}
+	if _, err := env.store.GetStory(ctx, created.ID); err != nil {
+		t.Errorf("GetStory() after restore error = %v, want nil", err)
+	}
+}
+
+// Only the author may change a story's deletion mark, and the store refuses
+// before writing anything.
+func TestIntegrationDeleteStoryRefusesAnotherAuthor(t *testing.T) {
+	env := integrationSetup(t)
+	ctx := context.Background()
+
+	created, err := env.store.CreateStory(ctx, newIntegrationStory(env.author, "not-mine"))
+	if err != nil {
+		t.Fatalf("CreateStory() error = %v, want nil", err)
+	}
+
+	const stranger = "55555555-5555-4555-8555-555555555555"
+	if err := env.store.DeleteStory(ctx, created.ID, stranger); !errors.Is(err, ErrNotAuthor) {
+		t.Errorf("DeleteStory() error = %v, want ErrNotAuthor", err)
+	}
+
+	// Still visible: the refused write changed nothing.
+	if _, err := env.store.GetStory(ctx, created.ID); err != nil {
+		t.Errorf("GetStory() error = %v, want the story untouched", err)
+	}
+}

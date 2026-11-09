@@ -696,6 +696,7 @@ function ThemedApp(): React.ReactElement {
           <FeedScreen
             token={current.accessToken}
             viewer={{
+              id: current.user.id,
               display_name: current.user.display_name,
               avatar_url: current.user.avatar_url,
             }}

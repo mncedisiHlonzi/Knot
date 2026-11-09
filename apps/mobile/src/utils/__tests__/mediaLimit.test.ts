@@ -83,7 +83,7 @@ describe('the video cap', () => {
   });
 
   it('words the refusal', () => {
-    expect(VIDEO_LIMIT_MESSAGE).toBe('You can add up to 3 videos per story.');
+    expect(VIDEO_LIMIT_MESSAGE).toBe('You can only select up to 3 videos per story.');
   });
 });
 

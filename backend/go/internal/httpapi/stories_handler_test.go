@@ -43,6 +43,9 @@ type memoryStoryStore struct {
 	// test seeds them directly.
 	versions []stories.VersionFeedItem
 	err      error
+	// deleted records the ids a test soft-deleted, so the in-memory store hides
+	// them exactly as the SQL predicates do (KNOT-053).
+	deleted map[string]bool
 
 	gotCreate  stories.Story
 	gotCursor  *stories.Cursor
@@ -74,10 +77,49 @@ func (m *memoryStoryStore) CreateStory(_ context.Context, story stories.Story) (
 func (m *memoryStoryStore) GetStory(_ context.Context, id string) (stories.Story, error) {
 	m.getCalls++
 	for _, story := range m.stories {
-		if story.ID == id {
+		if story.ID == id && !m.isDeleted(story.ID) {
 			return story, nil
 		}
 	}
+	return stories.Story{}, stories.ErrNotFound
+}
+
+// isDeleted reports whether a story was soft-deleted, which is the in-memory form
+// of the `deleted_at IS NULL` predicate every read appends (KNOT-053).
+func (m *memoryStoryStore) isDeleted(id string) bool {
+	return m.deleted[id]
+}
+
+func (m *memoryStoryStore) DeleteStory(_ context.Context, id, authorID string) error {
+	for _, story := range m.stories {
+		if story.ID != id {
+			continue
+		}
+		if story.AuthorID != authorID {
+			return stories.ErrNotAuthor
+		}
+		if m.deleted == nil {
+			m.deleted = map[string]bool{}
+		}
+		m.deleted[id] = true
+		return nil
+	}
+
+	return stories.ErrNotFound
+}
+
+func (m *memoryStoryStore) RestoreStory(_ context.Context, id, authorID string) (stories.Story, error) {
+	for _, story := range m.stories {
+		if story.ID != id {
+			continue
+		}
+		if story.AuthorID != authorID {
+			return stories.Story{}, stories.ErrNotAuthor
+		}
+		delete(m.deleted, id)
+		return story, nil
+	}
+
 	return stories.Story{}, stories.ErrNotFound
 }
 
@@ -91,9 +133,15 @@ func (m *memoryStoryStore) ListFeed(_ context.Context, cursor *stories.Cursor, l
 
 	ordered := make([]stories.FeedItem, 0, len(m.stories)+len(m.versions))
 	for _, story := range m.stories {
+		if m.isDeleted(story.ID) {
+			continue
+		}
 		ordered = append(ordered, stories.FeedItem{Kind: stories.FeedKindStory, Story: story})
 	}
 	for _, version := range m.versions {
+		if m.isDeleted(version.StoryID) {
+			continue
+		}
 		ordered = append(ordered, stories.FeedItem{Kind: stories.FeedKindVersion, Version: version})
 	}
 
@@ -145,7 +193,7 @@ func (m *memoryStoryStore) FeedItemsByIDs(_ context.Context, storyIDs, versionID
 	found := make([]stories.FeedItem, 0, len(storyIDs)+len(versionIDs))
 	for _, id := range storyIDs {
 		for _, story := range m.stories {
-			if story.ID == id {
+			if story.ID == id && !m.isDeleted(story.ID) {
 				found = append(found, stories.FeedItem{Kind: stories.FeedKindStory, Story: story})
 				break
 			}
@@ -153,7 +201,7 @@ func (m *memoryStoryStore) FeedItemsByIDs(_ context.Context, storyIDs, versionID
 	}
 	for _, id := range versionIDs {
 		for _, version := range m.versions {
-			if version.ID == id {
+			if version.ID == id && !m.isDeleted(version.StoryID) {
 				found = append(found, stories.FeedItem{Kind: stories.FeedKindVersion, Version: version})
 				break
 			}
@@ -180,19 +228,38 @@ func beforeCursor(createdAt time.Time, id string, cursor stories.Cursor) bool {
 // fakeStoriesService returns canned values, so the failure paths a real service
 // cannot produce (an infrastructure error) can still be tested.
 type fakeStoriesService struct {
-	createResult stories.Story
-	createErr    error
-	getResult    stories.Story
-	getErr       error
-	listResult   []stories.FeedItem
-	listNext     string
-	listErr      error
-	byIDsResult  []stories.FeedItem
-	byIDsErr     error
+	createResult  stories.Story
+	createErr     error
+	getResult     stories.Story
+	getErr        error
+	listResult    []stories.FeedItem
+	listNext      string
+	listErr       error
+	byIDsResult   []stories.FeedItem
+	byIDsErr      error
+	deleteErr     error
+	restoreResult stories.Story
+	restoreErr    error
 
-	listCalls  int
-	byIDsCalls int
-	gotRefs    []stories.FeedRef
+	listCalls        int
+	byIDsCalls       int
+	gotRefs          []stories.FeedRef
+	gotDeleteID      string
+	gotDeleteAuthor  string
+	gotRestoreID     string
+	gotRestoreAuthor string
+}
+
+func (f *fakeStoriesService) DeleteStory(_ context.Context, id, authorID string) error {
+	f.gotDeleteID = id
+	f.gotDeleteAuthor = authorID
+	return f.deleteErr
+}
+
+func (f *fakeStoriesService) RestoreStory(_ context.Context, id, authorID string) (stories.Story, error) {
+	f.gotRestoreID = id
+	f.gotRestoreAuthor = authorID
+	return f.restoreResult, f.restoreErr
 }
 
 func (f *fakeStoriesService) CreateStory(_ context.Context, _ stories.CreateStoryInput) (stories.Story, error) {
@@ -1323,5 +1390,215 @@ func TestStoryMediaEnrichmentFailureIsSwallowed(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), `"media":[]`) {
 		t.Errorf("body = %s, want an empty media array on enrichment failure", recorder.Body.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Soft deletion (KNOT-053)
+// ---------------------------------------------------------------------------
+
+// createStoryViaAPI posts the standard body and returns the stored story.
+func createStoryViaAPI(t *testing.T, handler http.Handler) storyResponse {
+	t.Helper()
+
+	recorder := doStoryRequest(handler, http.MethodPost, "/stories", validStoryBody(), testAccessToken)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d (body %s)", recorder.Code, http.StatusCreated, recorder.Body.String())
+	}
+
+	var envelope storyEnvelope
+	decodeBody(t, recorder, &envelope)
+
+	return envelope.Story
+}
+
+// feedStoryIDs lists the story ids one page of GET /stories carries.
+func feedStoryIDs(t *testing.T, handler http.Handler) []string {
+	t.Helper()
+
+	recorder := doStoryRequest(handler, http.MethodGet, "/stories", "", testAccessToken)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("feed status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var page feedPage
+	decodeBody(t, recorder, &page)
+
+	ids := make([]string, 0, len(page.Items))
+	for _, story := range feedStories(t, page) {
+		ids = append(ids, story.ID)
+	}
+
+	return ids
+}
+
+func TestDeleteStoryAnswersNoContentAndHidesItEverywhere(t *testing.T) {
+	store := &memoryStoryStore{}
+	handler := newStoriesHandler(t, store)
+	created := createStoryViaAPI(t, handler)
+
+	if ids := feedStoryIDs(t, handler); len(ids) != 1 || ids[0] != created.ID {
+		t.Fatalf("feed before = %v, want the new story", ids)
+	}
+
+	recorder := doStoryRequest(handler, http.MethodDelete, "/stories/"+created.ID, "", testAccessToken)
+
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusNoContent, recorder.Body.String())
+	}
+	if recorder.Body.Len() != 0 {
+		t.Errorf("body = %q, want no body on 204", recorder.Body.String())
+	}
+
+	// Hidden from the feed and from its own detail...
+	if ids := feedStoryIDs(t, handler); len(ids) != 0 {
+		t.Errorf("feed after = %v, want the story gone", ids)
+	}
+	if detail := doStoryRequest(handler, http.MethodGet, "/stories/"+created.ID, "", testAccessToken); detail.Code != http.StatusNotFound {
+		t.Errorf("detail status = %d, want %d", detail.Code, http.StatusNotFound)
+	}
+
+	// ...but kept, because the author can still recover it.
+	if !store.isDeleted(created.ID) {
+		t.Error("the store never recorded the deletion")
+	}
+	if len(store.stories) != 1 {
+		t.Errorf("stored stories = %d, want the row kept for the recovery window", len(store.stories))
+	}
+}
+
+func TestDeleteStoryRefusesSomebodyElsesStory(t *testing.T) {
+	const (
+		otherAuthor = "44444444-4444-4444-8444-444444444444"
+		otherStory  = "33333333-3333-4333-8333-333333333333"
+	)
+	store := &memoryStoryStore{stories: []stories.Story{{
+		ID:       otherStory,
+		AuthorID: otherAuthor,
+		Pillar:   stories.PillarWonder,
+		Language: "eng",
+		Title:    "Not mine",
+		Body:     "Body",
+	}}}
+	handler := newStoriesHandler(t, store)
+
+	recorder := doStoryRequest(handler, http.MethodDelete, "/stories/"+otherStory, "", testAccessToken)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusForbidden, recorder.Body.String())
+	}
+	if store.isDeleted(otherStory) {
+		t.Error("another author's story was deleted")
+	}
+}
+
+func TestDeleteStoryRequiresAuthentication(t *testing.T) {
+	store := &memoryStoryStore{}
+	handler := newStoriesHandler(t, store)
+
+	recorder := doStoryRequest(handler, http.MethodDelete, "/stories/33333333-3333-4333-8333-333333333333", "", "")
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d", recorder.Code, http.StatusUnauthorized)
+	}
+	if len(store.deleted) != 0 {
+		t.Error("an unauthenticated request reached the store")
+	}
+}
+
+func TestDeleteStoryThatDoesNotExistIsNotFound(t *testing.T) {
+	handler := newStoriesHandler(t, &memoryStoryStore{})
+
+	recorder := doStoryRequest(handler, http.MethodDelete, "/stories/33333333-3333-4333-8333-333333333333", "", testAccessToken)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d (body %s)", recorder.Code, http.StatusNotFound, recorder.Body.String())
+	}
+}
+
+func TestRestoreStoryBringsItBack(t *testing.T) {
+	store := &memoryStoryStore{}
+	handler := newStoriesHandler(t, store)
+	created := createStoryViaAPI(t, handler)
+
+	if recorder := doStoryRequest(handler, http.MethodDelete, "/stories/"+created.ID, "", testAccessToken); recorder.Code != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+
+	recorder := doStoryRequest(handler, http.MethodPost, "/stories/"+created.ID+"/restore", "", testAccessToken)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d (body %s)", recorder.Code, http.StatusOK, recorder.Body.String())
+	}
+
+	var envelope storyEnvelope
+	decodeBody(t, recorder, &envelope)
+	if envelope.Story.ID != created.ID {
+		t.Errorf("restored id = %q, want %q", envelope.Story.ID, created.ID)
+	}
+	if envelope.Story.AuthorID != testUserID {
+		t.Errorf("restored author = %q, want %q", envelope.Story.AuthorID, testUserID)
+	}
+
+	// Visible again, and its detail answers.
+	if ids := feedStoryIDs(t, handler); len(ids) != 1 || ids[0] != created.ID {
+		t.Errorf("feed after restore = %v, want the story back", ids)
+	}
+	if detail := doStoryRequest(handler, http.MethodGet, "/stories/"+created.ID, "", testAccessToken); detail.Code != http.StatusOK {
+		t.Errorf("detail status = %d, want %d", detail.Code, http.StatusOK)
+	}
+}
+
+func TestRestoreStoryRefusesSomebodyElsesStory(t *testing.T) {
+	const (
+		otherAuthor = "44444444-4444-4444-8444-444444444444"
+		otherStory  = "33333333-3333-4333-8333-333333333333"
+	)
+	store := &memoryStoryStore{stories: []stories.Story{{
+		ID:       otherStory,
+		AuthorID: otherAuthor,
+		Pillar:   stories.PillarWonder,
+		Language: "eng",
+		Title:    "Not mine",
+		Body:     "Body",
+	}}}
+	handler := newStoriesHandler(t, store)
+
+	recorder := doStoryRequest(handler, http.MethodPost, "/stories/"+otherStory+"/restore", "", testAccessToken)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d (body %s)", recorder.Code, http.StatusForbidden, recorder.Body.String())
+	}
+}
+
+func TestDeleteStoryDropsTheAuthorFeedAndTheDetail(t *testing.T) {
+	feed := &feedCacheRecorder{}
+	details := newDetailCacheRecorder()
+	handler := newStoriesHandlerWithCaches(t, &memoryStoryStore{}, Caches{Feed: feed, Details: details})
+	created := createStoryViaAPI(t, handler)
+
+	recorder := doStoryRequest(handler, http.MethodDelete, "/stories/"+created.ID, "", testAccessToken)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+
+	// The feed drop runs off the request path, so the test waits for it.
+	waitFor(t, "the author's feed to be invalidated", func() bool {
+		return feed.snapshot().invalidateCalls > 0
+	})
+	if got := feed.snapshot().invalidateUserID; got != testUserID {
+		t.Errorf("invalidated user = %q, want the author %q", got, testUserID)
+	}
+
+	// The detail drop is synchronous, so it has already happened.
+	found := false
+	for _, id := range details.snapshot().invalidatedStories {
+		if id == created.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("the story's detail cache was not invalidated")
 	}
 }

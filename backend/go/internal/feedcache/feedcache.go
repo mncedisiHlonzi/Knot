@@ -347,6 +347,39 @@ func (f *Feed) Seed(ctx context.Context, userID string, entries []Entry) error {
 	return errors.Join(failures...)
 }
 
+// InvalidateUser deletes one user's cached feed sets, both directions.
+//
+// It exists for the one write that changes which entries a reader should see
+// WITHOUT producing one: a story being deleted or restored (KNOT-053). A page is
+// ids only, so the honest repair is to drop it and let the next read rebuild it
+// from SQL — where the deletion mark is filtered — rather than to guess which of
+// hundreds of readers' sets hold the id.
+//
+// Both the reader's own sets and the same id's author sets are removed, so an
+// author who is also a reader of their own work is covered by one call. Keys that
+// do not exist are not an error: a user with no cached feed is already correct.
+func (f *Feed) InvalidateUser(ctx context.Context, userID string) error {
+	if userID == "" {
+		return nil
+	}
+
+	keys := []string{
+		FeedKey(userID),
+		FeedVersionsKey(userID),
+		AuthorFeedKey(userID),
+		AuthorFeedVersionsKey(userID),
+	}
+
+	var failures []error
+	for _, key := range keys {
+		if err := f.sets.Delete(ctx, key); err != nil {
+			failures = append(failures, err)
+		}
+	}
+
+	return errors.Join(failures...)
+}
+
 // ReadMerged returns up to limit entries from a reader's feeds, merged with the
 // recent entries of the given high-fanout authors, newest first.
 //

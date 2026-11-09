@@ -89,7 +89,8 @@ func (s *PostgresStore) ListClusters(ctx context.Context, filter ClusterFilter) 
 			MAX(s.created_at) AS latest_story_at
 		FROM stories s
 		JOIN story_versions rv ON rv.id = s.root_version_id
-		WHERE s.approximate_location_lower IS NOT NULL`
+		WHERE s.approximate_location_lower IS NOT NULL
+			AND s.deleted_at IS NULL`
 
 	args := make([]any, 0, 4)
 
@@ -191,7 +192,7 @@ func (s *PostgresStore) ListClusters(ctx context.Context, filter ClusterFilter) 
 // (created_at DESC, id DESC), the page predicate is the matching row comparison,
 // and one extra row is fetched to decide whether more remain.
 func (s *PostgresStore) ListStoriesAtPlace(ctx context.Context, placeLower string, country PlaceCountryFilter, pillar stories.Pillar, cursor *stories.Cursor, limit int) ([]stories.Story, *stories.Cursor, error) {
-	query := `SELECT ` + storyColumns + storyFrom + ` WHERE s.approximate_location_lower = $1`
+	query := `SELECT ` + storyColumns + storyFrom + ` WHERE s.approximate_location_lower = $1 AND s.deleted_at IS NULL`
 	args := []any{placeLower}
 
 	if cursor != nil {

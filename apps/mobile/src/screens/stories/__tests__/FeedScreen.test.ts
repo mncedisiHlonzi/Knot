@@ -1,6 +1,8 @@
 import { MagnifyingGlass, Plus } from 'phosphor-react-native';
+import { Alert } from 'react-native';
 
 import type { FeedItem } from '../../../api/stories';
+import { storiesApi } from '../../../api/stories';
 import Avatar from '../../../components/Avatar';
 import ConfirmSheet from '../../../components/ConfirmSheet';
 import FeedEntry from '../../../components/FeedEntry';
@@ -20,6 +22,8 @@ import { PROMPTS, nextPromptIndex, promptAt, promptIndexForPillar } from '../fee
  * is collected, so no test has to know which state slot is which (KNOT-032-fix1).
  */
 const mockStateSetters: jest.Mock[] = [];
+const mockStateValues: unknown[] = [];
+const mockKeepInitial = Symbol('keep initial value');
 
 jest.mock('react', () => ({
   ...jest.requireActual('react'),
@@ -33,12 +37,15 @@ jest.mock('react', () => ({
   useState: (initial: unknown) => {
     const setter = jest.fn();
     mockStateSetters.push(setter);
-    return [initial, setter];
+    const scripted = mockStateValues.length > 0 ? mockStateValues.shift() : mockKeepInitial;
+    return [scripted === mockKeepInitial ? initial : scripted, setter];
   },
 }));
 
 jest.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
+  // Deleting a story asks first, through a native alert (KNOT-053).
+  Alert: { alert: jest.fn() },
   // The prompt card draws the shared Button and Chip, which build their animated
   // wrappers at module scope (KNOT-020k-fix7).
   Animated: {
@@ -76,6 +83,7 @@ jest.mock('phosphor-react-native', () => ({
   PencilSimple: () => null,
   Plus: () => null,
   ShareNetwork: () => null,
+  Trash: () => null,
   X: () => null,
 }));
 
@@ -87,7 +95,7 @@ jest.mock('../../../api/notifications', () => ({
 }));
 jest.mock('../../../api/stories', () => ({
   FEED_PAGE_SIZE: 20,
-  storiesApi: { listStories: jest.fn() },
+  storiesApi: { listStories: jest.fn(), deleteStory: jest.fn() },
 }));
 
 type ElementLike = { type?: unknown; props?: Record<string, unknown> };
@@ -242,7 +250,7 @@ const VERSION_ITEM: FeedItem = {
 
 const SCREEN_PROPS = {
   token: 'token',
-  viewer: { display_name: 'Nomsa Khan', avatar_url: '' },
+  viewer: { id: 'user-1', display_name: 'Nomsa Khan', avatar_url: '' },
   onOpenStory: () => undefined,
   onOpenVersion: () => undefined,
   onOpenUserProfile: () => undefined,
@@ -256,6 +264,22 @@ const SCREEN_PROPS = {
 function renderScreen(): unknown {
   mockStateSetters.length = 0;
   return FeedScreen(SCREEN_PROPS);
+}
+
+/**
+ * Scripts the stubbed `useState` by slot index, in hook order:
+ * items 0, nextCursor 1, loading 2, refreshing 3, loadingMore 4, error 5,
+ * activeTab 6, activeIndex 7, isMuted 8, **menuItem 9**, reportItem 10,
+ * pendingHideId 11, promptIndex 12.
+ *
+ * A slot that is not scripted keeps its initial value, so the existing tests are
+ * unaffected (KNOT-053).
+ */
+function scriptState(values: Readonly<Record<number, unknown>>): void {
+  const last = Math.max(...Object.keys(values).map((key) => Number(key)));
+  for (let index = 0; index <= last; index += 1) {
+    mockStateValues.push(index in values ? values[index] : mockKeepInitial);
+  }
 }
 
 /** The card the list builds for one entry: its real `renderItem`, called directly. */
@@ -661,6 +685,139 @@ function findElement(
   }
   return findElement(element.props?.children, predicate);
 }
+
+/**
+ * Deleting a story (KNOT-053).
+ *
+ * The row is offered only on the viewer's own story, the question names the
+ * recovery window, the card leaves at once, and a refused request puts it back.
+ */
+describe('FeedScreen story deletion', () => {
+  /**
+   * The options sheet's own tree.
+   *
+   * The screen holds the sheet as an ELEMENT, so its rows only exist once the
+   * component is called — which is how a children-only walk can reach them.
+   */
+  const optionsSheet = (tree: unknown): ElementLike | undefined => {
+    const element = findElement(
+      tree,
+      (props) =>
+        typeof props.onHide === 'function' &&
+        typeof props.onReport === 'function' &&
+        typeof props.onClose === 'function' &&
+        'item' in props,
+    );
+
+    if (element === undefined) {
+      return undefined;
+    }
+
+    return (element.type as (props: unknown) => ElementLike)(element.props);
+  };
+
+  /** The destructive row, or undefined when the sheet drew none. */
+  const deleteRow = (tree: unknown): ElementLike | undefined =>
+    findByTestID(optionsSheet(tree), 'post-delete');
+
+  /** The `Delete` button's handler from the confirmation that was raised. */
+  const confirmDelete = (): (() => void) | undefined => {
+    const buttons = (Alert.alert as jest.Mock).mock.calls[0]?.[2] as
+      { text: string; onPress?: () => void }[] | undefined;
+
+    return buttons?.find((button) => button.text === 'Delete')?.onPress;
+  };
+
+  /** Every state updater the screen has written, in order. */
+  const listUpdaters = (): ((items: readonly FeedItem[]) => readonly FeedItem[])[] =>
+    mockStateSetters
+      .flatMap((setter) => setter.mock.calls as unknown[][])
+      .map(([value]) => value)
+      .filter(
+        (value): value is (items: readonly FeedItem[]) => readonly FeedItem[] =>
+          typeof value === 'function',
+      );
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it('offers deletion on the viewer’s own story', () => {
+    scriptState({ 9: ITEM });
+    const row = deleteRow(renderScreen());
+
+    expect(row).toBeDefined();
+    expect(row?.props?.label).toBe('Delete Story');
+    // Destructive: the same red the report row carries.
+    expect(row?.props?.danger).toBe(true);
+  });
+
+  it('offers no deletion on somebody else’s story', () => {
+    scriptState({ 9: { ...ITEM, author_id: 'user-9' } });
+
+    expect(deleteRow(renderScreen())).toBeUndefined();
+  });
+
+  it('offers no deletion on an adaptation, even one the viewer wrote', () => {
+    // An adaptation belongs to its adapter but the story behind it is not theirs to
+    // remove; deleting versions is a different feature (KNOT-053).
+    scriptState({ 9: { ...VERSION_ITEM, author_id: 'user-1' } });
+
+    expect(deleteRow(renderScreen())).toBeUndefined();
+  });
+
+  it('asks first, and names the recovery window', () => {
+    scriptState({ 9: ITEM });
+
+    (deleteRow(renderScreen())?.props?.onPress as () => void)();
+
+    expect(Alert.alert).toHaveBeenCalledTimes(1);
+    const [title, message, buttons] = (Alert.alert as jest.Mock).mock.calls[0] as [
+      string,
+      string,
+      { text: string }[],
+    ];
+    expect(title).toBe('Delete this story?');
+    expect(message).toBe(
+      'Are you sure you want to delete this story? You have 30 days to recover it.',
+    );
+    expect(buttons.map((button) => button.text)).toEqual(['Cancel', 'Delete']);
+    // Asking removes nothing and calls nothing.
+    expect(storiesApi.deleteStory).not.toHaveBeenCalled();
+    expect(listUpdaters()).toHaveLength(0);
+  });
+
+  it('removes the card at once and then asks the server', async () => {
+    (storiesApi.deleteStory as jest.Mock).mockResolvedValue(undefined);
+    scriptState({ 0: [ITEM], 9: ITEM });
+
+    (deleteRow(renderScreen())?.props?.onPress as () => void)();
+    confirmDelete()?.();
+    await Promise.resolve();
+
+    const [removal] = listUpdaters();
+    expect(removal([ITEM, VERSION_ITEM])).toEqual([VERSION_ITEM]);
+    expect(storiesApi.deleteStory).toHaveBeenCalledWith(ITEM.id, 'token');
+  });
+
+  it('puts the story back when the server refuses', async () => {
+    (storiesApi.deleteStory as jest.Mock).mockRejectedValue(new Error('offline'));
+    scriptState({ 0: [ITEM], 9: ITEM });
+
+    (deleteRow(renderScreen())?.props?.onPress as () => void)();
+    confirmDelete()?.();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const updaters = listUpdaters();
+    expect(updaters).toHaveLength(2);
+    // Gone first...
+    expect(updaters[0]([ITEM, VERSION_ITEM])).toEqual([VERSION_ITEM]);
+    // ...and back where it was when the request failed.
+    expect(updaters[1]([VERSION_ITEM])).toEqual([ITEM, VERSION_ITEM]);
+    expect(Alert.alert).toHaveBeenLastCalledWith('Story not deleted', 'request failed');
+  });
+});
 
 describe('FeedScreen ordering tabs', () => {
   it('offers For you and Latest beside the visual-only filters', () => {

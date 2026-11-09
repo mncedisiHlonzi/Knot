@@ -58,6 +58,56 @@ func (s *Service) GetStory(ctx context.Context, id string) (Story, error) {
 	return story, nil
 }
 
+// DeleteStory soft-deletes a story its author owns (KNOT-053).
+//
+// Nothing is removed: the story, its versions, its comments and its media stay in
+// place, and every read filters the deletion mark out. The author has a recovery
+// window — the API promises 30 days — and a future purge job is what finally
+// deletes the row.
+//
+// The author is part of the request rather than looked up here, because the store
+// can enforce ownership in the same statement that writes the mark, which is the
+// only way to close the gap between "is this mine?" and "delete it".
+//
+// A malformed id is reported as not found (the resource genuinely does not exist),
+// matching GetStory's convention.
+func (s *Service) DeleteStory(ctx context.Context, id, authorID string) error {
+	if !isUUID(id) || !isUUID(authorID) {
+		return ErrNotFound
+	}
+
+	if err := s.store.DeleteStory(ctx, id, authorID); err != nil {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotAuthor) {
+			return err
+		}
+		return fmt.Errorf("stories: delete story: %w", err)
+	}
+
+	return nil
+}
+
+// RestoreStory cancels a soft deletion and returns the story (KNOT-053).
+//
+// It is idempotent: restoring a story that is not deleted returns it unchanged, so
+// a client retrying after a dropped response cannot fail on the second attempt.
+// An adaptation of the restored story becomes visible again with it, because the
+// feed's version branch filters on the story's own deletion mark.
+func (s *Service) RestoreStory(ctx context.Context, id, authorID string) (Story, error) {
+	if !isUUID(id) || !isUUID(authorID) {
+		return Story{}, ErrNotFound
+	}
+
+	story, err := s.store.RestoreStory(ctx, id, authorID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotAuthor) {
+			return Story{}, err
+		}
+		return Story{}, fmt.Errorf("stories: restore story: %w", err)
+	}
+
+	return story, nil
+}
+
 // ListFeed returns one page of the merged feed — stories and their adaptations,
 // newest first — plus the cursor that resumes after it.
 //

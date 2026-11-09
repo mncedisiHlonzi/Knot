@@ -35,6 +35,7 @@ import {
   VIDEO_LIMIT_MESSAGE,
   admitMedia,
   canAddMedia,
+  canAddVideo,
   countVideos,
   mediaStripLabel,
   remainingMediaSlots,
@@ -243,6 +244,31 @@ export default function CreateStoryScreen({
 
   /** How many of the chosen items are clips, for the label and the video cap. */
   const videoCount = countVideos(media);
+
+  /** The story already holds every clip it may: a picker would only refuse. */
+  const videosAtCap = !canAddVideo(videoCount);
+
+  /**
+   * Opens the media picker, or explains why it will not open.
+   *
+   * Three clips is the story's limit, and a picker opened past it could only
+   * return media the composer must then throw away. Refusing the tap — with the
+   * reason — is the honest version of that rule, and it is checked before the
+   * native sheet appears rather than after a selection comes back (KNOT-053).
+   *
+   * The consequence is deliberate: once three clips are chosen the strip stops
+   * accepting photographs too, because the two caps cannot be expressed in one
+   * native picker. The total cap of ten is unchanged for a story with fewer
+   * clips.
+   */
+  function openMediaPicker(): void {
+    if (videosAtCap) {
+      Alert.alert(VIDEO_LIMIT_TITLE, VIDEO_LIMIT_MESSAGE);
+      return;
+    }
+
+    setPickerVisible(true);
+  }
 
   /** Shows the picker a chip names, or closes it when it is the one already open. */
   function togglePicker(which: 'language' | 'place'): () => void {
@@ -530,7 +556,7 @@ export default function CreateStoryScreen({
 
           <Pressable
             style={[styles.addMedia, atMediaCap ? styles.buttonDisabled : null]}
-            onPress={() => setPickerVisible(true)}
+            onPress={openMediaPicker}
             disabled={atMediaCap}
             accessibilityRole="button"
             accessibilityLabel="Add media"
@@ -553,7 +579,7 @@ export default function CreateStoryScreen({
         <View style={styles.footerIcons}>
           <Pressable
             style={styles.footerButton}
-            onPress={() => setPickerVisible(true)}
+            onPress={openMediaPicker}
             disabled={atMediaCap}
             accessibilityRole="button"
             accessibilityLabel="Add media"

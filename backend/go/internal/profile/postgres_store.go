@@ -100,6 +100,7 @@ var activityUnion = `
 	FROM stories s
 	JOIN story_versions rv ON rv.id = s.root_version_id
 	WHERE s.author_id = $1
+		AND s.deleted_at IS NULL
 
 	UNION ALL
 
@@ -142,6 +143,7 @@ var activityUnion = `
 	) ranked ON ranked.id = v.id
 	WHERE v.author_id = $1
 	  AND v.parent_version_id IS NOT NULL
+	  AND s.deleted_at IS NULL
 
 	UNION ALL
 

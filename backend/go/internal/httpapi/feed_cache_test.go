@@ -47,6 +47,9 @@ type feedCacheState struct {
 	seedUserID  string
 	seedEntries []feedcache.Entry
 
+	invalidateCalls  int
+	invalidateUserID string
+
 	fanoutCalls []fanoutCall
 }
 
@@ -58,8 +61,9 @@ type feedCacheRecorder struct {
 	items   []feedcache.Item
 	readErr error
 
-	seedErr   error
-	fanoutErr error
+	seedErr       error
+	fanoutErr     error
+	invalidateErr error
 
 	state feedCacheState
 }
@@ -107,6 +111,16 @@ func (f *feedCacheRecorder) Seed(_ context.Context, userID string, entries []fee
 	f.state.seedEntries = entries
 
 	return f.seedErr
+}
+
+func (f *feedCacheRecorder) InvalidateUser(_ context.Context, userID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.state.invalidateCalls++
+	f.state.invalidateUserID = userID
+
+	return f.invalidateErr
 }
 
 // snapshot returns a copy of what the recorder has seen so far.

@@ -81,3 +81,35 @@ export function entryStoryMap(items: readonly FeedItem[]): ReadonlyMap<string, F
 
   return stories;
 }
+
+/**
+ * The list without one entry, for a delete applied before the server answers.
+ *
+ * Deleting a story is the one feed action whose result is certain — the author
+ * asked for it and the server will agree — so the card leaves at once and the
+ * request runs behind it. Keeping the removal here rather than inline in the
+ * screen is what lets the optimistic rule be tested on its own (KNOT-053).
+ */
+export function removeFeedEntry(items: readonly FeedItem[], id: string): readonly FeedItem[] {
+  return items.filter((item) => item.id !== id);
+}
+
+/**
+ * The list with an entry put back where it was, for a delete the server refused.
+ *
+ * The index is clamped into the list, and an entry already present is left where
+ * it is: a failure handler must never duplicate a card or stamp one on the end of
+ * a list that changed while the request was in flight (KNOT-053).
+ */
+export function insertFeedEntryAt(
+  items: readonly FeedItem[],
+  item: FeedItem,
+  index: number,
+): readonly FeedItem[] {
+  if (items.some((existing) => existing.id === item.id)) {
+    return items;
+  }
+
+  const clamped = Math.max(0, Math.min(index, items.length));
+  return [...items.slice(0, clamped), item, ...items.slice(clamped)];
+}

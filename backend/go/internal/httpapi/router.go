@@ -185,6 +185,12 @@ func (r *Router) Handler() http.Handler {
 	mux.HandleFunc("GET /stories", r.authMiddleware.Optional(r.stories.List))
 	mux.HandleFunc("GET /stories/{id}", r.authMiddleware.Optional(r.stories.Get))
 
+	// Soft deletion (KNOT-053). A story is hidden, never destroyed: its author has
+	// 30 days to restore it, and a later purge job removes what nobody recovered.
+	// Both routes require the caller to be the story's author.
+	mux.HandleFunc("DELETE /stories/{id}", r.authMiddleware.Require(r.stories.Delete))
+	mux.HandleFunc("POST /stories/{id}/restore", r.authMiddleware.Require(r.stories.Restore))
+
 	// Tell My People: story versions and the Language Tree. Adapting requires an
 	// access token; reading a version or a tree is open.
 	mux.HandleFunc("POST /stories/{id}/adapt", r.authMiddleware.Require(r.versions.Adapt))

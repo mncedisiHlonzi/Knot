@@ -624,4 +624,28 @@ export const storiesApi = {
   listStories(options: ListStoriesOptions = {}, token?: string): Promise<FeedListResponse> {
     return request<FeedListResponse>(`/stories${feedQuery(options)}`, { method: 'GET', token });
   },
+
+  /**
+   * DELETE /stories/{id} — soft-deletes one of the caller's own stories.
+   *
+   * Nothing is destroyed: the story disappears from the feed and its detail for a
+   * 30-day recovery window, after which a purge job removes it. Only its author
+   * may call this, and the server answers 204 with no body (KNOT-053).
+   */
+  deleteStory(id: string, token: string): Promise<void> {
+    return request<void>(`/stories/${encodeURIComponent(id)}`, { method: 'DELETE', token });
+  },
+
+  /**
+   * POST /stories/{id}/restore — cancels a soft deletion inside the window.
+   *
+   * The story comes back exactly as it was, because nothing was ever removed
+   * (KNOT-053).
+   */
+  restoreStory(id: string, token: string): Promise<StoryResponse> {
+    return request<StoryResponse>(`/stories/${encodeURIComponent(id)}/restore`, {
+      method: 'POST',
+      token,
+    });
+  },
 };

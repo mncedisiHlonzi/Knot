@@ -34,6 +34,11 @@ type StoriesService interface {
 	// entries of both kinds, in the order the cache returned them (KNOT-036,
 	// KNOT-036-fix).
 	FeedItemsByIDs(ctx context.Context, refs []stories.FeedRef) ([]stories.FeedItem, error)
+	// DeleteStory soft-deletes one of the caller's own stories (KNOT-053).
+	DeleteStory(ctx context.Context, id, authorID string) error
+	// RestoreStory cancels a soft deletion on one of the caller's own stories
+	// (KNOT-053).
+	RestoreStory(ctx context.Context, id, authorID string) (stories.Story, error)
 }
 
 // The feed's discriminator values. They mirror the domain's own literals so the
@@ -554,6 +559,73 @@ func (h *StoriesHandler) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, storyEnvelope{Story: response})
 }
 
+// Delete handles DELETE /stories/{id}. The route is protected.
+//
+// Deletion is SOFT (KNOT-053): the story stops being visible everywhere — the
+// feed, its detail, discovery, the profile wall and search all filter the deletion
+// mark — while the row, its versions, its comments and its media objects stay in
+// place for the 30-day recovery window. Nothing is deleted from the object store,
+// which is what makes Restore a single column write.
+//
+// Only the author may delete, and the service enforces that before anything is
+// written, so a 403 here means the caller named somebody else's story.
+//
+// 204 with no body: there is nothing to say. The story is gone from the client's
+// point of view, and a body would only be a copy of what the client already had.
+func (h *StoriesHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		// Unreachable while the route is wrapped by AuthMiddleware; kept as a
+		// fail-closed guard, the same way Create guards its author.
+		writeError(w, http.StatusUnauthorized, codeUnauthorized, "authentication required")
+		return
+	}
+
+	storyID := r.PathValue("id")
+	if err := h.service.DeleteStory(r.Context(), storyID, userID); err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+
+	// The story is already hidden by its deletion mark, so these two drops only
+	// stop the caches serving the page it used to be on: the author's own feed is
+	// rebuilt from SQL on the next read, and the detail key is dropped so a
+	// re-opened link cannot answer from the old payload (KNOT-053).
+	invalidateAuthorFeed(r.Context(), h.logger, h.caches.Feed, userID)
+	invalidateStoryDetail(r.Context(), h.logger, h.caches.Details, storyID)
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Restore handles POST /stories/{id}/restore. The route is protected.
+//
+// Restoring clears the deletion mark, which is all it takes: the content and its
+// media never moved, and the feed's cached ids still point at the story, so it
+// reappears as soon as the next read resolves them. The author's own feed page is
+// dropped anyway, because that page was rebuilt while the story was hidden.
+func (h *StoriesHandler) Restore(w http.ResponseWriter, r *http.Request) {
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, codeUnauthorized, "authentication required")
+		return
+	}
+
+	storyID := r.PathValue("id")
+	story, err := h.service.RestoreStory(r.Context(), storyID, userID)
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+
+	response := newStoryResponse(story)
+	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, story.AuthorID)
+
+	invalidateAuthorFeed(r.Context(), h.logger, h.caches.Feed, userID)
+	invalidateStoryDetail(r.Context(), h.logger, h.caches.Details, storyID)
+
+	writeJSON(w, http.StatusOK, storyEnvelope{Story: response})
+}
+
 // List handles GET /stories. The route is public.
 //
 // The page is a merged stream of two entry kinds (KNOT-022). Each page is
@@ -703,6 +775,11 @@ func (h *StoriesHandler) writeServiceError(w http.ResponseWriter, r *http.Reques
 	switch {
 	case errors.As(err, &validation):
 		writeError(w, http.StatusBadRequest, codeValidation, fmt.Sprintf("%s %s", validation.Field, validation.Message))
+	case errors.Is(err, stories.ErrNotAuthor):
+		// The caller named a story that exists but is not theirs. Saying so is safe:
+		// they already knew it existed, and a 404 would misdescribe the outcome of a
+		// request that was refused for a different reason (KNOT-053).
+		writeError(w, http.StatusForbidden, codeForbidden, "you can only change your own story")
 	case errors.Is(err, stories.ErrNotFound):
 		writeError(w, http.StatusNotFound, codeNotFound, "story not found")
 	default:

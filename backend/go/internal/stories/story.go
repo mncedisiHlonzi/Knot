@@ -32,6 +32,11 @@ var (
 	// so errors.Is(err, ErrValidation) and errors.As(err, &validation) are both
 	// true for the same value.
 	ErrValidation = errors.New("stories: invalid input")
+	// ErrNotAuthor is returned when a caller asks to delete or restore a story
+	// they did not publish. It is deliberately distinct from ErrNotFound so the
+	// handler can answer 403 instead of pretending the story is gone: the caller
+	// proved they know the story exists by naming it (KNOT-053).
+	ErrNotAuthor = errors.New("stories: not the story author")
 )
 
 // ValidationError describes a rejected field on a request. Handlers expose the
@@ -200,6 +205,17 @@ type StoryStore interface {
 	// same branches the SQL feed uses so a cached entry and a queried entry cannot
 	// drift apart (KNOT-036, KNOT-036-fix).
 	FeedItemsByIDs(ctx context.Context, storyIDs, versionIDs []string) ([]FeedItem, error)
+	// DeleteStory marks the story deleted, hiding it from every read while the
+	// row and its media stay in place for the recovery window (KNOT-053). It
+	// returns ErrNotFound when no story with that id exists and ErrNotAuthor when
+	// it exists but belongs to somebody else. Deleting a story that is already
+	// deleted is a no-op, so a repeated request is idempotent.
+	DeleteStory(ctx context.Context, id, authorID string) error
+	// RestoreStory clears the deletion mark and returns the story. It returns
+	// ErrNotFound when no story with that id exists and ErrNotAuthor when it
+	// belongs to somebody else. Restoring a live story is a no-op that still
+	// returns it, so a double restore is harmless.
+	RestoreStory(ctx context.Context, id, authorID string) (Story, error)
 }
 
 // Service holds the stories business rules.

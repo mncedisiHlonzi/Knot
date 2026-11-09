@@ -138,6 +138,11 @@ type FeedCache interface {
 	// reader who was never fanned out to (a new account) stops hitting PostgreSQL
 	// on every read.
 	Seed(ctx context.Context, userID string, entries []feedcache.Entry) error
+	// InvalidateUser drops one user's cached feed sets, so the next read rebuilds
+	// them from SQL. It is what a story deletion or restoration needs: neither
+	// writes an entry, but both change which entries a reader should see
+	// (KNOT-053).
+	InvalidateUser(ctx context.Context, userID string) error
 }
 
 // Background bounds.
@@ -224,6 +229,39 @@ func seedPrecomputedFeed(ctx context.Context, logger *slog.Logger, feed FeedCach
 		if err := feed.Seed(writeCtx, userID, entries); err != nil {
 			logger.Warn(
 				"feed cache seed failed",
+				"user_id", userID,
+				"error", err,
+			)
+		}
+	}()
+}
+
+// invalidateAuthorFeed drops one user's cached feed sets after a write that changed
+// what their feed should contain without adding an entry (KNOT-053).
+//
+// A story's deletion and its restoration are exactly that write. The feeds are
+// invalidated rather than repaired: a reader's page is a list of ids, and the SQL
+// fallback rebuilds it correctly in one read, so the repair IS the rebuild. Only
+// the caller's own sets are dropped — readers who were fanned out to keep the id
+// in their sets, and the hydration query filters a deleted story out of the page,
+// so the id lingering there is invisible rather than wrong.
+//
+// Like the fan-out and the seed, it runs off the request path and never fails the
+// request: the deletion has already happened by the time this runs, and a Redis
+// outage must not turn a successful delete into an error.
+func invalidateAuthorFeed(ctx context.Context, logger *slog.Logger, feed FeedCache, userID string) {
+	if feed == nil || userID == "" {
+		return
+	}
+
+	detached := context.WithoutCancel(ctx)
+	go func() {
+		writeCtx, cancel := context.WithTimeout(detached, feedSeedTimeout)
+		defer cancel()
+
+		if err := feed.InvalidateUser(writeCtx, userID); err != nil {
+			logger.Error(
+				"feed cache invalidation failed",
 				"user_id", userID,
 				"error", err,
 			)

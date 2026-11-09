@@ -465,6 +465,41 @@ describe('CreateStoryScreen video cap', () => {
     expect(mockStateSetters[11]).toHaveBeenCalledWith(MEDIA_LIMIT_MESSAGE);
     expect(Alert.alert).not.toHaveBeenCalled();
   });
+
+  /**
+   * The hard block (KNOT-053): the picker never opens once the story holds three
+   * clips, so a fourth can never be selected in the first place.
+   */
+  it('refuses to open the picker once three clips are chosen', () => {
+    scriptState({ 8: threeVideos });
+    const tree = CreateStoryScreen(PROPS);
+
+    (findByTestID(tree, 'create-add-media')?.props?.onPress as () => void)();
+
+    expect(Alert.alert).toHaveBeenCalledWith('Video limit', VIDEO_LIMIT_MESSAGE);
+    // The picker's own state was never written, so no sheet opened.
+    expect(mockStateSetters[9]).not.toHaveBeenCalled();
+  });
+
+  it('refuses from the footer mark as well, so there is no second way in', () => {
+    scriptState({ 8: threeVideos });
+    const tree = CreateStoryScreen(PROPS);
+
+    (findByTestID(tree, 'create-footer-media')?.props?.onPress as () => void)();
+
+    expect(Alert.alert).toHaveBeenCalledWith('Video limit', VIDEO_LIMIT_MESSAGE);
+    expect(mockStateSetters[9]).not.toHaveBeenCalled();
+  });
+
+  it('opens the picker while the story holds fewer than three clips', () => {
+    scriptState({ 8: [threeVideos[0]] });
+    const tree = CreateStoryScreen(PROPS);
+
+    (findByTestID(tree, 'create-add-media')?.props?.onPress as () => void)();
+
+    expect(Alert.alert).not.toHaveBeenCalled();
+    expect(mockStateSetters[9]).toHaveBeenCalledWith(true);
+  });
 });
 
 describe('CreateStoryScreen footer', () => {

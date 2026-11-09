@@ -27,7 +27,7 @@ export const MAX_VIDEOS_PER_STORY = 3;
 export const MEDIA_LIMIT_MESSAGE = `You can add up to ${MAX_MEDIA_PER_STORY} media items per story.`;
 
 /** The message shown when a pick would take a story past the video cap. */
-export const VIDEO_LIMIT_MESSAGE = `You can add up to ${MAX_VIDEOS_PER_STORY} videos per story.`;
+export const VIDEO_LIMIT_MESSAGE = `You can only select up to ${MAX_VIDEOS_PER_STORY} videos per story.`;
 
 /** The two kinds of media a story can carry. */
 export type MediaKind = 'image' | 'video';

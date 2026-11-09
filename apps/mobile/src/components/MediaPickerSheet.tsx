@@ -1,5 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { Animated, Modal, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  Animated,
+  Alert,
+  Modal,
+  PanResponder,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { ImagePickerResponse, launchCamera, launchImageLibrary } from 'react-native-image-picker';
 import { Camera, Images, type Icon } from 'phosphor-react-native';
 
@@ -61,6 +71,14 @@ type MediaPickerSheetProps = {
 
 /** How far the sheet must be dragged down before it dismisses. */
 const SHEET_CLOSE_DISTANCE = 96;
+
+/**
+ * What a camera request may ask for.
+ *
+ * `mixed` is only meaningful where the native camera offers both modes; Android
+ * needs the kind chosen before the intent is built (KNOT-053).
+ */
+type CameraKind = 'photo' | 'video' | 'mixed';
 
 /** The option tile's glyph size. */
 const OPTION_ICON_SIZE = 28;
@@ -156,23 +174,54 @@ export default function MediaPickerSheet({
   );
 
   /**
-   * Launches the device camera.
+   * Launches the device camera for one kind of media.
    *
    * `mixed` asks the native camera for both photographs and clips, so the camera's
    * own mode control decides the kind. An avatar is an image only, so that flow
    * asks for `photo`.
    */
-  const runCamera = useCallback((): void => {
-    void launchCamera({
-      mediaType: allowVideo ? 'mixed' : 'photo',
-      quality: 0.8,
-      videoQuality: 'high',
-      saveToPhotos: false,
-    })
-      .then((response) => handleResponse(response, 'camera'))
-      .catch(reportFailure)
-      .finally(onClose);
-  }, [allowVideo, handleResponse, onClose, reportFailure]);
+  const runCamera = useCallback(
+    (kind: CameraKind): void => {
+      void launchCamera({
+        mediaType: allowVideo ? kind : 'photo',
+        quality: 0.8,
+        videoQuality: 'high',
+        saveToPhotos: false,
+      })
+        .then((response) => handleResponse(response, 'camera'))
+        .catch(reportFailure)
+        .finally(onClose);
+    },
+    [allowVideo, handleResponse, onClose, reportFailure],
+  );
+
+  /**
+   * Opens the camera, choosing a still or a clip first where the platform needs it.
+   *
+   * On iOS the camera itself offers both modes, so one `mixed` request is enough.
+   * Android's picker cannot: `launchCamera` routes every request that is not
+   * `video` to the still-camera intent, so a `mixed` capture silently means a
+   * photograph (KNOT-052's known issue). Rather than pretend otherwise, the choice
+   * is asked here — one tap later than the sheet, and never in place of it
+   * (KNOT-053).
+   */
+  const openCamera = useCallback((): void => {
+    if (!allowVideo) {
+      runCamera('photo');
+      return;
+    }
+
+    if (Platform.OS !== 'android') {
+      runCamera('mixed');
+      return;
+    }
+
+    Alert.alert('Camera', 'What would you like to capture?', [
+      { text: 'Take Photo', onPress: () => runCamera('photo') },
+      { text: 'Record Video', onPress: () => runCamera('video') },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }, [allowVideo, runCamera]);
 
   /**
    * Launches the photo library for photographs, clips, or both.
@@ -262,7 +311,7 @@ export default function MediaPickerSheet({
                 icon={Camera}
                 label="Camera"
                 hint={allowVideo ? 'Photo or video' : 'A photo'}
-                onPress={runCamera}
+                onPress={openCamera}
                 testID="media-picker-camera"
               />
               <OptionTile
