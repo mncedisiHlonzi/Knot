@@ -239,6 +239,228 @@ func (s *PostgresStore) RestoreStory(ctx context.Context, id, authorID string) (
 	return story, nil
 }
 
+// UpdateStory rewrites the root version's title and body and returns the story
+// (KNOT-054).
+//
+// A story's written content lives in its root version (KNOT-ADR-012), so that is
+// the row the update targets. The story row's own updated_at is touched in the
+// same transaction so "when did this story last change" stays meaningful for a
+// listing that reads only stories.
+//
+// Ownership and visibility are part of the UPDATE, so a caller cannot edit
+// somebody else's story or a story in the recycle bin. A statement that matches
+// no row is told apart by a probe, and a deleted story is reported as not found
+// because it is hidden from every read until restored.
+func (s *PostgresStore) UpdateStory(ctx context.Context, id, authorID string, in UpdateStoryInput) (Story, error) {
+	if !isUUID(id) || !isUUID(authorID) {
+		return Story{}, ErrNotFound
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Story{}, fmt.Errorf("stories: begin update story: %w", err)
+	}
+	// A rollback after a successful commit is a no-op, so this covers every early
+	// return.
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Root version content is the story's content: parent_version_id IS NULL is
+	// implied by joining on stories.root_version_id, which is unique.
+	const updateVersion = `UPDATE story_versions v SET title = $3, body = $4, updated_at = now() FROM stories s WHERE s.id = $1 AND v.id = s.root_version_id AND s.author_id = $2 AND s.deleted_at IS NULL`
+
+	tag, err := tx.Exec(ctx, updateVersion, id, authorID, in.Title, in.Body)
+	if err != nil {
+		return Story{}, fmt.Errorf("stories: update story: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		owner, deleted, exists, probeErr := storyWriteState(ctx, tx, id)
+		if probeErr != nil {
+			return Story{}, fmt.Errorf("stories: update story: %w", probeErr)
+		}
+		switch {
+		case !exists:
+			return Story{}, ErrNotFound
+		case owner != authorID:
+			return Story{}, ErrNotAuthor
+		case deleted:
+			// In the recycle bin: invisible to every read, so editing it is not
+			// found rather than a separate refusal (KNOT-054).
+			return Story{}, ErrNotFound
+		default:
+			return Story{}, ErrNotFound
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE stories SET updated_at = now() WHERE id = $1`, id); err != nil {
+		return Story{}, fmt.Errorf("stories: update story: %w", err)
+	}
+
+	story, err := scanStory(tx.QueryRow(ctx, `SELECT `+storyColumns+storyFrom+` WHERE s.id = $1`, id))
+	if err != nil {
+		return Story{}, fmt.Errorf("stories: update story: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return Story{}, fmt.Errorf("stories: commit update story: %w", err)
+	}
+
+	return story, nil
+}
+
+// GetDeletedStory returns a soft-deleted story its author owns (KNOT-054).
+//
+// It reads the row the ordinary detail query deliberately hides, and it checks
+// ownership itself so the permanent-removal path learns everything it needs from
+// one call: missing, somebody else's, or still live.
+func (s *PostgresStore) GetDeletedStory(ctx context.Context, id, authorID string) (Story, error) {
+	if !isUUID(id) || !isUUID(authorID) {
+		return Story{}, ErrNotFound
+	}
+
+	const query = `SELECT ` + storyColumns + storyFrom + ` WHERE s.id = $1 AND s.author_id = $2 AND s.deleted_at IS NOT NULL`
+
+	story, err := scanStory(s.pool.QueryRow(ctx, query, id, authorID))
+	if err == nil {
+		return story, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Story{}, fmt.Errorf("stories: get deleted story: %w", err)
+	}
+
+	// Nothing matched: say which precondition failed, without reading the story's
+	// content for a caller who is not entitled to it.
+	owner, deleted, exists, probeErr := storyWriteState(ctx, s.pool, id)
+	if probeErr != nil {
+		return Story{}, fmt.Errorf("stories: get deleted story: %w", probeErr)
+	}
+	switch {
+	case !exists:
+		return Story{}, ErrNotFound
+	case owner != authorID:
+		return Story{}, ErrNotAuthor
+	case !deleted:
+		return Story{}, ErrNotDeleted
+	default:
+		return Story{}, ErrNotFound
+	}
+}
+
+// PurgeStory permanently removes a soft-deleted story (KNOT-054).
+//
+// One DELETE is enough for the content: story_versions and story_media both
+// reference the story with ON DELETE CASCADE, so the content and its rows go with
+// it. The predicate requires the deletion mark, so a live story can never be
+// removed by a stray request. The storage objects are the handler's job, because
+// this package knows nothing about buckets.
+//
+// The derived entity_features read model has no foreign key (KNOT-026), so it is
+// cleared in the same transaction — the story's own row and every version's. An
+// orphaned feature row is harmless to a query, but leaving one for a story that no
+// longer exists is a leak that would only grow.
+func (s *PostgresStore) PurgeStory(ctx context.Context, id, authorID string) error {
+	if !isUUID(id) || !isUUID(authorID) {
+		return ErrNotFound
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("stories: begin purge story: %w", err)
+	}
+	// A rollback after a successful commit is a no-op, so this covers every early
+	// return.
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	// Lock the row first, so ownership and the deletion mark cannot change between
+	// the check and the delete.
+	var owner string
+	var deleted bool
+	err = tx.QueryRow(ctx, `SELECT author_id::text, deleted_at IS NOT NULL FROM stories WHERE id = $1 FOR UPDATE`, id).Scan(&owner, &deleted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("stories: purge story: %w", err)
+	}
+	if owner != authorID {
+		return ErrNotAuthor
+	}
+	if !deleted {
+		return ErrNotDeleted
+	}
+
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM entity_features
+		WHERE entity_id = $1
+		   OR entity_id IN (SELECT id FROM story_versions WHERE story_id = $1)`, id); err != nil {
+		return fmt.Errorf("stories: purge story features: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx, `DELETE FROM stories WHERE id = $1`, id); err != nil {
+		return fmt.Errorf("stories: purge story: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("stories: commit purge story: %w", err)
+	}
+
+	return nil
+}
+
+// ListDeletedStories returns an author's soft-deleted stories, newest first
+// (KNOT-054). The bin is bounded by the caller's limit.
+func (s *PostgresStore) ListDeletedStories(ctx context.Context, authorID string, limit int) ([]Story, error) {
+	if !isUUID(authorID) {
+		return []Story{}, nil
+	}
+
+	const query = `SELECT ` + storyColumns + storyFrom + ` WHERE s.author_id = $1 AND s.deleted_at IS NOT NULL ORDER BY s.created_at DESC, s.id DESC LIMIT $2`
+
+	rows, err := s.pool.Query(ctx, query, authorID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("stories: list deleted stories: %w", err)
+	}
+	defer rows.Close()
+
+	page := make([]Story, 0)
+	for rows.Next() {
+		story, scanErr := scanStory(rows)
+		if scanErr != nil {
+			return nil, fmt.Errorf("stories: list deleted stories: %w", scanErr)
+		}
+		page = append(page, story)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("stories: list deleted stories: %w", err)
+	}
+
+	return page, nil
+}
+
+// storyQuerier is the subset of pgx used by storyWriteState: both the pool and a
+// transaction can answer one query.
+type storyQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// storyWriteState reports what a write's predicate failed on: whether the story
+// exists, who owns it, and whether it is deleted.
+//
+// The write methods carry their ownership and visibility rules inside the
+// statement they run, which is what makes them race-free; this read only runs
+// after such a statement matched nothing, to choose between 404, 403 and 409. It
+// selects no content, so a caller who is not the author learns nothing they did
+// not already know by naming the id (KNOT-054).
+func storyWriteState(ctx context.Context, q storyQuerier, id string) (owner string, deleted bool, exists bool, err error) {
+	err = q.QueryRow(ctx, `SELECT author_id::text, deleted_at IS NOT NULL FROM stories WHERE id = $1`, id).Scan(&owner, &deleted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, false, nil
+	}
+	if err != nil {
+		return "", false, false, err
+	}
+	return owner, deleted, true, nil
+}
+
 // feedStoryBranch and feedVersionBranch are the two halves of the merged feed.
 //
 // They select the same eighteen columns in the same order, so the union can be

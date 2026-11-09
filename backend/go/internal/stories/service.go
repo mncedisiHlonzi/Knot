@@ -108,6 +108,106 @@ func (s *Service) RestoreStory(ctx context.Context, id, authorID string) (Story,
 	return story, nil
 }
 
+// UpdateStory validates a revised title and body and writes them to the story's
+// root version (KNOT-054).
+//
+// Only the author may edit: the store enforces ownership in the same statement
+// that writes the content, so a caller cannot edit somebody else's story by
+// racing a read. A soft-deleted story is reported as not found, matching GetStory
+// — it is in the recycle bin, where it can be restored first.
+//
+// A malformed id is reported as not found, the same convention the other
+// single-resource methods follow.
+func (s *Service) UpdateStory(ctx context.Context, id, authorID string, in UpdateStoryInput) (Story, error) {
+	if !isUUID(id) || !isUUID(authorID) {
+		return Story{}, ErrNotFound
+	}
+
+	title, body, err := validateStoryText(in.Title, in.Body)
+	if err != nil {
+		return Story{}, err
+	}
+
+	updated, err := s.store.UpdateStory(ctx, id, authorID, UpdateStoryInput{Title: title, Body: body})
+	if err != nil {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotAuthor) {
+			return Story{}, err
+		}
+		return Story{}, fmt.Errorf("stories: update story: %w", err)
+	}
+
+	return updated, nil
+}
+
+// GetDeletedStory returns a soft-deleted story its author owns, which is the
+// precondition for permanently removing it (KNOT-054).
+//
+// It is a separate read from PurgeStory because removing a story's media objects
+// needs the story to still exist: the story's rows are the only place the object
+// keys live. The handler verifies ownership first, empties the media, then deletes
+// the row.
+func (s *Service) GetDeletedStory(ctx context.Context, id, authorID string) (Story, error) {
+	if !isUUID(id) || !isUUID(authorID) {
+		return Story{}, ErrNotFound
+	}
+
+	story, err := s.store.GetDeletedStory(ctx, id, authorID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotAuthor) || errors.Is(err, ErrNotDeleted) {
+			return Story{}, err
+		}
+		return Story{}, fmt.Errorf("stories: get deleted story: %w", err)
+	}
+
+	return story, nil
+}
+
+// PurgeStory permanently removes a story its author deleted (KNOT-054).
+//
+// This is the second half of the recycle bin: the story, every version and every
+// media row are gone after it, because both tables reference the story with ON
+// DELETE CASCADE. The storage objects are removed by the handler before the row,
+// which is the only order that can find them.
+//
+// A live story is refused with ErrNotDeleted: permanent removal is only reachable
+// from the recycle bin, never by a stray request against a visible story.
+func (s *Service) PurgeStory(ctx context.Context, id, authorID string) error {
+	if !isUUID(id) || !isUUID(authorID) {
+		return ErrNotFound
+	}
+
+	if err := s.store.PurgeStory(ctx, id, authorID); err != nil {
+		if errors.Is(err, ErrNotFound) || errors.Is(err, ErrNotAuthor) || errors.Is(err, ErrNotDeleted) {
+			return err
+		}
+		return fmt.Errorf("stories: purge story: %w", err)
+	}
+
+	return nil
+}
+
+// ListDeletedStories returns the caller's recycle bin, newest first (KNOT-054).
+//
+// The author comes from the authenticated request rather than from the query, so
+// a caller can only ever see their own bin. An empty bin is an empty slice, not
+// nil: the JSON response is then [] rather than null.
+func (s *Service) ListDeletedStories(ctx context.Context, authorID string) ([]Story, error) {
+	if !isUUID(authorID) {
+		return nil, ErrNotFound
+	}
+
+	deleted, err := s.store.ListDeletedStories(ctx, authorID, MaxDeletedListLimit)
+	if err != nil {
+		return nil, fmt.Errorf("stories: list deleted stories: %w", err)
+	}
+
+	if deleted == nil {
+		return []Story{}, nil
+	}
+
+	return deleted, nil
+}
+
 // ListFeed returns one page of the merged feed — stories and their adaptations,
 // newest first — plus the cursor that resumes after it.
 //
@@ -249,25 +349,9 @@ func validateCreateStory(in CreateStoryInput) (Story, error) {
 		}
 	}
 
-	title := strings.TrimSpace(in.Title)
-	if utf8.RuneCountInString(title) < minTitleLen {
-		return Story{}, &ValidationError{Field: "title", Message: "is required"}
-	}
-	if utf8.RuneCountInString(title) > MaxTitleLen {
-		return Story{}, &ValidationError{
-			Field:   "title",
-			Message: fmt.Sprintf("must be at most %d characters", MaxTitleLen),
-		}
-	}
-
-	if strings.TrimSpace(in.Body) == "" {
-		return Story{}, &ValidationError{Field: "body", Message: "is required"}
-	}
-	if utf8.RuneCountInString(in.Body) > MaxBodyLen {
-		return Story{}, &ValidationError{
-			Field:   "body",
-			Message: fmt.Sprintf("must be at most %d characters", MaxBodyLen),
-		}
+	title, body, err := validateStoryText(in.Title, in.Body)
+	if err != nil {
+		return Story{}, err
 	}
 
 	language, err := validateLanguage(in.Language)
@@ -310,13 +394,45 @@ func validateCreateStory(in CreateStoryInput) (Story, error) {
 		Pillar:              in.Pillar,
 		Language:            language,
 		Title:               title,
-		Body:                in.Body,
+		Body:                body,
 		ApproximateLocation: location,
 		Latitude:            latitude,
 		Longitude:           longitude,
 		PlaceCountry:        placeCountry,
 		MediaURLs:           media,
 	}, nil
+}
+
+// validateStoryText applies the rules a story's written content must satisfy,
+// whether it is being written for the first time or revised (KNOT-054).
+//
+// The title is trimmed because surrounding whitespace is never meaningful there;
+// the body is stored verbatim so the author's formatting survives, and is only
+// trimmed to decide whether it is empty. Lengths are counted in runes so a
+// multi-byte script is not penalised.
+func validateStoryText(rawTitle, rawBody string) (string, string, error) {
+	title := strings.TrimSpace(rawTitle)
+	if utf8.RuneCountInString(title) < minTitleLen {
+		return "", "", &ValidationError{Field: "title", Message: "is required"}
+	}
+	if utf8.RuneCountInString(title) > MaxTitleLen {
+		return "", "", &ValidationError{
+			Field:   "title",
+			Message: fmt.Sprintf("must be at most %d characters", MaxTitleLen),
+		}
+	}
+
+	if strings.TrimSpace(rawBody) == "" {
+		return "", "", &ValidationError{Field: "body", Message: "is required"}
+	}
+	if utf8.RuneCountInString(rawBody) > MaxBodyLen {
+		return "", "", &ValidationError{
+			Field:   "body",
+			Message: fmt.Sprintf("must be at most %d characters", MaxBodyLen),
+		}
+	}
+
+	return title, rawBody, nil
 }
 
 // validateCoordinates enforces that a coordinate is supplied as a pair, with each

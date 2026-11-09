@@ -27,6 +27,14 @@ type fakeStore struct {
 	restoreResult Story
 	restoreErr    error
 
+	updateResult      Story
+	updateErr         error
+	deletedResult     Story
+	deletedErr        error
+	purgeErr          error
+	listDeletedResult []Story
+	listDeletedErr    error
+
 	gotCreate        Story
 	gotGetID         string
 	gotCursor        *Cursor
@@ -37,6 +45,15 @@ type fakeStore struct {
 	gotDeleteAuthor  string
 	gotRestoreID     string
 	gotRestoreAuthor string
+	gotUpdateID      string
+	gotUpdateAuthor  string
+	gotUpdateInput   UpdateStoryInput
+	gotDeletedID     string
+	gotDeletedAuthor string
+	gotPurgeID       string
+	gotPurgeAuthor   string
+	gotDeletedListBy string
+	gotDeletedLimit  int
 
 	createCalls  int
 	getCalls     int
@@ -44,6 +61,10 @@ type fakeStore struct {
 	byIDsCalls   int
 	deleteCalls  int
 	restoreCalls int
+	updateCalls  int
+	deletedCalls int
+	purgeCalls   int
+	listDelCalls int
 }
 
 func (f *fakeStore) CreateStory(_ context.Context, story Story) (Story, error) {
@@ -97,6 +118,35 @@ func (f *fakeStore) RestoreStory(_ context.Context, id, authorID string) (Story,
 	f.gotRestoreID = id
 	f.gotRestoreAuthor = authorID
 	return f.restoreResult, f.restoreErr
+}
+
+func (f *fakeStore) UpdateStory(_ context.Context, id, authorID string, in UpdateStoryInput) (Story, error) {
+	f.updateCalls++
+	f.gotUpdateID = id
+	f.gotUpdateAuthor = authorID
+	f.gotUpdateInput = in
+	return f.updateResult, f.updateErr
+}
+
+func (f *fakeStore) GetDeletedStory(_ context.Context, id, authorID string) (Story, error) {
+	f.deletedCalls++
+	f.gotDeletedID = id
+	f.gotDeletedAuthor = authorID
+	return f.deletedResult, f.deletedErr
+}
+
+func (f *fakeStore) PurgeStory(_ context.Context, id, authorID string) error {
+	f.purgeCalls++
+	f.gotPurgeID = id
+	f.gotPurgeAuthor = authorID
+	return f.purgeErr
+}
+
+func (f *fakeStore) ListDeletedStories(_ context.Context, authorID string, limit int) ([]Story, error) {
+	f.listDelCalls++
+	f.gotDeletedListBy = authorID
+	f.gotDeletedLimit = limit
+	return f.listDeletedResult, f.listDeletedErr
 }
 
 // storyEntry wraps a story as a story entry of the merged feed, so a test about

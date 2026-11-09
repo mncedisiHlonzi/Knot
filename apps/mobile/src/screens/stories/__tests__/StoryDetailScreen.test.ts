@@ -1,7 +1,9 @@
 import type { Story, StoryMedia } from '../../../api/stories';
 import FeedVideo from '../../../components/FeedVideo';
+import Header from '../../../components/Header';
 import MediaImage from '../../../components/MediaImage';
 import VideoThumbnail from '../../../components/VideoThumbnail';
+import { Flag } from 'phosphor-react-native';
 import StoryDetailScreen from '../StoryDetailScreen';
 
 /**
@@ -41,9 +43,11 @@ jest.mock('react', () => ({
 
 jest.mock('react-native', () => ({
   ActivityIndicator: 'ActivityIndicator',
+  Alert: { alert: jest.fn() },
   Animated: { createAnimatedComponent: (component: unknown) => component },
   Easing: { bezier: () => () => 0 },
   Image: 'Image',
+  Modal: 'Modal',
   Platform: { OS: 'android' },
   Pressable: 'Pressable',
   ScrollView: 'ScrollView',
@@ -56,8 +60,11 @@ jest.mock('react-native', () => ({
 
 jest.mock('phosphor-react-native', () => ({
   ArrowLeft: () => null,
+  DotsThree: () => null,
   Flag: () => null,
   GitBranch: () => null,
+  PencilSimple: () => null,
+  Trash: () => null,
 }));
 
 // FeedVideo (the carousel's video page) imports the native player.
@@ -326,5 +333,44 @@ describe('StoryDetailScreen media frame', () => {
     expect(new Set(heights).size).toBe(1);
     expect(heights[0]).toBe(pagerHeight(tree));
     expect(heights[0]).toBeGreaterThan(0);
+  });
+});
+
+describe('StoryDetailScreen ownership', () => {
+  /** The header's trailing control, as the screen handed it to `Header`. */
+  function headerAction(viewerId: string): ElementLike | undefined {
+    mockStateValues = [storyWith([]), 3, false, undefined];
+    mockStateCursor = 0;
+
+    const tree = StoryDetailScreen({
+      id: 'story-1',
+      token: 'token',
+      viewerId,
+      onBack: () => undefined,
+      onAdapt: () => undefined,
+      onViewTree: () => undefined,
+      onConversation: () => undefined,
+      onOpenUserProfile: () => undefined,
+      onOpenMedia: () => undefined,
+      onEditStory: () => undefined,
+      onDeleted: () => undefined,
+    });
+
+    const headers = elementsOfType(tree, Header);
+    return headers[0]?.props?.right as ElementLike | undefined;
+  }
+
+  it('offers the author their own options instead of Report', () => {
+    const action = headerAction('user-root');
+
+    expect(action?.props?.accessibilityLabel).toBe('Story options');
+    // The author never reports themselves (KNOT-054).
+    expect(elementsOfType(action, Flag)).toHaveLength(0);
+  });
+
+  it('offers Report on somebody else’s story', () => {
+    const action = headerAction('user-other');
+
+    expect(action?.props?.accessibilityLabel).toBe('Report this story');
   });
 });

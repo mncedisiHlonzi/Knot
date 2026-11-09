@@ -258,6 +258,7 @@ const SCREEN_PROPS = {
   onOpenMedia: () => undefined,
   onOpenSearch: () => undefined,
   onCreateStory: () => undefined,
+  onEditStory: () => undefined,
 };
 
 /** One render of the screen, with the state setters reset first. */
@@ -700,13 +701,12 @@ describe('FeedScreen story deletion', () => {
    * component is called — which is how a children-only walk can reach them.
    */
   const optionsSheet = (tree: unknown): ElementLike | undefined => {
+    // The sheet's callbacks depend on who owns the entry — an owned story has no
+    // Hide or Report — so it is identified by its own props, not by one action
+    // (KNOT-054).
     const element = findElement(
       tree,
-      (props) =>
-        typeof props.onHide === 'function' &&
-        typeof props.onReport === 'function' &&
-        typeof props.onClose === 'function' &&
-        'item' in props,
+      (props) => typeof props.onClose === 'function' && 'item' in props && 'onEdit' in props,
     );
 
     if (element === undefined) {
@@ -816,6 +816,66 @@ describe('FeedScreen story deletion', () => {
     // ...and back where it was when the request failed.
     expect(updaters[1]([VERSION_ITEM])).toEqual([ITEM, VERSION_ITEM]);
     expect(Alert.alert).toHaveBeenLastCalledWith('Story not deleted', 'request failed');
+  });
+
+  /** The labels of the rows the sheet actually drew, in order. */
+  const optionLabels = (tree: unknown): string[] => {
+    const labels: string[] = [];
+    const visit = (node: unknown): void => {
+      if (Array.isArray(node)) {
+        node.forEach(visit);
+        return;
+      }
+      if (node === null || typeof node !== 'object') {
+        return;
+      }
+      const element = node as ElementLike;
+      const type = element.type as { name?: string } | undefined;
+      if (type?.name === 'PostOptionRow' && typeof element.props?.label === 'string') {
+        labels.push(element.props.label as string);
+      }
+      visit(element.props?.children);
+    };
+    visit(optionsSheet(tree));
+    return labels;
+  };
+
+  it('shows only Edit and Delete on the viewer’s own story', () => {
+    scriptState({ 9: ITEM });
+
+    const labels = optionLabels(renderScreen());
+
+    expect(labels).toEqual(['Edit Story', 'Delete Story']);
+    // Reporting or hiding one's own story is nonsensical (KNOT-054).
+    expect(labels).not.toContain('Report post');
+    expect(labels).not.toContain('Hide this post');
+  });
+
+  it('shows only Report and Hide on somebody else’s story', () => {
+    scriptState({ 9: { ...ITEM, author_id: 'user-9' } });
+
+    const labels = optionLabels(renderScreen());
+
+    expect(labels).toEqual(['Hide this post', 'Report post']);
+    expect(labels).not.toContain('Edit Story');
+    expect(labels).not.toContain('Delete Story');
+  });
+
+  it('shows the reader’s menu on an adaptation the viewer wrote', () => {
+    // A version is not the story, so it is never editable or deletable here.
+    scriptState({ 9: { ...VERSION_ITEM, author_id: 'user-1' } });
+
+    expect(optionLabels(renderScreen())).toEqual(['Hide this post', 'Report post']);
+  });
+
+  it('opens the editor with the story id when Edit Story is chosen', () => {
+    const onEditStory = jest.fn();
+    scriptState({ 9: ITEM });
+
+    const sheet = optionsSheet(FeedScreen({ ...SCREEN_PROPS, onEditStory }));
+    (findByTestID(sheet, 'post-edit')?.props?.onPress as () => void)();
+
+    expect(onEditStory).toHaveBeenCalledWith(ITEM.id);
   });
 });
 

@@ -123,6 +123,83 @@ func (m *memoryStoryStore) RestoreStory(_ context.Context, id, authorID string) 
 	return stories.Story{}, stories.ErrNotFound
 }
 
+// UpdateStory rewrites the in-memory story's title and body, which is the same
+// observable effect as the SQL update of its root version (KNOT-054).
+func (m *memoryStoryStore) UpdateStory(_ context.Context, id, authorID string, in stories.UpdateStoryInput) (stories.Story, error) {
+	for i, story := range m.stories {
+		if story.ID != id {
+			continue
+		}
+		if story.AuthorID != authorID {
+			return stories.Story{}, stories.ErrNotAuthor
+		}
+		if m.isDeleted(id) {
+			return stories.Story{}, stories.ErrNotFound
+		}
+		m.stories[i].Title = in.Title
+		m.stories[i].Body = in.Body
+		m.stories[i].UpdatedAt = testNow
+		return m.stories[i], nil
+	}
+
+	return stories.Story{}, stories.ErrNotFound
+}
+
+// GetDeletedStory reads a soft-deleted story, the precondition for a permanent
+// removal (KNOT-054).
+func (m *memoryStoryStore) GetDeletedStory(_ context.Context, id, authorID string) (stories.Story, error) {
+	for _, story := range m.stories {
+		if story.ID != id {
+			continue
+		}
+		if story.AuthorID != authorID {
+			return stories.Story{}, stories.ErrNotAuthor
+		}
+		if !m.isDeleted(id) {
+			return stories.Story{}, stories.ErrNotDeleted
+		}
+		return story, nil
+	}
+
+	return stories.Story{}, stories.ErrNotFound
+}
+
+// PurgeStory drops the row, which is what the SQL cascade does to the versions and
+// media with it (KNOT-054).
+func (m *memoryStoryStore) PurgeStory(_ context.Context, id, authorID string) error {
+	for i, story := range m.stories {
+		if story.ID != id {
+			continue
+		}
+		if story.AuthorID != authorID {
+			return stories.ErrNotAuthor
+		}
+		if !m.isDeleted(id) {
+			return stories.ErrNotDeleted
+		}
+		m.stories = append(m.stories[:i], m.stories[i+1:]...)
+		delete(m.deleted, id)
+		return nil
+	}
+
+	return stories.ErrNotFound
+}
+
+// ListDeletedStories returns the caller's bin, newest first, bounded by limit
+// (KNOT-054).
+func (m *memoryStoryStore) ListDeletedStories(_ context.Context, authorID string, limit int) ([]stories.Story, error) {
+	bin := make([]stories.Story, 0)
+	for _, story := range m.stories {
+		if story.AuthorID == authorID && m.isDeleted(story.ID) {
+			bin = append(bin, story)
+		}
+	}
+	if len(bin) > limit {
+		bin = bin[:limit]
+	}
+	return bin, nil
+}
+
 func (m *memoryStoryStore) ListFeed(_ context.Context, cursor *stories.Cursor, limit int) ([]stories.FeedItem, *stories.Cursor, error) {
 	m.listCalls++
 	m.gotCursor = cursor
@@ -228,18 +305,25 @@ func beforeCursor(createdAt time.Time, id string, cursor stories.Cursor) bool {
 // fakeStoriesService returns canned values, so the failure paths a real service
 // cannot produce (an infrastructure error) can still be tested.
 type fakeStoriesService struct {
-	createResult  stories.Story
-	createErr     error
-	getResult     stories.Story
-	getErr        error
-	listResult    []stories.FeedItem
-	listNext      string
-	listErr       error
-	byIDsResult   []stories.FeedItem
-	byIDsErr      error
-	deleteErr     error
-	restoreResult stories.Story
-	restoreErr    error
+	createResult   stories.Story
+	createErr      error
+	getResult      stories.Story
+	getErr         error
+	listResult     []stories.FeedItem
+	listNext       string
+	listErr        error
+	byIDsResult    []stories.FeedItem
+	byIDsErr       error
+	deleteErr      error
+	restoreResult  stories.Story
+	restoreErr     error
+	updateResult   stories.Story
+	updateErr      error
+	deletedResult  stories.Story
+	deletedErr     error
+	purgeErr       error
+	deletedList    []stories.Story
+	deletedListErr error
 
 	listCalls        int
 	byIDsCalls       int
@@ -248,6 +332,46 @@ type fakeStoriesService struct {
 	gotDeleteAuthor  string
 	gotRestoreID     string
 	gotRestoreAuthor string
+	gotUpdateID      string
+	gotUpdateAuthor  string
+	gotUpdateInput   stories.UpdateStoryInput
+	gotDeletedID     string
+	gotDeletedAuthor string
+	gotPurgeID       string
+	gotPurgeAuthor   string
+	gotDeletedListBy string
+	updateCalls      int
+	deletedCalls     int
+	purgeCalls       int
+	listDelCalls     int
+}
+
+func (f *fakeStoriesService) UpdateStory(_ context.Context, id, authorID string, in stories.UpdateStoryInput) (stories.Story, error) {
+	f.updateCalls++
+	f.gotUpdateID = id
+	f.gotUpdateAuthor = authorID
+	f.gotUpdateInput = in
+	return f.updateResult, f.updateErr
+}
+
+func (f *fakeStoriesService) GetDeletedStory(_ context.Context, id, authorID string) (stories.Story, error) {
+	f.deletedCalls++
+	f.gotDeletedID = id
+	f.gotDeletedAuthor = authorID
+	return f.deletedResult, f.deletedErr
+}
+
+func (f *fakeStoriesService) PurgeStory(_ context.Context, id, authorID string) error {
+	f.purgeCalls++
+	f.gotPurgeID = id
+	f.gotPurgeAuthor = authorID
+	return f.purgeErr
+}
+
+func (f *fakeStoriesService) ListDeletedStories(_ context.Context, authorID string) ([]stories.Story, error) {
+	f.listDelCalls++
+	f.gotDeletedListBy = authorID
+	return f.deletedList, f.deletedListErr
 }
 
 func (f *fakeStoriesService) DeleteStory(_ context.Context, id, authorID string) error {
@@ -478,6 +602,9 @@ type feedLookups struct {
 	// caches are the optional Redis read caches (KNOT-036, KNOT-036-fix). Zero
 	// means the pre-cache behaviour: every request takes the database path.
 	caches Caches
+	// purger empties a story's media on permanent removal (KNOT-054). Nil makes
+	// that one route fail closed.
+	purger StoryMediaPurger
 }
 
 // newRouterWithFeedLookups assembles the full router with explicit feed
@@ -490,7 +617,7 @@ func newRouterWithFeedLookups(t *testing.T, logger *slog.Logger, service Stories
 		t.Fatalf("NewAuthHandler() error = %v, want nil", err)
 	}
 
-	storiesHandler, err := NewStoriesHandlerWithCaches(service, lookups.authors, lookups.rooted, lookups.media, lookups.reactions, lookups.stats, lookups.chains, lookups.interactions, logger, nil, FeedRanking{}, lookups.caches)
+	storiesHandler, err := NewStoriesHandlerWithMediaPurge(service, lookups.authors, lookups.rooted, lookups.media, lookups.reactions, lookups.stats, lookups.chains, lookups.interactions, logger, nil, FeedRanking{}, lookups.caches, lookups.purger)
 	if err != nil {
 		t.Fatalf("NewStoriesHandlerWithCaches() error = %v, want nil", err)
 	}

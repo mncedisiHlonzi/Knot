@@ -39,6 +39,27 @@ type StoriesService interface {
 	// RestoreStory cancels a soft deletion on one of the caller's own stories
 	// (KNOT-053).
 	RestoreStory(ctx context.Context, id, authorID string) (stories.Story, error)
+	// UpdateStory revises the title and body of one of the caller's own stories
+	// (KNOT-054).
+	UpdateStory(ctx context.Context, id, authorID string, in stories.UpdateStoryInput) (stories.Story, error)
+	// GetDeletedStory reads a soft-deleted story its caller owns, which is the
+	// precondition for removing it permanently (KNOT-054).
+	GetDeletedStory(ctx context.Context, id, authorID string) (stories.Story, error)
+	// PurgeStory permanently removes a story the caller already deleted
+	// (KNOT-054).
+	PurgeStory(ctx context.Context, id, authorID string) error
+	// ListDeletedStories returns the caller's recycle bin (KNOT-054).
+	ListDeletedStories(ctx context.Context, authorID string) ([]stories.Story, error)
+}
+
+// StoryMediaPurger is the slice of the story-media service that permanent removal
+// needs: deleting every object and row belonging to one story (KNOT-054).
+//
+// It is deliberately narrower than the whole media service, and separate from
+// StoryMediaLookup so a handler assembled without a purger still serves every
+// read — only the permanent-delete route fails closed.
+type StoryMediaPurger interface {
+	PurgeStoryMedia(ctx context.Context, storyID string) error
 }
 
 // The feed's discriminator values. They mirror the domain's own literals so the
@@ -64,6 +85,10 @@ type StoriesHandler struct {
 	// the SQL feed, and the story detail store (KNOT-036, KNOT-036-fix). Nil fields
 	// mean "take the database path".
 	caches Caches
+	// purger removes a story's media objects and rows when it is purged from the
+	// recycle bin (KNOT-054). Nil keeps every read working; only the permanent
+	// removal fails closed.
+	purger StoryMediaPurger
 	logger *slog.Logger
 }
 
@@ -125,6 +150,19 @@ func NewStoriesHandlerWithPrecomputedFeed(service StoriesService, authors Author
 // Either cache may be nil, and a nil cache means "take the database path": a
 // deployment with Redis trouble still serves every request, just slower.
 func NewStoriesHandlerWithCaches(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, stats StoryStatsLookup, chains VersionChainLookup, interactions InteractionLookup, logger *slog.Logger, recorder InteractionRecorder, ranking FeedRanking, caches Caches) (*StoriesHandler, error) {
+	return NewStoriesHandlerWithMediaPurge(
+		service, authors, rooted, media, reactions, stats, chains, interactions, logger, recorder, ranking, caches, nil,
+	)
+}
+
+// NewStoriesHandlerWithMediaPurge is NewStoriesHandlerWithCaches plus the media
+// purger the recycle bin's permanent removal needs (KNOT-054).
+//
+// A nil purger leaves every read and every other write working; only
+// DELETE /stories/{id}/permanent answers an error, because a permanent removal
+// that left the bucket contents behind would be a lie. The composition root always
+// passes the story-media service.
+func NewStoriesHandlerWithMediaPurge(service StoriesService, authors AuthorLookup, rooted RootedLookup, media StoryMediaLookup, reactions ReactionsLookup, stats StoryStatsLookup, chains VersionChainLookup, interactions InteractionLookup, logger *slog.Logger, recorder InteractionRecorder, ranking FeedRanking, caches Caches, purger StoryMediaPurger) (*StoriesHandler, error) {
 	if service == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a service")
 	}
@@ -152,7 +190,7 @@ func NewStoriesHandlerWithCaches(service StoriesService, authors AuthorLookup, r
 	if logger == nil {
 		return nil, fmt.Errorf("httpapi: stories handler requires a logger")
 	}
-	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, stats: stats, chains: chains, interactions: interactions, recorder: recorder, ranking: ranking, caches: caches, logger: logger}, nil
+	return &StoriesHandler{service: service, authors: authors, rooted: rooted, media: media, reactions: reactions, stats: stats, chains: chains, interactions: interactions, recorder: recorder, ranking: ranking, caches: caches, purger: purger, logger: logger}, nil
 }
 
 // createStoryRequest is the POST /stories body.
@@ -626,6 +664,207 @@ func (h *StoriesHandler) Restore(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, storyEnvelope{Story: response})
 }
 
+// updateStoryRequest is the PUT /stories/{id} body.
+//
+// Only the two writable pieces of content are accepted. There is deliberately no
+// author, language, pillar, place or media field: changing a language is an
+// adaptation, and editing media is a different feature (KNOT-054).
+type updateStoryRequest struct {
+	Title string `json:"title"`
+	Body  string `json:"body"`
+}
+
+// Update handles PUT /stories/{id}. The route is protected.
+//
+// It revises the story's written content — the root version's title and body —
+// and answers with the same story projection GET serves, so the client can replace
+// what it is showing without a second read. Only the author may edit; the service
+// enforces that in the statement that writes, so a 403 here means the caller named
+// somebody else's story.
+//
+// Both caches are dropped: the detail key holds the old text, and the author's own
+// feed page is rebuilt from SQL on the next read even though a reader's page is a
+// list of ids that would hydrate to the new text anyway (KNOT-054).
+func (h *StoriesHandler) Update(w http.ResponseWriter, r *http.Request) {
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, codeUnauthorized, "authentication required")
+		return
+	}
+
+	var body updateStoryRequest
+	if err := decodeJSON(w, r, &body); err != nil {
+		writeDecodeError(w, r, h.logger, err)
+		return
+	}
+
+	storyID := r.PathValue("id")
+	updated, err := h.service.UpdateStory(r.Context(), storyID, userID, stories.UpdateStoryInput{
+		Title: body.Title,
+		Body:  body.Body,
+	})
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+
+	response := newStoryResponse(updated)
+	response.AuthorRooted = authorRootedSummaries(r.Context(), h.rooted, h.logger, []string{updated.AuthorID})[updated.AuthorID]
+	response.AuthorDisplayName, response.AuthorAvatarURL = authorFields(r.Context(), h.authors, h.logger, updated.AuthorID)
+	response.Media = storyMediaForDetail(r.Context(), h.media, h.logger, updated.ID)
+	attachStoryCounts(&response, h.stats, r, h.logger, updated.ID)
+	response.Reactions, response.MyReactions = reactionsForEntity(r.Context(), h.reactions, h.logger, reactions.EntityStory, userID, updated.ID)
+
+	// The story detail IS its root version, so its attribution needs no store walk
+	// -- the same one-link chain Get builds (KNOT-021).
+	rootChain := versions.Chain{{
+		VersionID:         updated.RootVersionID,
+		StoryID:           updated.ID,
+		AuthorID:          updated.AuthorID,
+		AuthorDisplayName: response.AuthorDisplayName,
+		Language:          updated.Language,
+	}}
+	response.AttributionLine = optionalString(versions.FormatAttribution(rootChain))
+	response.VersionDepth = optionalInt(0)
+
+	invalidateStoryDetail(r.Context(), h.logger, h.caches.Details, updated.ID)
+	invalidateAuthorFeed(r.Context(), h.logger, h.caches.Feed, userID)
+
+	writeJSON(w, http.StatusOK, storyEnvelope{Story: response})
+}
+
+// deletedStoriesResponse is the GET /stories/deleted body.
+//
+// It is the recycle bin: the caller's own soft-deleted stories, most recently
+// created first, each carrying the same story projection every other read serves.
+// The list is always an array, so an empty bin is [] rather than null (KNOT-054).
+type deletedStoriesResponse struct {
+	Stories []storyResponse `json:"stories"`
+}
+
+// Deleted handles GET /stories/deleted. The route is protected.
+//
+// The bin is read from the rows every other read hides. The author comes from the
+// token, never from the query, so a caller can only see their own deletions. The
+// page is enriched in three batched reads — the authors, their Rooted summaries,
+// and one media preview per story — so a bin of thumbnails costs the same number
+// of queries as a bin with none (KNOT-054).
+func (h *StoriesHandler) Deleted(w http.ResponseWriter, r *http.Request) {
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, codeUnauthorized, "authentication required")
+		return
+	}
+
+	deleted, err := h.service.ListDeletedStories(r.Context(), userID)
+	if err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+
+	authorIDs := make([]string, 0, len(deleted))
+	storyIDs := make([]string, 0, len(deleted))
+	for _, story := range deleted {
+		authorIDs = append(authorIDs, story.AuthorID)
+		storyIDs = append(storyIDs, story.ID)
+	}
+
+	attributions := authorAttributions(r.Context(), h.authors, h.logger, authorIDs)
+	rooted := authorRootedSummaries(r.Context(), h.rooted, h.logger, authorIDs)
+	previews := storyMediaPreviews(r.Context(), h.media, h.logger, storyIDs)
+
+	responses := make([]storyResponse, 0, len(deleted))
+	for _, story := range deleted {
+		response := newStoryResponse(story)
+
+		attribution := attributions[story.AuthorID]
+		response.AuthorDisplayName = attribution.DisplayName
+		response.AuthorAvatarURL = optionalString(attribution.AvatarURL)
+		response.AuthorRooted = rooted[story.AuthorID]
+
+		// A bin row draws the story's first still, exactly as a feed card does: the
+		// preview rides the response and the first-media fields describe it.
+		media := previews[story.ID]
+		if media == nil {
+			media = []storyMediaResponse{}
+		}
+		response.Media = media
+		first := firstMediaFields(media)
+		response.FirstMediaType = first.mediaType
+		response.FirstMediaURL = first.url
+		response.FirstMediaThumbnailURL = first.thumbnailURL
+		response.FirstMediaPosterURL = first.posterURL
+		response.FirstMediaWidth = first.width
+		response.FirstMediaHeight = first.height
+
+		responses = append(responses, response)
+	}
+
+	writeJSON(w, http.StatusOK, deletedStoriesResponse{Stories: responses})
+}
+
+// Purge handles DELETE /stories/{id}/permanent. The route is protected.
+//
+// It is the recycle bin's "Delete forever": the story row, every version and every
+// media row are removed, and the media objects are removed from storage first —
+// the rows are the only place their keys live, so they must be read before the
+// cascade takes them. A live story is refused with 409: the only way to a
+// permanent removal is through the bin, which is what makes the 30-day window a
+// real promise.
+//
+// The order is deliberate. Ownership and the soft-deleted state are proven first,
+// then the media is emptied, then the story row is deleted. A failure part-way is
+// safe: media rows removed before an object-store hiccup leave a bin entry with
+// fewer pictures, never a deleted story whose bytes linger, and the author can
+// simply try again.
+func (h *StoriesHandler) Purge(w http.ResponseWriter, r *http.Request) {
+	userID, ok := UserIDFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusUnauthorized, codeUnauthorized, "authentication required")
+		return
+	}
+
+	if h.purger == nil {
+		h.logger.ErrorContext(
+			r.Context(),
+			"stories handler has no media purger",
+			slog.String("request_id", RequestIDFromContext(r.Context())),
+		)
+		writeError(w, http.StatusInternalServerError, codeInternal, "internal server error")
+		return
+	}
+
+	storyID := r.PathValue("id")
+
+	// Prove the caller owns a story that is in their bin before touching storage.
+	if _, err := h.service.GetDeletedStory(r.Context(), storyID, userID); err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+
+	if err := h.purger.PurgeStoryMedia(r.Context(), storyID); err != nil {
+		h.logger.ErrorContext(
+			r.Context(),
+			"story media purge failed",
+			slog.String("request_id", RequestIDFromContext(r.Context())),
+			slog.String("story_id", storyID),
+			slog.String("error", err.Error()),
+		)
+		writeError(w, http.StatusInternalServerError, codeInternal, "internal server error")
+		return
+	}
+
+	if err := h.service.PurgeStory(r.Context(), storyID, userID); err != nil {
+		h.writeServiceError(w, r, err)
+		return
+	}
+
+	invalidateStoryDetail(r.Context(), h.logger, h.caches.Details, storyID)
+	invalidateAuthorFeed(r.Context(), h.logger, h.caches.Feed, userID)
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // List handles GET /stories. The route is public.
 //
 // The page is a merged stream of two entry kinds (KNOT-022). Each page is
@@ -780,6 +1019,11 @@ func (h *StoriesHandler) writeServiceError(w http.ResponseWriter, r *http.Reques
 		// they already knew it existed, and a 404 would misdescribe the outcome of a
 		// request that was refused for a different reason (KNOT-053).
 		writeError(w, http.StatusForbidden, codeForbidden, "you can only change your own story")
+	case errors.Is(err, stories.ErrNotDeleted):
+		// A permanent removal is only reachable from the recycle bin, and the story is
+		// still live. 409 rather than 403 or 404: the request was valid and authorized,
+		// the story is simply in the wrong state for it (KNOT-054).
+		writeError(w, http.StatusConflict, codeConflict, "story must be deleted before it can be removed permanently")
 	case errors.Is(err, stories.ErrNotFound):
 		writeError(w, http.StatusNotFound, codeNotFound, "story not found")
 	default:

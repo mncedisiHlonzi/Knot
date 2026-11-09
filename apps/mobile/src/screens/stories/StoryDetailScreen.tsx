@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Image,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -14,7 +16,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
-import { ArrowLeft, Flag, GitBranch } from 'phosphor-react-native';
+import { ArrowLeft, DotsThree, Flag, GitBranch, PencilSimple, Trash } from 'phosphor-react-native';
 
 import { describeError } from '../../api/client';
 import { EMPTY_REACTION_COUNTS } from '../../api/reactions';
@@ -238,6 +240,16 @@ type StoryDetailScreenProps = {
     index: number,
     story?: ViewerStory | null,
   ) => void;
+  /**
+   * The signed-in person's id, so the screen knows whether it is showing the
+   * author's own story. An author edits or deletes here; everybody else reports
+   * (KNOT-054).
+   */
+  readonly viewerId?: string;
+  /** Called when the author chooses "Edit Story" (KNOT-054). */
+  readonly onEditStory?: (storyId: string) => void;
+  /** Called after the author deleted this story, so the caller can leave the screen. */
+  readonly onDeleted?: () => void;
 };
 
 /**
@@ -276,6 +288,9 @@ export default function StoryDetailScreen({
   onConversation,
   onOpenUserProfile,
   onOpenMedia,
+  viewerId,
+  onEditStory,
+  onDeleted,
 }: StoryDetailScreenProps): React.ReactElement {
   const { colors, theme } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -284,6 +299,10 @@ export default function StoryDetailScreen({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | undefined>(undefined);
   const [reportVisible, setReportVisible] = useState(false);
+  // The author's own action sheet, and whether the deletion it offers is in flight
+  // (KNOT-054).
+  const [ownerMenuOpen, setOwnerMenuOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   // The carousel's own state: which page is showing, the shape each page has
   // reported, the one mute control, and whether the carousel is still on screen
@@ -362,6 +381,45 @@ export default function StoryDetailScreen({
   }, []);
   useStoryPolling(story, handleStoryUpdate, token);
 
+  /**
+   * Asks before soft-deleting this story, then leaves the screen.
+   *
+   * The question names the 30-day recovery window exactly as the Feed's delete
+   * does, because it is the same deletion and the same promise (KNOT-053,
+   * KNOT-054).
+   */
+  const handleDeleteStory = useCallback((): void => {
+    if (story === undefined || token === undefined) {
+      return;
+    }
+
+    const target = story;
+    Alert.alert(
+      'Delete this story?',
+      'Are you sure you want to delete this story? You have 30 days to recover it.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setDeleting(true);
+              try {
+                await storiesApi.deleteStory(target.id, token);
+                onDeleted?.();
+              } catch (caught) {
+                Alert.alert('Story not deleted', describeError(caught));
+              } finally {
+                setDeleting(false);
+              }
+            })();
+          },
+        },
+      ],
+    );
+  }, [onDeleted, story, token]);
+
   // A different story starts at its first page: the overlay reuses this component
   // instance when one detail replaces another, so the previous page index must not
   // leak into the new story.
@@ -405,6 +463,8 @@ export default function StoryDetailScreen({
   }, []);
 
   const language = story === undefined ? '' : languageName(story.language);
+  // The author sees an edit/delete menu; everybody else sees Report (KNOT-054).
+  const isOwnStory = story !== undefined && viewerId !== undefined && story.author_id === viewerId;
   const versionsLabel = `${versionCount} ${versionCount === 1 ? 'version' : 'versions'}`;
   const commentCount = typeof story?.comment_count === 'number' ? story.comment_count : 0;
   const conversationLabel =
@@ -644,7 +704,17 @@ export default function StoryDetailScreen({
             </Pressable>
           }
           right={
-            token !== undefined ? (
+            isOwnStory ? (
+              <Pressable
+                style={styles.reportButton}
+                onPress={() => setOwnerMenuOpen(true)}
+                accessibilityRole="button"
+                accessibilityLabel="Story options"
+                testID="detail-options"
+              >
+                <DotsThree color={colors.text.onMedia} size={REPORT_ICON_SIZE} weight="bold" />
+              </Pressable>
+            ) : token !== undefined ? (
               <Pressable
                 style={styles.reportButton}
                 onPress={() => setReportVisible(true)}
@@ -659,6 +729,63 @@ export default function StoryDetailScreen({
         />
       </View>
 
+      {/* The author's own menu: edit the text, or delete with the recovery
+          promise. It is a sheet rather than two header controls because Delete is
+          destructive and must not sit one stray tap from Back (KNOT-054). */}
+      {isOwnStory && story !== undefined ? (
+        <Modal
+          visible={ownerMenuOpen}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setOwnerMenuOpen(false)}
+        >
+          <Pressable
+            style={styles.sheetBackdrop}
+            onPress={() => setOwnerMenuOpen(false)}
+            accessibilityRole="button"
+            accessibilityLabel="Close the story options"
+          >
+            <Pressable style={styles.sheet} onPress={() => undefined}>
+              <View style={styles.sheetHandleArea}>
+                <View style={styles.sheetHandle} />
+              </View>
+              <View style={styles.sheetBody}>
+                <Button
+                  variant="secondary"
+                  fullWidth
+                  label="Edit Story"
+                  leadingIcon={<PencilSimple color={colors.text.primary} size={20} weight="bold" />}
+                  onPress={() => {
+                    setOwnerMenuOpen(false);
+                    onEditStory?.(story.id);
+                  }}
+                  testID="detail-edit"
+                />
+                <Button
+                  variant="danger"
+                  fullWidth
+                  label="Delete Story"
+                  loading={deleting}
+                  leadingIcon={<Trash color={colors.state.danger} size={20} weight="bold" />}
+                  onPress={() => {
+                    setOwnerMenuOpen(false);
+                    handleDeleteStory();
+                  }}
+                  testID="detail-delete"
+                />
+              </View>
+              <Pressable
+                style={styles.sheetCancel}
+                onPress={() => setOwnerMenuOpen(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Cancel"
+              >
+                <Text style={[typeScale.button, styles.sheetCancelText]}>Cancel</Text>
+              </Pressable>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      ) : null}
       {story !== undefined && token !== undefined ? (
         <ReportModal
           visible={reportVisible}
@@ -750,6 +877,43 @@ const createStyles = (colors: ThemeColors) =>
     },
     reportLabel: {
       color: colors.text.onMedia,
+    },
+    // The author's action sheet (KNOT-054): a canvas card with a grab handle,
+    // mirroring the visitor sheet the profile wall draws.
+    sheet: {
+      backgroundColor: colors.bg.canvas,
+      borderTopLeftRadius: radius.xxl,
+      borderTopRightRadius: radius.xxl,
+      paddingBottom: spacing.lg,
+    },
+    sheetBackdrop: {
+      backgroundColor: colors.scrim.overlay,
+      flex: 1,
+      justifyContent: 'flex-end',
+    },
+    sheetBody: {
+      gap: spacing.sm,
+      paddingHorizontal: layout.screenPaddingFeed,
+      paddingTop: spacing.sm,
+    },
+    sheetCancel: {
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginTop: spacing.sm,
+      minHeight: 44,
+    },
+    sheetCancelText: {
+      color: colors.text.secondary,
+    },
+    sheetHandle: {
+      backgroundColor: colors.border.hairline,
+      borderRadius: radius.pill,
+      height: 4,
+      width: 32,
+    },
+    sheetHandleArea: {
+      alignItems: 'center',
+      paddingVertical: spacing.md,
     },
     languageLeft: {
       alignItems: 'center',

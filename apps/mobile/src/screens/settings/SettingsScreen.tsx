@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Camera,
   CaretRight,
+  ClockCounterClockwise,
   DeviceMobile,
   Devices,
   FileText,
@@ -73,6 +74,8 @@ type SettingsScreenProps = {
   readonly onOpenBlockedUsers: () => void;
   /** Called when the owner wants to see the devices they are signed in on. */
   readonly onOpenSessions: () => void;
+  /** Called when the owner opens their recycle bin (KNOT-054). */
+  readonly onOpenRecentlyDeleted: () => void;
   /** Called when the owner wants to delete their account. */
   readonly onOpenDeleteAccount: () => void;
   /** Called when the owner opens one of the legal documents (KNOT-035). */
@@ -238,6 +241,7 @@ export default function SettingsScreen({
   onSetRooted,
   onOpenBlockedUsers,
   onOpenSessions,
+  onOpenRecentlyDeleted,
   onOpenDeleteAccount,
   onOpenLegal,
   onSignOut,
@@ -413,6 +417,15 @@ export default function SettingsScreen({
           {/* The device list (KNOT-ADR-084): where a person reviews and ends the
               sessions their account is signed in on. */}
           <SettingRow divider icon={Devices} label="Sessions" onPress={onOpenSessions} />
+          {/* The recycle bin (KNOT-054): the stories the person deleted, kept for
+              30 days so a deletion is recoverable. It sits beside the account
+              rows because it is about their own content. */}
+          <SettingRow
+            divider
+            icon={ClockCounterClockwise}
+            label="Recently Deleted"
+            onPress={onOpenRecentlyDeleted}
+          />
           {/* Destructive, and last in the group: it is the one row here that
               cannot be undone from this screen (KNOT-034). */}
           <SettingRow

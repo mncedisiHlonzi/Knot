@@ -108,6 +108,7 @@ function headerAction(
     onOpenComment: () => undefined,
     onOpenInquiry: () => undefined,
     onOpenSettings,
+    onEditStory: () => undefined,
     onOpenMedia: () => undefined,
     onBack: () => undefined,
     showBackButton: true,

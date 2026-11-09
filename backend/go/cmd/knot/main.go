@@ -474,7 +474,7 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 	// adaptations in one stream, so it is built after the versions service and
 	// takes it as its chain lookup: attributing a page of adaptations is a batched
 	// read of the version domain, not a query per entry (KNOT-022).
-	storiesHandler, err := httpapi.NewStoriesHandlerWithCaches(
+	storiesHandler, err := httpapi.NewStoriesHandlerWithMediaPurge(
 		storiesService,
 		service,
 		rootedService,
@@ -497,6 +497,9 @@ func serve(cfg config.Config, logger *slog.Logger) error {
 		// means the feature is switched off and every request takes the SQL path
 		// (KNOT-036).
 		caches,
+		// Permanent removal from the recycle bin removes the story's media objects
+		// before the row, so the storage keys are still readable (KNOT-054).
+		storyMediaService,
 	)
 	if err != nil {
 		return err

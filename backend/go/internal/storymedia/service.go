@@ -256,6 +256,51 @@ func (s *Service) DeleteMedia(ctx context.Context, id, byUserID string) error {
 	return nil
 }
 
+// PurgeStoryMedia removes every media object and row belonging to a story
+// (KNOT-054).
+//
+// It exists for the recycle bin's permanent removal: the stories store deletes a
+// story and the ON DELETE CASCADE takes its media rows, but the objects in the
+// bucket are only reachable through those rows, so they must be read and removed
+// FIRST. It performs no authorization of its own — the caller has already proven
+// the story is the caller's and is soft-deleted — and it never touches the story
+// row.
+//
+// Object deletion is best-effort, exactly as it is for one item: a storage
+// failure leaves an orphaned object rather than failing the whole purge, because
+// the row is being removed regardless and an operator can clean the bucket. A
+// failure to delete a ROW is returned, so the caller can keep the story in the
+// bin and let the author try again.
+func (s *Service) PurgeStoryMedia(ctx context.Context, storyID string) error {
+	if !isUUID(storyID) {
+		return ErrNotFound
+	}
+
+	media, err := s.store.ListMedia(ctx, storyID)
+	if err != nil {
+		return fmt.Errorf("storymedia: list story media: %w", err)
+	}
+
+	for _, item := range media {
+		for _, key := range append([]string{item.StorageKey}, item.derivativeKeys()...) {
+			if err := s.objects.Delete(ctx, key); err != nil {
+				s.logger.WarnContext(
+					ctx,
+					"could not delete media object",
+					"key", key,
+					"error", err.Error(),
+				)
+			}
+		}
+
+		if err := s.store.DeleteMedia(ctx, item.ID); err != nil && !errors.Is(err, ErrNotFound) {
+			return fmt.Errorf("storymedia: purge story media: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // discardObject removes an object without failing the request: the upload has
 // already failed, so a deletion problem is logged and left for the operator.
 func (s *Service) discardObject(ctx context.Context, key string) {

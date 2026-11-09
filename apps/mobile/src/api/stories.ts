@@ -360,6 +360,29 @@ export type StoryResponse = {
 };
 
 /**
+ * The body of PUT /stories/{id}: the two pieces of a story its author may revise
+ * (KNOT-054).
+ *
+ * Editing is text only for now — language, pillar, place and media are not part of
+ * the edit, because changing a language is an adaptation and editing media is a
+ * different feature.
+ */
+export type UpdateStoryPayload = {
+  readonly title: string;
+  readonly body: string;
+};
+
+/**
+ * The body returned by GET /stories/deleted: the caller's own soft-deleted
+ * stories, most recently created first (KNOT-054).
+ *
+ * The list is always an array, so an empty recycle bin is [] rather than null.
+ */
+export type DeletedStoriesResponse = {
+  readonly stories: readonly Story[];
+};
+
+/**
  * The body returned by GET /discovery/places/{place}: that place's stories.
  *
  * The place page lists stories only, so it keeps the stories-shaped body. The feed
@@ -645,6 +668,45 @@ export const storiesApi = {
   restoreStory(id: string, token: string): Promise<StoryResponse> {
     return request<StoryResponse>(`/stories/${encodeURIComponent(id)}/restore`, {
       method: 'POST',
+      token,
+    });
+  },
+
+  /**
+   * PUT /stories/{id} — revises a story's title and body.
+   *
+   * Only the author may call this; the server enforces it and answers 403 for
+   * anybody else. The updated story comes back in the same shape GET serves, so
+   * the caller can replace what it is showing (KNOT-054).
+   */
+  updateStory(id: string, token: string, payload: UpdateStoryPayload): Promise<StoryResponse> {
+    return request<StoryResponse>(`/stories/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: payload,
+      token,
+    });
+  },
+
+  /**
+   * GET /stories/deleted — the caller's recycle bin.
+   *
+   * The author comes from the token, never from the query, so this always names
+   * the signed-in person's own deletions (KNOT-054).
+   */
+  listDeletedStories(token: string): Promise<DeletedStoriesResponse> {
+    return request<DeletedStoriesResponse>('/stories/deleted', { method: 'GET', token });
+  },
+
+  /**
+   * DELETE /stories/{id}/permanent — removes a soft-deleted story for good.
+   *
+   * The story must already be in the recycle bin; the server answers 409 for a
+   * live one. The media objects go with the row, so nothing is left in storage
+   * (KNOT-054).
+   */
+  permanentlyDeleteStory(id: string, token: string): Promise<void> {
+    return request<void>(`/stories/${encodeURIComponent(id)}/permanent`, {
+      method: 'DELETE',
       token,
     });
   },

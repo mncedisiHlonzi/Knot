@@ -37,6 +37,11 @@ var (
 	// handler can answer 403 instead of pretending the story is gone: the caller
 	// proved they know the story exists by naming it (KNOT-053).
 	ErrNotAuthor = errors.New("stories: not the story author")
+	// ErrNotDeleted is returned when a permanent removal is asked for a story
+	// that is still live. Permanent removal is the second step of the recovery
+	// flow: a story is soft-deleted first and purged from the recycle bin, so a
+	// live story is refused rather than silently hard-deleted (KNOT-054).
+	ErrNotDeleted = errors.New("stories: story is not deleted")
 )
 
 // ValidationError describes a rejected field on a request. Handlers expose the
@@ -109,6 +114,11 @@ const (
 	DefaultListLimit = 20
 	// MaxListLimit is the largest page the API will serve.
 	MaxListLimit = 50
+	// MaxDeletedListLimit bounds the recycle bin. A deleted story is invisible
+	// everywhere else, so the whole bin is read at once; the cap keeps the
+	// response (and its batched enrichment) bounded for an author who has deleted
+	// a great deal (KNOT-054).
+	MaxDeletedListLimit = 100
 )
 
 // Story is a published story.
@@ -181,6 +191,18 @@ type CreateStoryInput struct {
 	MediaURLs []string
 }
 
+// UpdateStoryInput is the input to UpdateStory: the two pieces of a story's
+// content its author may revise. Language and pillar are deliberately absent:
+// changing a language is an adaptation, and a pillar frames the whole story
+// (KNOT-054).
+type UpdateStoryInput struct {
+	// Title is required and must be 1-MaxTitleLen characters after trimming.
+	Title string
+	// Body is required and must be 1-MaxBodyLen characters. It is stored
+	// verbatim so the author's formatting survives, exactly as on creation.
+	Body string
+}
+
 // StoryStore is the persistence contract for stories. The service depends on
 // this interface rather than on pgx, so the business rules can be tested without
 // a database.
@@ -216,6 +238,26 @@ type StoryStore interface {
 	// belongs to somebody else. Restoring a live story is a no-op that still
 	// returns it, so a double restore is harmless.
 	RestoreStory(ctx context.Context, id, authorID string) (Story, error)
+	// UpdateStory rewrites the title and body of the story's ROOT version, which
+	// is where a story's written content lives, and touches the story's own
+	// updated_at. It returns ErrNotFound when no such story exists (or it is
+	// deleted) and ErrNotAuthor when it belongs to somebody else (KNOT-054).
+	UpdateStory(ctx context.Context, id, authorID string, in UpdateStoryInput) (Story, error)
+	// GetDeletedStory returns a soft-deleted story its author owns. It returns
+	// ErrNotFound when no such story exists, ErrNotAuthor when it belongs to
+	// somebody else, and ErrNotDeleted when the story is still live. It is the
+	// ownership-and-state check a permanent removal makes before touching
+	// anything (KNOT-054).
+	GetDeletedStory(ctx context.Context, id, authorID string) (Story, error)
+	// PurgeStory permanently removes a soft-deleted story, and with it every
+	// version and media row (both reference the story with ON DELETE CASCADE).
+	// It only matches a row that is deleted, so a live story can never be lost by
+	// a stray request (KNOT-054).
+	PurgeStory(ctx context.Context, id, authorID string) error
+	// ListDeletedStories returns the author's soft-deleted stories, most recently
+	// created first. The bin is read whole, bounded by MaxDeletedListLimit
+	// (KNOT-054).
+	ListDeletedStories(ctx context.Context, authorID string, limit int) ([]Story, error)
 }
 
 // Service holds the stories business rules.

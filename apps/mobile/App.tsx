@@ -70,6 +70,7 @@ import NotificationsScreen from './src/screens/notifications/NotificationsScreen
 import OnboardingScreen from './src/screens/onboarding/OnboardingScreen';
 import RootedSetupScreen from './src/screens/profile/RootedSetupScreen';
 import BlockedUsersScreen from './src/screens/profile/BlockedUsersScreen';
+import RecentlyDeletedScreen from './src/screens/profile/RecentlyDeletedScreen';
 import UserProfileScreen from './src/screens/profile/UserProfileScreen';
 import SearchScreen from './src/screens/search/SearchScreen';
 import SettingsScreen from './src/screens/settings/SettingsScreen';
@@ -77,6 +78,7 @@ import SplashScreen from './src/screens/splash/SplashScreen';
 import { SPLASH_DURATION_MS, postSplashDestination } from './src/screens/splash/splash';
 import AdaptStoryScreen from './src/screens/stories/AdaptStoryScreen';
 import CreateStoryScreen from './src/screens/stories/CreateStoryScreen';
+import EditStoryScreen from './src/screens/stories/EditStoryScreen';
 import FeedScreen from './src/screens/stories/FeedScreen';
 import type { MediaUploadProgress } from './src/screens/stories/mediaUpload';
 import LanguageTreeScreen from './src/screens/stories/LanguageTreeScreen';
@@ -125,6 +127,11 @@ const EASING_EXIT = Easing.bezier(...motion.easing.exit);
 type Overlay =
   | { readonly name: 'detail'; readonly storyId: string }
   | { readonly name: 'createStory' }
+  // Editing a story's text (KNOT-054). The screen reads the story itself, so the
+  // overlay only needs its id.
+  | { readonly name: 'editStory'; readonly storyId: string }
+  // The recycle bin, reached from Settings (KNOT-054).
+  | { readonly name: 'recentlyDeleted' }
   | { readonly name: 'adapt'; readonly storyId: string; readonly parentVersionId: string }
   | { readonly name: 'tree'; readonly storyId: string }
   | { readonly name: 'storyVersion'; readonly versionId: string }
@@ -724,6 +731,11 @@ function ThemedApp(): React.ReactElement {
             onCreateStory={() =>
               setOverlays((stack) => pushOverlay(stack, { name: 'createStory' }))
             }
+            // The author's own story offers Edit in its menu; the screen hands the
+            // id here and the editor reads the story itself (KNOT-054).
+            onEditStory={(storyId) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'editStory', storyId }))
+            }
           />
         );
     }
@@ -847,12 +859,35 @@ function ThemedApp(): React.ReactElement {
             onCancel={handleBack}
           />
         );
+      case 'editStory':
+        // Editing returns the author to whatever they were reading: the feed, the
+        // wall or the detail reloads on the pop and shows the new text (KNOT-054).
+        return (
+          <EditStoryScreen
+            storyId={overlay.storyId}
+            token={current.accessToken}
+            onSaved={() => setOverlays((stack) => popOverlay(stack))}
+            onCancel={handleBack}
+          />
+        );
+      case 'recentlyDeleted':
+        // The recycle bin is a destination of its own; restoring a story puts it
+        // back and the screens that list it pick it up on their next read
+        // (KNOT-054).
+        return <RecentlyDeletedScreen token={current.accessToken} onBack={handleBack} />;
       case 'detail':
         return (
           <StoryDetailScreen
             id={overlay.storyId}
             token={current.accessToken}
             onBack={handleBack}
+            // Ownership decides whether the header offers Report or the author's
+            // edit/delete menu (KNOT-054).
+            viewerId={current.user.id}
+            onEditStory={(storyId) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'editStory', storyId }))
+            }
+            onDeleted={handleBack}
             onAdapt={(parentVersionId) =>
               setOverlays((stack) =>
                 pushOverlay(stack, { name: 'adapt', storyId: overlay.storyId, parentVersionId }),
@@ -1019,6 +1054,9 @@ function ThemedApp(): React.ReactElement {
               setOverlays((stack) => pushOverlay(stack, { name: 'blockedUsers' }))
             }
             onOpenSessions={() => setOverlays((stack) => pushOverlay(stack, { name: 'sessions' }))}
+            onOpenRecentlyDeleted={() =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'recentlyDeleted' }))
+            }
             onOpenDeleteAccount={() =>
               setOverlays((stack) => pushOverlay(stack, { name: 'deleteAccount' }))
             }
@@ -1063,6 +1101,9 @@ function ThemedApp(): React.ReactElement {
               setOverlays((stack) => pushOverlay(stack, { name: 'inquiry', inquiryId }))
             }
             onOpenSettings={() => setOverlays((stack) => pushOverlay(stack, { name: 'settings' }))}
+            onEditStory={(storyId) =>
+              setOverlays((stack) => pushOverlay(stack, { name: 'editStory', storyId }))
+            }
             onOpenMedia={openMediaViewer}
             onBack={handleBack}
           />

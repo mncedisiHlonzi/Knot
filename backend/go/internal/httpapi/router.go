@@ -183,6 +183,9 @@ func (r *Router) Handler() http.Handler {
 	// optional auth so a signed-in caller's reaction highlights can be attached.
 	mux.HandleFunc("POST /stories", r.authMiddleware.Require(r.stories.Create))
 	mux.HandleFunc("GET /stories", r.authMiddleware.Optional(r.stories.List))
+	// The recycle bin is a literal path, so it takes precedence over the {id}
+	// wildcard: Go's ServeMux prefers the more specific pattern (KNOT-054).
+	mux.HandleFunc("GET /stories/deleted", r.authMiddleware.Require(r.stories.Deleted))
 	mux.HandleFunc("GET /stories/{id}", r.authMiddleware.Optional(r.stories.Get))
 
 	// Soft deletion (KNOT-053). A story is hidden, never destroyed: its author has
@@ -190,6 +193,10 @@ func (r *Router) Handler() http.Handler {
 	// Both routes require the caller to be the story's author.
 	mux.HandleFunc("DELETE /stories/{id}", r.authMiddleware.Require(r.stories.Delete))
 	mux.HandleFunc("POST /stories/{id}/restore", r.authMiddleware.Require(r.stories.Restore))
+	// Editing is text only for now, and permanent removal is the recycle bin's
+	// second step (KNOT-054).
+	mux.HandleFunc("PUT /stories/{id}", r.authMiddleware.Require(r.stories.Update))
+	mux.HandleFunc("DELETE /stories/{id}/permanent", r.authMiddleware.Require(r.stories.Purge))
 
 	// Tell My People: story versions and the Language Tree. Adapting requires an
 	// access token; reading a version or a tree is open.

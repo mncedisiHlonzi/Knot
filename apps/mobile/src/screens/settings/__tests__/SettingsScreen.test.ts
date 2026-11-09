@@ -173,6 +173,7 @@ const PROPS = {
   onSetRooted: () => undefined,
   onOpenBlockedUsers: () => undefined,
   onOpenSessions: () => undefined,
+  onOpenRecentlyDeleted: () => undefined,
   onOpenDeleteAccount: () => undefined,
   onOpenLegal: jest.fn(),
   onSignOut: () => undefined,
@@ -331,12 +332,13 @@ describe('SettingsScreen', () => {
     );
     expect(cards).toHaveLength(5);
 
-    // Five rows are parted from the row above them: Set Rooted, Sessions and
-    // Delete account in Account, and the two legal rows in About.
+    // Six rows are parted from the row above them: Set Rooted, Sessions,
+    // Recently Deleted and Delete account in Account, and the two legal rows in
+    // About (KNOT-054 added the bin).
     const dividers = parts.filter(
       (part) => part.borderTopWidth === 1 && part.borderTopColor === colors.border.hairline,
     );
-    expect(dividers).toHaveLength(5);
+    expect(dividers).toHaveLength(6);
   });
 
   it('offers every account action the profile sheet used to hold', () => {
@@ -345,6 +347,8 @@ describe('SettingsScreen', () => {
     expect(labels).toContain('Edit avatar');
     expect(labels).toContain('Set Rooted');
     expect(labels).toContain('Blocked users');
+    // The recycle bin lives beside the account rows (KNOT-054).
+    expect(labels).toContain('Recently Deleted');
   });
 
   it('offers System, Light and Dark, and applies a choice on the tap', () => {

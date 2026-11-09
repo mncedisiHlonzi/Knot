@@ -24,6 +24,7 @@ import {
   ProfileUser,
   profileApi,
 } from '../../api/profile';
+import { storiesApi } from '../../api/stories';
 import AuthorLine from '../../components/AuthorLine';
 import Avatar from '../../components/Avatar';
 import Button from '../../components/Button';
@@ -84,8 +85,13 @@ type UserProfileScreenProps = {
    * Called when the owner opens Settings — the account and preferences screen that
    * replaced the options sheet (KNOT-020k-fix22).
    */
-  readonly onOpenSettings: () => void;
-  /** Called when a card's media is tapped, to open the full-screen viewer. */
+  readonly onOpenSettings: () => void; /**
+   * Called when the owner chooses "Edit Story" on one of their story cards
+   * (KNOT-054). The argument is the story's own id.
+   */
+  readonly onEditStory: (
+    storyId: string,
+  ) => void; /** Called when a card's media is tapped, to open the full-screen viewer. */
   readonly onOpenMedia: (
     items: readonly ViewerMedia[],
     index: number,
@@ -259,6 +265,7 @@ export default function UserProfileScreen({
   onOpenComment,
   onOpenInquiry,
   onOpenSettings,
+  onEditStory,
   onOpenMedia,
   onBack,
   showBackButton = true,
@@ -312,6 +319,63 @@ export default function UserProfileScreen({
   const closeVisitorMenu = useCallback((): void => {
     setVisitorMenuOpen(false);
   }, []);
+
+  // The owner's card menu (KNOT-054): which story card was asked about, and
+  // whether its deletion is in flight. Only a story card can open it — an
+  // adaptation is a version, not the story, and is not editable here.
+  const [cardMenu, setCardMenu] = useState<Activity | undefined>(undefined);
+  const [cardBusyId, setCardBusyId] = useState<string | undefined>(undefined);
+  const closeCardMenu = useCallback((): void => {
+    setCardMenu(undefined);
+  }, []);
+
+  /** Hands the card menu's story to the Edit Story screen. */
+  const editCard = useCallback((): void => {
+    const target = cardMenu;
+    setCardMenu(undefined);
+
+    if (target !== undefined) {
+      onEditStory(target.id);
+    }
+  }, [cardMenu, onEditStory]);
+
+  /**
+   * Soft-deletes one of the owner's story cards, then removes it from the wall.
+   *
+   * The question names the recovery window exactly as the Feed's delete does: it
+   * is the same deletion and the same promise. The card leaves only after the
+   * server has answered, so a failed request never looks like a successful one
+   * (KNOT-053, KNOT-054).
+   */
+  const deleteCard = useCallback(
+    (activity: Activity): void => {
+      Alert.alert(
+        'Delete this story?',
+        'Are you sure you want to delete this story? You have 30 days to recover it.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Delete',
+            style: 'destructive',
+            onPress: () => {
+              void (async () => {
+                setCardBusyId(activity.id);
+                try {
+                  await storiesApi.deleteStory(activity.id, token);
+                  setActivities((existing) => existing.filter((item) => item.id !== activity.id));
+                } catch (caught) {
+                  Alert.alert('Story not deleted', describeError(caught));
+                } finally {
+                  setCardBusyId(undefined);
+                }
+              })();
+            },
+          },
+        ],
+      );
+    },
+    [token],
+  );
 
   const loadFirstPage = useCallback(async (): Promise<void> => {
     setLoading(true);
@@ -622,15 +686,33 @@ export default function UserProfileScreen({
                     is the activity's own (KNOT-020k-fix20). It is plain, not a tap
                     target: the card already opens the activity. */}
                 <View style={styles.cardAuthor}>
-                  <AuthorLine
-                    displayName={profile?.display_name}
-                    avatarUrl={profile?.avatar_url ?? null}
-                    createdAt={item.created_at}
-                    rooted={null}
-                    size="medium"
-                    layout="stacked"
-                    timeFormat="short"
-                  />
+                  <View style={styles.cardAuthorLine}>
+                    <AuthorLine
+                      displayName={profile?.display_name}
+                      avatarUrl={profile?.avatar_url ?? null}
+                      createdAt={item.created_at}
+                      rooted={null}
+                      size="medium"
+                      layout="stacked"
+                      timeFormat="short"
+                    />
+                  </View>
+                  {/* The owner's own story can be edited or deleted from the wall,
+                      exactly as it can from the Feed (KNOT-054). A version card gets
+                      no menu: an adaptation is not the story and is not editable
+                      here. */}
+                  {isOwnProfile && item.kind === 'story' ? (
+                    <Pressable
+                      style={styles.cardMenuButton}
+                      onPress={() => setCardMenu(item)}
+                      hitSlop={spacing.sm}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Options for ${card.title}`}
+                      testID={`card-options-${item.id}`}
+                    >
+                      <DotsThree color={colors.text.tertiary} size={22} weight="bold" />
+                    </Pressable>
+                  ) : null}
                 </View>
 
                 {card.pillar === undefined ? (
@@ -741,6 +823,53 @@ export default function UserProfileScreen({
           </Animated.View>
         </Pressable>
       </Modal>
+
+      {/* The owner's story-card menu (KNOT-054): the same sheet treatment as the
+          visitor's, offering the two actions the author owns. */}
+      <Modal
+        visible={cardMenu !== undefined}
+        transparent
+        animationType="slide"
+        onRequestClose={closeCardMenu}
+      >
+        <Pressable
+          style={styles.sheetBackdrop}
+          onPress={closeCardMenu}
+          accessibilityRole="button"
+          accessibilityLabel="Close the story options"
+        >
+          <Pressable style={styles.sheet} onPress={() => undefined}>
+            <View style={styles.sheetHandleArea}>
+              <View style={styles.sheetHandle} />
+            </View>
+            <View style={styles.sheetBody}>
+              <Button
+                variant="secondary"
+                fullWidth
+                label="Edit Story"
+                onPress={editCard}
+                testID="card-edit"
+              />
+              <Button
+                variant="danger"
+                fullWidth
+                label="Delete Story"
+                disabled={cardBusyId !== undefined}
+                onPress={() => {
+                  const target = cardMenu;
+                  if (target === undefined) {
+                    return;
+                  }
+                  setCardMenu(undefined);
+                  deleteCard(target);
+                }}
+                testID="card-delete"
+              />
+              <Button variant="secondary" fullWidth label="Cancel" onPress={closeCardMenu} />
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 }
@@ -768,7 +897,22 @@ const createStyles = (colors: ThemeColors) =>
     // 32pt avatar, name then time), set apart from the pillar and title below it by
     // the same step the Feed uses above its tag row (KNOT-020k-fix20).
     cardAuthor: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
       marginBottom: spacing.md,
+    },
+    // The author line takes the room the options control does not, so a long name
+    // truncates instead of pushing the control off the card (KNOT-054).
+    cardAuthorLine: {
+      flex: 1,
+    },
+    // A 44-point target for the owner's per-card overflow control (KNOT-054).
+    cardMenuButton: {
+      alignItems: 'center',
+      height: 44,
+      justifyContent: 'center',
+      width: 44,
     },
     // A card whose last child is the meta row gives its bottom inset to that row
     // (see `cardMetaRow`), so the counts are not pushed down towards the hairline

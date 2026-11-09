@@ -171,6 +171,11 @@ type FeedScreenProps = {
    * composer row; it is the prompt card now (KNOT-020k-fix6, KNOT-020k-fix7).
    */
   readonly onCreateStory: () => void;
+  /**
+   * Called when the author chooses "Edit Story" on one of their own stories
+   * (KNOT-054). The id is the story's own, which is what PUT /stories/{id} names.
+   */
+  readonly onEditStory: (storyId: string) => void;
 };
 
 /**
@@ -231,6 +236,7 @@ export default function FeedScreen({
   pendingStory,
   onPendingStoryConsumed,
   mediaUpload,
+  onEditStory,
 }: FeedScreenProps): React.ReactElement {
   const { colors } = useTheme();
   const styles = useThemedStyles(createStyles);
@@ -504,6 +510,21 @@ export default function FeedScreen({
   }, []);
 
   /**
+   * Hands the entry from the options sheet to the Edit Story screen (KNOT-054).
+   *
+   * The sheet closes first, so the editor is never stacked over the menu it was
+   * chosen from.
+   */
+  const editStory = useCallback((): void => {
+    const target = menuItem;
+    setMenuItem(undefined);
+
+    if (target !== undefined) {
+      onEditStory(target.id);
+    }
+  }, [menuItem, onEditStory]);
+
+  /**
    * Removes a story the person just deleted, before the server has answered.
    *
    * Deleting is the one feed action whose outcome is certain — the author asked
@@ -567,6 +588,18 @@ export default function FeedScreen({
     },
     [deleteEntry],
   );
+
+  /**
+   * Whether the sheet is open on a story the viewer wrote.
+   *
+   * Ownership decides what the menu offers. An author can edit or delete their own
+   * story; reporting it or hiding it from themselves is nonsensical. Anybody
+   * else's entry can only be reported or hidden. An adaptation is never editable
+   * here: it is a version, not the story, and the delete path only exists for a
+   * story (KNOT-054).
+   */
+  const ownsMenuItem =
+    menuItem !== undefined && menuItem.kind === 'story' && menuItem.author_id === viewer.id;
 
   return (
     <View style={styles.container}>
@@ -788,17 +821,13 @@ export default function FeedScreen({
 
       <PostOptionsSheet
         item={menuItem}
-        // The sheet's hide row asks exactly like the card's `✕` does: one shared
-        // confirmation, one shared removal (KNOT-032-fix1).
-        onHide={() => requestHide(menuItem?.id)}
-        onReport={reportPost}
-        // Deleting is only offered on a story the viewer wrote. An adaptation is
-        // somebody else's version of it, and deleting one is a different feature.
-        onDelete={
-          menuItem !== undefined && menuItem.kind === 'story' && menuItem.author_id === viewer.id
-            ? () => requestDelete(menuItem)
-            : undefined
-        }
+        // The menu is the author's own for their own story: edit it, or delete it
+        // with the recovery promise. Report and hide are for everybody else's
+        // (KNOT-054).
+        onEdit={ownsMenuItem ? editStory : undefined}
+        onDelete={ownsMenuItem ? () => requestDelete(menuItem) : undefined}
+        onHide={ownsMenuItem ? undefined : () => requestHide(menuItem?.id)}
+        onReport={ownsMenuItem ? undefined : reportPost}
         onClose={closePostOptions}
       />
 
@@ -937,8 +966,12 @@ function PromptCard({
 }
 
 /**
- * The post options sheet: the actions a reader can take on one feed entry — hide
- * it from this feed, or report it to the moderators.
+ * The post options sheet: the actions a person can take on one feed entry.
+ *
+ * Which rows exist is the ownership rule (KNOT-054). An entry the viewer wrote — a
+ * story, never an adaptation — offers Edit and Delete. Anybody else's entry offers
+ * Hide and Report. The two sets never mix: reporting one's own story is
+ * nonsensical, and deleting somebody else's is impossible.
  *
  * Its hide row does not hide anything itself: it arms the feed's confirmation and
  * closes, so both entry points ask the same question (KNOT-032-fix1).
@@ -951,15 +984,20 @@ function PromptCard({
  */
 function PostOptionsSheet({
   item,
+  onEdit,
   onHide,
   onReport,
   onDelete,
   onClose,
 }: {
   readonly item: FeedItem | undefined;
-  readonly onHide: () => void;
-  readonly onReport: () => void;
-  /** Absent unless the entry is a story the viewer wrote (KNOT-053). */
+  /** Present only on a story the viewer wrote (KNOT-054). */
+  readonly onEdit?: () => void;
+  /** Present only on an entry the viewer did NOT write (KNOT-054). */
+  readonly onHide?: () => void;
+  /** Present only on an entry the viewer did NOT write (KNOT-054). */
+  readonly onReport?: () => void;
+  /** Present only on a story the viewer wrote (KNOT-054). */
   readonly onDelete?: () => void;
   readonly onClose: () => void;
 }): React.ReactElement {
@@ -980,8 +1018,17 @@ function PostOptionsSheet({
           </View>
 
           <View style={styles.sheetBody}>
-            <PostOptionRow icon={EyeSlash} label="Hide this post" onPress={onHide} />
-            <PostOptionRow icon={Flag} label="Report post" danger onPress={onReport} />
+            {/* An owned story offers only what its author can do to it: editing and
+                deleting. Report and hide would be actions against themselves
+                (KNOT-054). */}
+            {onEdit === undefined ? null : (
+              <PostOptionRow
+                icon={PencilSimple}
+                label="Edit Story"
+                onPress={onEdit}
+                testID="post-edit"
+              />
+            )}
             {/* Destructive, and last: Delete is the action nobody should reach by
                 accident, so it sits furthest from the thumb's resting place. */}
             {onDelete === undefined ? null : (
@@ -992,6 +1039,14 @@ function PostOptionsSheet({
                 onPress={onDelete}
                 testID="post-delete"
               />
+            )}
+            {/* Anybody else's entry offers the reader's two actions, and neither can
+                edit or delete it (KNOT-054). */}
+            {onHide === undefined ? null : (
+              <PostOptionRow icon={EyeSlash} label="Hide this post" onPress={onHide} />
+            )}
+            {onReport === undefined ? null : (
+              <PostOptionRow icon={Flag} label="Report post" danger onPress={onReport} />
             )}
           </View>
 
@@ -1011,7 +1066,7 @@ function PostOptionsSheet({
 
 /**
  * One row of the post options sheet: a leading icon and a label, 44pt tall, with
- * `danger` reserved for the action that reports somebody's work.
+ * `danger` reserved for the destructive actions (Delete and Report).
  */
 function PostOptionRow({
   icon,
